@@ -3,6 +3,7 @@ import type { ZodType } from 'zod'
 import { createDocument } from 'zod-openapi'
 // One line per module, mirroring the registry in apps/web/lib/modules.ts.
 import { paths as academicPaths } from '@campusos/module-academic/api/openapi'
+import { paths as attendancePaths } from '@campusos/module-attendance/api/openapi'
 import {
   assignRoleSchema,
   createInstitutionSchema,
@@ -78,6 +79,7 @@ export const document = createDocument({
 
     // Module-contributed paths.
     ...academicPaths,
+    ...attendancePaths,
   },
   components: {
     schemas: {
