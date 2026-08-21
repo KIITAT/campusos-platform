@@ -1,0 +1,30 @@
+{
+  "name": "@campusos/module-academic",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./schema": "./schema.ts",
+    "./manifest": "./manifest.ts",
+    "./api": "./api/index.ts",
+    "./api/openapi": "./api/openapi.ts",
+    "./ui": "./ui/index.ts"
+  },
+  "scripts": {
+    "test": "node --import tsx --test \"**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@campusos/db": "workspace:*",
+    "@campusos/module-framework": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "zod": "^4.4.3",
+    "react": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "tsx": "^4.23.12",
+    "@types/react": "^19.2.18"
+  }
+}
