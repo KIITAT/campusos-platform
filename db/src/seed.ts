@@ -45,23 +45,37 @@ const one = <T extends { id: string }>(rows: T[], what: string): T => {
   return row
 }
 
-const [lecturer] = await db
-  .insert(users)
-  .values({ institutionId: demo.id, email: `lecturer@${domain}`, role: 'faculty', name: 'A. Lecturer' })
-  .onConflictDoUpdate({
-    target: users.email,
-    set: { institutionId: demo.id, role: 'faculty', name: 'A. Lecturer' },
-  })
-  .returning({ id: users.id })
+/**
+ * Demo users are keyed on a fixed id, not on their email address. Real users
+ * get an adapter-generated uuid, so `seed:` can never collide with one -- and
+ * re-seeding after SUPER_ADMIN_EMAILS changes domain then updates these rows
+ * instead of leaving the previous domain's pair behind.
+ */
+const demoUser = async (
+  key: string,
+  role: 'faculty' | 'student',
+  name: string,
+) => {
+  const [row] = await db
+    .insert(users)
+    .values({
+      id: `seed:${key}`,
+      institutionId: demo.id,
+      email: `${key}@${domain}`,
+      role,
+      name,
+    })
+    .onConflictDoUpdate({
+      target: users.id,
+      set: { institutionId: demo.id, email: `${key}@${domain}`, role, name },
+    })
+    .returning({ id: users.id })
+  if (!row) throw new Error(`seed: ${key} upsert returned no row`)
+  return row
+}
 
-const [student] = await db
-  .insert(users)
-  .values({ institutionId: demo.id, email: `student@${domain}`, role: 'student', name: 'S. Student' })
-  .onConflictDoUpdate({
-    target: users.email,
-    set: { institutionId: demo.id, role: 'student', name: 'S. Student' },
-  })
-  .returning({ id: users.id })
+const lecturer = await demoUser('lecturer', 'faculty', 'A. Lecturer')
+const student = await demoUser('student', 'student', 'S. Student')
 
 const dept = one(
   await db
@@ -130,12 +144,10 @@ const section = one(
   'section',
 )
 
-if (student) {
-  await db
-    .insert(academic.sectionMembers)
-    .values({ ...tenant, sectionId: section.id, userId: student.id })
-    .onConflictDoNothing()
-}
+await db
+  .insert(academic.sectionMembers)
+  .values({ ...tenant, sectionId: section.id, userId: student.id })
+  .onConflictDoNothing()
 
 const COURSES = [
   { code: 'CS301', title: 'Operating Systems', credits: 4, room: 'LT-1', day: 1, at: '09:00' },
@@ -176,7 +188,7 @@ for (const c of COURSES) {
         termId: term.id,
         courseId: course.id,
         sectionId: section.id,
-        facultyUserId: lecturer?.id ?? null,
+        facultyUserId: lecturer.id,
       })
       .onConflictDoUpdate({
         target: [
@@ -184,7 +196,7 @@ for (const c of COURSES) {
           academic.offerings.courseId,
           academic.offerings.sectionId,
         ],
-        set: { facultyUserId: lecturer?.id ?? null },
+        set: { facultyUserId: lecturer.id },
       })
       .returning(),
     'offering',
@@ -212,5 +224,9 @@ for (const c of COURSES) {
 console.log(
   `seeded institution=${demo.slug} super_admin=${email} ` +
     `academic=1 dept, 1 programme, ${COURSES.length} courses, 1 cohort, ${COURSES.length} slots`,
+)
+console.log(
+  'note: this populates, it does not reconcile. If SUPER_ADMIN_EMAILS changed, ' +
+    'the previous admin row is still there -- use `docker compose down -v` for a true reset.',
 )
 process.exit(0)
