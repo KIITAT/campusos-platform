@@ -1,0 +1,24 @@
+{
+  "name": "@campusos/api-contracts",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "openapi": "tsx src/openapi.ts",
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@campusos/db": "workspace:*",
+    "zod": "^4.4.3",
+    "zod-openapi": "^6.0.1",
+    "@campusos/module-academic": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "tsx": "^4.23.12"
+  }
+}
