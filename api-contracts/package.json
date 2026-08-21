@@ -13,11 +13,12 @@
   },
   "dependencies": {
     "@campusos/db": "workspace:*",
-    "zod": "^4.4.3",
-    "zod-openapi": "^6.0.1",
     "@campusos/module-academic": "workspace:*",
     "@campusos/module-attendance": "workspace:*",
-    "@campusos/module-examinations": "workspace:*"
+    "@campusos/module-examinations": "workspace:*",
+    "@campusos/module-fees": "workspace:*",
+    "zod": "^4.4.3",
+    "zod-openapi": "^6.0.1"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
