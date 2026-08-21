@@ -1,5 +1,5 @@
 import { and, eq, isNull, sql } from 'drizzle-orm'
-import { users, withTenant } from '@campusos/db'
+import { audit, users, withTenant } from '@campusos/db'
 import type { Role } from '@campusos/module-framework'
 import {
   courses,
@@ -38,6 +38,7 @@ import {
 
 export interface Actor {
   id: string
+  email?: string | null
   role: Role
   institutionId: string | null
 }
@@ -493,7 +494,7 @@ export async function override(actor: Actor, input: unknown) {
       throw new AttendanceError(404, 'not_enrolled', 'that student is not in this class')
     }
 
-    await tx
+    const [row] = await tx
       .insert(records)
       .values({
         institutionId: tenant,
@@ -512,6 +513,22 @@ export async function override(actor: Actor, input: unknown) {
           markedAt: new Date(),
         },
       })
+      .returning({ id: records.id })
+
+    // The shared audit utility, not a second implementation of one. The reason
+    // is also kept on the record itself because the roster shows it inline;
+    // the audit row is what survives a later correction of the same mark.
+    await audit(tx, {
+      institutionId: tenant,
+      actorId: actor.id,
+      actorEmail: actor.email ?? null,
+      moduleId: 'attendance',
+      action: 'attendance.override',
+      entity: 'attendance_records',
+      entityId: row!.id,
+      reason: data.reason,
+      detail: { sessionId: session.id, studentId: data.studentId },
+    })
   })
 }
 

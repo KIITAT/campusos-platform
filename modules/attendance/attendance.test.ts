@@ -1,7 +1,7 @@
 import { after, before, beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { eq } from 'drizzle-orm'
-import { authDb, institutions, users, withTenant } from '@campusos/db'
+import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
 import {
   AttendanceError,
@@ -137,6 +137,7 @@ beforeEach(async () => {
     await tx.delete(records)
     await tx.delete(sessions)
     await tx.delete(devices)
+    await tx.delete(auditLog)
   })
   // s1 has an approved device by default; s2 has none.
   const d = await registerDevice(student(ids.s1), { deviceHash: HASH_A })
@@ -444,6 +445,21 @@ test('an override requires a substantive reason', async () => {
       override(A({}), { sessionId: s.id, studentId: ids.s2, reason }),
     )
   }
+})
+
+test('an override writes a row in the shared audit log', async () => {
+  const s = await openSession(A({}), { slotId: ids.slot })
+  await override(A({ email: 'fac@att.test' }), {
+    sessionId: s.id,
+    studentId: ids.s2,
+    reason: 'verified in person, handset left at home',
+  })
+  const trail = await withTenant(inst, (tx) => tx.select().from(auditLog))
+  assert.equal(trail.length, 1)
+  assert.equal(trail[0]!.moduleId, 'attendance')
+  assert.equal(trail[0]!.action, 'attendance.override')
+  assert.equal(trail[0]!.entity, 'attendance_records')
+  assert.match(trail[0]!.reason, /handset left at home/)
 })
 
 test('an override marks the student and records who and why', async () => {

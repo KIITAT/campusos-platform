@@ -29,6 +29,20 @@
       "when": 1787316045665,
       "tag": "0003_narrow_kitty_pryde",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1787316981699,
+      "tag": "0004_nifty_korg",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1787316990927,
+      "tag": "0005_published_marks_guard",
+      "breakpoints": true
     }
   ]
 }

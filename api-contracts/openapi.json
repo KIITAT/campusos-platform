@@ -1478,6 +1478,439 @@
           }
         }
       }
+    },
+    "/api/v1/modules/examinations/exams": {
+      "post": {
+        "summary": "Schedule an exam against a course offering",
+        "tags": [
+          "examinations"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Created"
+          },
+          "403": {
+            "description": "Forbidden, or the module is not enabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Name taken, or total weight would exceed 100%",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/modules/examinations/marks": {
+      "post": {
+        "summary": "Enter or amend marks for an unpublished exam",
+        "tags": [
+          "examinations"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamEnterMarks"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Recorded"
+          },
+          "403": {
+            "description": "Forbidden, or the module is not enabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Exam is published — revise instead",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/modules/examinations/marks/revise": {
+      "post": {
+        "summary": "Change a published mark. The reason is mandatory and audited.",
+        "description": "The only path that can alter a mark once results are published. A database trigger refuses any other write to a published exam, so this cannot be bypassed by a future code path or by a direct SQL session.",
+        "tags": [
+          "examinations"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamReviseMark"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Revised"
+          },
+          "403": {
+            "description": "Forbidden, or the module is not enabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/modules/examinations/exams/publish": {
+      "post": {
+        "summary": "Publish results, locking every mark under this exam",
+        "tags": [
+          "examinations"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamPublish"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Published"
+          },
+          "403": {
+            "description": "Forbidden, or the module is not enabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/modules/examinations/exams/unpublish": {
+      "post": {
+        "summary": "Withdraw published results. Admin only, reason mandatory.",
+        "tags": [
+          "examinations"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamUnpublish"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Withdrawn"
+          },
+          "403": {
+            "description": "Forbidden, or the module is not enabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/modules/examinations/scales": {
+      "post": {
+        "summary": "Define a grading scheme: percentage, GPA, or a custom scale",
+        "tags": [
+          "examinations"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExamCreateScheme"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Created"
+          },
+          "403": {
+            "description": "Forbidden, or the module is not enabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Grading schemes for this institution",
+        "tags": [
+          "examinations"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "403": {
+            "description": "Forbidden, or the module is not enabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/modules/examinations/transcript": {
+      "get": {
+        "summary": "A student transcript. Students may read only their own.",
+        "tags": [
+          "examinations"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExamTranscript"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden, or the module is not enabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/modules/examinations/transcript.pdf": {
+      "get": {
+        "summary": "The same transcript as a PDF",
+        "tags": [
+          "examinations"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/pdf": {}
+            }
+          },
+          "403": {
+            "description": "Forbidden, or the module is not enabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2034,6 +2467,278 @@
           "longitude"
         ]
       },
+      "ExamCreate": {
+        "type": "object",
+        "properties": {
+          "offeringId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "quiz",
+              "assignment",
+              "midterm",
+              "practical",
+              "final"
+            ]
+          },
+          "maxMarks": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 10000,
+            "multipleOf": 0.01
+          },
+          "weightPercent": {
+            "type": "number",
+            "minimum": 0.01,
+            "maximum": 100
+          },
+          "scheduledAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "roomId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "offeringId",
+          "name",
+          "kind",
+          "maxMarks",
+          "weightPercent"
+        ]
+      },
+      "ExamEnterMarks": {
+        "type": "object",
+        "properties": {
+          "examId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "marks": {
+            "minItems": 1,
+            "maxItems": 1000,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExamMarkEntry"
+            }
+          }
+        },
+        "required": [
+          "examId",
+          "marks"
+        ]
+      },
+      "ExamMarkEntry": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "obtained": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 10000,
+                "multipleOf": 0.01
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "absent": {
+            "default": false,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "studentId"
+        ]
+      },
+      "ExamReviseMark": {
+        "type": "object",
+        "properties": {
+          "examId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "studentId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "obtained": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 10000,
+                "multipleOf": 0.01
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "absent": {
+            "default": false,
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "examId",
+          "studentId",
+          "reason"
+        ]
+      },
+      "ExamPublish": {
+        "type": "object",
+        "properties": {
+          "examId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": [
+          "examId"
+        ]
+      },
+      "ExamUnpublish": {
+        "type": "object",
+        "properties": {
+          "examId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "examId",
+          "reason"
+        ]
+      },
+      "ExamCreateScheme": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "percentage",
+              "gpa",
+              "custom"
+            ]
+          },
+          "maxPoints": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 1,
+                "maximum": 100
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "isDefault": {
+            "default": false,
+            "type": "boolean"
+          },
+          "bands": {
+            "default": [],
+            "maxItems": 30,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExamGradeBand"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "kind"
+        ]
+      },
+      "ExamGradeBand": {
+        "type": "object",
+        "properties": {
+          "minPercent": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8
+          },
+          "points": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "isPass": {
+            "default": true,
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "minPercent",
+          "label"
+        ]
+      },
       "PricingModel": {
         "type": "string",
         "enum": [
@@ -2508,6 +3213,179 @@
         "required": [
           "error",
           "message"
+        ],
+        "additionalProperties": false
+      },
+      "ExamTranscript": {
+        "type": "object",
+        "properties": {
+          "studentName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "studentEmail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "institutionName": {
+            "type": "string"
+          },
+          "programCode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "schemeName": {
+            "type": "string"
+          },
+          "schemeKind": {
+            "type": "string",
+            "enum": [
+              "percentage",
+              "gpa",
+              "custom"
+            ]
+          },
+          "terms": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "termCode": {
+                  "type": "string"
+                },
+                "termName": {
+                  "type": "string"
+                },
+                "grades": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ExamGrade"
+                  }
+                },
+                "gpa": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "credits": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "termCode",
+                "termName",
+                "grades",
+                "gpa",
+                "credits"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "cumulativeGpa": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "totalCredits": {
+            "type": "number"
+          },
+          "provisional": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "studentName",
+          "studentEmail",
+          "institutionName",
+          "programCode",
+          "schemeName",
+          "schemeKind",
+          "terms",
+          "cumulativeGpa",
+          "totalCredits",
+          "provisional"
+        ],
+        "additionalProperties": false
+      },
+      "ExamGrade": {
+        "type": "object",
+        "properties": {
+          "courseCode": {
+            "type": "string"
+          },
+          "courseTitle": {
+            "type": "string"
+          },
+          "credits": {
+            "type": "number"
+          },
+          "percent": {
+            "type": "number"
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "points": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "passed": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "courseCode",
+          "courseTitle",
+          "credits",
+          "percent",
+          "complete",
+          "label",
+          "points",
+          "passed"
         ],
         "additionalProperties": false
       },
