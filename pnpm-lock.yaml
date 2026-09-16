@@ -32,6 +32,16 @@ importers:
       '@campusos/db':
         specifier: workspace:*
         version: link:../db
+      '@campusos/module-framework':
+        specifier: workspace:*
+        version: link:../module-framework
+      zod:
+        specifier: ^4.4.3
+        version: 4.6.5
+      zod-openapi:
+        specifier: ^6.0.1
+        version: 6.0.2(zod@4.6.5)
+    devDependencies:
       '@campusos/module-academic':
         specifier: workspace:*
         version: link:../modules/academic
@@ -44,9 +54,6 @@ importers:
       '@campusos/module-fees':
         specifier: workspace:*
         version: link:../modules/fees
-      '@campusos/module-framework':
-        specifier: workspace:*
-        version: link:../module-framework
       '@campusos/module-hostel':
         specifier: workspace:*
         version: link:../modules/hostel
@@ -62,13 +69,6 @@ importers:
       '@campusos/module-parents':
         specifier: workspace:*
         version: link:../modules/parents
-      zod:
-        specifier: ^4.4.3
-        version: 4.6.5
-      zod-openapi:
-        specifier: ^6.0.1
-        version: 6.0.2(zod@4.6.5)
-    devDependencies:
       '@types/node':
         specifier: ^24.10.1
         version: 24.13.4

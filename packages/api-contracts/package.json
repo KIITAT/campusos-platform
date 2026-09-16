@@ -13,20 +13,20 @@
   },
   "dependencies": {
     "@campusos/db": "workspace:*",
+    "@campusos/module-framework": "workspace:*",
+    "zod": "^4.4.3",
+    "zod-openapi": "^6.0.1"
+  },
+  "devDependencies": {
     "@campusos/module-academic": "workspace:*",
     "@campusos/module-attendance": "workspace:*",
     "@campusos/module-examinations": "workspace:*",
     "@campusos/module-fees": "workspace:*",
-    "@campusos/module-framework": "workspace:*",
     "@campusos/module-hostel": "workspace:*",
     "@campusos/module-hr": "workspace:*",
     "@campusos/module-library": "workspace:*",
     "@campusos/module-notices": "workspace:*",
     "@campusos/module-parents": "workspace:*",
-    "zod": "^4.4.3",
-    "zod-openapi": "^6.0.1"
-  },
-  "devDependencies": {
     "@types/node": "^24.10.1",
     "tsx": "^4.23.12"
   }

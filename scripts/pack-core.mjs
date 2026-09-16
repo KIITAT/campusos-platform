@@ -62,6 +62,16 @@ for (const lib of LIBRARIES) {
     },
   })
 
+  // devDependencies are stripped from the shipped package.json. They exist for
+  // this repository's own tests -- api-contracts depends on every module to
+  // assert that routes and OpenAPI agree -- and a consumer that tried to
+  // install them would be looking for packages that are plugins, not packages.
+  const manifestPath = join(staging, 'package.json')
+  const pkg = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  delete pkg.devDependencies
+  delete pkg.scripts?.test
+  writeFileSync(manifestPath, JSON.stringify(pkg, null, 2) + '\n')
+
   const name = `campusos-core-${short}-${version}.tgz`
   execFileSync('tar', ['-czf', name, '-C', short, '.'], { cwd: OUT, stdio: 'inherit' })
   rmSync(staging, { recursive: true, force: true })
