@@ -88,3 +88,34 @@ export async function assertDependenciesEnabled(
     )
   }
 }
+
+/**
+ * Whether a module is on for an institution, as a question rather than a gate.
+ *
+ * `requireModule` throws, which is right for a route: the caller has no
+ * entitlement and the request stops. A soft dependency is the opposite case --
+ * the caller has its own entitlement and is asking whether it can lean on
+ * another module's machinery, or must fall back. Hostel roll-call reuses
+ * Attendance when it is enabled and takes a manual register when it is not, and
+ * neither answer is an error.
+ */
+export async function moduleEnabled(
+  manifests: ModuleManifest[],
+  moduleId: string,
+  institutionId: string,
+): Promise<boolean> {
+  const manifest = getManifest(manifests, moduleId)
+  if (!manifest) throw new Error(`unregistered module: ${moduleId}`)
+  if (manifest.alwaysEnabled) return true
+
+  const [row] = await db
+    .select({ enabled: institutionModules.enabled })
+    .from(institutionModules)
+    .where(
+      and(
+        eq(institutionModules.institutionId, institutionId),
+        eq(institutionModules.moduleId, moduleId),
+      ),
+    )
+  return row?.enabled === true
+}
