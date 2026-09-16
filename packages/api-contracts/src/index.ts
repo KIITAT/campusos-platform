@@ -1,2 +1,2 @@
 export * from './schemas'
-export { document as openApiDocument } from './openapi'
+export { coreDocument as openApiDocument, documentWith } from './openapi'

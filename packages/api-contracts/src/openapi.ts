@@ -1,16 +1,6 @@
 import { writeFileSync } from 'node:fs'
 import type { ZodType } from 'zod'
 import { createDocument } from 'zod-openapi'
-// One line per module, mirroring the registry in apps/web/lib/modules.ts.
-import { paths as academicPaths } from '@campusos/module-academic/api/openapi'
-import { paths as attendancePaths } from '@campusos/module-attendance/api/openapi'
-import { paths as examinationPaths } from '@campusos/module-examinations/api/openapi'
-import { paths as feePaths } from '@campusos/module-fees/api/openapi'
-import { paths as hostelPaths } from '@campusos/module-hostel/api/openapi'
-import { paths as hrPaths } from '@campusos/module-hr/api/openapi'
-import { paths as noticePaths } from '@campusos/module-notices/api/openapi'
-import { paths as parentPaths } from '@campusos/module-parents/api/openapi'
-import { paths as libraryPaths } from '@campusos/module-library/api/openapi'
 import {
   assignRoleSchema,
   consentStateSchema,
@@ -26,11 +16,15 @@ import {
 const json = (schema: ZodType) => ({ 'application/json': { schema } })
 
 /**
- * The generated spec is what the Flutter client codegens from, so it is the
- * contract -- not documentation written after the fact. Every module phase adds
- * its paths here rather than hand-writing Dart HTTP calls.
+ * The core contract: what the host answers before any plugin is installed.
+ *
+ * Modules used to be spread in here at build time, which was right when they
+ * were workspace packages and wrong now that they arrive at runtime. The host
+ * merges each installed plugin's fragment into this document when it is asked
+ * for it, so what an institution sees describes what that institution actually
+ * has -- not the union of everything that was ever written.
  */
-export const document = createDocument({
+export const coreDocument = createDocument({
   openapi: '3.1.0',
   info: {
     title: 'CampusOS API',
@@ -167,16 +161,6 @@ export const document = createDocument({
       },
     },
 
-    // Module-contributed paths.
-    ...academicPaths,
-    ...attendancePaths,
-    ...examinationPaths,
-    ...feePaths,
-    ...libraryPaths,
-    ...hostelPaths,
-    ...hrPaths,
-    ...noticePaths,
-    ...parentPaths,
   },
   components: {
     schemas: {
@@ -187,9 +171,26 @@ export const document = createDocument({
   },
 })
 
+/**
+ * Merge installed plugins' fragments into the core document.
+ *
+ * Called by the host per request rather than at build time, so what an
+ * institution is served describes what that institution actually has -- not the
+ * union of everything ever written. A plugin's paths are already validated to
+ * sit under its own `apiBasePath`, so a collision here would mean two plugins
+ * claiming one id, which the installer refuses earlier.
+ */
+export function documentWith(
+  fragments: Record<string, unknown>[],
+): ReturnType<typeof createDocument> {
+  const paths = { ...coreDocument.paths }
+  for (const fragment of fragments) Object.assign(paths, fragment)
+  return { ...coreDocument, paths } as ReturnType<typeof createDocument>
+}
+
 // `tsx src/openapi.ts` regenerates the committed spec; CI fails on drift.
 if (process.argv[1]?.endsWith('openapi.ts')) {
   const out = new URL('../openapi.json', import.meta.url)
-  writeFileSync(out, JSON.stringify(document, null, 2) + '\n')
+  writeFileSync(out, JSON.stringify(coreDocument, null, 2) + '\n')
   console.log(`wrote ${out.pathname}`)
 }

@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { roleEnum } from '@campusos/db'
-import { document } from './openapi'
+import { coreDocument, documentWith } from './openapi'
 import {
   assignRoleSchema,
   createInstitutionSchema,
@@ -41,7 +41,7 @@ test('pending cannot be assigned as a role', () => {
 })
 
 test('the role schema tracks the database enum exactly', () => {
-  const spec = document.components?.schemas?.Role
+  const spec = coreDocument.components?.schemas?.Role
   assert.deepEqual(
     (spec as { enum?: string[] } | undefined)?.enum,
     [...roleEnum.enumValues],
@@ -49,9 +49,10 @@ test('the role schema tracks the database enum exactly', () => {
 })
 
 test('the core platform routes are all declared', () => {
-  const paths = Object.keys(document.paths ?? {})
-  // Asserted as a set rather than an exhaustive list, because every module
-  // phase contributes more paths and this test should not need editing then.
+  const paths = Object.keys(coreDocument.paths ?? {})
+  // Asserted as a set rather than an exhaustive list: this document is what the
+  // host answers before any plugin is installed, and it should not need editing
+  // when one is.
   for (const core of [
     '/api/v1/institutions',
     '/api/v1/me',
@@ -62,11 +63,27 @@ test('the core platform routes are all declared', () => {
   }
 })
 
-test('every module in the registry contributes its paths under its apiBasePath', () => {
-  const paths = Object.keys(document.paths ?? {})
-  const academic = paths.filter((p) => p.startsWith('/api/v1/modules/academic/'))
-  assert.ok(academic.length > 0, 'academic contributed no paths')
-  assert.ok(academic.includes('/api/v1/modules/academic/timetable'))
+test('the core document describes no module, because none is installed yet', () => {
+  const paths = Object.keys(coreDocument.paths ?? {})
+  assert.ok(
+    !paths.some((p) => p.startsWith('/api/v1/modules/') && p !== '/api/v1/modules/toggle'),
+    'a module path is baked into the core document',
+  )
   // Nothing may escape the versioned prefix: the Flutter client codegens off it.
   assert.ok(paths.every((p) => p.startsWith('/api/v1/')), paths.join(', '))
+})
+
+test('an installed plugin merges its fragment into the document it is served', () => {
+  const fragment = {
+    '/api/v1/modules/library/titles': { get: { summary: 'Search the catalogue' } },
+  }
+  const merged = documentWith([fragment])
+
+  assert.ok(Object.keys(merged.paths ?? {}).includes('/api/v1/modules/library/titles'))
+  // ...and the core paths are still there, which is the point of merging
+  // rather than replacing.
+  assert.ok(Object.keys(merged.paths ?? {}).includes('/api/v1/me'))
+  // The core document itself is untouched: a request that merges must not
+  // leave the next one describing a plugin this institution does not have.
+  assert.ok(!Object.keys(coreDocument.paths ?? {}).includes('/api/v1/modules/library/titles'))
 })
