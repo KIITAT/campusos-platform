@@ -4991,6 +4991,336 @@
           }
         }
       }
+    },
+    "/api/v1/modules/parents/links": {
+      "get": {
+        "summary": "Parent-student links, optionally only those awaiting a decision",
+        "tags": [
+          "parents"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ParentLink"
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden, or the module is not enabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Claim a link to a student",
+        "description": "Never self-service: anybody can assert they are somebody’s father. The link exists immediately and shows nothing until the institution verifies it. A link an administrator registers is verified by that act.",
+        "tags": [
+          "parents"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ParentLinkClaim"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Claimed"
+          },
+          "403": {
+            "description": "Forbidden, or the module is not enabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "That pair is already linked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/modules/parents/links/decide": {
+      "post": {
+        "summary": "Verify or refuse a claimed link. Reason mandatory and audited.",
+        "tags": [
+          "parents"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ParentLinkDecide"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Decided"
+          },
+          "403": {
+            "description": "Forbidden, or the module is not enabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already verified",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/modules/parents/links/revoke": {
+      "post": {
+        "summary": "Withdraw a verified link. Reason mandatory and audited.",
+        "description": "A parent losing sight of a child is usually a custody or safeguarding decision, so the reason is part of the record rather than a formality.",
+        "tags": [
+          "parents"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ParentLinkDecide"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Revoked"
+          },
+          "403": {
+            "description": "Forbidden, or the module is not enabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/modules/parents/children": {
+      "get": {
+        "summary": "This parent’s claims, verified or not",
+        "tags": [
+          "parents"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "403": {
+            "description": "Forbidden, or the module is not enabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/modules/parents/child": {
+      "get": {
+        "summary": "One child, across whichever modules the institution has enabled",
+        "description": "The portal computes nothing. Every figure is read through the module that owns it, so what a parent sees is what the office sees. A section is absent -- not zero -- when its module is off, which is the honest rendering of \"this institution does not use that\".",
+        "tags": [
+          "parents"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParentChildOverview"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden, or the module is not enabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such student",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -7081,6 +7411,58 @@
             ]
           }
         }
+      },
+      "ParentLinkClaim": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "relation": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 40
+          },
+          "parentId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "studentId",
+          "relation"
+        ]
+      },
+      "ParentLinkDecide": {
+        "type": "object",
+        "properties": {
+          "linkId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "approve": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "linkId",
+          "approve",
+          "reason"
+        ]
       },
       "PricingModel": {
         "type": "string",
@@ -9365,6 +9747,399 @@
           "noticeId",
           "readAt",
           "createdAt"
+        ],
+        "additionalProperties": false
+      },
+      "ParentLink": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "parentId": {
+            "type": "string"
+          },
+          "parentName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "parentEmail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "studentId": {
+            "type": "string"
+          },
+          "studentName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "studentEmail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "relation": {
+            "type": "string"
+          },
+          "verifiedAt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "refusedReason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "parentId",
+          "parentName",
+          "parentEmail",
+          "studentId",
+          "studentName",
+          "studentEmail",
+          "relation",
+          "verifiedAt",
+          "refusedReason"
+        ],
+        "additionalProperties": false
+      },
+      "ParentChildOverview": {
+        "type": "object",
+        "properties": {
+          "studentId": {
+            "type": "string"
+          },
+          "studentName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "studentEmail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sections": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "attendance": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "marked": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "recent": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "courseCode": {
+                          "type": "string"
+                        },
+                        "markedAt": {
+                          "type": "string"
+                        },
+                        "method": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "courseCode",
+                        "markedAt",
+                        "method"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "marked",
+                  "recent"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "results": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "provisional": {
+                    "type": "boolean"
+                  },
+                  "gpa": {
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "grades": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "courseCode": {
+                          "type": "string"
+                        },
+                        "courseTitle": {
+                          "type": "string"
+                        },
+                        "percent": {
+                          "type": "number"
+                        },
+                        "label": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "passed": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "courseCode",
+                        "courseTitle",
+                        "percent",
+                        "label",
+                        "passed"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "provisional",
+                  "gpa",
+                  "grades"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fees": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "termCode": {
+                    "type": "string"
+                  },
+                  "payablePaise": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "paidPaise": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "outstandingPaise": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "unreconciledPaise": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "termCode",
+                  "payablePaise",
+                  "paidPaise",
+                  "outstandingPaise",
+                  "unreconciledPaise"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "library": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "openCount": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "outstandingFinePaise": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "overdue": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "openCount",
+                  "outstandingFinePaise",
+                  "overdue"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hostel": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "allocated": {
+                    "type": "boolean"
+                  },
+                  "blockCode": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "roomNumber": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "recentNights": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "onNight": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "string"
+                        },
+                        "method": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "onNight",
+                        "status",
+                        "method"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "allocated",
+                  "blockCode",
+                  "roomNumber",
+                  "recentNights"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "studentId",
+          "studentName",
+          "studentEmail",
+          "sections",
+          "attendance",
+          "results",
+          "fees",
+          "library",
+          "hostel"
         ],
         "additionalProperties": false
       },

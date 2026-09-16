@@ -9,6 +9,7 @@ import { paths as feePaths } from '@campusos/module-fees/api/openapi'
 import { paths as hostelPaths } from '@campusos/module-hostel/api/openapi'
 import { paths as hrPaths } from '@campusos/module-hr/api/openapi'
 import { paths as noticePaths } from '@campusos/module-notices/api/openapi'
+import { paths as parentPaths } from '@campusos/module-parents/api/openapi'
 import { paths as libraryPaths } from '@campusos/module-library/api/openapi'
 import {
   assignRoleSchema,
@@ -92,6 +93,7 @@ export const document = createDocument({
     ...hostelPaths,
     ...hrPaths,
     ...noticePaths,
+    ...parentPaths,
   },
   components: {
     schemas: {

@@ -21,6 +21,7 @@
     "@campusos/module-hr": "workspace:*",
     "@campusos/module-library": "workspace:*",
     "@campusos/module-notices": "workspace:*",
+    "@campusos/module-parents": "workspace:*",
     "zod": "^4.4.3",
     "zod-openapi": "^6.0.1"
   },

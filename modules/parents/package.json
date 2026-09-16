@@ -24,6 +24,7 @@
     "@campusos/module-framework": "workspace:*",
     "@campusos/module-hostel": "workspace:*",
     "@campusos/module-library": "workspace:*",
+    "@campusos/money": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "react": "^19.2.8",
     "zod": "^4.4.3"
