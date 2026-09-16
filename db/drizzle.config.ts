@@ -7,7 +7,12 @@ export default defineConfig({
   // own migrations folder would make ordering across modules unresolvable.
   // Listed rather than imported, so packages/db never depends on a module and
   // there is no workspace cycle.
-  schema: ['./src/schema.ts', './src/audit.ts', '../modules/*/schema.ts'],
+  schema: [
+    './src/schema.ts',
+    './src/audit.ts',
+    './src/device-tokens.ts',
+    '../modules/*/schema.ts',
+  ],
   out: './migrations',
   dialect: 'postgresql',
   // owner role: only migrations get DDL rights, the app never does

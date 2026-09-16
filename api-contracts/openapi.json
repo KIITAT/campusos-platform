@@ -118,6 +118,66 @@
         }
       }
     },
+    "/api/v1/devices": {
+      "get": {
+        "summary": "Devices paired to this account",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "summary": "Generate a pairing code for a phone",
+        "description": "Six characters, ten minutes, single use. It exists so the long-lived device token never travels through a screenshot or a chat message.",
+        "responses": {
+          "200": {
+            "description": "A code, shown once"
+          }
+        }
+      }
+    },
+    "/api/v1/devices/claim": {
+      "post": {
+        "summary": "Exchange a pairing code for a device token",
+        "description": "The one unauthenticated endpoint that grants a credential -- the phone has none yet. A wrong, expired or malformed code returns the same 401, so guessing learns nothing. The token is then sent as `Authorization: Bearer`; everything downstream (the module gate, each operation’s own checks, RLS) is identical to a browser session, so the mobile client can never reach anything the web client cannot.",
+        "responses": {
+          "200": {
+            "description": "A device token, shown once"
+          },
+          "401": {
+            "description": "Not a valid code",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/devices/revoke": {
+      "post": {
+        "summary": "Revoke a device immediately",
+        "responses": {
+          "204": {
+            "description": "Revoked"
+          },
+          "404": {
+            "description": "No such device",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/me/consent": {
       "get": {
         "summary": "Whether this person has agreed to the privacy notice in force",
