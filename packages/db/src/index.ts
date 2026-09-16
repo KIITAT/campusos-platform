@@ -1,4 +1,4 @@
-export { db, authDb, withTenant } from './client'
+export { db, authDb, withTenant, corePool, useSharedPool } from './client'
 export * from './rls'
 export * from './schema'
 export * from './audit'

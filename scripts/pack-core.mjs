@@ -34,7 +34,16 @@ const LIBRARIES = [
 
 /** Not shipped: test files, local builds, and anything a consumer cannot use. */
 const SKIP = new Set(['node_modules', 'dist', '.pack', '.turbo'])
+
+/**
+ * The seed is excluded deliberately. It populates a demo institution *with
+ * academic data*, so it imports a module -- which is a plugin now and not a
+ * dependency of anything. A consumer unpacking the database layer would be
+ * unable to compile a file it has no use for.
+ */
+const EXCLUDE_FILES = new Set(['seed.ts'])
 const isTest = (p) => /\.test\.ts$/.test(p)
+const isExcluded = (p) => EXCLUDE_FILES.has(p.split(/[\/]/).pop())
 
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex')
 
@@ -58,7 +67,7 @@ for (const lib of LIBRARIES) {
     filter: (src) => {
       const parts = src.split(/[\\/]/)
       if (parts.some((p) => SKIP.has(p))) return false
-      return !isTest(src)
+      return !isTest(src) && !isExcluded(src)
     },
   })
 
