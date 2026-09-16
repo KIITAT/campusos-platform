@@ -47,14 +47,18 @@ CREATE TRIGGER library_loan_takes_copy
 CREATE OR REPLACE FUNCTION library_loan_returns_copy() RETURNS trigger AS $$
 BEGIN
   -- A loan is against one physical object for one borrower, decided when it was
-  -- issued. Re-pointing it afterwards would rewrite who had what.
+  -- issued. Re-pointing it afterwards rewrites who had what, so it takes an
+  -- audited reason -- the same mechanism as every other correction here. The
+  -- ordinary circulation path never touches these columns at all.
   IF NEW.copy_id IS DISTINCT FROM OLD.copy_id
      OR NEW.borrower_id IS DISTINCT FROM OLD.borrower_id
      OR NEW.issued_at IS DISTINCT FROM OLD.issued_at
   THEN
-    RAISE EXCEPTION 'a loan cannot be reassigned to another copy, borrower or date'
-      USING ERRCODE = 'check_violation',
-            HINT = 'return this loan and issue a new one';
+    IF nullif(current_setting('app.audit_reason', true), '') IS NULL THEN
+      RAISE EXCEPTION 'a loan cannot be reassigned to another copy, borrower or date'
+        USING ERRCODE = 'check_violation',
+              HINT = 'return this loan and issue a new one, or record why';
+    END IF;
   END IF;
 
   -- Returning: the copy goes back on the shelf, unless it came back declared
