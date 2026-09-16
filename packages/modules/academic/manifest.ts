@@ -27,17 +27,17 @@ export const manifest: ModuleManifest = {
   navEntries: [
     {
       label: 'Timetable',
-      href: '/academic/timetable',
+      href: '/m/academic',
       roles: ['institution_admin', 'hod', 'faculty', 'student'],
     },
     {
       label: 'Structure',
-      href: '/academic/structure',
+      href: '/m/academic/structure',
       roles: ['institution_admin', 'hod'],
     },
     {
       label: 'Cohorts',
-      href: '/academic/sections',
+      href: '/m/academic/cohorts',
       roles: ['institution_admin', 'hod'],
     },
   ],

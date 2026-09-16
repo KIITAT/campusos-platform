@@ -19,9 +19,9 @@ export const manifest: ModuleManifest = {
   ],
 
   navEntries: [
-    { label: 'Fees', href: '/fees', roles: ['institution_admin', 'accounts_staff'] },
-    { label: 'Dues', href: '/fees/dues', roles: ['institution_admin', 'accounts_staff', 'hod'] },
-    { label: 'My fees', href: '/fees/me', roles: ['student'] },
+    { label: 'Fees', href: '/m/fees', roles: ['institution_admin', 'accounts_staff'] },
+    { label: 'Dues', href: '/m/fees/dues', roles: ['institution_admin', 'accounts_staff', 'hod'] },
+    { label: 'My fees', href: '/m/fees/me', roles: ['student'] },
   ],
 
   apiBasePath: '/api/v1/modules/fees',

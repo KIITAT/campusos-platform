@@ -1,4 +1,5 @@
 import type { ModuleManifest, Role, ViewerScope } from './types'
+import type { PluginPage } from './pages'
 
 /**
  * What a module hands the host when it is installed as a plugin.
@@ -48,6 +49,12 @@ export interface Plugin {
   routes: PluginRoute[]
   /** This module's fragment of the OpenAPI document, merged by the host. */
   openapiPaths: Record<string, unknown>
+  /**
+   * The screens this module contributes, declared rather than drawn. Optional:
+   * a module can be API-only, and one that ships no pages simply has no web
+   * surface -- its mobile and integration surface is unaffected.
+   */
+  pages?: PluginPage[]
 }
 
 /**
@@ -101,6 +108,17 @@ export function validatePlugin(plugin: Plugin): void {
     const key = `${r.method} ${r.path}`
     if (seen.has(key)) throw new Error(`${manifest.id}: duplicate route ${key}`)
     seen.add(key)
+  }
+
+  const pagePaths = new Set<string>()
+  for (const page of plugin.pages ?? []) {
+    if (!page.path.startsWith('/')) {
+      throw new Error(`${manifest.id}: page ${page.path} must start with a slash`)
+    }
+    if (pagePaths.has(page.path)) {
+      throw new Error(`${manifest.id}: duplicate page ${page.path}`)
+    }
+    pagePaths.add(page.path)
   }
 
   for (const path of Object.keys(plugin.openapiPaths ?? {})) {

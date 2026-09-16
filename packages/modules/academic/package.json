@@ -12,7 +12,8 @@
     "./ui": "./ui/index.ts",
     "./routes": "./routes.ts",
     "./plugin": "./plugin.ts",
-    "./migrations": "./migrations"
+    "./migrations": "./migrations",
+    "./pages": "./pages.ts"
   },
   "scripts": {
     "test": "node --import tsx --test \"**/*.test.ts\"",

@@ -131,3 +131,65 @@ test('dependencies name modules that exist', () => {
     }
   }
 })
+
+test('every nav entry points at a page the module actually declares', () => {
+  // The manifest's nav and the page table are written in different files and
+  // drifted the moment the pages moved out of the host: academic advertised
+  // /timetable and /sections while declaring / and /cohorts. A nav entry that
+  // 404s is worse than no nav entry.
+  for (const p of PLUGINS) {
+    const declared = new Set((p.pages ?? []).map((page) => page.path))
+    for (const entry of p.manifest.navEntries) {
+      const prefix = `/m/${p.manifest.id}`
+      assert.ok(
+        entry.href === prefix || entry.href.startsWith(`${prefix}/`),
+        `${p.manifest.id}: ${entry.href} is outside its own page space`,
+      )
+      const path = entry.href === prefix ? '/' : entry.href.slice(prefix.length)
+      assert.ok(
+        declared.has(path),
+        `${p.manifest.id}: nav points at ${path}, which is not a declared page`,
+      )
+    }
+  }
+})
+
+test('a page nobody may open is not in anybody’s menu', () => {
+  for (const p of PLUGINS) {
+    for (const page of p.pages ?? []) {
+      if (!page.menu) continue
+      assert.ok(page.roles.length > 0, `${p.manifest.id}: ${page.path} has a menu and no roles`)
+      for (const role of page.roles) {
+        assert.ok(
+          p.manifest.rolesWithAccess.includes(role),
+          `${p.manifest.id}: ${page.path} admits ${role}, which the manifest does not`,
+        )
+      }
+    }
+  }
+})
+
+test('every form on a page posts to a route the module answers', () => {
+  // A form whose action does not exist is a button that 404s, and nothing else
+  // in the codebase would catch it.
+  for (const p of PLUGINS) {
+    for (const page of p.pages ?? []) {
+      // Forgiving stand-in data: this test is about where a form posts, not
+      // about what a page renders, and a section builder should not have to be
+      // written defensively to be inspectable.
+      const blank = new Proxy(
+        {},
+        { get: () => [] },
+      ) as Record<string, unknown>
+
+      for (const section of page.sections(blank)) {
+        if (section.kind !== 'form') continue
+        const method = section.method ?? 'POST'
+        assert.ok(
+          p.routes.some((r) => r.method === method && r.path === section.path),
+          `${p.manifest.id}: ${page.path} posts to ${method} ${section.path}, which is not a route`,
+        )
+      }
+    }
+  }
+})

@@ -19,10 +19,10 @@ export const manifest: ModuleManifest = {
   ],
 
   navEntries: [
-    { label: 'Library desk', href: '/library', roles: ['institution_admin', 'library_staff'] },
-    { label: 'Catalogue', href: '/library/catalogue', roles: ['institution_admin', 'library_staff', 'faculty', 'student'] },
-    { label: 'Overdue', href: '/library/overdue', roles: ['institution_admin', 'library_staff'] },
-    { label: 'My library', href: '/library/me', roles: ['student', 'faculty'] },
+    { label: 'Library desk', href: '/m/library', roles: ['institution_admin', 'library_staff'] },
+    { label: 'Catalogue', href: '/m/library/catalogue', roles: ['institution_admin', 'library_staff', 'faculty', 'student'] },
+    { label: 'Overdue', href: '/m/library/overdue', roles: ['institution_admin', 'library_staff'] },
+    { label: 'My library', href: '/m/library/me', roles: ['student', 'faculty'] },
   ],
 
   apiBasePath: '/api/v1/modules/library',

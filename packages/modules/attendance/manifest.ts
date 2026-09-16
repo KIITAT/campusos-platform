@@ -26,13 +26,13 @@ export const manifest: ModuleManifest = {
   navEntries: [
     {
       label: 'Attendance',
-      href: '/attendance',
+      href: '/m/attendance',
       roles: ['institution_admin', 'hod', 'faculty'],
     },
-    { label: 'My attendance', href: '/attendance/me', roles: ['student'] },
+    { label: 'My attendance', href: '/m/attendance/me', roles: ['student'] },
     {
       label: 'Devices',
-      href: '/attendance/devices',
+      href: '/m/attendance/devices',
       roles: ['institution_admin'],
     },
   ],

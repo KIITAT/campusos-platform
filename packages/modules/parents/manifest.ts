@@ -15,8 +15,8 @@ export const manifest: ModuleManifest = {
   rolesWithAccess: ['super_admin', 'institution_admin', 'parent'],
 
   navEntries: [
-    { label: 'My children', href: '/parents', roles: ['parent'] },
-    { label: 'Parent links', href: '/parents/links', roles: ['institution_admin', 'super_admin'] },
+    { label: 'My children', href: '/m/parents', roles: ['parent'] },
+    { label: 'Parent links', href: '/m/parents/links', roles: ['institution_admin', 'super_admin'] },
   ],
 
   apiBasePath: '/api/v1/modules/parents',

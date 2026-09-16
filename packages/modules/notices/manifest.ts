@@ -25,8 +25,8 @@ export const manifest: ModuleManifest = {
   ],
 
   navEntries: [
-    { label: 'Notices', href: '/notices', roles: ['super_admin', 'institution_admin', 'hod', 'faculty', 'accounts_staff', 'library_staff', 'hostel_staff', 'student', 'parent'] },
-    { label: 'Inbox', href: '/notices/inbox', roles: ['super_admin', 'institution_admin', 'hod', 'faculty', 'accounts_staff', 'library_staff', 'hostel_staff', 'student', 'parent'] },
+    { label: 'Notices', href: '/m/notices', roles: ['super_admin', 'institution_admin', 'hod', 'faculty', 'accounts_staff', 'library_staff', 'hostel_staff', 'student', 'parent'] },
+    { label: 'Inbox', href: '/m/notices/inbox', roles: ['super_admin', 'institution_admin', 'hod', 'faculty', 'accounts_staff', 'library_staff', 'hostel_staff', 'student', 'parent'] },
   ],
 
   apiBasePath: '/api/v1/modules/notices',

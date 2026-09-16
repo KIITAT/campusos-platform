@@ -19,9 +19,9 @@ export const manifest: ModuleManifest = {
   ],
 
   navEntries: [
-    { label: 'Examinations', href: '/examinations', roles: ['institution_admin', 'hod', 'faculty'] },
-    { label: 'My results', href: '/examinations/me', roles: ['student'] },
-    { label: 'Grade scales', href: '/examinations/scales', roles: ['institution_admin'] },
+    { label: 'Examinations', href: '/m/examinations', roles: ['institution_admin', 'hod', 'faculty'] },
+    { label: 'My results', href: '/m/examinations/me', roles: ['student'] },
+    { label: 'Grade scales', href: '/m/examinations/scales', roles: ['institution_admin'] },
   ],
 
   apiBasePath: '/api/v1/modules/examinations',

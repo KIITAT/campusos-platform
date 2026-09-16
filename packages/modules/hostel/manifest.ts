@@ -20,10 +20,10 @@ export const manifest: ModuleManifest = {
   ],
 
   navEntries: [
-    { label: 'Hostel', href: '/hostel', roles: ['institution_admin', 'hostel_staff'] },
-    { label: 'Roll call', href: '/hostel/rollcall', roles: ['institution_admin', 'hostel_staff'] },
-    { label: 'Visitors', href: '/hostel/visitors', roles: ['institution_admin', 'hostel_staff'] },
-    { label: 'My hostel', href: '/hostel/me', roles: ['student'] },
+    { label: 'Hostel', href: '/m/hostel', roles: ['institution_admin', 'hostel_staff'] },
+    { label: 'Roll call', href: '/m/hostel/rollcall', roles: ['institution_admin', 'hostel_staff'] },
+    { label: 'Visitors', href: '/m/hostel/visitors', roles: ['institution_admin', 'hostel_staff'] },
+    { label: 'My hostel', href: '/m/hostel/me', roles: ['student'] },
   ],
 
   apiBasePath: '/api/v1/modules/hostel',

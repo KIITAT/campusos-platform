@@ -15,10 +15,10 @@ export const manifest: ModuleManifest = {
   rolesWithAccess: ['super_admin', 'institution_admin', 'accounts_staff', 'faculty'],
 
   navEntries: [
-    { label: 'Staff', href: '/hr', roles: ['institution_admin', 'accounts_staff'] },
-    { label: 'Leave', href: '/hr/leave', roles: ['institution_admin', 'accounts_staff'] },
-    { label: 'Payroll', href: '/hr/payroll', roles: ['institution_admin', 'accounts_staff'] },
-    { label: 'My employment', href: '/hr/me', roles: ['faculty'] },
+    { label: 'Staff', href: '/m/hr', roles: ['institution_admin', 'accounts_staff'] },
+    { label: 'Leave', href: '/m/hr/leave', roles: ['institution_admin', 'accounts_staff'] },
+    { label: 'Payroll', href: '/m/hr/payroll', roles: ['institution_admin', 'accounts_staff'] },
+    { label: 'My employment', href: '/m/hr/me', roles: ['faculty'] },
   ],
 
   apiBasePath: '/api/v1/modules/hr',
