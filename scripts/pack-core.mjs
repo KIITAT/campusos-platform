@@ -43,7 +43,7 @@ const SKIP = new Set(['node_modules', 'dist', '.pack', '.turbo'])
  */
 const EXCLUDE_FILES = new Set(['seed.ts'])
 const isTest = (p) => /\.test\.ts$/.test(p)
-const isExcluded = (p) => EXCLUDE_FILES.has(p.split(/[\/]/).pop())
+const isExcluded = (p) => EXCLUDE_FILES.has(p.split(/[\\/]/).pop())
 
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex')
 
