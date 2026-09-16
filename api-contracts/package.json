@@ -17,6 +17,7 @@
     "@campusos/module-attendance": "workspace:*",
     "@campusos/module-examinations": "workspace:*",
     "@campusos/module-fees": "workspace:*",
+    "@campusos/module-library": "workspace:*",
     "zod": "^4.4.3",
     "zod-openapi": "^6.0.1"
   },
