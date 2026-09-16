@@ -1,6 +1,6 @@
 import * as z from 'zod'
 import { paymentMethodEnum } from '../schema'
-import { parseRupeesToPaise } from './money'
+import { parseRupeesToPaise } from '@campusos/money'
 
 const uuid = z.uuid()
 const label = z.string().min(1).max(120).trim()

@@ -1,5 +1,5 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
-import { plainPaise } from './money'
+import { plainPaise } from '@campusos/money'
 
 export interface ReceiptData {
   receiptNo: string

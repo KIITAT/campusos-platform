@@ -1,4 +1,4 @@
-import { formatPaise } from '../api/money'
+import { formatPaise } from '@campusos/money'
 import type { DuesReport, StudentLedger } from '../api/schemas'
 
 /** Presentational only, as with the other modules. */

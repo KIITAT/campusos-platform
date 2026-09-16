@@ -17,7 +17,7 @@ import {
   type DuesReport,
   type StudentLedger,
 } from './schemas'
-import { ledger, overpaidPaise, type LedgerLine } from './money'
+import { ledger, overpaidPaise, type LedgerLine } from './ledger'
 
 const MODULE = 'fees'
 
