@@ -104,3 +104,19 @@ export type CreateInstitution = z.infer<typeof createInstitutionSchema>
 export type AssignRole = z.infer<typeof assignRoleSchema>
 export type ToggleModule = z.infer<typeof toggleModuleSchema>
 export type ModuleDenied = z.infer<typeof moduleDeniedSchema>
+
+/**
+ * Erasure is destructive in the only way that matters -- the person can never
+ * be identified in these records again -- so it states why, like every other
+ * irreversible act in this system.
+ */
+export const eraseUserSchema = z
+  .object({
+    userId: z.string().min(1),
+    reason: z.string().trim().min(5).max(500),
+  })
+  .meta({ id: 'EraseUser' })
+
+export const consentStateSchema = z
+  .object({ current: z.boolean() })
+  .meta({ id: 'ConsentState' })

@@ -13,7 +13,9 @@ import { paths as parentPaths } from '@campusos/module-parents/api/openapi'
 import { paths as libraryPaths } from '@campusos/module-library/api/openapi'
 import {
   assignRoleSchema,
+  consentStateSchema,
   createInstitutionSchema,
+  eraseUserSchema,
   errorSchema,
   institutionSchema,
   meSchema,
@@ -66,6 +68,50 @@ export const document = createDocument({
           '204': { description: 'Assigned' },
           '403': { description: 'Forbidden', content: json(errorSchema) },
           '404': { description: 'No such user in this institution', content: json(errorSchema) },
+        },
+      },
+    },
+    '/api/v1/me/consent': {
+      get: {
+        summary: 'Whether this person has agreed to the privacy notice in force',
+        responses: {
+          '200': { description: 'OK', content: json(consentStateSchema) },
+          '401': { description: 'Not signed in', content: json(errorSchema) },
+        },
+      },
+      post: {
+        summary: 'Record consent to the notice currently in force',
+        description:
+          'The version shown is stored alongside, so "what did they agree to" has an answer ' +
+          'after the notice is rewritten.',
+        responses: { '204': { description: 'Recorded' } },
+      },
+    },
+    '/api/v1/me/export': {
+      get: {
+        summary: 'Everything held about one person, as JSON',
+        description:
+          'Assembled by walking the foreign keys to `users`, so a module added next year is ' +
+          'covered without anybody remembering to edit an export list.',
+        responses: {
+          '200': { description: 'OK' },
+          '403': { description: 'Not yours to export', content: json(errorSchema) },
+        },
+      },
+    },
+    '/api/v1/users/erase': {
+      post: {
+        summary: 'Erase a person, keeping the institution’s records',
+        description:
+          'Anonymisation, not deletion: a fee receipt, a mark and an attendance register are ' +
+          'the institution’s own records with their own retention obligations. The identifying ' +
+          'fields go and the rows that referenced them become unattributable. Refused for the ' +
+          'last remaining administrator.',
+        requestBody: { content: json(eraseUserSchema) },
+        responses: {
+          '200': { description: 'Erased' },
+          '403': { description: 'Forbidden', content: json(errorSchema) },
+          '409': { description: 'That is the only administrator', content: json(errorSchema) },
         },
       },
     },

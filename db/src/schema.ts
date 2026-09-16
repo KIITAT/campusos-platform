@@ -85,6 +85,21 @@ export const users = pgTable(
       onDelete: 'cascade',
     }),
     role: roleEnum().notNull().default('pending'),
+    /**
+     * DPDP consent. Recorded with the version of the notice that was shown, so
+     * "what did they agree to" has an answer after the notice is rewritten --
+     * which it will be, and re-consenting everybody is the whole cost of not
+     * having stored this.
+     */
+    consentedAt: timestamp('consented_at', { withTimezone: true }),
+    consentVersion: text('consent_version'),
+    /**
+     * Erasure is anonymisation, not deletion. A payment, a mark and an
+     * attendance record are the institution's own records with their own
+     * retention obligations; removing the person leaves those intact and
+     * unattributable. The row survives so the foreign keys do.
+     */
+    erasedAt: timestamp('erased_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   () => [tenantPolicy('users')],
