@@ -9,6 +9,7 @@ import {
   decodeQr,
   rollCallKey,
   rollCallQr,
+  rollCallSecret,
   verifyToken,
   type RollCallMode,
 } from './rollcall'
@@ -326,7 +327,7 @@ export async function grantLeave(actor: Actor, input: unknown) {
  * silently returning a code nobody can scan when it is not: a blank screen with
  * an explanation beats a QR that does nothing.
  */
-export async function rollCallCode(actor: Actor, blockId: string, secret: string) {
+export async function rollCallCode(actor: Actor, blockId: string, secret?: string) {
   const tenant = requireWarden(actor)
   if ((await rollCallMode(tenant)) !== 'scan') {
     throw new HostelError(
@@ -335,10 +336,10 @@ export async function rollCallCode(actor: Actor, blockId: string, secret: string
       'scan roll call needs the Attendance module; take the manual register instead',
     )
   }
-  return rollCallQr(secret, blockId, today())
+  return rollCallQr(secret ?? rollCallSecret(tenant), blockId, today())
 }
 
-export async function scanCheckIn(actor: Actor, input: unknown, secret: string) {
+export async function scanCheckIn(actor: Actor, input: unknown, secret?: string) {
   const tenant = tenantOf(actor)
   const d = scanSchema.parse(input)
   const night = d.onNight ?? today()
@@ -358,7 +359,7 @@ export async function scanCheckIn(actor: Actor, input: unknown, secret: string) 
   }
 
   const verdict = verifyToken(
-    secret,
+    secret ?? rollCallSecret(tenant),
     presented.sessionId,
     ROLL_CALL_WINDOW_SECONDS,
     presented,

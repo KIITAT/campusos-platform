@@ -6,6 +6,7 @@ import { paths as academicPaths } from '@campusos/module-academic/api/openapi'
 import { paths as attendancePaths } from '@campusos/module-attendance/api/openapi'
 import { paths as examinationPaths } from '@campusos/module-examinations/api/openapi'
 import { paths as feePaths } from '@campusos/module-fees/api/openapi'
+import { paths as hostelPaths } from '@campusos/module-hostel/api/openapi'
 import { paths as libraryPaths } from '@campusos/module-library/api/openapi'
 import {
   assignRoleSchema,
@@ -86,6 +87,7 @@ export const document = createDocument({
     ...examinationPaths,
     ...feePaths,
     ...libraryPaths,
+    ...hostelPaths,
   },
   components: {
     schemas: {
