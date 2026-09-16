@@ -72,17 +72,44 @@ for (const p of packed.plugins) {
   }
 }
 
+// Core libraries, if they were packed alongside. A host fetches these before
+// it can build at all, where a plugin is fetched by an administrator after it
+// is already running.
+const corePath = join(ROOT, 'dist', 'core', 'packed-core.json')
+const libraries = {}
+if (existsSync(corePath)) {
+  const core = JSON.parse(readFileSync(corePath, 'utf8'))
+  for (const lib of core.libraries) {
+    const previousVersions = previous.libraries?.[lib.name]?.versions ?? {}
+    libraries[lib.name] = {
+      name: lib.name,
+      latest: lib.version,
+      versions: {
+        ...previousVersions,
+        [lib.version]: {
+          version: lib.version,
+          archive: `${base}/${lib.archive}`,
+          sha256: lib.sha256,
+          publishedAt: new Date().toISOString(),
+        },
+      },
+    }
+  }
+}
+
 const index = {
   // Bumped only if the *shape* of this document changes, so an old host can
   // refuse an index it would misread rather than guessing.
   schema: 1,
   registry: 'CampusOS',
   generatedAt: new Date().toISOString(),
+  libraries: { ...(previous.libraries ?? {}), ...libraries },
   packages,
 }
 
 writeFileSync(join(OUT, 'registry.json'), JSON.stringify(index, null, 2) + '\n')
 console.log(
-  `registry.json: ${Object.keys(packages).length} packages, ` +
+  `registry.json: ${Object.keys(index.libraries).length} core libraries, ` +
+    `${Object.keys(packages).length} packages, ` +
     `${Object.values(packages).reduce((n, p) => n + Object.keys(p.versions).length, 0)} versions`,
 )

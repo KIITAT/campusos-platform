@@ -61,6 +61,7 @@ jobs:
           AUTH_SECRET: packing-only-never-used-at-runtime
         run: |
           pnpm pack:plugins
+          pnpm pack:core
           mkdir -p dist
           if [ -f dist/previous-registry.json ]; then
             cp dist/previous-registry.json dist/plugins/previous-registry.json
@@ -85,5 +86,6 @@ jobs:
             host verifies before it will install.
           files: |
             dist/plugins/*.tgz
+            dist/core/*.tgz
             dist/plugins/registry.json
           fail_on_unmatched_files: true
