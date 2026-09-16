@@ -17,6 +17,7 @@
     "@campusos/module-attendance": "workspace:*",
     "@campusos/module-examinations": "workspace:*",
     "@campusos/module-fees": "workspace:*",
+    "@campusos/module-framework": "workspace:*",
     "@campusos/module-hostel": "workspace:*",
     "@campusos/module-hr": "workspace:*",
     "@campusos/module-library": "workspace:*",

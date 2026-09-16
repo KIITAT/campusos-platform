@@ -1,0 +1,68 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_DB: campusos
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d campusos"
+          --health-interval 2s --health-timeout 3s --health-retries 15
+
+    env:
+      # A throwaway Postgres per run: fast, free, and structurally unable to
+      # reach real data. No Neon branch is involved at any point in CI.
+      MIGRATION_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/campusos
+      DATABASE_URL: postgresql://campusos_app:campusos_app@localhost:5432/campusos
+      NEXT_PUBLIC_ROOT_DOMAIN: localhost:3000
+      AUTH_SECRET: ci-only-not-a-real-secret
+      AUTH_URL: http://localhost:3000
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # The same file the local Docker entrypoint runs, so the app role and its
+      # grants cannot drift between a developer machine and CI.
+      - run: psql "$MIGRATION_DATABASE_URL" -f docker/init.sql
+
+      # Core only -- institutions, users, the Auth.js tables, the audit log and
+      # device tokens. Every module carries its own SQL in its package.
+      - run: pnpm db:migrate
+      - run: pnpm db:check
+
+      # ...and a module's migrations must actually apply on top of that core,
+      # in dependency order, or the plugin installs and then 500s on its first
+      # query. Cheaper to find here than at an institution.
+      - name: apply every module's migrations
+        run: node scripts/apply-module-migrations.mjs
+      # ...and the committed OpenAPI document must match the Zod schemas, or the
+      # Flutter client codegens against a contract the server no longer honours.
+      - run: pnpm openapi
+      - name: fail if the OpenAPI document is stale
+        run: git diff --exit-code -- packages/api-contracts/openapi.json
+
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+
+      # Packing is part of CI, not only of release: a module that cannot be
+      # bundled into a loadable plugin is broken whether or not anyone is
+      # cutting a version today.
+      - run: pnpm pack:plugins
+      - run: pnpm registry:index
+      - name: prove a packed plugin loads outside the workspace
+        run: node scripts/verify-archives.mjs

@@ -1,0 +1,89 @@
+name: release
+
+# The CampusOS package repository is published here.
+#
+# A tag produces one release holding every plugin archive plus registry.json,
+# which is the index a host fetches to find out what it can install. GitHub
+# Releases is the store: free, versioned, immutable once published, and already
+# where the code lives. Nothing about the host depends on it being GitHub --
+# the index carries absolute URLs, so an institution that cannot reach it can
+# mirror the whole thing and point REGISTRY_BASE_URL somewhere else.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to publish, without the leading v
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: work out the version
+        id: v
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The previous index is fetched and merged, so publishing 0.2.0 does not
+      # strip 0.1.0 out from under a host that pinned it.
+      - name: fetch the published index
+        continue-on-error: true
+        run: |
+          curl -fsSL -o dist/previous-registry.json \
+            https://github.com/${{ github.repository }}/releases/latest/download/registry.json \
+            || true
+        # dist may not exist yet on a first release; packing creates it.
+        shell: bash
+
+      - name: pack
+        env:
+          PLUGIN_VERSION: ${{ steps.v.outputs.version }}
+          # Never used: packing constructs no pool, and the stubbed driver
+          # refuses if anything tries.
+          DATABASE_URL: postgresql://pack:pack@127.0.0.1:1/pack
+          AUTH_SECRET: packing-only-never-used-at-runtime
+        run: |
+          pnpm pack:plugins
+          mkdir -p dist
+          if [ -f dist/previous-registry.json ]; then
+            cp dist/previous-registry.json dist/plugins/previous-registry.json
+          fi
+          pnpm registry:index
+
+      # An archive that cannot be loaded from a temporary directory by plain
+      # Node is not publishable, whatever the tests said about the workspace.
+      - run: node scripts/verify-archives.mjs
+
+      - name: publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.v.outputs.version }}
+          name: CampusOS ${{ steps.v.outputs.version }}
+          body: |
+            Plugin archives for the CampusOS package repository.
+
+            A host installs these from its admin portal; nothing here is an npm
+            package and nothing needs a package manager at the institution.
+            `registry.json` is the index, and each entry carries the sha256 the
+            host verifies before it will install.
+          files: |
+            dist/plugins/*.tgz
+            dist/plugins/registry.json
+          fail_on_unmatched_files: true

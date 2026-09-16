@@ -19,6 +19,11 @@ const gated = {
 
 export const paths = {
   [`${base}/exams`]: {
+    get: {
+      summary: 'Exams scheduled against one offering',
+      tags: ['examinations'],
+      responses: { '200': { description: 'OK' }, ...gated },
+    },
     post: {
       summary: 'Schedule an exam against a course offering',
       tags: ['examinations'],
@@ -31,6 +36,14 @@ export const paths = {
     },
   },
   [`${base}/marks`]: {
+    get: {
+      summary: 'The marks sheet for one exam, absent students included',
+      description:
+        'Usable as a register: every enrolled student appears, marked or not, so the sheet is ' +
+        'the same shape before and after entry.',
+      tags: ['examinations'],
+      responses: { '200': { description: 'OK' }, ...gated },
+    },
     post: {
       summary: 'Enter or amend marks for an unpublished exam',
       tags: ['examinations'],

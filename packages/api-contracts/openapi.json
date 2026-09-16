@@ -1637,6 +1637,40 @@
       }
     },
     "/api/v1/modules/examinations/exams": {
+      "get": {
+        "summary": "Exams scheduled against one offering",
+        "tags": [
+          "examinations"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "403": {
+            "description": "Forbidden, or the module is not enabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "summary": "Schedule an exam against a course offering",
         "tags": [
@@ -1705,6 +1739,41 @@
       }
     },
     "/api/v1/modules/examinations/marks": {
+      "get": {
+        "summary": "The marks sheet for one exam, absent students included",
+        "description": "Usable as a register: every enrolled student appears, marked or not, so the sheet is the same shape before and after entry.",
+        "tags": [
+          "examinations"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "403": {
+            "description": "Forbidden, or the module is not enabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "summary": "Enter or amend marks for an unpublished exam",
         "tags": [
@@ -6091,7 +6160,7 @@
               {
                 "type": "string",
                 "format": "date-time",
-                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
               },
               {
                 "type": "null"
@@ -6343,13 +6412,9 @@
             "maxLength": 120
           },
           "amount": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "number"
-              }
+            "type": [
+              "string",
+              "number"
             ]
           },
           "dueOn": {
@@ -6385,13 +6450,9 @@
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
           },
           "amount": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "number"
-              }
+            "type": [
+              "string",
+              "number"
             ]
           },
           "reason": {
@@ -6439,13 +6500,9 @@
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
           },
           "amount": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "number"
-              }
+            "type": [
+              "string",
+              "number"
             ]
           },
           "method": {
@@ -6475,7 +6532,7 @@
               {
                 "type": "string",
                 "format": "date-time",
-                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
               },
               {
                 "type": "null"
@@ -6524,13 +6581,9 @@
         "type": "object",
         "properties": {
           "isbn": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "title": {
@@ -6613,20 +6666,10 @@
             ]
           },
           "replacement": {
-            "anyOf": [
-              {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "number"
-                  }
-                ]
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "number",
+              "null"
             ]
           }
         },
@@ -6700,13 +6743,9 @@
             "maxLength": 40
           },
           "markLost": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "boolean",
+              "null"
             ]
           }
         }
@@ -6733,13 +6772,9 @@
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
           },
           "amount": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "number"
-              }
+            "type": [
+              "string",
+              "number"
             ]
           },
           "reason": {
@@ -6781,13 +6816,9 @@
             "maximum": 90
           },
           "finePerDay": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "number"
-              }
+            "type": [
+              "string",
+              "number"
             ]
           },
           "maxConcurrentLoans": {
@@ -6801,30 +6832,16 @@
             "maximum": 20
           },
           "maxFine": {
-            "anyOf": [
-              {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "type": "number"
-                  }
-                ]
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "number",
+              "null"
             ]
           },
           "blockAtOutstanding": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "number"
-              }
+            "type": [
+              "string",
+              "number"
             ]
           }
         },
@@ -7209,7 +7226,7 @@
               {
                 "type": "string",
                 "format": "email",
-                "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
               },
               {
                 "type": "null"
@@ -7410,13 +7427,9 @@
             ]
           },
           "amount": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "number"
-              }
+            "type": [
+              "string",
+              "number"
             ]
           },
           "effectiveFrom": {
@@ -7517,7 +7530,7 @@
               {
                 "type": "string",
                 "format": "date-time",
-                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
               },
               {
                 "type": "null"
@@ -7657,16 +7670,12 @@
           "email": {
             "type": "string",
             "format": "email",
-            "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+            "pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
           },
           "name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "role": {
@@ -7685,13 +7694,9 @@
             ]
           },
           "institutionSlug": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "enabledModules": {
@@ -7761,13 +7766,9 @@
             "maxLength": 200
           },
           "customDomain": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "allowedEmailDomains": {
@@ -7781,7 +7782,7 @@
               {
                 "type": "string",
                 "format": "date-time",
-                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
               },
               {
                 "type": "null"
@@ -7815,13 +7816,9 @@
         "type": "object",
         "properties": {
           "termCode": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "entries": {
@@ -7872,13 +7869,9 @@
             "type": "string"
           },
           "facultyName": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           }
         },
@@ -7947,13 +7940,9 @@
             "type": "string"
           },
           "closedAt": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "present": {
@@ -7993,23 +7982,15 @@
             "type": "string"
           },
           "name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "email": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "status": {
@@ -8034,23 +8015,15 @@
             ]
           },
           "markedAt": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "overrideReason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "anomalies": {
@@ -8085,7 +8058,7 @@
           "markedAt": {
             "type": "string",
             "format": "date-time",
-            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
           }
         },
         "required": [
@@ -8132,36 +8105,24 @@
         "type": "object",
         "properties": {
           "studentName": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "studentEmail": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "institutionName": {
             "type": "string"
           },
           "programCode": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "schemeName": {
@@ -8193,13 +8154,9 @@
                   }
                 },
                 "gpa": {
-                  "anyOf": [
-                    {
-                      "type": "number"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "number",
+                    "null"
                   ]
                 },
                 "credits": {
@@ -8217,13 +8174,9 @@
             }
           },
           "cumulativeGpa": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "number",
+              "null"
             ]
           },
           "totalCredits": {
@@ -8266,23 +8219,15 @@
             "type": "boolean"
           },
           "label": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "points": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "number",
+              "null"
             ]
           },
           "passed": {
@@ -8308,23 +8253,15 @@
             "type": "string"
           },
           "studentName": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "studentEmail": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "termCode": {
@@ -8433,13 +8370,9 @@
             ]
           },
           "waiverReason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           }
         },
@@ -8481,26 +8414,18 @@
             ]
           },
           "reference": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "receivedAt": {
             "type": "string"
           },
           "reconciledAt": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           }
         },
@@ -8553,23 +8478,15 @@
             "type": "string"
           },
           "studentName": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "studentEmail": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "programCode": {
@@ -8617,13 +8534,9 @@
             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
           },
           "isbn": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "title": {
@@ -8633,13 +8546,9 @@
             "type": "string"
           },
           "publisher": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "year": {
@@ -8655,13 +8564,9 @@
             ]
           },
           "category": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "copies": {
@@ -8714,23 +8619,15 @@
             "type": "string"
           },
           "borrowerName": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "borrowerEmail": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "issuedAt": {
@@ -8740,13 +8637,9 @@
             "type": "string"
           },
           "returnedAt": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "renewals": {
@@ -8765,13 +8658,9 @@
             "maximum": 9007199254740991
           },
           "finePaidAt": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "daysOverdue": {
@@ -8807,13 +8696,9 @@
             "type": "string"
           },
           "borrowerName": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "open": {
@@ -8844,13 +8729,9 @@
             "maximum": 9007199254740991
           },
           "blockedBy": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           }
         },
@@ -8935,23 +8816,15 @@
                   "type": "string"
                 },
                 "name": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "email": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 },
                 "allocatedOn": {
@@ -9049,23 +8922,15 @@
             "type": "string"
           },
           "name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "email": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "roomNumber": {
@@ -9087,23 +8952,15 @@
             ]
           },
           "method": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "note": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "onLeave": {
@@ -9134,56 +8991,36 @@
             "type": "string"
           },
           "phone": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "relation": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "purpose": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "studentName": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "enteredAt": {
             "type": "string"
           },
           "exitedAt": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           }
         },
@@ -9206,33 +9043,21 @@
             "type": "boolean"
           },
           "blockCode": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "blockName": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "roomNumber": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "floor": {
@@ -9256,13 +9081,9 @@
                   "type": "string"
                 },
                 "name": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "type": "null"
-                    }
+                  "type": [
+                    "string",
+                    "null"
                   ]
                 }
               },
@@ -9274,13 +9095,9 @@
             }
           },
           "allocatedOn": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "recentNights": {
@@ -9366,13 +9183,9 @@
             "type": "string"
           },
           "department": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "employment": {
@@ -9388,33 +9201,21 @@
             "type": "string"
           },
           "leftOn": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "email": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "phone": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "monthlyGrossPaise": {
@@ -9487,13 +9288,9 @@
             ]
           },
           "decisionNote": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           }
         },
@@ -9778,46 +9575,30 @@
             }
           },
           "departmentCode": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "pinned": {
             "type": "boolean"
           },
           "publishedAt": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "expiresAt": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "authorName": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "reach": {
@@ -9890,13 +9671,9 @@
             "type": "string"
           },
           "link": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "noticeId": {
@@ -9912,13 +9689,9 @@
             ]
           },
           "readAt": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "createdAt": {
@@ -9949,69 +9722,45 @@
             "type": "string"
           },
           "parentName": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "parentEmail": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "studentId": {
             "type": "string"
           },
           "studentName": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "studentEmail": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "relation": {
             "type": "string"
           },
           "verifiedAt": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "refusedReason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           }
         },
@@ -10036,23 +9785,15 @@
             "type": "string"
           },
           "studentName": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "studentEmail": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
+            "type": [
+              "string",
+              "null"
             ]
           },
           "sections": {
@@ -10115,13 +9856,9 @@
                     "type": "boolean"
                   },
                   "gpa": {
-                    "anyOf": [
-                      {
-                        "type": "number"
-                      },
-                      {
-                        "type": "null"
-                      }
+                    "type": [
+                      "number",
+                      "null"
                     ]
                   },
                   "grades": {
@@ -10139,13 +9876,9 @@
                           "type": "number"
                         },
                         "label": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "null"
-                            }
+                          "type": [
+                            "string",
+                            "null"
                           ]
                         },
                         "passed": {
@@ -10260,23 +9993,15 @@
                     "type": "boolean"
                   },
                   "blockCode": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
+                    "type": [
+                      "string",
+                      "null"
                     ]
                   },
                   "roomNumber": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
+                    "type": [
+                      "string",
+                      "null"
                     ]
                   },
                   "recentNights": {
@@ -10350,13 +10075,9 @@
                 "$ref": "#/components/schemas/PricingModel"
               },
               "priceINR": {
-                "anyOf": [
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "null"
-                  }
+                "type": [
+                  "number",
+                  "null"
                 ]
               }
             },

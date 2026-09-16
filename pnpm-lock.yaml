@@ -44,6 +44,9 @@ importers:
       '@campusos/module-fees':
         specifier: workspace:*
         version: link:../modules/fees
+      '@campusos/module-framework':
+        specifier: workspace:*
+        version: link:../module-framework
       '@campusos/module-hostel':
         specifier: workspace:*
         version: link:../modules/hostel

@@ -5,3 +5,5 @@ node_modules/
 .turbo/
 dist/
 next-env.d.ts
+dist/
+.pack/

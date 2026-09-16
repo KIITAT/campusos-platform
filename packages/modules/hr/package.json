@@ -9,7 +9,10 @@
     "./manifest": "./manifest.ts",
     "./api": "./api/index.ts",
     "./api/openapi": "./api/openapi.ts",
-    "./ui": "./ui/index.tsx"
+    "./ui": "./ui/index.tsx",
+    "./routes": "./routes.ts",
+    "./plugin": "./plugin.ts",
+    "./migrations": "./migrations"
   },
   "scripts": {
     "test": "node --import tsx --test \"**/*.test.ts\"",
