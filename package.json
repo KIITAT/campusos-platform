@@ -1,0 +1,26 @@
+{
+  "name": "campusos-platform",
+  "private": true,
+  "packageManager": "pnpm@11.22.0",
+  "scripts": {
+    "build": "turbo build",
+    "typecheck": "turbo typecheck",
+    "lint": "eslint .",
+    "test": "turbo test",
+    "db:generate": "pnpm -F @campusos/db exec drizzle-kit generate",
+    "db:migrate": "pnpm -F @campusos/db exec drizzle-kit migrate",
+    "db:check": "pnpm -F @campusos/db exec drizzle-kit check",
+    "db:seed": "pnpm -F @campusos/db seed",
+    "openapi": "pnpm -F @campusos/api-contracts openapi",
+    "pack:plugins": "node scripts/pack-plugins.mjs",
+    "registry:index": "node scripts/build-index.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.8.1",
+    "turbo": "^2.10.11",
+    "typescript": "6.0.3",
+    "typescript-eslint": "^8.67.0",
+    "esbuild": "^0.27.0"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "globalEnv": [
+    "DATABASE_URL",
+    "MIGRATION_DATABASE_URL",
+    "AUTH_*",
+    "NEXT_PUBLIC_*",
+    "SUPER_ADMIN_EMAILS",
+    "RESEND_API_KEY",
+    "NOTICE_EMAIL_FROM"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": [".next/**", "!.next/cache/**", "dist/**"],
+      "env": ["BUILD_STANDALONE", "NODE_ENV"]
+    },
+    "typecheck": { "dependsOn": ["^build"] },
+    "test": { "dependsOn": ["^build"] },
+    "dev": { "cache": false, "persistent": true }
+  }
+}

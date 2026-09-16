@@ -1,0 +1,4 @@
+# Normalise to LF in the repository regardless of the checkout platform, so a
+# Windows and a Linux developer do not produce whitespace-only diffs.
+* text=auto eol=lf
+pnpm-lock.yaml -diff

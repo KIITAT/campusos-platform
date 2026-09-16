@@ -1,0 +1,25 @@
+# Local dev + local test DB. Neon is never touched from a dev machine.
+services:
+  postgres:
+    image: postgres:18-alpine # match the Neon project's major version
+    environment:
+      POSTGRES_DB: campusos
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      # PG18+ images store data in a version-named subdir, so mount the
+      # parent -- mounting /data makes the container refuse to start.
+      - pgdata:/var/lib/postgresql
+      # postgres runs *.sql in here on first init of an empty volume
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d campusos"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+
+volumes:
+  pgdata:
