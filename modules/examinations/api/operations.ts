@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, isNotNull } from 'drizzle-orm'
 import { audit, auditLog, users, withTenant } from '@campusos/db'
-import type { Role } from '@campusos/module-framework'
+import { viewsOnBehalf, type Role, type ViewerScope } from '@campusos/module-framework'
 import {
   courses,
   institutions,
@@ -24,7 +24,7 @@ import { DEFAULT_GPA_BANDS, gradeCourse, gpa, type Band } from './grading'
 
 const MODULE = 'examinations'
 
-export interface Actor {
+export interface Actor extends ViewerScope {
   id: string
   email?: string | null
   role: Role
@@ -505,11 +505,15 @@ export async function sheet(actor: Actor, examId: string) {
  */
 export async function transcript(actor: Actor, studentId: string): Promise<Transcript> {
   const tenant = tenantOf(actor)
-  if (actor.role === 'student' && studentId !== actor.id) {
-    throw new ExamError(403, 'forbidden', 'not permitted')
-  }
-  if (actor.role !== 'student' && !canMark(actor.role)) {
-    throw new ExamError(403, 'forbidden', 'not permitted')
+  // A verified viewer -- a parent, via the Parent Portal -- reads exactly the
+  // students they were cleared for, and nothing else changes for them.
+  if (!viewsOnBehalf(actor, studentId)) {
+    if (actor.role === 'student' && studentId !== actor.id) {
+      throw new ExamError(403, 'forbidden', 'not permitted')
+    }
+    if (actor.role !== 'student' && !canMark(actor.role)) {
+      throw new ExamError(403, 'forbidden', 'not permitted')
+    }
   }
 
   return withTenant(tenant, async (tx): Promise<Transcript> => {

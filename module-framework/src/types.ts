@@ -41,3 +41,22 @@ export interface ModuleDeniedPayload {
   name: string
   pricing: ModuleManifest['pricing']
 }
+
+/**
+ * Students this actor has been verified to read on behalf of.
+ *
+ * A parent is not staff and is not the student, so every per-student read would
+ * otherwise refuse them. Rather than teaching five modules what a parent is --
+ * and what a *verified* parent is -- the Parent Portal resolves its own links
+ * and hands the resulting ids down. A module then asks one question: "was this
+ * caller vouched for, for this student".
+ *
+ * Deliberately not a role. Roles are what somebody is; this is what they have
+ * been cleared to see, which is per-request and comes from a verified link.
+ */
+export interface ViewerScope {
+  viewerOf?: string[]
+}
+
+export const viewsOnBehalf = (actor: ViewerScope, studentId: string): boolean =>
+  actor.viewerOf?.includes(studentId) === true

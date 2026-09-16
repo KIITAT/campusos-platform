@@ -1,6 +1,6 @@
 import { and, eq, isNull, sql } from 'drizzle-orm'
 import { audit, users, withTenant } from '@campusos/db'
-import type { Role } from '@campusos/module-framework'
+import { viewsOnBehalf, type Role, type ViewerScope } from '@campusos/module-framework'
 import {
   courses,
   offerings,
@@ -36,7 +36,7 @@ import {
   verifyToken,
 } from './token'
 
-export interface Actor {
+export interface Actor extends ViewerScope {
   id: string
   email?: string | null
   role: Role
@@ -634,8 +634,17 @@ export async function openSessions(actor: Actor) {
 }
 
 /** A student's own history. Read-only, own rows only. */
-export async function myAttendance(actor: Actor) {
+/**
+ * One student's own record. `studentId` is only honoured for a caller that has
+ * been verified to view it -- a parent, through the Parent Portal -- so the
+ * default and the common case remain "mine".
+ */
+export async function myAttendance(actor: Actor, studentId?: string) {
   const tenant = tenantOf(actor)
+  const target = studentId ?? actor.id
+  if (target !== actor.id && !viewsOnBehalf(actor, target)) {
+    throw new AttendanceError(403, 'forbidden', 'not permitted')
+  }
 
   return withTenant(tenant, (tx) =>
     tx
@@ -649,7 +658,7 @@ export async function myAttendance(actor: Actor) {
       .innerJoin(sessions, eq(sessions.id, records.sessionId))
       .innerJoin(offerings, eq(offerings.id, sessions.offeringId))
       .innerJoin(courses, eq(courses.id, offerings.courseId))
-      .where(eq(records.studentId, actor.id))
+      .where(eq(records.studentId, target))
       .orderBy(records.markedAt),
   )
 }

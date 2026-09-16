@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import { audit, auditLog, users, withTenant } from '@campusos/db'
-import type { Role } from '@campusos/module-framework'
+import { viewsOnBehalf, type Role, type ViewerScope } from '@campusos/module-framework'
 import {
   programs,
   sectionMembers,
@@ -21,7 +21,7 @@ import { ledger, overpaidPaise, type LedgerLine } from './ledger'
 
 const MODULE = 'fees'
 
-export interface Actor {
+export interface Actor extends ViewerScope {
   id: string
   email?: string | null
   role: Role
@@ -400,10 +400,12 @@ export async function studentLedger(
 ): Promise<StudentLedger> {
   const tenant = tenantOf(actor)
   // A student may read their own; the finance desk may read any.
-  if (actor.role === 'student') {
-    if (studentId !== actor.id) throw new FeeError(403, 'forbidden', 'not permitted')
-  } else if (!isFinance(actor.role) && actor.role !== 'hod') {
-    throw new FeeError(403, 'forbidden', 'not permitted')
+  if (!viewsOnBehalf(actor, studentId)) {
+    if (actor.role === 'student') {
+      if (studentId !== actor.id) throw new FeeError(403, 'forbidden', 'not permitted')
+    } else if (!isFinance(actor.role) && actor.role !== 'hod') {
+      throw new FeeError(403, 'forbidden', 'not permitted')
+    }
   }
 
   return withTenant(tenant, async (tx): Promise<StudentLedger> => {
@@ -561,11 +563,13 @@ export async function paymentForReceipt(actor: Actor, paymentId: string) {
     if (!row) throw new FeeError(404, 'no_such_payment', 'no such payment')
 
     // A student may fetch only their own receipt.
-    if (actor.role === 'student' && row.studentId !== actor.id) {
-      throw new FeeError(403, 'forbidden', 'not permitted')
-    }
-    if (actor.role !== 'student' && !isFinance(actor.role)) {
-      throw new FeeError(403, 'forbidden', 'not permitted')
+    if (!viewsOnBehalf(actor, row.studentId)) {
+      if (actor.role === 'student' && row.studentId !== actor.id) {
+        throw new FeeError(403, 'forbidden', 'not permitted')
+      }
+      if (actor.role !== 'student' && !isFinance(actor.role)) {
+        throw new FeeError(403, 'forbidden', 'not permitted')
+      }
     }
     return row
   })

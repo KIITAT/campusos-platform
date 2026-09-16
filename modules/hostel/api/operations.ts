@@ -1,6 +1,11 @@
 import { and, asc, desc, eq, gte, isNull, lte, sql } from 'drizzle-orm'
 import { audit, users, withTenant } from '@campusos/db'
-import { moduleEnabled, type Role } from '@campusos/module-framework'
+import {
+  moduleEnabled,
+  viewsOnBehalf,
+  type Role,
+  type ViewerScope,
+} from '@campusos/module-framework'
 import { manifest as attendanceManifest } from '@campusos/module-attendance/manifest'
 import { manifest as hostelManifest } from '../manifest'
 import { allocations, blocks, checkIns, leaves, rooms, visitors } from '../schema'
@@ -31,7 +36,7 @@ import {
 
 const MODULE = 'hostel'
 
-export interface Actor {
+export interface Actor extends ViewerScope {
   id: string
   email?: string | null
   role: Role
@@ -596,7 +601,7 @@ export async function visitorLog(
 export async function myHostel(actor: Actor, studentId?: string): Promise<MyHostel> {
   const tenant = tenantOf(actor)
   const target = studentId ?? actor.id
-  if (!isWarden(actor.role) && target !== actor.id) {
+  if (!viewsOnBehalf(actor, target) && !isWarden(actor.role) && target !== actor.id) {
     throw new HostelError(403, 'forbidden', 'not permitted')
   }
 

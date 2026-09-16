@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm'
 import { audit, auditLog, users, withTenant } from '@campusos/db'
-import type { Role } from '@campusos/module-framework'
+import { viewsOnBehalf, type Role, type ViewerScope } from '@campusos/module-framework'
 import { copies, loans, settings, titles } from '../schema'
 import {
   DEFAULT_RULES,
@@ -30,7 +30,7 @@ import {
 
 const MODULE = 'library'
 
-export interface Actor {
+export interface Actor extends ViewerScope {
   id: string
   email?: string | null
   role: Role
@@ -617,7 +617,7 @@ const loanQuery = (tx: Tx) =>
 export async function borrowerStatus(actor: Actor, borrowerId: string): Promise<BorrowerStatus> {
   const tenant = tenantOf(actor)
   // A borrower may read their own; the desk may read anybody's.
-  if (!isDesk(actor.role) && borrowerId !== actor.id) {
+  if (!viewsOnBehalf(actor, borrowerId) && !isDesk(actor.role) && borrowerId !== actor.id) {
     throw new LibraryError(403, 'forbidden', 'not permitted')
   }
 
