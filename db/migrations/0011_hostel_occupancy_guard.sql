@@ -113,7 +113,10 @@ BEGIN
      WHERE a.student_id = NEW.student_id
        AND r.block_id = NEW.block_id
        AND a.allocated_on <= NEW.on_night
-       AND (a.vacated_on IS NULL OR a.vacated_on >= NEW.on_night)
+       -- Strictly greater: a student who vacated on the 6th slept elsewhere on
+       -- the night of the 6th, exactly as one who arrives on the 6th sleeps
+       -- here that night.
+       AND (a.vacated_on IS NULL OR a.vacated_on > NEW.on_night)
   ) INTO lives_here;
 
   IF NOT lives_here THEN
