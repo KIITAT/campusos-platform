@@ -22,6 +22,18 @@ export const scanSchema = z
     longitude: z.number().min(-180).max(180),
     accuracyM: z.number().min(0).max(100_000),
     deviceHash: z.string().min(16).max(200),
+    /**
+     * The client asserts that the person holding the phone passed its screen
+     * lock -- biometric or PIN -- immediately before this scan.
+     *
+     * Defaulted rather than required so an older build gets the closed-set
+     * rejection with something readable in it instead of a schema error. The
+     * assertion is a client claim and nothing here can prove it; what it buys
+     * is that handing an unlocked phone to a friend is no longer enough, the
+     * friend has to hold the owner's finger to the sensor. That is a different
+     * and much less casual act, which is the whole of the defence.
+     */
+    deviceLockConfirmed: z.boolean().default(false),
   })
   .meta({ id: 'AttendanceScan' })
 
@@ -53,6 +65,7 @@ export const scanRejectionSchema = z
       'no_registered_device',
       'device_pending_approval',
       'wrong_device',
+      'device_not_confirmed',
       'already_marked',
     ]),
     message: z.string(),

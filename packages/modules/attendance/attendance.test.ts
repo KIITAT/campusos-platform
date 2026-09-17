@@ -51,6 +51,7 @@ const scanAs = (id: string, qr: string, over: Partial<Record<string, unknown>> =
     longitude: ROOM.longitude,
     accuracyM: 12,
     deviceHash: HASH_A,
+    deviceLockConfirmed: true,
     ...over,
   })
 
@@ -353,6 +354,29 @@ test('an unapproved device cannot scan, and says so specifically', async () => {
   await assert.rejects(
     async () => scanAs(ids.s2, await liveQr(s.id), { deviceHash: HASH_B }),
     (e: unknown) => code(e) === 'device_pending_approval',
+  )
+})
+
+test('a scan that never proved the screen lock is refused', async () => {
+  const s = await openSession(A({}), { slotId: ids.slot })
+  await assert.rejects(
+    async () => scanAs(ids.s1, await liveQr(s.id), { deviceLockConfirmed: false }),
+    (e: unknown) => code(e) === 'device_not_confirmed',
+  )
+})
+
+test('an older client that omits the confirmation gets the same refusal, not a schema error', async () => {
+  const s = await openSession(A({}), { slotId: ids.slot })
+  await assert.rejects(
+    async () =>
+      scan(student(ids.s1), {
+        qr: await liveQr(s.id),
+        latitude: ROOM.latitude,
+        longitude: ROOM.longitude,
+        accuracyM: 12,
+        deviceHash: HASH_A,
+      }),
+    (e: unknown) => code(e) === 'device_not_confirmed',
   )
 })
 

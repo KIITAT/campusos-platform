@@ -292,7 +292,8 @@ export async function setGeofence(actor: Actor, input: unknown) {
 
 /**
  * The validation pipeline, in the spec's order, rejecting on first failure:
- * token, then enrolment, then geofence, then device.
+ * token, then enrolment, then geofence, then device -- where the device step
+ * covers both which handset this is and whether its owner just unlocked it.
  *
  * Order matters for what it reveals as much as for cost. A stale token is
  * answered before we say anything about enrolment, so the endpoint cannot be
@@ -389,6 +390,17 @@ export async function scan(actor: Actor, input: unknown) {
     if (data.accuracyM < 3) anomalies.push('implausible_accuracy')
 
     // 4. device binding
+    //
+    // The screen lock first, because it is the one check that costs nothing and
+    // discloses nothing: a request that never proved a lock is refused before we
+    // say whether this student has a device at all.
+    if (!data.deviceLockConfirmed) {
+      throw new ScanRejected(
+        'device_not_confirmed',
+        'unlock your phone with your fingerprint, face or PIN when it asks, then scan again',
+      )
+    }
+
     const [device] = await tx
       .select({ id: devices.id, hash: devices.deviceHash })
       .from(devices)
