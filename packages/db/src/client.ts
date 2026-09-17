@@ -74,6 +74,25 @@ export const authDb = new Proxy({} as ReturnType<typeof drizzle>, {
     const value = Reflect.get(instance, prop) as unknown
     return typeof value === 'function' ? value.bind(instance) : value
   },
+  // Drizzle identifies a database by walking its prototype chain, and so does
+  // the Auth.js adapter through it -- an empty target would answer "Unsupported
+  // database type". Forwarding these makes the handle indistinguishable from
+  // the instance behind it, which is the only way a lazy handle is safe to hand
+  // to code that inspects what it was given.
+  getPrototypeOf() {
+    return Object.getPrototypeOf(owner()) as object
+  },
+  has(_target, prop) {
+    return Reflect.has(owner(), prop)
+  },
+  ownKeys() {
+    return Reflect.ownKeys(owner())
+  },
+  getOwnPropertyDescriptor(_target, prop) {
+    const descriptor = Reflect.getOwnPropertyDescriptor(owner(), prop)
+    // A proxy may not report a non-configurable property its target lacks.
+    return descriptor && { ...descriptor, configurable: true }
+  },
 })
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
