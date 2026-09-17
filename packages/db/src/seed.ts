@@ -25,13 +25,17 @@ const [demo] = await db
   .returning()
 if (!demo) throw new Error('seed: institution upsert returned no row')
 
-await db
-  .insert(users)
-  .values({ institutionId: demo.id, email, role: 'super_admin' })
-  .onConflictDoUpdate({
-    target: users.email,
-    set: { institutionId: demo.id, role: 'super_admin' },
-  })
+// No user row for the administrator, deliberately.
+//
+// Auth.js refuses to attach a Google identity to a row that already carries the
+// same address -- allowDangerousEmailAccountLinking is false, because otherwise
+// anyone who can prove an address can claim an account that was created before
+// them. Seeding the row first therefore locked the one person the seed exists
+// for out of their own install: every sign-in came back OAuthAccountNotLinked.
+//
+// The first sign-in creates the row, and bindNewUser reads SUPER_ADMIN_EMAILS
+// and grants the role. The seed's job is the institution; the role follows from
+// the address, and it always did.
 
 // --- academic demo data ----------------------------------------------------
 // Enough for the timetable to render something on a fresh checkout. Every
