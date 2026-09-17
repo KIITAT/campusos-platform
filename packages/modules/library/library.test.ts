@@ -593,7 +593,13 @@ test('a library with no settings row still lends, on the defaults', async () => 
   assert.equal(r.loanDays, 14)
   const { copies: c } = await stocked()
   const loan = await issue(desk(), { copyId: c[0]!.id, borrowerId: ids.s1 })
-  const days = Math.round((loan.dueOn.getTime() - loan.issuedAt.getTime()) / 86_400_000)
+
+  // Calendar days, not elapsed milliseconds. A due date is the end of the
+  // fourteenth day, so the span from a morning issue is fourteen days and most
+  // of another one -- which rounds to fifteen and made this test pass or fail
+  // depending on the hour it was run at.
+  const midnight = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  const days = Math.round((midnight(loan.dueOn) - midnight(loan.issuedAt)) / 86_400_000)
   assert.equal(days, 14)
 })
 
