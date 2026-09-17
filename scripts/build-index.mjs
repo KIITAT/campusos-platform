@@ -51,6 +51,12 @@ const packages = { ...previous.packages }
 for (const p of packed.plugins) {
   const entry = {
     version: p.version,
+    // The release this archive was published in. Derivable today, because the
+    // tag is v<version> -- recorded anyway, because a host resolving an archive
+    // has to know which release holds it once versions have accumulated across
+    // several, and an assumption about the release workflow is not something a
+    // host should be making.
+    release: `v${p.version}`,
     archive: `${base}/${p.archive}`,
     sha256: p.sha256,
     // What the store shows before anybody commits to installing.
@@ -96,6 +102,7 @@ if (existsSync(corePath)) {
         ...previousVersions,
         [lib.version]: {
           version: lib.version,
+          release: `v${lib.version}`,
           archive: `${base}/${lib.archive}`,
           sha256: lib.sha256,
           publishedAt: new Date().toISOString(),
