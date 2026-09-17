@@ -1,0 +1,29 @@
+name: Feature or change
+description: Something the product should do and does not.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: What a college cannot do today
+      description: The situation, not the implementation.
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where it belongs
+      options:
+        - an existing module
+        - a new module
+        - the core, because more than one module needs it
+        - not sure
+    validations:
+      required: true
+  - type: textarea
+    id: shape
+    attributes:
+      label: What it would touch
+      description: >-
+        New tables? A new endpoint? A migration a host has to apply? Say if you
+        do not know.

@@ -1,0 +1,13 @@
+# Default owner for everything.
+*                               @chitrakshbotwala
+
+# The security boundary. Any change here needs a second pair of eyes.
+/packages/db/src/rls.ts         @chitrakshbotwala
+/packages/db/src/client.ts      @chitrakshbotwala
+/packages/db/migrations/        @chitrakshbotwala
+/docker/init.sql                @chitrakshbotwala
+/.github/workflows/             @chitrakshbotwala
+
+# What every host downloads and runs. A change here reaches every institution.
+/scripts/                       @chitrakshbotwala
+/packages/module-framework/     @chitrakshbotwala

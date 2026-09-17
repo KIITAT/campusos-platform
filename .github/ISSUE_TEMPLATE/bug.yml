@@ -1,0 +1,50 @@
+name: Bug report
+description: Something behaves differently from how it is specified or documented.
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - core (tenancy, RLS, audit, DPDP)
+        - module framework
+        - api contracts
+        - money
+        - academic
+        - attendance
+        - examinations
+        - fees
+        - library
+        - hostel
+        - hr
+        - notices
+        - parents
+        - packing / the package repository
+        - CI / tooling
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Include the exact error text if there is one.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should have happened
+      description: Quote the specification or the decision log if it says.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: A failing test is the best possible version of this.
+  - type: input
+    id: version
+    attributes:
+      label: Module version, if it is installed rather than built
+      placeholder: academic 0.1.2
