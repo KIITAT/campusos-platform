@@ -43,14 +43,22 @@ jobs:
 
       # The previous index is fetched and merged, so publishing 0.2.0 does not
       # strip 0.1.0 out from under a host that pinned it.
+      #
+      # Through the API, not the browser URL: a private repository answers 404
+      # at releases/latest/download/... even with a token, and a merge that
+      # quietly fetched nothing would drop every older version without failing.
       - name: fetch the published index
         continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          curl -fsSL -o dist/previous-registry.json \
-            https://github.com/${{ github.repository }}/releases/latest/download/registry.json \
-            || true
-        # dist may not exist yet on a first release; packing creates it.
-        shell: bash
+          mkdir -p dist
+          gh release download --repo "$GITHUB_REPOSITORY"             --pattern registry.json --output dist/previous-registry.json || true
+          if [ -f dist/previous-registry.json ]; then
+            echo "merging $(jq '[.packages[].versions | length] | add' dist/previous-registry.json) existing versions"
+          else
+            echo "no published index yet; this will be the first"
+          fi
 
       - name: pack
         env:
