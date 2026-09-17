@@ -52,8 +52,22 @@ const OUT = join(ROOT, 'dist', 'plugins')
  * The driver is never used inside a plugin -- the host's pool arrives through
  * the global -- so it is replaced by something that says so loudly if that
  * assumption ever stops holding.
+ *
+ * `types` is the exception, and it is not optional: drizzle's node-postgres
+ * driver does `const { Pool, types } = pg` at module load and then calls
+ * `types.getTypeParser` for every column it does not special-case. A stub
+ * without it left `types` undefined, and the first query any installed module
+ * ran died on `Cannot read properties of undefined (reading 'builtins')` --
+ * which nothing caught, because loading a plugin and querying through one are
+ * different things and only the first was ever tested.
+ *
+ * pg-types is safe to carry: OID constants and pure functions over strings,
+ * sharing no state with a connection. The pool remains the only live object
+ * that crosses the boundary.
  */
 const PG_STUB = `
+import types from 'pg-types'
+
 export class Pool {
   constructor() {
     throw new Error(
@@ -62,7 +76,8 @@ export class Pool {
   }
 }
 export class Client extends Pool {}
-export default { Pool, Client }
+export { types }
+export default { Pool, Client, types }
 `
 
 const stubPg = {
@@ -72,6 +87,9 @@ const stubPg = {
     build.onLoad({ filter: /.*/, namespace: 'stub-pg' }, () => ({
       contents: PG_STUB,
       loader: 'js',
+      // pg-types is resolved from this repository, which is where it is
+      // installed; a synthetic module has no directory of its own.
+      resolveDir: ROOT,
     }))
   },
 }
@@ -112,6 +130,17 @@ async function packOne(id, versionTag) {
     // nobody can debug at an institution that has no source access.
     minify: false,
     sourcemap: false,
+    // ESM output has no ambient `require`, so esbuild emits a shim that throws
+    // on any CommonJS dependency reaching for a Node builtin -- `pg-types`
+    // reaches for `stream`. Giving the bundle a real one costs two lines and
+    // covers the class rather than this instance. Only builtins can arrive
+    // here: everything else is bundled.
+    banner: {
+      js: [
+        "import { createRequire as __campusosCreateRequire } from 'node:module'",
+        'const require = __campusosCreateRequire(import.meta.url)',
+      ].join('\n'),
+    },
     logLevel: 'warning',
   })
 
