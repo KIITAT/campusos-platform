@@ -67,3 +67,13 @@ jobs:
       - run: pnpm registry:index
       - name: prove a packed plugin loads outside the workspace
         run: node scripts/verify-archives.mjs
+
+      # The registry pins a sha256, which is a claim that this source produces
+      # this archive. Packing twice and comparing is the only thing that keeps
+      # the claim true: without it an archive could embed a build timestamp and
+      # nobody downstream could ever reproduce it to check.
+      - name: prove the archives are reproducible
+        run: |
+          cp dist/plugins/registry.json first-registry.json
+          pnpm pack:plugins && pnpm pack:core && pnpm registry:index
+          node scripts/compare-digests.mjs first-registry.json dist/plugins/registry.json

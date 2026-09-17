@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto'
-import { execFileSync } from 'node:child_process'
 import {
   cpSync,
   existsSync,
@@ -11,6 +10,7 @@ import {
 } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { build } from 'esbuild'
+import { packDirectory } from './archive.mjs'
 
 /**
  * Turn every module into a plugin archive the host can download and install.
@@ -160,7 +160,7 @@ async function packOne(id, versionTag) {
   // paths with a drive letter, and this is the one place the build touches the
   // shell.
   const name = `campusos-${id}-${versionTag}.tgz`
-  execFileSync('tar', ['-czf', name, '-C', id, '.'], { cwd: OUT, stdio: 'inherit' })
+  packDirectory(OUT, id, name)
 
   const digest = sha256(readFileSync(join(OUT, name)))
   return { ...meta, archive: name, sha256: digest }

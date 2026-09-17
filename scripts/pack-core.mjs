@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
-import { execFileSync } from 'node:child_process'
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { packDirectory } from './archive.mjs'
 
 /**
  * Pack the core libraries the host builds against.
@@ -82,7 +82,7 @@ for (const lib of LIBRARIES) {
   writeFileSync(manifestPath, JSON.stringify(pkg, null, 2) + '\n')
 
   const name = `campusos-core-${short}-${version}.tgz`
-  execFileSync('tar', ['-czf', name, '-C', short, '.'], { cwd: OUT, stdio: 'inherit' })
+  packDirectory(OUT, short, name)
   rmSync(staging, { recursive: true, force: true })
 
   packed.push({
