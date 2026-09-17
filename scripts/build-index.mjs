@@ -1,4 +1,12 @@
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { join, resolve } from 'node:path'
 
 /**
@@ -108,6 +116,34 @@ const index = {
 }
 
 writeFileSync(join(OUT, 'registry.json'), JSON.stringify(index, null, 2) + '\n')
+
+/**
+ * dist/registry is the release, laid out as it will actually be served: every
+ * archive and the index in one flat directory.
+ *
+ * Plugins and core libraries are packed separately because they are built
+ * differently, but nothing downstream cares about that split -- a host, or an
+ * institution mirroring the repository onto a USB stick, sees one directory. A
+ * local index resolves its archives beside itself, so this is also the thing to
+ * copy for an air-gapped install, and building it on every pack means that path
+ * is exercised rather than described in a document nobody runs.
+ */
+const RELEASE = join(ROOT, 'dist', 'registry')
+rmSync(RELEASE, { recursive: true, force: true })
+mkdirSync(RELEASE, { recursive: true })
+
+let copied = 0
+for (const dir of [OUT, join(ROOT, 'dist', 'core')]) {
+  if (!existsSync(dir)) continue
+  for (const file of readdirSync(dir)) {
+    if (!file.endsWith('.tgz')) continue
+    copyFileSync(join(dir, file), join(RELEASE, file))
+    copied++
+  }
+}
+copyFileSync(join(OUT, 'registry.json'), join(RELEASE, 'registry.json'))
+console.log(`dist/registry: ${copied} archives + registry.json`)
+
 console.log(
   `registry.json: ${Object.keys(index.libraries).length} core libraries, ` +
     `${Object.keys(packages).length} packages, ` +

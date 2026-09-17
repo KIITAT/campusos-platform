@@ -84,8 +84,8 @@ jobs:
             package and nothing needs a package manager at the institution.
             `registry.json` is the index, and each entry carries the sha256 the
             host verifies before it will install.
-          files: |
-            dist/plugins/*.tgz
-            dist/core/*.tgz
-            dist/plugins/registry.json
+          # dist/registry is the release laid out as it is served: every
+          # archive and the index in one flat directory, which is also exactly
+          # what an institution copies to mirror the repository.
+          files: dist/registry/*
           fail_on_unmatched_files: true
