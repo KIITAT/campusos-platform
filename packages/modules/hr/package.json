@@ -1,6 +1,6 @@
 {
   "name": "@campusos/module-hr",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@campusos/db": "workspace:*",
+    "@campusos/module-finance": "workspace:*",
     "@campusos/module-framework": "workspace:*",
     "@campusos/money": "workspace:*",
     "drizzle-orm": "^0.45.2",

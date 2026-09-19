@@ -6,6 +6,7 @@ import {
   listLeave,
   listLeaveTypes,
   listPayslips,
+  listSalaryPayments,
   listStaff,
   myEmployment,
   type Actor,
@@ -308,9 +309,18 @@ export const pages: PluginPage[] = [
     async load(actor, req) {
       const a = actor as Actor
       const period = param(req, 'period') ?? thisMonth()
-      const [payslips, staff] = await Promise.all([listPayslips(a, period), listStaff(a)])
+      const [payslips, staff, paid] = await Promise.all([
+        listPayslips(a, period),
+        listStaff(a),
+        listSalaryPayments(a),
+      ])
+      const thisOne = paid.find((x) => x.period === `${period.slice(0, 7)}-01`)
       return {
         period,
+        paidOn: thisOne?.paidOn ?? '',
+        paidFrom: thisOne?.paidFrom ?? '',
+        isPaid: !!thisOne,
+        today: new Date().toISOString().slice(0, 10),
         payslips: payslips.map((p) => ({
           ...p,
           month: p.period.slice(0, 7),
@@ -329,6 +339,19 @@ export const pages: PluginPage[] = [
           `— no statutory filing. A payslip cannot be edited once generated; ` +
           `corrections go on the next one.`,
       },
+      ...(data.isPaid
+        ? [
+            {
+              kind: 'note' as const,
+              tone: 'info' as const,
+              text:
+                `Paid on ${String(data.paidOn)} from ${String(data.paidFrom)}. ` +
+                'The month is closed: a payslip added now would accrue a salary ' +
+                'that payment never covered, so it is refused. Put the correction ' +
+                'on the next month.',
+            },
+          ]
+        : []),
       {
         kind: 'table',
         rows: 'payslips',
@@ -361,6 +384,46 @@ export const pages: PluginPage[] = [
           },
         ],
       },
+      ...(data.isPaid || Number(data.count ?? 0) === 0
+        ? []
+        : [
+            {
+              kind: 'form' as const,
+              title: 'Pay these salaries',
+              note:
+                'Clears what the payslips accrued. The amount is their total, not ' +
+                'something to type: the entry that discharges the liability has to ' +
+                'be the one that created it. The cost stays in the month worked ' +
+                'even when the money leaves in the next one.',
+              submit: 'Mark paid',
+              path: '/payroll/paid',
+              roles: [...ADMIN],
+              fields: [
+                {
+                  name: 'period',
+                  kind: 'hidden' as const,
+                  label: '',
+                  value: String(data.period ?? ''),
+                },
+                {
+                  name: 'paidOn',
+                  label: 'Paid on',
+                  kind: 'date' as const,
+                  value: String(data.today ?? ''),
+                },
+                {
+                  name: 'paidFrom',
+                  label: 'From',
+                  kind: 'select' as const,
+                  options: [
+                    { value: 'bank', label: 'bank' },
+                    { value: 'cash', label: 'cash' },
+                  ],
+                },
+                { name: 'reference', label: 'Reference', optional: true },
+              ],
+            },
+          ]),
     ],
   },
 

@@ -10,6 +10,7 @@ import {
   leaveBalanceSchema,
   leaveRowSchema,
   myEmploymentSchema,
+  paySalariesSchema,
   payrollRunSchema,
   payslipRowSchema,
   requestLeaveSchema,
@@ -165,6 +166,29 @@ export const paths = {
       responses: {
         '200': { description: 'Generated', content: json(payrollRunSchema) },
         ...gated,
+      },
+    },
+  },
+
+  [`${base}/payroll/paid`]: {
+    get: {
+      summary: 'Which months have been paid, and when',
+      tags: ['hr'],
+      responses: { '200': { description: 'OK' }, ...gated },
+    },
+    post: {
+      summary: "Pay a month's salaries and clear the liability",
+      description:
+        "The amount is the sum of that month's payslips, not an input: the " +
+        'entry that clears salaries payable has to be the entry that created ' +
+        'it. Once a month is paid, no further payslip can be generated for it.',
+      tags: ['hr'],
+      requestBody: { content: json(paySalariesSchema) },
+      responses: {
+        '200': { description: 'Paid' },
+        '404': { description: 'No payroll generated for that month', content: json(err) },
+        ...gated,
+        '409': { description: 'That month is already paid', content: json(err) },
       },
     },
   },

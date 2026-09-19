@@ -11,6 +11,8 @@ import {
   listLeave,
   listLeaveTypes,
   listPayslips,
+  listSalaryPayments,
+  paySalaries,
   listStaff,
   myEmployment,
   requestLeave,
@@ -88,6 +90,17 @@ export const routes: PluginRoute[] = [
     method: 'POST',
     path: '/payroll',
     handler: async (actor, req) => generatePayroll(actor as Actor, await jsonBody(req)),
+  },
+
+  {
+    method: 'GET',
+    path: '/payroll/paid',
+    handler: (actor) => listSalaryPayments(actor as Actor),
+  },
+  {
+    method: 'POST',
+    path: '/payroll/paid',
+    handler: async (actor, req) => paySalaries(actor as Actor, await jsonBody(req)),
   },
 
   { method: 'GET', path: '/me', handler: (actor) => myEmployment(actor as Actor) },

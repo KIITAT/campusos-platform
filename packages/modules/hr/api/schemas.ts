@@ -96,6 +96,21 @@ export const generatePayrollSchema = z
   })
   .meta({ id: 'HrPayrollGenerate' })
 
+/**
+ * Paying a month's salaries. The amount is not an input: it is the sum of the
+ * payslips already generated, so a typo cannot leave the liability half
+ * discharged and the books carrying the difference for ever.
+ */
+export const paySalariesSchema = z
+  .object({
+    period,
+    paidOn: day,
+    /** Which asset it leaves from. Only the two the chart has accounts for. */
+    paidFrom: z.enum(['bank', 'cash']).default('bank'),
+    reference: z.string().trim().max(120).nullish(),
+  })
+  .meta({ id: 'HrSalariesPay' })
+
 // --- reads -----------------------------------------------------------------
 
 export const staffRowSchema = z

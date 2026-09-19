@@ -1,7 +1,14 @@
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm'
 import { audit, withTenant } from '@campusos/db'
 import type { Role } from '@campusos/module-framework'
-import { leaveRequests, leaveTypes, payComponents, payslips, staff } from '../schema'
+import {
+  leaveRequests,
+  leaveTypes,
+  payComponents,
+  payslips,
+  salaryPayments,
+  staff,
+} from '../schema'
 import {
   daysInMonth,
   daysInPeriod,
@@ -17,6 +24,7 @@ import {
   decideLeaveSchema,
   endEmploymentSchema,
   generatePayrollSchema,
+  paySalariesSchema,
   requestLeaveSchema,
   setComponentSchema,
   type LeaveBalance,
@@ -26,6 +34,7 @@ import {
   type PayslipRow,
   type StaffRow,
 } from './schemas'
+import { postPayslip, postSalaryPayment } from './posting'
 
 const MODULE = 'hr'
 
@@ -488,6 +497,18 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
       )
       .orderBy(asc(staff.employeeCode))
 
+    const [paid] = await tx
+      .select({ id: salaryPayments.id })
+      .from(salaryPayments)
+      .where(eq(salaryPayments.period, period))
+    if (paid) {
+      throw new HrError(
+        409,
+        'period_paid',
+        `salaries for ${period.slice(0, 7)} have already been paid`,
+      )
+    }
+
     const existing = await tx
       .select({ staffId: payslips.staffId })
       .from(payslips)
@@ -552,6 +573,19 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
         })
         .returning()
 
+      // Same transaction: a payslip the books never heard about is a salary
+      // that does not appear in the month it was earned.
+      await postPayslip(tx, tenant, actor.id, {
+        id: row!.id,
+        period,
+        staffName: person.name,
+        employeeCode: person.employeeCode,
+        department: person.department,
+        grossPaise: slip.grossPaise,
+        deductionsPaise: slip.deductionsPaise,
+        netPaise: slip.netPaise,
+      })
+
       made.push({
         id: row!.id,
         staffId: person.id,
@@ -577,6 +611,89 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
       payslips: made,
     }
   })
+}
+
+/**
+ * Pay a month's salaries: the liability the payslips accrued, discharged.
+ *
+ * The amount comes from the payslips rather than from the caller, so the entry
+ * that clears salaries payable is exactly the entry that created it. Once a
+ * month is paid it is closed -- a payslip generated afterwards would accrue a
+ * salary that this payment was never going to cover.
+ */
+export async function paySalaries(actor: Actor, input: unknown) {
+  const tenant = requireAdmin(actor)
+  const d = paySalariesSchema.parse(input)
+
+  return withTenant(tenant, async (tx) => {
+    const [owed] = await tx
+      .select({ total: sql<number>`coalesce(sum(${payslips.netPaise}), 0)::bigint` })
+      .from(payslips)
+      .where(eq(payslips.period, d.period))
+    const amountPaise = Number(owed?.total ?? 0)
+
+    if (amountPaise === 0) {
+      throw new HrError(
+        404,
+        'no_payroll',
+        `no payroll has been generated for ${d.period.slice(0, 7)}`,
+      )
+    }
+
+    const [already] = await tx
+      .select({ id: salaryPayments.id })
+      .from(salaryPayments)
+      .where(eq(salaryPayments.period, d.period))
+    if (already) {
+      throw new HrError(
+        409,
+        'already_paid',
+        `salaries for ${d.period.slice(0, 7)} have already been paid`,
+      )
+    }
+
+    const [row] = await tx
+      .insert(salaryPayments)
+      .values({
+        institutionId: tenant,
+        period: d.period,
+        paidOn: d.paidOn,
+        amountPaise,
+        paidFrom: d.paidFrom,
+        reference: d.reference ?? null,
+        paidBy: actor.id,
+      })
+      .returning()
+
+    await audit(tx, {
+      institutionId: tenant,
+      actorId: actor.id,
+      actorEmail: actor.email ?? null,
+      moduleId: MODULE,
+      action: 'payroll.paid',
+      entity: 'hr_salary_payments',
+      entityId: row!.id,
+      reason: `${d.period.slice(0, 7)} salaries paid from ${d.paidFrom}`,
+      detail: { period: d.period, paidOn: d.paidOn, amountPaise, reference: d.reference ?? null },
+    })
+
+    await postSalaryPayment(tx, tenant, actor.id, {
+      id: row!.id,
+      period: row!.period,
+      paidOn: row!.paidOn,
+      amountPaise: row!.amountPaise,
+      paidFrom: row!.paidFrom,
+    })
+
+    return row!
+  })
+}
+
+export async function listSalaryPayments(actor: Actor) {
+  const tenant = requireHr(actor)
+  return withTenant(tenant, (tx) =>
+    tx.select().from(salaryPayments).orderBy(desc(salaryPayments.period)),
+  )
 }
 
 const payslipColumns = {

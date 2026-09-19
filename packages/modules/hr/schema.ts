@@ -231,8 +231,47 @@ export const payslips = pgTable(
   ],
 )
 
+// --- paying ----------------------------------------------------------------
+
+/**
+ * The month's salaries actually leaving the bank.
+ *
+ * Separate from the payslips on purpose, and it is the whole reason the books
+ * carry a salaries-payable account: March's payroll is a cost of March however
+ * late in April it is paid, and an institution reading its March expenses
+ * should see it there rather than wherever the transfer happened to clear.
+ *
+ * One payment per period. A month paid in two instalments is a real thing and
+ * not one this handles; the module refuses the second rather than half-recording
+ * it.
+ */
+export const salaryPayments = pgTable(
+  'hr_salary_payments',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    /** The month being paid for, not the month it was paid in. */
+    period: date().notNull(),
+    paidOn: date('paid_on').notNull(),
+    amountPaise: paise('amount_paise').notNull(),
+    /** Which asset it left from. Only the two the chart has accounts for. */
+    paidFrom: text('paid_from').notNull().default('bank'),
+    reference: text(),
+    paidBy: text('paid_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hr_salary_payments_once').on(t.institutionId, t.period),
+    check('hr_salary_payments_amount', sql`amount_paise > 0`),
+    check('hr_salary_payments_route', sql`paid_from in ('bank', 'cash')`),
+    check('hr_salary_payments_period', sql`extract(day from period) = 1`),
+    tenantPolicy('hr_salary_payments'),
+  ],
+)
+
 export type Staff = typeof staff.$inferSelect
 export type LeaveType = typeof leaveTypes.$inferSelect
 export type LeaveRequest = typeof leaveRequests.$inferSelect
 export type PayComponent = typeof payComponents.$inferSelect
 export type Payslip = typeof payslips.$inferSelect
+export type SalaryPayment = typeof salaryPayments.$inferSelect

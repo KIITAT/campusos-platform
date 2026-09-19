@@ -314,6 +314,9 @@ importers:
       '@campusos/db':
         specifier: workspace:*
         version: link:../../db
+      '@campusos/module-finance':
+        specifier: workspace:*
+        version: link:../finance
       '@campusos/module-framework':
         specifier: workspace:*
         version: link:../../module-framework

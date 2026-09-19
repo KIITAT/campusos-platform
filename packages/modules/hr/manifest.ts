@@ -5,11 +5,15 @@ export const manifest: ModuleManifest = {
   name: 'HR & Payroll',
   description:
     'Staff records independent of the academic roster, leave types with an approval workflow, dated pay components, and generated payslips. No statutory filing: the figures are produced and the institution files them.',
-  version: '0.1.0',
+  version: '0.2.0',
   alwaysEnabled: false,
-  // Nothing: an institution that has bought no other module should still be
-  // able to run its payroll.
-  dependsOn: [],
+  /**
+   * finance, and nothing else. No academic module: a cook needs a payslip and
+   * never teaches a section. The books are different -- a payroll that does not
+   * reach them is a cost the institution cannot see, and an institution running
+   * payroll has books whether or not it has students.
+   */
+  dependsOn: ['finance'],
   pricing: { model: 'not_priced_yet', priceINR: null },
 
   rolesWithAccess: ['super_admin', 'institution_admin', 'accounts_staff', 'faculty'],

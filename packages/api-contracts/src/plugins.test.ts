@@ -87,10 +87,11 @@ test('what a module documents and what it answers are the same set', () => {
 test('the whole product still answers the same number of endpoints', () => {
   // The monorepo had 94 route *files*, several exporting both a GET and a POST;
   // these tables declared 101 endpoints, which was the same surface counted
-  // honestly. Finance added 8 more, and fees three for issuing and refunds. A regression guard on the conversion,
+  // honestly. Finance added 8 more, fees three for issuing and refunds, and hr two
+  // for paying a month's salaries. A regression guard on the conversion,
   // not a target.
   const total = PLUGINS.reduce((n, p) => n + p.routes.length, 0)
-  assert.equal(total, 112, `expected 112 endpoints across all modules, found ${total}`)
+  assert.equal(total, 114, `expected 114 endpoints across all modules, found ${total}`)
 })
 
 test('a longer path is never swallowed by a shorter one', () => {
