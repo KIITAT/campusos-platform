@@ -8,6 +8,7 @@ import academic from '@campusos/module-academic/plugin'
 import attendance from '@campusos/module-attendance/plugin'
 import examinations from '@campusos/module-examinations/plugin'
 import fees from '@campusos/module-fees/plugin'
+import finance from '@campusos/module-finance/plugin'
 import library from '@campusos/module-library/plugin'
 import hostel from '@campusos/module-hostel/plugin'
 import hr from '@campusos/module-hr/plugin'
@@ -26,6 +27,7 @@ const PLUGINS: Plugin[] = [
   attendance,
   examinations,
   fees,
+  finance,
   library,
   hostel,
   hr,
@@ -84,10 +86,11 @@ test('what a module documents and what it answers are the same set', () => {
 
 test('the whole product still answers the same number of endpoints', () => {
   // The monorepo had 94 route *files*, several exporting both a GET and a POST;
-  // these tables declare 101 endpoints, which is the same surface counted
-  // honestly. A regression guard on the conversion, not a target.
+  // these tables declared 101 endpoints, which was the same surface counted
+  // honestly, and finance added 8 more. A regression guard on the conversion,
+  // not a target.
   const total = PLUGINS.reduce((n, p) => n + p.routes.length, 0)
-  assert.equal(total, 101, `expected 101 endpoints across all modules, found ${total}`)
+  assert.equal(total, 109, `expected 109 endpoints across all modules, found ${total}`)
 })
 
 test('a longer path is never swallowed by a shorter one', () => {

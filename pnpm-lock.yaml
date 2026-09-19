@@ -57,6 +57,9 @@ importers:
       '@campusos/module-fees':
         specifier: workspace:*
         version: link:../modules/fees
+      '@campusos/module-finance':
+        specifier: workspace:*
+        version: link:../modules/finance
       '@campusos/module-hostel':
         specifier: workspace:*
         version: link:../modules/hostel
@@ -243,6 +246,31 @@ importers:
       '@types/react':
         specifier: ^19.2.18
         version: 19.3.0
+      tsx:
+        specifier: ^4.23.12
+        version: 4.23.13
+
+  packages/modules/finance:
+    dependencies:
+      '@campusos/db':
+        specifier: workspace:*
+        version: link:../../db
+      '@campusos/module-framework':
+        specifier: workspace:*
+        version: link:../../module-framework
+      '@campusos/money':
+        specifier: workspace:*
+        version: link:../../money
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@types/pg@8.23.1)(pg@8.23.0)
+      zod:
+        specifier: ^4.4.3
+        version: 4.6.5
+    devDependencies:
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.13.4
       tsx:
         specifier: ^4.23.12
         version: 4.23.13
