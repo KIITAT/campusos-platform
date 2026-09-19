@@ -66,6 +66,7 @@ export const accountPurposeEnum = pgEnum('finance_account_purpose', [
   'fees_receivable',
   'fee_income',
   'fee_waiver',
+  'fine_income',
   'salaries_expense',
   'employer_cost',
   'salaries_payable',

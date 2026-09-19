@@ -1,6 +1,13 @@
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm'
 import { audit, auditLog, users, withTenant } from '@campusos/db'
-import { viewsOnBehalf, type Role, type ViewerScope } from '@campusos/module-framework'
+import {
+  moduleEnabled,
+  viewsOnBehalf,
+  type Role,
+  type ViewerScope,
+} from '@campusos/module-framework'
+import { manifest as financeManifest } from '@campusos/module-finance/manifest'
+import { manifest as libraryManifest } from '../manifest'
 import { copies, loans, settings, titles } from '../schema'
 import {
   DEFAULT_RULES,
@@ -27,8 +34,16 @@ import {
   type LoanRow,
   type OverdueReport,
 } from './schemas'
+import { postFineSettled } from './posting'
 
 const MODULE = 'library'
+
+/**
+ * Whether this institution keeps books at all. A question rather than a gate:
+ * the desk works either way, and only the posting depends on the answer.
+ */
+const booksAreOn = (institutionId: string) =>
+  moduleEnabled([libraryManifest, financeManifest], 'finance', institutionId)
 
 export interface Actor extends ViewerScope {
   id: string
@@ -513,10 +528,17 @@ export async function waiveFine(actor: Actor, input: unknown) {
 }
 
 /**
- * The fine has been paid at the desk. Deliberately not a Fees charge: Fees is
- * an optional module, and a library that cannot take a five-rupee fine because
- * the institution did not buy the finance module is a library that stops
- * working. If both are enabled, posting fines to the ledger is a later join.
+ * The fine has been paid at the desk.
+ *
+ * Deliberately not a Fees charge: a fee item belongs to a programme and a term
+ * and applies to everyone in a cohort, which an overdue book is not. The loan
+ * stays the record of what was owed and what was taken.
+ *
+ * It does reach the books when there are books to reach -- debit cash, credit
+ * fines and charges -- as a soft dependency, so a library whose institution has
+ * not bought finance still takes the five rupees rather than refusing it. What
+ * it will not do is backfill: a fine settled while the ledger was off stays off
+ * it, the same way hostel roll call does not invent attendance it never had.
  */
 export async function settleFine(actor: Actor, input: unknown) {
   const tenant = requireDesk(actor)
@@ -544,6 +566,25 @@ export async function settleFine(actor: Actor, input: unknown) {
       .set({ finePaidAt: new Date() })
       .where(eq(loans.id, d.loanId))
       .returning()
+
+    const takenPaise = loan.finePaise - loan.fineWaivedPaise
+    if (takenPaise > 0 && (await booksAreOn(tenant))) {
+      const [about] = await tx
+        .select({ borrowerName: users.name, title: titles.title })
+        .from(loans)
+        .innerJoin(users, eq(users.id, loans.borrowerId))
+        .innerJoin(copies, eq(copies.id, loans.copyId))
+        .innerJoin(titles, eq(titles.id, copies.titleId))
+        .where(eq(loans.id, d.loanId))
+
+      await postFineSettled(tx, tenant, actor.id, {
+        loanId: loan.id,
+        amountPaise: takenPaise,
+        borrowerName: about?.borrowerName ?? null,
+        title: about?.title ?? 'a book',
+      })
+    }
+
     return row!
   })
 }
