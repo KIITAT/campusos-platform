@@ -59,6 +59,33 @@ export const recordPaymentSchema = z
   })
   .meta({ id: 'FeePaymentRecord' })
 
+/**
+ * Issuing is deliberately per term, not per student: a clerk issuing one
+ * invoice at a time is how half a cohort ends up uninvoiced. `studentId`
+ * narrows it for the late admission who joined after the run.
+ */
+export const issueInvoicesSchema = z
+  .object({
+    termId: uuid,
+    studentId: z.string().min(1).nullish(),
+  })
+  .meta({ id: 'FeeInvoiceIssue' })
+
+/**
+ * A refund is always against the payment the money came in on. The method
+ * defaults to the way it arrived, because returning cash by cheque is a
+ * decision somebody has to make on purpose.
+ */
+export const refundPaymentSchema = z
+  .object({
+    paymentId: uuid,
+    amount: positiveRupees,
+    reason: z.string().trim().min(5).max(500),
+    method: z.enum(paymentMethodEnum.enumValues).nullish(),
+    reference: z.string().max(120).trim().nullish(),
+  })
+  .meta({ id: 'FeeRefund' })
+
 export const reconcilePaymentSchema = z
   .object({
     paymentId: uuid,
@@ -104,9 +131,12 @@ export const studentLedgerSchema = z
     waivedPaise: z.number().int(),
     payablePaise: z.number().int(),
     paidPaise: z.number().int(),
+    refundedPaise: z.number().int(),
     unreconciledPaise: z.number().int(),
     outstandingPaise: z.number().int(),
     overpaidPaise: z.number().int(),
+    /** Null until the term's charges have been issued to this student. */
+    invoicedAt: z.string().nullable(),
   })
   .meta({ id: 'FeeStudentLedger' })
 
@@ -118,6 +148,7 @@ export const duesRowSchema = z
     programCode: z.string(),
     payablePaise: z.number().int(),
     paidPaise: z.number().int(),
+    refundedPaise: z.number().int(),
     unreconciledPaise: z.number().int(),
     outstandingPaise: z.number().int(),
   })

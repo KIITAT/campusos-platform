@@ -10,11 +10,14 @@ import {
   createFeeItem,
   duesReport,
   grantWaiver,
+  issueInvoices,
   listFeeItems,
+  listInvoices,
   paymentForReceipt,
   receiptPdf,
   recordPayment,
   reconcilePayment,
+  refundPayment,
   revokeWaiver,
   studentLedger,
   type Actor,
@@ -56,6 +59,22 @@ export const routes: PluginRoute[] = [
     handler: async (actor, req) => {
       await reconcilePayment(actor as Actor, await jsonBody(req))
     },
+  },
+
+  {
+    method: 'GET',
+    path: '/invoices',
+    handler: (actor, req) => listInvoices(actor as Actor, requiredParam(req, 'termId')),
+  },
+  {
+    method: 'POST',
+    path: '/invoices',
+    handler: async (actor, req) => issueInvoices(actor as Actor, await jsonBody(req)),
+  },
+  {
+    method: 'POST',
+    path: '/refunds',
+    handler: async (actor, req) => refundPayment(actor as Actor, await jsonBody(req)),
   },
 
   {

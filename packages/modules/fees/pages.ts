@@ -4,6 +4,7 @@ import { listStructure } from '@campusos/module-academic/api'
 import {
   duesReport,
   listFeeItems,
+  listInvoices,
   studentLedger,
   type Actor,
 } from './api'
@@ -112,9 +113,14 @@ export const pages: PluginPage[] = [
       const { structure, term } = await termFor(a, req)
       if (!term) return { rows: [], terms: [], termCode: null, total: 0, defaulters: 0 }
 
-      const report = await duesReport(a, term.id)
+      const [report, invoices] = await Promise.all([
+        duesReport(a, term.id),
+        listInvoices(a, term.id),
+      ])
       return {
         termCode: report.termCode,
+        termId: term.id,
+        issuedCount: invoices.length,
         total: report.totalOutstandingPaise,
         defaulters: report.defaulterCount,
         rows: report.rows.map((r) => ({
@@ -134,6 +140,7 @@ export const pages: PluginPage[] = [
       {
         kind: 'figures',
         figures: [
+          { label: 'Issued', value: String(data.issuedCount ?? 0) },
           { label: 'Owing', value: String(data.defaulters) },
           {
             label: 'Outstanding',
@@ -170,6 +177,19 @@ export const pages: PluginPage[] = [
           },
         ],
       },
+      {
+        kind: 'form',
+        title: "Issue this term's charges",
+        note:
+          'Turns the price list into money owed, for every student in the term ' +
+          'at once, and posts it to the books. Safe to run again: a student ' +
+          'already issued is skipped, and a charge added since goes out on its ' +
+          'own supplementary entry.',
+        submit: 'Issue',
+        path: '/invoices',
+        roles: [...ADMIN],
+        fields: [{ name: 'termId', kind: 'hidden', label: '', value: String(data.termId ?? '') }],
+      },
     ],
   },
 
@@ -193,6 +213,8 @@ export const pages: PluginPage[] = [
         outstanding: l.outstandingPaise,
         overpaid: l.overpaidPaise,
         unreconciled: l.unreconciledPaise,
+        refunded: l.refundedPaise,
+        invoiced: !!l.invoicedAt,
         termId: term.id,
         lines: l.lines.map((line) => ({
           ...line,
@@ -214,6 +236,10 @@ export const pages: PluginPage[] = [
             value: p.id,
             label: `${p.receiptNo} - ${formatPaise(p.amountPaise)}`,
           })),
+        receipts: l.payments.map((p) => ({
+          value: p.id,
+          label: `${p.receiptNo} - ${formatPaise(p.amountPaise)}`,
+        })),
       }
     },
     sections: (data) => [
@@ -237,8 +263,21 @@ export const pages: PluginPage[] = [
                 },
               ]
             : []),
+          ...(Number(data.refunded ?? 0) > 0
+            ? [{ label: 'Refunded', value: formatPaise(Number(data.refunded)) }]
+            : []),
         ],
       },
+      ...(data.invoiced
+        ? []
+        : [
+            {
+              kind: 'note' as const,
+              text:
+                'These charges have not been issued for this term yet, so nothing ' +
+                'here is in the books. Issue them from the dues list.',
+            },
+          ]),
       ...(Number(data.unreconciled ?? 0) > 0
         ? [
             {
@@ -319,6 +358,36 @@ export const pages: PluginPage[] = [
         fields: [
           { name: 'paymentId', label: 'Payment', kind: 'select', options: 'pending' },
           { name: 'reason', label: 'Reason' },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Refund a payment',
+        note:
+          'Money going back out, against the receipt it came in on. The payment ' +
+          'itself stays on the record, and never more can go back than came in.',
+        submit: 'Refund',
+        path: '/refunds',
+        roles: [...ADMIN],
+        fields: [
+          { name: 'paymentId', label: 'Receipt', kind: 'select', options: 'receipts' },
+          { name: 'amount', label: 'Amount', kind: 'money', hint: 'Rupees' },
+          {
+            name: 'method',
+            label: 'Returned by',
+            kind: 'select',
+            optional: true,
+            options: [
+              { value: 'cash', label: 'cash' },
+              { value: 'cheque', label: 'cheque' },
+              { value: 'bank_transfer', label: 'bank transfer' },
+              { value: 'upi', label: 'upi' },
+              { value: 'card', label: 'card' },
+              { value: 'other', label: 'other' },
+            ],
+          },
+          { name: 'reference', label: 'Reference', optional: true },
+          { name: 'reason', label: 'Reason', hint: 'At least five characters' },
         ],
       },
       {

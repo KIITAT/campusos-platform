@@ -3,6 +3,7 @@ import {
   bigint,
   check,
   index,
+  integer,
   pgEnum,
   pgTable,
   text,
@@ -101,6 +102,16 @@ export const feeWaivers = pgTable(
     amountPaise: paise('amount_paise').notNull(),
     reason: text().notNull(),
     grantedBy: text('granted_by').references(() => users.id, { onDelete: 'set null' }),
+    /**
+     * How much of this waiver the books have already been told about, and how
+     * many times they have been told. A waiver granted before the invoice is
+     * issued rides along in the invoice entry; one granted or revised after it
+     * posts the difference. Keeping the posted figure on the row is what makes
+     * that difference arithmetic rather than a guess, and the counter is what
+     * gives each posting a source reference of its own.
+     */
+    postedPaise: paise('posted_paise').notNull().default(0),
+    postings: integer().notNull().default(0),
     createdAt: createdAt(),
   },
   (t) => [
@@ -171,4 +182,82 @@ export const receiptCounters = pgTable(
     next: bigint({ mode: 'number' }).notNull().default(1),
   },
   () => [tenantPolicy('fee_receipt_counters')],
+)
+
+// --- what is issued --------------------------------------------------------
+
+/**
+ * The moment a term's charges become money owed.
+ *
+ * Until an invoice is issued, a charge is a price list: the student's cohort
+ * matches a fee item, so a screen can add it up. Nothing is receivable and
+ * nothing belongs in the books. Issuing is the act that turns the list into a
+ * debt, and gives it a date the ledger can post against.
+ *
+ * One row per student and term. `chargedPaise` is what was issued, not what is
+ * currently in the price list -- a fee item added afterwards is a supplementary
+ * issue, which bumps `version`, updates the snapshot, and posts only the
+ * difference.
+ */
+export const feeInvoices = pgTable(
+  'fee_invoices',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    termId: uuid('term_id')
+      .notNull()
+      .references(() => terms.id, { onDelete: 'restrict' }),
+    /** Gross charges issued so far, before any waiver. */
+    chargedPaise: paise('charged_paise').notNull(),
+    /** Incremented by a supplementary issue, so each posting has its own ref. */
+    version: integer().notNull().default(1),
+    issuedAt: timestamp('issued_at', { withTimezone: true }).notNull().defaultNow(),
+    issuedBy: text('issued_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('fee_invoices_once').on(t.studentId, t.termId),
+    index('fee_invoices_term').on(t.termId),
+    check('fee_invoices_amount', sql`charged_paise > 0`),
+    tenantPolicy('fee_invoices'),
+  ],
+)
+
+// --- what goes back --------------------------------------------------------
+
+/**
+ * Money returned to a student, against the payment it came in on.
+ *
+ * Against the payment rather than against the term, because the refund has to
+ * leave by a route the institution can defend: a cash payment refunded by
+ * cheque is a different conversation with the auditor, and the payment row is
+ * where the method and the reference already live.
+ *
+ * Never a delete of the payment. The payment happened; so did the refund.
+ */
+export const feeRefunds = pgTable(
+  'fee_refunds',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    paymentId: uuid('payment_id')
+      .notNull()
+      .references(() => feePayments.id, { onDelete: 'cascade' }),
+    amountPaise: paise('amount_paise').notNull(),
+    method: paymentMethodEnum().notNull(),
+    reference: text(),
+    reason: text().notNull(),
+    refundedAt: timestamp('refunded_at', { withTimezone: true }).notNull().defaultNow(),
+    refundedBy: text('refunded_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('fee_refunds_payment').on(t.paymentId),
+    check('fee_refunds_amount', sql`amount_paise > 0`),
+    check('fee_refunds_reason', sql`length(trim(reason)) >= 5`),
+    tenantPolicy('fee_refunds'),
+  ],
 )

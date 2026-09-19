@@ -7,17 +7,27 @@ import {
   sections,
   terms,
 } from '@campusos/module-academic/schema'
-import { feeItems, feePayments, feeWaivers, receiptCounters } from '../schema'
+import {
+  feeInvoices,
+  feeItems,
+  feePayments,
+  feeRefunds,
+  feeWaivers,
+  receiptCounters,
+} from '../schema'
 import {
   createFeeItemSchema,
   grantWaiverSchema,
+  issueInvoicesSchema,
   recordPaymentSchema,
   reconcilePaymentSchema,
+  refundPaymentSchema,
   revokeWaiverSchema,
   type DuesReport,
   type StudentLedger,
 } from './schemas'
 import { ledger, overpaidPaise, type LedgerLine } from './ledger'
+import { postInvoice, postPayment, postRefund, postWaiverChange } from './posting'
 
 const MODULE = 'fees'
 
@@ -58,7 +68,32 @@ const requireFinance = (actor: Actor) => {
   return tenant
 }
 
+/**
+ * Issuing charges and giving money back are decisions, not counter work -- the
+ * same line waivers already sit on the far side of.
+ */
+const requireAdmin = (actor: Actor) => {
+  const tenant = tenantOf(actor)
+  if (!canWaive(actor.role)) throw new FeeError(403, 'forbidden', 'not permitted')
+  return tenant
+}
+
 type Tx = Parameters<Parameters<typeof withTenant>[1]>[0]
+
+/** Whether this student's charges for this term have been issued yet. */
+async function invoiceFor(tx: Tx, studentId: string, termId: string) {
+  const [row] = await tx
+    .select()
+    .from(feeInvoices)
+    .where(and(eq(feeInvoices.studentId, studentId), eq(feeInvoices.termId, termId)))
+  return row ?? null
+}
+
+/** For a journal memo, which a human reads and an account number does not help. */
+async function nameOf(tx: Tx, userId: string): Promise<string | null> {
+  const [row] = await tx.select({ name: users.name }).from(users).where(eq(users.id, userId))
+  return row?.name ?? null
+}
 
 // --- charges ---------------------------------------------------------------
 
@@ -122,7 +157,11 @@ export async function grantWaiver(actor: Actor, input: unknown) {
 
   return withTenant(tenant, async (tx) => {
     const [item] = await tx
-      .select({ amountPaise: feeItems.amountPaise, label: feeItems.label })
+      .select({
+        amountPaise: feeItems.amountPaise,
+        label: feeItems.label,
+        termId: feeItems.termId,
+      })
       .from(feeItems)
       .where(eq(feeItems.id, data.feeItemId))
     if (!item) throw new FeeError(404, 'no_such_item', 'no such charge')
@@ -139,7 +178,12 @@ export async function grantWaiver(actor: Actor, input: unknown) {
     }
 
     const [existing] = await tx
-      .select({ id: feeWaivers.id, amountPaise: feeWaivers.amountPaise })
+      .select({
+        id: feeWaivers.id,
+        amountPaise: feeWaivers.amountPaise,
+        postedPaise: feeWaivers.postedPaise,
+        postings: feeWaivers.postings,
+      })
       .from(feeWaivers)
       .where(
         and(eq(feeWaivers.studentId, data.studentId), eq(feeWaivers.feeItemId, data.feeItemId)),
@@ -178,6 +222,26 @@ export async function grantWaiver(actor: Actor, input: unknown) {
       },
     })
 
+    // If the charges have already gone out, forgiving part of them is an event
+    // in the books and posts the difference. If they have not, this waiver is
+    // simply part of what will be issued, and posting it now would forgive it
+    // twice.
+    if (await invoiceFor(tx, data.studentId, item.termId)) {
+      const posting = (existing?.postings ?? 0) + 1
+      await tx
+        .update(feeWaivers)
+        .set({ postedPaise: data.amount, postings: posting })
+        .where(eq(feeWaivers.id, row!.id))
+
+      await postWaiverChange(tx, tenant, actor.id, {
+        waiverId: row!.id,
+        posting,
+        deltaPaise: data.amount - (existing?.postedPaise ?? 0),
+        label: item.label,
+        studentName: await nameOf(tx, data.studentId),
+      })
+    }
+
     return row!
   })
 }
@@ -211,6 +275,22 @@ export async function revokeWaiver(actor: Actor, input: unknown) {
         originalReason: row.reason,
       },
     })
+
+    // Whatever the books were told is forgiven, they are now told otherwise.
+    if (row.postedPaise > 0) {
+      const [item] = await tx
+        .select({ label: feeItems.label })
+        .from(feeItems)
+        .where(eq(feeItems.id, row.feeItemId))
+
+      await postWaiverChange(tx, tenant, actor.id, {
+        waiverId: row.id,
+        posting: row.postings + 1,
+        deltaPaise: -row.postedPaise,
+        label: item?.label ?? 'a charge',
+        studentName: await nameOf(tx, row.studentId),
+      })
+    }
 
     await tx.delete(feeWaivers).where(eq(feeWaivers.id, data.waiverId))
   })
@@ -290,6 +370,232 @@ export async function recordPayment(actor: Actor, input: unknown) {
         method: data.method,
         reference: data.reference ?? null,
       },
+    })
+
+    // Same transaction, deliberately: money recorded and books that never
+    // heard about it is the one failure this module cannot have.
+    //
+    // Posted at recording rather than at reconciliation. Reconciling is the
+    // accounts office matching a claim against the bank statement -- useful,
+    // and not an accounting event: the entry the student's receipt describes
+    // happened when the money changed hands. A cheque that bounces is a
+    // reversing entry, which is what the journal is for.
+    await postPayment(tx, tenant, actor.id, row!)
+
+    return row!
+  })
+}
+
+/**
+ * Issue a term's charges, turning a price list into money owed.
+ *
+ * Per term rather than per student: issuing one at a time is how half a cohort
+ * ends up uninvoiced and unchased. Re-running it is safe, and is how a charge
+ * added late reaches the books -- the invoice keeps what was issued, and only
+ * the difference is posted.
+ *
+ * No audit row. Issuing is not a discretionary act with a reason behind it,
+ * and the journal entry it writes is already append-only evidence of what was
+ * issued and when.
+ */
+export async function issueInvoices(actor: Actor, input: unknown) {
+  const tenant = requireAdmin(actor)
+  const data = issueInvoicesSchema.parse(input)
+
+  return withTenant(tenant, async (tx) => {
+    const [term] = await tx
+      .select({ code: terms.code })
+      .from(terms)
+      .where(eq(terms.id, data.termId))
+    if (!term) throw new FeeError(404, 'no_such_term', 'no such term')
+
+    const roster = await tx
+      .selectDistinct({
+        studentId: users.id,
+        studentName: users.name,
+        studentEmail: users.email,
+      })
+      .from(sectionMembers)
+      .innerJoin(users, eq(users.id, sectionMembers.userId))
+      .where(data.studentId ? eq(sectionMembers.userId, data.studentId) : undefined)
+      .orderBy(asc(users.email))
+
+    const issued = []
+    let unchanged = 0
+
+    for (const s of roster) {
+      // ponytail: a pair of queries per student, like duesReport. Fine for a
+      // few hundred; fold into grouped queries if a roster reaches thousands.
+      const charges = await chargesFor(tx, s.studentId, data.termId)
+      const chargedPaise = charges.reduce((n, c) => n + c.chargedPaise, 0)
+      if (chargedPaise === 0) continue
+
+      const invoice = await invoiceFor(tx, s.studentId, data.termId)
+      const delta = chargedPaise - (invoice?.chargedPaise ?? 0)
+      if (delta <= 0) {
+        unchanged++
+        continue
+      }
+
+      // Waivers the books have not been told about: everything granted before
+      // this student was ever invoiced, plus anything against a charge added
+      // since. Both ride along in this entry.
+      const fresh = charges.filter(
+        (c) => c.waiverId && (c.waivedPaise ?? 0) > (c.postedPaise ?? 0),
+      )
+      const waivedPaise = fresh.reduce(
+        (n, c) => n + ((c.waivedPaise ?? 0) - (c.postedPaise ?? 0)),
+        0,
+      )
+
+      const version = (invoice?.version ?? 0) + 1
+      const id =
+        invoice?.id ??
+        (
+          await tx
+            .insert(feeInvoices)
+            .values({
+              institutionId: tenant,
+              studentId: s.studentId,
+              termId: data.termId,
+              chargedPaise,
+              issuedBy: actor.id,
+            })
+            .returning({ id: feeInvoices.id })
+        )[0]!.id
+
+      if (invoice) {
+        await tx
+          .update(feeInvoices)
+          .set({ chargedPaise, version })
+          .where(eq(feeInvoices.id, invoice.id))
+      }
+
+      await postInvoice(tx, tenant, actor.id, {
+        id,
+        version,
+        studentName: s.studentName,
+        termCode: term.code,
+        chargedPaise: delta,
+        waivedPaise,
+      })
+
+      if (fresh.length > 0) {
+        await tx
+          .update(feeWaivers)
+          .set({ postedPaise: sql`${feeWaivers.amountPaise}` })
+          .where(
+            inArray(
+              feeWaivers.id,
+              fresh.map((c) => c.waiverId!),
+            ),
+          )
+      }
+
+      issued.push({
+        studentId: s.studentId,
+        studentName: s.studentName,
+        invoiceId: id,
+        version,
+        chargedPaise: delta,
+        waivedPaise,
+      })
+    }
+
+    return { termCode: term.code, issued, unchanged }
+  })
+}
+
+export async function listInvoices(actor: Actor, termId: string) {
+  const tenant = requireFinance(actor)
+  return withTenant(tenant, (tx) =>
+    tx
+      .select({
+        id: feeInvoices.id,
+        studentId: feeInvoices.studentId,
+        studentName: users.name,
+        studentEmail: users.email,
+        chargedPaise: feeInvoices.chargedPaise,
+        version: feeInvoices.version,
+        issuedAt: feeInvoices.issuedAt,
+      })
+      .from(feeInvoices)
+      .innerJoin(users, eq(users.id, feeInvoices.studentId))
+      .where(eq(feeInvoices.termId, termId))
+      .orderBy(asc(users.email)),
+  )
+}
+
+/**
+ * Money back out, against the payment it came in on.
+ *
+ * Never a deletion of the payment: the money did arrive, and a ledger that
+ * erased it would answer a different question from the one the student's
+ * receipt asks. The database refuses a refund larger than its payment too, so
+ * that the check surviving is not a matter of remembering to call it.
+ */
+export async function refundPayment(actor: Actor, input: unknown) {
+  const tenant = requireAdmin(actor)
+  const data = refundPaymentSchema.parse(input)
+
+  return withTenant(tenant, async (tx) => {
+    const [payment] = await tx
+      .select()
+      .from(feePayments)
+      .where(eq(feePayments.id, data.paymentId))
+    if (!payment) throw new FeeError(404, 'no_such_payment', 'no such payment')
+
+    const [sums] = await tx
+      .select({ back: sql<number>`coalesce(sum(${feeRefunds.amountPaise}), 0)::bigint` })
+      .from(feeRefunds)
+      .where(eq(feeRefunds.paymentId, payment.id))
+    const already = Number(sums?.back ?? 0)
+
+    if (already + data.amount > payment.amountPaise) {
+      throw new FeeError(
+        400,
+        'refund_exceeds_payment',
+        `receipt ${payment.receiptNo} has ${payment.amountPaise - already} paise left to refund`,
+      )
+    }
+
+    const [row] = await tx
+      .insert(feeRefunds)
+      .values({
+        institutionId: tenant,
+        paymentId: payment.id,
+        amountPaise: data.amount,
+        method: data.method ?? payment.method,
+        reference: data.reference ?? null,
+        reason: data.reason,
+        refundedBy: actor.id,
+      })
+      .returning()
+
+    await audit(tx, {
+      institutionId: tenant,
+      actorId: actor.id,
+      actorEmail: actor.email ?? null,
+      moduleId: MODULE,
+      action: 'fee.refunded',
+      entity: 'fee_refunds',
+      entityId: row!.id,
+      reason: data.reason,
+      detail: {
+        studentId: payment.studentId,
+        receiptNo: payment.receiptNo,
+        amountPaise: data.amount,
+        ofPaise: payment.amountPaise,
+        method: row!.method,
+      },
+    })
+
+    await postRefund(tx, tenant, actor.id, {
+      id: row!.id,
+      receiptNo: payment.receiptNo,
+      amountPaise: row!.amountPaise,
+      method: row!.method,
+      refundedAt: row!.refundedAt,
     })
 
     return row!
@@ -378,6 +684,7 @@ async function chargesFor(tx: Tx, studentId: string, termId: string) {
       waiverId: feeWaivers.id,
       waivedPaise: feeWaivers.amountPaise,
       waiverReason: feeWaivers.reason,
+      postedPaise: feeWaivers.postedPaise,
     })
     .from(feeItems)
     .leftJoin(
@@ -391,6 +698,15 @@ async function chargesFor(tx: Tx, studentId: string, termId: string) {
       ),
     )
     .orderBy(asc(feeItems.label))
+}
+
+/** What has gone back out to this student for this term. */
+function refundsFor(tx: Tx, studentId: string, termId: string) {
+  return tx
+    .select({ amountPaise: feeRefunds.amountPaise })
+    .from(feeRefunds)
+    .innerJoin(feePayments, eq(feePayments.id, feeRefunds.paymentId))
+    .where(and(eq(feePayments.studentId, studentId), eq(feePayments.termId, termId)))
 }
 
 export async function studentLedger(
@@ -427,13 +743,15 @@ export async function studentLedger(
       .from(feePayments)
       .where(and(eq(feePayments.studentId, studentId), eq(feePayments.termId, termId)))
       .orderBy(asc(feePayments.receivedAt))
+    const refunds = await refundsFor(tx, studentId, termId)
+    const invoice = await invoiceFor(tx, studentId, termId)
 
     const lines: LedgerLine[] = charges.map((c) => ({
       label: c.label,
       chargedPaise: c.chargedPaise,
       waivedPaise: c.waivedPaise ?? 0,
     }))
-    const l = ledger(lines, payments)
+    const l = ledger(lines, payments, refunds)
 
     return {
       studentId,
@@ -462,9 +780,11 @@ export async function studentLedger(
       waivedPaise: l.waivedPaise,
       payablePaise: l.payablePaise,
       paidPaise: l.paidPaise,
+      refundedPaise: l.refundedPaise,
       unreconciledPaise: l.unreconciledPaise,
       outstandingPaise: l.outstandingPaise,
       overpaidPaise: overpaidPaise(l),
+      invoicedAt: invoice?.issuedAt.toISOString() ?? null,
     }
   })
 }
@@ -513,6 +833,7 @@ export async function duesReport(actor: Actor, termId: string): Promise<DuesRepo
           waivedPaise: c.waivedPaise ?? 0,
         })),
         payments,
+        await refundsFor(tx, s.studentId, termId),
       )
       if (l.payablePaise === 0 && l.paidPaise === 0) continue
 
@@ -523,6 +844,7 @@ export async function duesReport(actor: Actor, termId: string): Promise<DuesRepo
         programCode: s.programCode,
         payablePaise: l.payablePaise,
         paidPaise: l.paidPaise,
+        refundedPaise: l.refundedPaise,
         unreconciledPaise: l.unreconciledPaise,
         outstandingPaise: l.outstandingPaise,
       })

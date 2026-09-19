@@ -27,6 +27,15 @@ test('an unreconciled payment still reduces what is owed, and is reported apart'
   assert.equal(l.outstandingPaise, 2500000)
 })
 
+test('money refunded is money no longer paid', () => {
+  const l = ledger(lines, [{ amountPaise: 4000000, reconciledAt: new Date() }], [
+    { amountPaise: 1500000 },
+  ])
+  assert.equal(l.refundedPaise, 1500000)
+  assert.equal(l.paidPaise, 2500000)
+  assert.equal(l.outstandingPaise, 4000000)
+})
+
 test('an overpayment is a credit, never negative dues', () => {
   const l = ledger(lines, [{ amountPaise: 7000000, reconciledAt: new Date() }])
   assert.equal(l.outstandingPaise, 0)

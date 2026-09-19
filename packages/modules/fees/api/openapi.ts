@@ -4,8 +4,10 @@ import {
   createFeeItemSchema,
   duesReportSchema,
   grantWaiverSchema,
+  issueInvoicesSchema,
   recordPaymentSchema,
   reconcilePaymentSchema,
+  refundPaymentSchema,
   revokeWaiverSchema,
   studentLedgerSchema,
 } from './schemas'
@@ -32,6 +34,45 @@ export const paths = {
         '200': { description: 'Created' },
         ...gated,
         '409': { description: 'That label already exists for the term', content: json(err) },
+      },
+    },
+  },
+
+  [`${base}/invoices`]: {
+    get: {
+      summary: 'What has been issued for a term, and for how much',
+      tags: ['fees'],
+      responses: { '200': { description: 'OK' }, ...gated },
+    },
+    post: {
+      summary: "Issue a term's charges and post them to the books",
+      description:
+        'Turns the price list into money owed for every student in the term. ' +
+        'Safe to run again: a student already issued is skipped, and a charge ' +
+        'added since goes out on a supplementary entry for the difference.',
+      tags: ['fees'],
+      requestBody: { content: json(issueInvoicesSchema) },
+      responses: {
+        '200': { description: 'Issued' },
+        '404': { description: 'No such term', content: json(err) },
+        ...gated,
+      },
+    },
+  },
+
+  [`${base}/refunds`]: {
+    post: {
+      summary: 'Return money against the payment it came in on',
+      description:
+        'The payment itself is never deleted or amended. Never more can go ' +
+        'back than came in, which the database enforces as well as this module.',
+      tags: ['fees'],
+      requestBody: { content: json(refundPaymentSchema) },
+      responses: {
+        '200': { description: 'Refunded' },
+        '400': { description: 'More than the payment has left to refund', content: json(err) },
+        '404': { description: 'No such payment', content: json(err) },
+        ...gated,
       },
     },
   },

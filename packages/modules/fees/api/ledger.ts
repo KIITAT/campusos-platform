@@ -15,7 +15,9 @@ export interface Ledger {
   chargedPaise: number
   waivedPaise: number
   payablePaise: number
+  /** What came in, less anything that went back out. */
   paidPaise: number
+  refundedPaise: number
   /** Recorded but not yet matched against the bank. */
   unreconciledPaise: number
   outstandingPaise: number
@@ -33,10 +35,15 @@ export interface Ledger {
 export function ledger(
   lines: LedgerLine[],
   payments: { amountPaise: number; reconciledAt: Date | null }[],
+  refunds: { amountPaise: number }[] = [],
 ): Ledger {
   const chargedPaise = lines.reduce((n, l) => n + l.chargedPaise, 0)
   const waivedPaise = lines.reduce((n, l) => n + l.waivedPaise, 0)
-  const paidPaise = payments.reduce((n, p) => n + p.amountPaise, 0)
+  const refundedPaise = refunds.reduce((n, r) => n + r.amountPaise, 0)
+  // Money returned is money no longer paid: a student refunded in full owes
+  // the whole fee again, and a dues report that says otherwise is the reason
+  // nobody chases them.
+  const paidPaise = payments.reduce((n, p) => n + p.amountPaise, 0) - refundedPaise
   const unreconciledPaise = payments
     .filter((p) => p.reconciledAt === null)
     .reduce((n, p) => n + p.amountPaise, 0)
@@ -48,6 +55,7 @@ export function ledger(
     waivedPaise,
     payablePaise,
     paidPaise,
+    refundedPaise,
     unreconciledPaise,
     // Never negative: an overpayment is a credit to refund, not a debt owed
     // backwards, and reporting it as negative dues reads as an error.
