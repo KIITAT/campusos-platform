@@ -1,6 +1,8 @@
 import * as z from 'zod'
 import { manifest } from '../manifest'
 import {
+  addEquivalenceSchema,
+  addPrerequisiteSchema,
   addSectionMemberSchema,
   createCourseSchema,
   createDepartmentSchema,
@@ -8,10 +10,19 @@ import {
   createProgramSchema,
   createRoomSchema,
   createSectionSchema,
+  createCurriculumSchema,
+  createRequirementSchema,
   createSlotSchema,
   createTermSchema,
+  declareProgramSchema,
+  eligibilityResultSchema,
+  eligibilitySchema,
+  endStudentProgramSchema,
+  recordCompletionSchema,
   setCurrentTermSchema,
+  setTermCalendarSchema,
   timetableSchema,
+  waivePrerequisiteSchema,
 } from './schemas'
 
 /**
@@ -37,6 +48,20 @@ const post = (summary: string, schema: z.ZodType) => ({
       },
       '409': {
         description: 'Conflicts with an existing row or a constraint',
+        content: { 'application/json': { schema: errorRef } },
+      },
+    },
+  },
+})
+
+const list = (summary: string) => ({
+  get: {
+    summary,
+    tags: ['academic'],
+    responses: {
+      '200': { description: 'OK' },
+      '403': {
+        description: 'Forbidden, or the module is not enabled',
         content: { 'application/json': { schema: errorRef } },
       },
     },
@@ -71,4 +96,62 @@ export const paths = {
   [`${base}/sections/members`]: post('Add a student to a cohort', addSectionMemberSchema),
   [`${base}/offerings`]: post('Offer a course to a cohort in a term', createOfferingSchema),
   [`${base}/slots`]: post('Add a weekly timetable slot', createSlotSchema),
+
+  [`${base}/terms/calendar`]: post(
+    "Set a term's registration and drop dates",
+    setTermCalendarSchema,
+  ),
+  [`${base}/curricula`]: {
+    ...post('Create a curriculum for a catalogue year', createCurriculumSchema),
+    ...list('Every curriculum, with its requirements'),
+  },
+  [`${base}/requirements`]: post(
+    'Add a degree requirement and the courses that satisfy it',
+    createRequirementSchema,
+  ),
+  [`${base}/prerequisites`]: {
+    ...post('Require one course before another', addPrerequisiteSchema),
+    ...list('Every prerequisite edge'),
+  },
+  [`${base}/prerequisites/waivers`]: {
+    ...post('Excuse a named student from a prerequisite', waivePrerequisiteSchema),
+    ...list('Waivers on file, newest first'),
+  },
+  [`${base}/equivalences`]: post(
+    'Record two courses as the same course, cross-listed or accepted in transfer',
+    addEquivalenceSchema,
+  ),
+  [`${base}/students/programs`]: {
+    ...post('Declare a programme for a student', declareProgramSchema),
+    ...list("A student's declared programmes; the caller's own without a studentId"),
+  },
+  [`${base}/students/programs/end`]: post(
+    'Complete, withdraw from or transfer out of a programme',
+    endStudentProgramSchema,
+  ),
+  [`${base}/completions`]: {
+    ...post('Record a passed course, earned here or accepted in transfer', recordCompletionSchema),
+    ...list("A student's completed courses"),
+  },
+  [`${base}/eligibility`]: {
+    post: {
+      summary: 'Whether a student may take a course, and what is missing if not',
+      tags: ['academic'],
+      requestBody: { content: { 'application/json': { schema: eligibilitySchema } } },
+      responses: {
+        '200': {
+          description: 'OK',
+          content: { 'application/json': { schema: eligibilityResultSchema } },
+        },
+        '403': {
+          description: 'Forbidden, or the module is not enabled',
+          content: { 'application/json': { schema: errorRef } },
+        },
+        '404': {
+          description: 'No such course',
+          content: { 'application/json': { schema: errorRef } },
+        },
+      },
+    },
+  },
 }

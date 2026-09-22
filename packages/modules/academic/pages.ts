@@ -1,5 +1,16 @@
 import type { PluginPage } from '@campusos/module-framework'
-import { getTimetable, listOfferings, listSections, listStructure, type Actor } from './api'
+import {
+  getTimetable,
+  listCompletions,
+  listCurricula,
+  listOfferings,
+  listPrerequisites,
+  listSections,
+  listStructure,
+  listStudentPrograms,
+  listWaivers,
+  type Actor,
+} from './api'
 
 const REGISTRAR = ['institution_admin', 'super_admin'] as const
 const EVERYONE = [
@@ -187,8 +198,35 @@ export const pages: PluginPage[] = [
         fields: [
           { name: 'code', label: 'Code' },
           { name: 'name', label: 'Name' },
+          {
+            name: 'kind',
+            label: 'Kind',
+            kind: 'select',
+            options: [
+              { value: 'regular', label: 'regular' },
+              { value: 'summer', label: 'summer' },
+              { value: 'winter', label: 'winter' },
+            ],
+          },
           { name: 'startsOn', label: 'From', kind: 'date' },
           { name: 'endsOn', label: 'To', kind: 'date' },
+        ],
+      },
+      {
+        kind: 'form',
+        title: "Set a term's calendar",
+        note:
+          'Registration and drop dates, which is what enrollment and any refund ' +
+          'are keyed to. A window left empty is closed, not open.',
+        submit: 'Set dates',
+        path: '/terms/calendar',
+        roles: [...REGISTRAR],
+        fields: [
+          { name: 'termId', label: 'Term', kind: 'select', options: 'termOptions' },
+          { name: 'registrationOpensOn', label: 'Registration opens', kind: 'date', optional: true },
+          { name: 'registrationClosesOn', label: 'Registration closes', kind: 'date', optional: true },
+          { name: 'addDropEndsOn', label: 'Add/drop ends', kind: 'date', optional: true },
+          { name: 'withdrawEndsOn', label: 'Withdrawal ends', kind: 'date', optional: true },
         ],
       },
       {
@@ -335,6 +373,386 @@ export const pages: PluginPage[] = [
           },
           { name: 'startsAt', label: 'From', hint: 'HH:MM' },
           { name: 'endsAt', label: 'To', hint: 'HH:MM' },
+        ],
+      },
+    ],
+  },
+
+  {
+    path: '/curriculum',
+    title: 'Curriculum',
+    menu: 'Curriculum',
+    roles: [...REGISTRAR, 'hod'],
+    async load(actor) {
+      const a = actor as Actor
+      const registrar = a.role === 'institution_admin' || a.role === 'super_admin'
+      const [structure, curricula, chains, waivers] = await Promise.all([
+        listStructure(a),
+        listCurricula(a),
+        listPrerequisites(a),
+        registrar ? listWaivers(a) : Promise.resolve([]),
+      ])
+
+      return {
+        curricula: curricula.map((c) => ({
+          ...c,
+          programme: `${c.programCode} - ${c.programName}`,
+          requirementCount: c.requirements.length,
+        })),
+        requirements: curricula.flatMap((c) =>
+          c.requirements.map((r) => ({
+            ...r,
+            curriculum: `${c.programCode} ${c.catalogYear}`,
+            asks: r.minCredits > 0 ? `${r.minCredits} credits` : `${r.minCourses} courses`,
+          })),
+        ),
+        chains: chains.map((p) => ({
+          ...p,
+          needs: p.minGradePoints ? `${p.requiresCode} at ${p.minGradePoints}+` : p.requiresCode,
+        })),
+        waivers: waivers.map((w) => ({
+          ...w,
+          scope: w.requiresCode ?? 'every prerequisite',
+        })),
+        programOptions: structure.programs.map((p) => ({
+          value: p.id,
+          label: `${p.code} - ${p.name}`,
+        })),
+        courseOptions: structure.courses.map((c) => ({
+          value: c.id,
+          label: `${c.code} - ${c.title}`,
+        })),
+        curriculumOptions: curricula.map((c) => ({
+          value: c.id,
+          label: `${c.programCode} ${c.catalogYear}`,
+        })),
+      }
+    },
+    sections: () => [
+      {
+        kind: 'note',
+        text: 'A curriculum belongs to a catalogue year, and a student is held to the one in force when they declared. Editing next year’s rules therefore never moves the goalposts for this year’s students.',
+      },
+      {
+        kind: 'table',
+        title: 'Curricula',
+        rows: 'curricula',
+        empty: 'None yet.',
+        columns: [
+          { key: 'programme', label: 'Programme' },
+          { key: 'catalogYear', label: 'Catalogue' },
+          { key: 'totalCredits', label: 'Credits' },
+          { key: 'requirementCount', label: 'Requirements' },
+          { key: 'isActive', label: 'Active', kind: 'bool' },
+        ],
+      },
+      {
+        kind: 'table',
+        title: 'Requirements',
+        rows: 'requirements',
+        empty: 'None yet.',
+        columns: [
+          { key: 'curriculum', label: 'Curriculum' },
+          { key: 'code', label: 'Code', kind: 'code' },
+          { key: 'title', label: 'Title' },
+          { key: 'kind', label: 'Kind' },
+          { key: 'asks', label: 'Asks for' },
+        ],
+      },
+      {
+        kind: 'table',
+        title: 'Prerequisites',
+        note: 'The chain cannot close a loop; the database refuses the edge that would.',
+        rows: 'chains',
+        empty: 'No course requires another yet.',
+        columns: [
+          { key: 'courseCode', label: 'Course', kind: 'code' },
+          { key: 'kind', label: 'Kind' },
+          { key: 'needs', label: 'Needs' },
+          { key: 'requiresTitle', label: 'Which is' },
+        ],
+      },
+      {
+        kind: 'table',
+        title: 'Overrides on file',
+        note: 'Who was let in, to what, and why.',
+        rows: 'waivers',
+        empty: 'None. Every student met the chain as written.',
+        columns: [
+          { key: 'studentName', label: 'Student' },
+          { key: 'courseCode', label: 'For', kind: 'code' },
+          { key: 'scope', label: 'Waived' },
+          { key: 'reason', label: 'Reason' },
+          { key: 'createdAt', label: 'When', kind: 'date' },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Add a curriculum',
+        submit: 'Add',
+        path: '/curricula',
+        roles: [...REGISTRAR],
+        fields: [
+          { name: 'programId', label: 'Programme', kind: 'select', options: 'programOptions' },
+          { name: 'catalogYear', label: 'Catalogue year', kind: 'number' },
+          { name: 'totalCredits', label: 'Credits for the award', kind: 'number' },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Add a requirement',
+        note: 'An open requirement takes any course that counts, so it needs no course named.',
+        submit: 'Add',
+        path: '/requirements',
+        roles: [...REGISTRAR],
+        fields: [
+          {
+            name: 'curriculumId',
+            label: 'Curriculum',
+            kind: 'select',
+            options: 'curriculumOptions',
+          },
+          { name: 'code', label: 'Code' },
+          { name: 'title', label: 'Title' },
+          {
+            name: 'kind',
+            label: 'Kind',
+            kind: 'select',
+            options: [
+              { value: 'core', label: 'core - all of these' },
+              { value: 'elective', label: 'elective - enough of these' },
+              { value: 'open', label: 'open - anything that counts' },
+            ],
+          },
+          { name: 'minCredits', label: 'Credits', kind: 'number', optional: true },
+          { name: 'minCourses', label: 'Courses', kind: 'number', optional: true },
+          {
+            name: 'courseIds',
+            label: 'Course',
+            kind: 'select',
+            options: 'courseOptions',
+            optional: true,
+            hint: 'One at a time; add the requirement again to widen the pool.',
+          },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Require one course before another',
+        submit: 'Add',
+        path: '/prerequisites',
+        roles: [...REGISTRAR],
+        fields: [
+          { name: 'courseId', label: 'Course', kind: 'select', options: 'courseOptions' },
+          {
+            name: 'requiresCourseId',
+            label: 'Requires',
+            kind: 'select',
+            options: 'courseOptions',
+          },
+          {
+            name: 'kind',
+            label: 'Kind',
+            kind: 'select',
+            options: [
+              { value: 'prerequisite', label: 'prerequisite - before' },
+              { value: 'corequisite', label: 'corequisite - before or alongside' },
+            ],
+          },
+          {
+            name: 'minGradePoints',
+            label: 'Minimum grade points',
+            kind: 'number',
+            optional: true,
+            hint: 'Leave empty when a pass is enough.',
+          },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Two courses, one course',
+        note: 'Cross-listing and transfer equivalence are the same statement, and it reads in both directions.',
+        submit: 'Record',
+        path: '/equivalences',
+        roles: [...REGISTRAR],
+        fields: [
+          { name: 'courseId', label: 'Course', kind: 'select', options: 'courseOptions' },
+          {
+            name: 'equivalentCourseId',
+            label: 'Is the same as',
+            kind: 'select',
+            options: 'courseOptions',
+          },
+          { name: 'note', label: 'Note', optional: true },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Excuse a student from a prerequisite',
+        note: 'Leave the prerequisite empty to waive all of them. The reason is on the record.',
+        submit: 'Waive',
+        path: '/prerequisites/waivers',
+        roles: [...REGISTRAR],
+        fields: [
+          { name: 'studentId', label: 'Student id' },
+          { name: 'courseId', label: 'For course', kind: 'select', options: 'courseOptions' },
+          {
+            name: 'requiresCourseId',
+            label: 'Prerequisite',
+            kind: 'select',
+            options: 'courseOptions',
+            optional: true,
+          },
+          { name: 'reason', label: 'Reason', kind: 'textarea', rows: 2 },
+        ],
+      },
+    ],
+  },
+
+  {
+    path: '/record',
+    title: 'Record',
+    menu: 'Record',
+    roles: [...EVERYONE],
+    async load(actor, req) {
+      const a = actor as Actor
+      const asked = new URL(req.url).searchParams.get('studentId')
+      const registrar = a.role === 'institution_admin' || a.role === 'super_admin'
+      const studentId = registrar || a.role === 'hod' || a.role === 'faculty' ? (asked ?? a.id) : a.id
+
+      const [programmes, completions, structure, curricula] = await Promise.all([
+        listStudentPrograms(a, { studentId }),
+        listCompletions(a, { studentId }),
+        registrar ? listStructure(a) : Promise.resolve(null),
+        registrar ? listCurricula(a) : Promise.resolve([]),
+      ])
+
+      const passed = completions.filter((c) => c.passed)
+      return {
+        studentId,
+        mine: studentId === a.id,
+        programmes: programmes.map((p) => ({
+          ...p,
+          programme: `${p.programCode} - ${p.programName}`,
+          lead: p.isPrimary ? 'yes' : '',
+        })),
+        completions: completions.map((c) => ({
+          ...c,
+          grade: c.gradeLabel ?? (c.gradePoints ? String(c.gradePoints) : ''),
+          where: c.source === 'transfer' ? 'transferred' : 'here',
+        })),
+        creditsEarned: String(passed.reduce((n, c) => n + c.credits, 0)),
+        coursesPassed: String(passed.length),
+        transferred: String(passed.filter((c) => c.source === 'transfer').length),
+        programOptions: (structure?.programs ?? []).map((p) => ({
+          value: p.id,
+          label: `${p.code} - ${p.name}`,
+        })),
+        courseOptions: (structure?.courses ?? []).map((c) => ({
+          value: c.id,
+          label: `${c.code} - ${c.title}`,
+        })),
+        termOptions: (structure?.terms ?? []).map((t) => ({
+          value: t.id,
+          label: `${t.code} - ${t.name}`,
+        })),
+        curriculumOptions: curricula.map((c) => ({
+          value: c.id,
+          label: `${c.programCode} ${c.catalogYear}`,
+        })),
+      }
+    },
+    sections: (data) => [
+      {
+        kind: 'note',
+        text: data.mine
+          ? 'What you are reading for, and what you have passed. Transfer credit sits here too, which is why the prerequisite check finds it.'
+          : 'A student can read for more than one degree at once; the one marked as leading is the one a transcript opens with.',
+      },
+      {
+        kind: 'figures',
+        figures: [
+          { label: 'Credits earned', value: String(data.creditsEarned) },
+          { label: 'Courses passed', value: String(data.coursesPassed) },
+          { label: 'Transferred in', value: String(data.transferred) },
+        ],
+      },
+      {
+        kind: 'table',
+        title: 'Programmes',
+        rows: 'programmes',
+        empty: 'Nothing declared.',
+        columns: [
+          { key: 'programme', label: 'Programme' },
+          { key: 'status', label: 'Status' },
+          { key: 'lead', label: 'Leads' },
+          { key: 'declaredOn', label: 'Declared', kind: 'date' },
+          { key: 'endedOn', label: 'Ended', kind: 'date' },
+        ],
+      },
+      {
+        kind: 'table',
+        title: 'Courses completed',
+        rows: 'completions',
+        empty: 'Nothing on the record yet.',
+        columns: [
+          { key: 'courseCode', label: 'Course', kind: 'code' },
+          { key: 'courseTitle', label: 'Title' },
+          { key: 'credits', label: 'Credits' },
+          { key: 'grade', label: 'Grade' },
+          { key: 'passed', label: 'Passed', kind: 'bool' },
+          { key: 'where', label: 'Earned' },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Declare a programme',
+        submit: 'Declare',
+        path: '/students/programs',
+        roles: [...REGISTRAR],
+        fields: [
+          { name: 'studentId', label: 'Student id', value: String(data.studentId) },
+          { name: 'programId', label: 'Programme', kind: 'select', options: 'programOptions' },
+          {
+            name: 'curriculumId',
+            label: 'Catalogue',
+            kind: 'select',
+            options: 'curriculumOptions',
+            optional: true,
+          },
+          { name: 'isPrimary', label: 'This one leads', kind: 'checkbox', optional: true },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Record a completed course',
+        note: 'Leave the term empty for transfer credit, and say where it came from in the note.',
+        submit: 'Record',
+        path: '/completions',
+        roles: [...REGISTRAR],
+        fields: [
+          { name: 'studentId', label: 'Student id', value: String(data.studentId) },
+          { name: 'courseId', label: 'Course', kind: 'select', options: 'courseOptions' },
+          {
+            name: 'termId',
+            label: 'Term',
+            kind: 'select',
+            options: 'termOptions',
+            optional: true,
+          },
+          {
+            name: 'source',
+            label: 'Earned',
+            kind: 'select',
+            options: [
+              { value: 'internal', label: 'here' },
+              { value: 'transfer', label: 'transferred in' },
+            ],
+          },
+          { name: 'credits', label: 'Credits', kind: 'number', optional: true },
+          { name: 'gradePoints', label: 'Grade points', kind: 'number', optional: true },
+          { name: 'gradeLabel', label: 'Grade', optional: true },
+          { name: 'note', label: 'Note', optional: true },
         ],
       },
     ],

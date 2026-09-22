@@ -23,6 +23,7 @@ import {
   createSlotSchema,
   createTermSchema,
   setCurrentTermSchema,
+  setTermCalendarSchema,
   type Timetable,
 } from './schemas'
 
@@ -53,7 +54,7 @@ export class AcademicError extends Error {
  * HOD oversight of a department -- timetable, faculty, analytics -- not the
  * right to create programmes or courses, so HOD is read-only here.
  */
-function requireWriter(actor: Actor): string {
+export function requireWriter(actor: Actor): string {
   if (actor.role !== 'institution_admin' && actor.role !== 'super_admin') {
     throw new AcademicError(403, 'forbidden', 'not permitted')
   }
@@ -63,7 +64,7 @@ function requireWriter(actor: Actor): string {
   return actor.institutionId
 }
 
-function requireReader(actor: Actor): string {
+export function requireReader(actor: Actor): string {
   if (!actor.institutionId) {
     throw new AcademicError(400, 'no_institution', 'no institution for this session')
   }
@@ -71,7 +72,7 @@ function requireReader(actor: Actor): string {
 }
 
 /** Postgres raises 23505 for an exclusion violation and 23505/23P01 for unique. */
-function rethrowConflict(e: unknown, code: string, message: string): never {
+export function rethrowConflict(e: unknown, code: string, message: string): never {
   const pg = (e as { cause?: { code?: string } }).cause?.code
   if (pg === '23505' || pg === '23P01' || pg === '23514') {
     throw new AcademicError(409, code, message)
@@ -177,6 +178,36 @@ export async function setCurrentTerm(actor: Actor, input: unknown) {
   })
 }
 
+/**
+ * The registration and drop dates, set once the committee has met. Kept apart
+ * from createTerm because a term is usually created before its calendar is
+ * agreed, and because this is the field enrollment and refunds read.
+ */
+export async function setTermCalendar(actor: Actor, input: unknown) {
+  const tenant = requireWriter(actor)
+  const { termId, ...dates } = setTermCalendarSchema.parse(input)
+  return withTenant(tenant, async (tx) => {
+    const [row] = await tx
+      .update(terms)
+      .set({
+        registrationOpensOn: dates.registrationOpensOn ?? null,
+        registrationClosesOn: dates.registrationClosesOn ?? null,
+        addDropEndsOn: dates.addDropEndsOn ?? null,
+        withdrawEndsOn: dates.withdrawEndsOn ?? null,
+      })
+      .where(eq(terms.id, termId))
+      .returning()
+    if (!row) throw new AcademicError(404, 'no_such_term', 'no such term')
+    return row
+  }).catch((e) =>
+    rethrowConflict(
+      e,
+      'invalid',
+      'those dates fall outside the term, or run backwards',
+    ),
+  )
+}
+
 // --- cohorts ---------------------------------------------------------------
 
 export async function createSection(actor: Actor, input: unknown) {
@@ -250,7 +281,7 @@ export async function createSlot(actor: Actor, input: unknown) {
       .returning()
     return row!
   }).catch((e) =>
-    // The exclusion constraints named here are created in migration 0002.
+    // The exclusion constraints named here are created in migration 0001.
     rethrowConflict(
       e,
       'clash',
