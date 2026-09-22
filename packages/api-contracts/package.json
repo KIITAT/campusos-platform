@@ -20,6 +20,7 @@
   "devDependencies": {
     "@campusos/module-academic": "workspace:*",
     "@campusos/module-attendance": "workspace:*",
+    "@campusos/module-enrollment": "workspace:*",
     "@campusos/module-examinations": "workspace:*",
     "@campusos/module-fees": "workspace:*",
     "@campusos/module-finance": "workspace:*",

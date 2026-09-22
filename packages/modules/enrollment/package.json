@@ -1,0 +1,34 @@
+{
+  "name": "@campusos/module-enrollment",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./schema": "./schema.ts",
+    "./manifest": "./manifest.ts",
+    "./api": "./api/index.ts",
+    "./api/openapi": "./api/openapi.ts",
+    "./routes": "./routes.ts",
+    "./plugin": "./plugin.ts",
+    "./migrations": "./migrations",
+    "./pages": "./pages.ts"
+  },
+  "scripts": {
+    "test": "node --import tsx --test \"**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@campusos/db": "workspace:*",
+    "@campusos/module-academic": "workspace:*",
+    "@campusos/module-framework": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "react": "^19.2.8",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.18",
+    "tsx": "^4.23.12"
+  }
+}
