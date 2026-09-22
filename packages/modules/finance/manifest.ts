@@ -16,7 +16,7 @@ export const manifest: ModuleManifest = {
   name: 'Finance & Books',
   description:
     'Double-entry accounting: a chart of accounts, a journal every other module posts to, and a trial balance.',
-  version: '0.1.0',
+  version: '0.2.0',
   alwaysEnabled: false,
   dependsOn: [],
   pricing: { model: 'flat_monthly', priceINR: 2000 },
@@ -24,6 +24,8 @@ export const manifest: ModuleManifest = {
   rolesWithAccess: ['super_admin', 'institution_admin', 'accounts_staff'],
 
   navEntries: [
+    { label: 'Periods', href: '/m/finance/periods', roles: ['institution_admin'] },
+    { label: 'Budgets', href: '/m/finance/budgets', roles: ['institution_admin'] },
     {
       label: 'Books',
       href: '/m/finance',

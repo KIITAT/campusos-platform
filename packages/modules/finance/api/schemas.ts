@@ -97,3 +97,75 @@ export const trialBalanceRowSchema = z
     balancePaise: z.int(),
   })
   .meta({ id: 'FinanceTrialBalanceRow' })
+
+// --- the close and the budget ----------------------------------------------
+
+const year = z.coerce.number().int().min(1900).max(2200)
+const month = z.coerce.number().int().min(1).max(12)
+
+export const periodsQuerySchema = z
+  .object({ year: year.optional() })
+  .meta({ id: 'FinancePeriodsQuery' })
+
+export const closePeriodSchema = z
+  .object({ year, month, reason: z.string().max(500).trim().optional() })
+  .meta({ id: 'FinanceClosePeriod' })
+
+export const reopenPeriodSchema = z
+  .object({
+    year,
+    month,
+    /**
+     * Mandatory, and it stays on the row. A period reopened silently is worse
+     * than one never closed, because the close is what everybody downstream
+     * relied on.
+     */
+    reason: z.string().min(5).max(500).trim(),
+  })
+  .meta({ id: 'FinanceReopenPeriod' })
+
+export const setBudgetSchema = z
+  .object({
+    year,
+    /** Matched against the cost centre on a journal line. */
+    costCenter: z.string().min(1).max(120).trim(),
+    accountCode: z.string().min(1).max(24).trim(),
+    amountPaise: z.coerce.number().int().min(0),
+    /**
+     * Off by default. A budget that blocks a journal entry stops the books
+     * matching what actually happened, which is the one thing a ledger must
+     * never do -- an institution that wants the block asks for it per line,
+     * knowing payroll then fails rather than overspends.
+     */
+    hardLimit: z.coerce.boolean().default(false),
+    note: z.string().max(500).trim().optional(),
+  })
+  .meta({ id: 'FinanceSetBudget' })
+
+export const budgetReportQuerySchema = z
+  .object({ year, costCenter: z.string().min(1).max(120).trim().optional() })
+  .meta({ id: 'FinanceBudgetReportQuery' })
+
+export const budgetReportSchema = z
+  .object({
+    year: z.number().int(),
+    rows: z.array(
+      z.object({
+        costCenter: z.string(),
+        accountCode: z.string(),
+        accountName: z.string(),
+        budgetPaise: z.number().int(),
+        /** Debits less credits: a credit to an expense account is spending undone. */
+        actualPaise: z.number().int(),
+        remainingPaise: z.number().int(),
+        hardLimit: z.boolean(),
+        overspent: z.boolean(),
+      }),
+    ),
+    budgetedPaise: z.number().int(),
+    spentPaise: z.number().int(),
+    overspentCount: z.number().int(),
+  })
+  .meta({ id: 'FinanceBudgetReport' })
+
+export type BudgetReport = z.infer<typeof budgetReportSchema>

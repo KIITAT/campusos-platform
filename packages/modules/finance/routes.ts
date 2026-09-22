@@ -6,12 +6,17 @@ import {
 } from '@campusos/module-framework'
 import {
   archiveAccount,
+  budgetReport,
+  closePeriod,
   createAccount,
   entryLines,
   listAccounts,
   listEntries,
+  listPeriods,
   postEntry,
+  reopenPeriod,
   reverseEntry,
+  setBudget,
   trialBalance,
   type Actor,
 } from './api'
@@ -46,6 +51,38 @@ export const routes: PluginRoute[] = [
     method: 'POST',
     path: '/journal/reverse',
     handler: async (actor, req) => reverseEntry(actor as Actor, await jsonBody(req)),
+  },
+
+  {
+    method: 'GET',
+    path: '/periods',
+    handler: (actor, req) =>
+      listPeriods(actor as Actor, { year: param(req, 'year') ?? undefined }),
+  },
+  {
+    method: 'POST',
+    path: '/periods/close',
+    handler: async (actor, req) => closePeriod(actor as Actor, await jsonBody(req)),
+  },
+  {
+    method: 'POST',
+    path: '/periods/reopen',
+    handler: async (actor, req) => reopenPeriod(actor as Actor, await jsonBody(req)),
+  },
+
+  {
+    method: 'GET',
+    path: '/budgets',
+    handler: (actor, req) =>
+      budgetReport(actor as Actor, {
+        year: requiredParam(req, 'year'),
+        costCenter: param(req, 'costCenter') ?? undefined,
+      }),
+  },
+  {
+    method: 'POST',
+    path: '/budgets',
+    handler: async (actor, req) => setBudget(actor as Actor, await jsonBody(req)),
   },
 
   {

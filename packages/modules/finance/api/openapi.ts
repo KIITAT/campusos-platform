@@ -6,6 +6,10 @@ import {
   postEntrySchema,
   reverseEntrySchema,
   trialBalanceRowSchema,
+  budgetReportSchema,
+  closePeriodSchema,
+  reopenPeriodSchema,
+  setBudgetSchema,
 } from './schemas'
 
 const base = manifest.apiBasePath
@@ -16,6 +20,53 @@ const gated = {
 }
 
 export const paths = {
+  [`${base}/periods`]: {
+    get: {
+      summary: 'Accounting months and whether each is still open',
+      tags: ['finance'],
+      responses: { '200': { description: 'OK' }, ...gated },
+    },
+  },
+  [`${base}/periods/close`]: {
+    post: {
+      summary: 'Close a month: nothing may be posted into it afterwards',
+      tags: ['finance'],
+      requestBody: { content: json(closePeriodSchema) },
+      responses: {
+        '200': { description: 'Closed' },
+        ...gated,
+        '409': {
+          description: 'That month has not finished, or is already closed',
+          content: json(err),
+        },
+      },
+    },
+  },
+  [`${base}/periods/reopen`]: {
+    post: {
+      summary: 'Open a closed month again, with a reason that stays on the record',
+      tags: ['finance'],
+      requestBody: { content: json(reopenPeriodSchema) },
+      responses: { '200': { description: 'Reopened' }, ...gated },
+    },
+  },
+  [`${base}/budgets`]: {
+    get: {
+      summary: 'What each cost centre was given for the year, and what it has spent',
+      tags: ['finance'],
+      responses: {
+        '200': { description: 'OK', content: json(budgetReportSchema) },
+        ...gated,
+      },
+    },
+    post: {
+      summary: "Set a cost centre's budget on one account for a year",
+      tags: ['finance'],
+      requestBody: { content: json(setBudgetSchema) },
+      responses: { '200': { description: 'Applied' }, ...gated },
+    },
+  },
+
   [`${base}/accounts`]: {
     get: {
       summary: 'The chart of accounts',

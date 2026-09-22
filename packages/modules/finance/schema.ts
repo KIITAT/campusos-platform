@@ -1,10 +1,12 @@
 import { sql } from 'drizzle-orm'
 import {
   bigint,
+  boolean,
   check,
   index,
   pgEnum,
   pgTable,
+  smallint,
   text,
   timestamp,
   uniqueIndex,
@@ -169,5 +171,84 @@ export const lines = pgTable(
       sql`debit_paise >= 0 and credit_paise >= 0 and (debit_paise = 0) <> (credit_paise = 0)`,
     ),
     tenantPolicy('finance_journal_lines'),
+  ],
+)
+
+// --- the close -------------------------------------------------------------
+
+export const periodStatusEnum = pgEnum('finance_period_status', ['open', 'closed'])
+
+/**
+ * An accounting month, and whether it is still open.
+ *
+ * A month with no row here is open: a ledger that refused to post until
+ * somebody had pre-created every month would be a ledger nobody could start
+ * using. Closing is the deliberate act -- the month has been reconciled, the
+ * numbers have been reported, and nothing may land in it afterwards.
+ *
+ * The rule is kept by a trigger on the journal rather than by the operation
+ * that posts, because every module in the product posts, and a closed month
+ * that only some code paths respect is not closed.
+ */
+export const periods = pgTable(
+  'finance_periods',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    year: smallint().notNull(),
+    /** 1-12. An accounting month, whatever month the financial year starts in. */
+    month: smallint().notNull(),
+    status: periodStatusEnum().notNull().default('open'),
+    closedBy: text('closed_by').references(() => users.id, { onDelete: 'set null' }),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    /** Why it was opened again, which is the interesting half of the trail. */
+    reopenedReason: text('reopened_reason'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('finance_periods_month').on(t.institutionId, t.year, t.month),
+    check('finance_periods_year', sql`year between 1900 and 2200`),
+    check('finance_periods_month', sql`month between 1 and 12`),
+    check('finance_periods_closed', sql`(status = 'closed') = (closed_at is not null)`),
+    tenantPolicy('finance_periods'),
+  ],
+)
+
+// --- budgets ---------------------------------------------------------------
+
+/**
+ * What a cost centre was given for the year, on one account.
+ *
+ * Per year rather than per month because that is how a department is funded and
+ * how it argues about the number. Actual spend is summed from the journal on
+ * the same pair, so the comparison needs no second set of figures to keep in
+ * step.
+ *
+ * `hardLimit` is off by default and deliberately so. A budget that blocks a
+ * journal entry stops the books matching what actually happened, which is the
+ * one thing a ledger must never do; an institution that wants the block can ask
+ * for it per line, knowing that payroll then fails rather than overspends.
+ */
+export const budgets = pgTable(
+  'finance_budgets',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    year: smallint().notNull(),
+    /** Matched against the cost centre on a journal line. */
+    costCenter: text('cost_center').notNull(),
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    amountPaise: paise('amount_paise').notNull(),
+    hardLimit: boolean('hard_limit').notNull().default(false),
+    note: text(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('finance_budgets_line').on(t.institutionId, t.year, t.costCenter, t.accountId),
+    check('finance_budgets_year', sql`year between 1900 and 2200`),
+    check('finance_budgets_amount', sql`amount_paise >= 0`),
+    tenantPolicy('finance_budgets'),
   ],
 )

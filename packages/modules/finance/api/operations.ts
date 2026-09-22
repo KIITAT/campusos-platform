@@ -1,8 +1,9 @@
 import { and, asc, eq, gte, isNull, lte, sql } from 'drizzle-orm'
 import { audit, withTenant } from '@campusos/db'
 import type { Role, ViewerScope } from '@campusos/module-framework'
-import { accounts, entries, lines } from '../schema'
+import { accounts, budgets, entries, lines } from '../schema'
 import { DEFAULT_CHART, normalSide } from './chart'
+import { spentSoFar } from './periods'
 import {
   archiveAccountSchema,
   createAccountSchema,
@@ -61,7 +62,7 @@ const canPost = (r: Role) => r === 'institution_admin' || r === 'super_admin'
  * not gets working books the first time a payment is recorded instead of an
  * error telling it to go and press a button somewhere else.
  */
-async function ensureDefaultChart(tx: Tx, institutionId: string): Promise<void> {
+export async function ensureDefaultChart(tx: Tx, institutionId: string): Promise<void> {
   await tx
     .insert(accounts)
     .values(
@@ -276,8 +277,57 @@ export async function postWithin(
   }))
 
   await tx.insert(lines).values(resolved.map((l) => ({ institutionId, entryId, ...l })))
+  await assertWithinBudget(tx, institutionId, data.occurredAt ?? new Date(), resolved)
 
   return { id: entryId, totalPaise: debit }
+}
+
+/**
+ * Refuse an entry that would take a cost centre past a budget it was told not
+ * to pass.
+ *
+ * Only for budget lines explicitly marked as hard limits, and checked after the
+ * lines are written so the sum includes this entry. The budget row is locked
+ * first, which is what stops two entries racing for the last of it and both
+ * finding room.
+ *
+ * Off by default everywhere, because a ledger that refuses to record what
+ * happened is worse than one that records an overspend somebody has to explain.
+ */
+async function assertWithinBudget(
+  tx: Tx,
+  institutionId: string,
+  occurredAt: Date,
+  resolved: ResolvedLine[],
+): Promise<void> {
+  const spending = resolved.filter((l) => l.costCenter !== null && l.debitPaise > 0)
+  if (spending.length === 0) return
+
+  const year = occurredAt.getUTCFullYear()
+  for (const line of spending) {
+    const [budget] = await tx
+      .select({ amountPaise: budgets.amountPaise, costCenter: budgets.costCenter })
+      .from(budgets)
+      .where(
+        and(
+          eq(budgets.year, year),
+          eq(budgets.accountId, line.accountId),
+          eq(budgets.costCenter, line.costCenter!),
+          eq(budgets.hardLimit, true),
+        ),
+      )
+      .for('update')
+    if (!budget) continue
+
+    const spent = await spentSoFar(tx, year, line.accountId, line.costCenter!)
+    if (spent > budget.amountPaise) {
+      throw new FinanceError(409, 'over_budget', 'that would take a cost centre past its budget', {
+        costCenter: budget.costCenter,
+        budgetPaise: budget.amountPaise,
+        wouldBePaise: spent,
+      })
+    }
+  }
 }
 
 /**

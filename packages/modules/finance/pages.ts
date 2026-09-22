@@ -1,6 +1,14 @@
 import { formatPaise } from '@campusos/money'
 import { param, type PluginPage } from '@campusos/module-framework'
-import { entryLines, listAccounts, listEntries, trialBalance, type Actor } from './api'
+import {
+  budgetReport,
+  entryLines,
+  listAccounts,
+  listEntries,
+  listPeriods,
+  trialBalance,
+  type Actor,
+} from './api'
 
 /**
  * Three screens, which is all a college's books need on day one: what accounts
@@ -202,6 +210,145 @@ export const pages: PluginPage[] = [
               { value: 'expense', label: 'Expense' },
             ],
           },
+        ],
+      },
+    ],
+  },
+
+  {
+    path: '/periods',
+    title: 'Periods',
+    menu: 'Periods',
+    roles: [...ADMIN],
+    async load(actor) {
+      const rows = await listPeriods(actor as Actor, {})
+      const now = new Date()
+      return {
+        periods: rows.map((p) => ({
+          ...p,
+          month: `${p.year}-${String(p.month).padStart(2, '0')}`,
+          reopened: p.reopenedReason ?? '',
+        })),
+        thisMonth: `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`,
+        closedCount: String(rows.filter((p) => p.status === 'closed').length),
+      }
+    },
+    sections: (data) => [
+      {
+        kind: 'note',
+        text: `A month with no row here is open, so nothing has to be created in advance. Closing one is what stops anything landing in it afterwards -- checked against the date an entry says it happened on, not the date it was typed, because backdating into a closed month is exactly what closing prevents. It is ${String(data.thisMonth)} now.`,
+      },
+      {
+        kind: 'figures',
+        figures: [{ label: 'Months closed', value: String(data.closedCount) }],
+      },
+      {
+        kind: 'table',
+        rows: 'periods',
+        empty: 'Nothing closed yet, so every month is open.',
+        columns: [
+          { key: 'month', label: 'Month', kind: 'code' },
+          { key: 'status', label: 'Status' },
+          { key: 'closedAt', label: 'Closed', kind: 'when' },
+          { key: 'reopened', label: 'Reopened because', alertWhen: 'reopened' },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Close a month',
+        note: 'Refused before the month is over: a period closed while entries for it are still arriving is a period that gets reopened on Monday.',
+        submit: 'Close',
+        path: '/periods/close',
+        fields: [
+          { name: 'year', label: 'Year', kind: 'number' },
+          { name: 'month', label: 'Month', kind: 'number', hint: '1-12' },
+          { name: 'reason', label: 'Note', optional: true },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Open one again',
+        note: 'A decision, not an undo. The reason stays on the row, because the close is what everybody downstream relied on.',
+        submit: 'Reopen',
+        path: '/periods/reopen',
+        fields: [
+          { name: 'year', label: 'Year', kind: 'number' },
+          { name: 'month', label: 'Month', kind: 'number' },
+          { name: 'reason', label: 'Reason', hint: 'At least five characters' },
+        ],
+      },
+    ],
+  },
+
+  {
+    path: '/budgets',
+    title: 'Budgets',
+    menu: 'Budgets',
+    roles: [...ADMIN],
+    async load(actor, req) {
+      const year = Number(param(req, 'year') ?? new Date().getUTCFullYear())
+      const report = await budgetReport(actor as Actor, { year })
+      const accounts = await listAccounts(actor as Actor)
+      return {
+        year: String(year),
+        rows: report.rows,
+        budgeted: formatPaise(report.budgetedPaise),
+        spent: formatPaise(report.spentPaise),
+        overspent: String(report.overspentCount),
+        accountOptions: accounts
+          .filter((a) => !a.archivedAt)
+          .map((a) => ({ value: a.code, label: `${a.code} - ${a.name}` })),
+      }
+    },
+    sections: (data) => [
+      {
+        kind: 'note',
+        text: 'Spend is summed from the journal on the cost centre a line carries, so there is no second set of figures to keep in step. Departments reach it through payroll; anything else reaches it by putting a cost centre on the entry.',
+      },
+      {
+        kind: 'figures',
+        figures: [
+          { label: `Budgeted ${String(data.year)}`, value: String(data.budgeted) },
+          { label: 'Spent', value: String(data.spent) },
+          {
+            label: 'Over budget',
+            value: String(data.overspent),
+            tone: Number(data.overspent) > 0 ? 'due' : 'clear',
+          },
+        ],
+      },
+      {
+        kind: 'table',
+        rows: 'rows',
+        empty: 'Nothing budgeted for this year.',
+        columns: [
+          { key: 'costCenter', label: 'Cost centre' },
+          { key: 'accountCode', label: 'Account', kind: 'code' },
+          { key: 'accountName', label: 'Name' },
+          { key: 'budgetPaise', label: 'Budget', kind: 'money' },
+          { key: 'actualPaise', label: 'Spent', kind: 'money' },
+          { key: 'remainingPaise', label: 'Left', kind: 'money', alertWhen: 'overspent' },
+          { key: 'hardLimit', label: 'Enforced', kind: 'bool' },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Set a budget',
+        note: 'Enforced budgets refuse the entry that would pass them. Left off, an overspend is recorded and reported -- which is usually right, because books that refuse to record what happened are worse than an overspend somebody has to explain.',
+        submit: 'Set',
+        path: '/budgets',
+        fields: [
+          { name: 'year', label: 'Year', kind: 'number' },
+          { name: 'costCenter', label: 'Cost centre', hint: 'As it appears on the journal line' },
+          {
+            name: 'accountCode',
+            label: 'Account',
+            kind: 'select',
+            options: 'accountOptions',
+          },
+          { name: 'amountPaise', label: 'Budget', kind: 'money' },
+          { name: 'hardLimit', label: 'Refuse entries past it', kind: 'checkbox', optional: true },
+          { name: 'note', label: 'Note', optional: true },
         ],
       },
     ],
