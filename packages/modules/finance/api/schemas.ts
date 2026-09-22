@@ -12,6 +12,7 @@ export const accountPurposes = [
   'fee_income',
   'fee_waiver',
   'fine_income',
+  'scholarship_expense',
   'salaries_expense',
   'employer_cost',
   'salaries_payable',

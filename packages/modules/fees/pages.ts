@@ -3,8 +3,12 @@ import { param, type PluginPage } from '@campusos/module-framework'
 import { listStructure } from '@campusos/module-academic/api'
 import {
   duesReport,
+  listAwards,
+  listDropCredits,
   listFeeItems,
   listInvoices,
+  listRefundRules,
+  listScholarships,
   studentLedger,
   type Actor,
 } from './api'
@@ -209,6 +213,7 @@ export const pages: PluginPage[] = [
         termCode: l.termCode,
         studentId,
         payable: l.payablePaise,
+        credited: l.creditedPaise,
         paid: l.paidPaise,
         outstanding: l.outstandingPaise,
         overpaid: l.overpaidPaise,
@@ -248,6 +253,15 @@ export const pages: PluginPage[] = [
         title: `${data.who ?? 'Student'} - ${data.termCode ?? ''}`,
         figures: [
           { label: 'Payable', value: formatPaise(Number(data.payable ?? 0)) },
+          ...(Number(data.credited ?? 0) > 0
+            ? [
+                {
+                  label: 'Aid and credits',
+                  value: formatPaise(Number(data.credited)),
+                  tone: 'clear' as const,
+                },
+              ]
+            : []),
           { label: 'Paid', value: formatPaise(Number(data.paid ?? 0)) },
           {
             label: 'Outstanding',
@@ -423,6 +437,7 @@ export const pages: PluginPage[] = [
       return {
         termCode: l.termCode,
         payable: l.payablePaise,
+        credited: l.creditedPaise,
         paid: l.paidPaise,
         outstanding: l.outstandingPaise,
         unreconciled: l.unreconciledPaise,
@@ -449,6 +464,15 @@ export const pages: PluginPage[] = [
         kind: 'figures',
         figures: [
           { label: 'Payable', value: formatPaise(Number(data.payable ?? 0)) },
+          ...(Number(data.credited ?? 0) > 0
+            ? [
+                {
+                  label: 'Aid and credits',
+                  value: formatPaise(Number(data.credited)),
+                  tone: 'clear' as const,
+                },
+              ]
+            : []),
           { label: 'Paid', value: formatPaise(Number(data.paid ?? 0)) },
           {
             label: 'Outstanding',
@@ -490,6 +514,218 @@ export const pages: PluginPage[] = [
           { key: 'receivedAt', label: 'Date', kind: 'date' },
           { key: 'amountPaise', label: 'Amount', kind: 'money' },
           { key: 'status', label: 'Status', alertWhen: 'pending' },
+        ],
+      },
+    ],
+  },
+
+  {
+    path: '/aid',
+    title: 'Aid and refunds',
+    menu: 'Aid',
+    roles: [...ADMIN],
+    async load(actor, req) {
+      const a = actor as Actor
+      const structure = await listStructure(a as never)
+      const current = structure.terms.find((t) => t.isCurrent) ?? structure.terms[0] ?? null
+      const termId = param(req, 'termId') ?? current?.id ?? null
+
+      const [rules, awards, brackets, credits] = await Promise.all([
+        listScholarships(a),
+        termId ? listAwards(a, { termId }) : Promise.resolve([]),
+        termId ? listRefundRules(a, termId) : Promise.resolve([]),
+        termId ? listDropCredits(a, termId) : Promise.resolve([]),
+      ])
+
+      return {
+        termId,
+        termName: current ? `${current.code} - ${current.name}` : null,
+        scholarships: rules.map((r) => ({
+          ...r,
+          worth:
+            r.basis === 'fixed'
+              ? formatPaise(r.amountPaise ?? 0)
+              : `${(r.percentBps ?? 0) / 100}% of charges`,
+          asks: [
+            r.minCredits > 0 ? `${r.minCredits} credits` : null,
+            r.minCgpa === null ? null : `${r.minCgpa} average`,
+          ]
+            .filter(Boolean)
+            .join(', ') || 'nothing',
+        })),
+        awards: awards.map((w) => ({
+          ...w,
+          amount: formatPaise(w.amountPaise),
+          held: w.status === 'awarded',
+        })),
+        awardedPaise: formatPaise(
+          awards.filter((w) => w.status === 'awarded').reduce((n, w) => n + w.amountPaise, 0),
+        ),
+        brackets: brackets.map((b) => ({
+          ...b,
+          share: `${b.refundBps / 100}%`,
+        })),
+        credits: credits.map((d) => ({
+          ...d,
+          amount: formatPaise(d.amountPaise),
+          share: `${d.refundBps / 100}%`,
+        })),
+        creditedPaise: formatPaise(credits.reduce((n, d) => n + d.amountPaise, 0)),
+        scholarshipOptions: rules
+          .filter((r) => r.isActive)
+          .map((r) => ({ value: r.id, label: `${r.code} - ${r.name}` })),
+        termOptions: structure.terms.map((t) => ({
+          value: t.id,
+          label: `${t.code} - ${t.name}`,
+        })),
+      }
+    },
+    sections: (data) => [
+      {
+        kind: 'note',
+        text: data.termName
+          ? `${String(data.termName)}. Scholarships the institution funds itself; a government or state scheme is recorded here as an award with the scheme named on it, because its eligibility lives where its rules do.`
+          : 'No term yet. Aid and refunds are both worked out per term.',
+      },
+      {
+        kind: 'figures',
+        figures: [
+          { label: 'Awarded this term', value: String(data.awardedPaise), tone: 'clear' },
+          { label: 'Credited for drops', value: String(data.creditedPaise), tone: 'clear' },
+        ],
+      },
+      {
+        kind: 'table',
+        title: 'Scholarships',
+        rows: 'scholarships',
+        empty: 'None defined.',
+        columns: [
+          { key: 'code', label: 'Code', kind: 'code' },
+          { key: 'name', label: 'Name' },
+          { key: 'kind', label: 'Kind' },
+          { key: 'worth', label: 'Worth' },
+          { key: 'asks', label: 'Asks for' },
+          { key: 'isActive', label: 'Live', kind: 'bool' },
+        ],
+      },
+      {
+        kind: 'table',
+        title: 'Awards this term',
+        note: 'Revoking posts the reversal and keeps the row: a student who lost a scholarship and a student who never had one are different facts.',
+        rows: 'awards',
+        empty: 'Nothing awarded.',
+        columns: [
+          { key: 'studentName', label: 'Student' },
+          { key: 'code', label: 'Scholarship', kind: 'code' },
+          { key: 'amount', label: 'Amount' },
+          { key: 'status', label: 'Status' },
+          { key: 'creditsAtAward', label: 'Credits then' },
+          { key: 'cgpaAtAward', label: 'Average then' },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Define a scholarship',
+        note: 'A fixed sum, or a share of what the student was charged. The minimums are checked against registered credits and the academic record, never entered by hand.',
+        submit: 'Define',
+        path: '/scholarships',
+        fields: [
+          { name: 'code', label: 'Code' },
+          { name: 'name', label: 'Name' },
+          {
+            name: 'kind',
+            label: 'Kind',
+            kind: 'select',
+            options: [
+              { value: 'merit', label: 'merit' },
+              { value: 'need', label: 'need' },
+              { value: 'staff', label: 'staff' },
+              { value: 'sport', label: 'sport' },
+              { value: 'other', label: 'other' },
+            ],
+          },
+          {
+            name: 'basis',
+            label: 'Basis',
+            kind: 'select',
+            options: [
+              { value: 'fixed', label: 'fixed - a sum per term' },
+              { value: 'proportional', label: 'proportional - a share of charges' },
+            ],
+          },
+          { name: 'amountPaise', label: 'Amount', kind: 'money', optional: true },
+          {
+            name: 'percentBps',
+            label: 'Share',
+            kind: 'number',
+            optional: true,
+            hint: 'Basis points: 2500 is a quarter of the term charges.',
+          },
+          { name: 'minCredits', label: 'Minimum credits', kind: 'number', optional: true },
+          { name: 'minCgpa', label: 'Minimum average', kind: 'number', optional: true },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Award one',
+        note: 'Refused unless the student actually qualifies, and the amount is settled and frozen when it is granted.',
+        submit: 'Award',
+        path: '/aid/award',
+        fields: [
+          {
+            name: 'scholarshipId',
+            label: 'Scholarship',
+            kind: 'select',
+            options: 'scholarshipOptions',
+          },
+          { name: 'studentId', label: 'Student id' },
+          { name: 'termId', label: 'Term', kind: 'select', options: 'termOptions' },
+          { name: 'reason', label: 'Note', optional: true },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Withdraw an award',
+        submit: 'Withdraw',
+        path: '/aid/revoke',
+        fields: [
+          { name: 'awardId', label: 'Award id' },
+          { name: 'reason', label: 'Reason', hint: 'At least five characters' },
+        ],
+      },
+      {
+        kind: 'table',
+        title: 'Refund brackets',
+        note: 'The first bracket a drop date falls within decides it. Past every bracket, the charge is kept in full.',
+        rows: 'brackets',
+        empty: 'None set, so a drop returns nothing.',
+        columns: [
+          { key: 'throughOn', label: 'Through', kind: 'date' },
+          { key: 'share', label: 'Returned' },
+        ],
+      },
+      {
+        kind: 'table',
+        title: 'Credited for dropped courses',
+        rows: 'credits',
+        empty: 'Nothing credited.',
+        columns: [
+          { key: 'studentName', label: 'Student' },
+          { key: 'creditsDropped', label: 'Credits' },
+          { key: 'effectiveOn', label: 'Dropped', kind: 'date' },
+          { key: 'share', label: 'Bracket' },
+          { key: 'amount', label: 'Credited' },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Work the drops into credits',
+        note: 'Once per dropped course, however many times this is run. Only tuition-style lines move: a registration fee is not returned because somebody dropped a paper.',
+        submit: 'Prorate',
+        path: '/drops/prorate',
+        fields: [
+          { name: 'termId', label: 'Term', kind: 'select', options: 'termOptions' },
+          { name: 'studentId', label: 'One student only', optional: true },
         ],
       },
     ],

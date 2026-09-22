@@ -1,8 +1,8 @@
 /**
  * The chart an institution gets if it never builds its own.
  *
- * Ten accounts, which is the smallest set that lets fees, the library and
- * payroll all post something an accountant would recognise. Codes follow the
+ * Eleven accounts, which is the smallest set that lets fees, aid, the library
+ * and payroll all post something an accountant would recognise. Codes follow the
  * convention almost every Indian college's auditor already uses -- 1000s
  * assets, 2000s liabilities, 4000s income, 5000s expense -- so the first
  * conversation about this is "renumber these" rather than "what is any of
@@ -31,9 +31,15 @@ export const DEFAULT_CHART = [
   { code: '4100', name: 'Fines and charges', type: 'income', purpose: 'fine_income' },
   {
     code: '5000',
-    name: 'Scholarships and waivers',
+    name: 'Fee waivers and concessions',
     type: 'expense',
     purpose: 'fee_waiver',
+  },
+  {
+    code: '5200',
+    name: 'Scholarships awarded',
+    type: 'expense',
+    purpose: 'scholarship_expense',
   },
   { code: '5100', name: 'Salaries and wages', type: 'expense', purpose: 'salaries_expense' },
   {

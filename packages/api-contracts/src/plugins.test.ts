@@ -96,7 +96,7 @@ test('the whole product still answers the same number of endpoints', () => {
   // and the scale a programme grades on. A regression guard on the conversion,
   // not a target.
   const total = PLUGINS.reduce((n, p) => n + p.routes.length, 0)
-  assert.equal(total, 143, `expected 143 endpoints across all modules, found ${total}`)
+  assert.equal(total, 153, `expected 153 endpoints across all modules, found ${total}`)
 })
 
 test('a longer path is never swallowed by a shorter one', () => {

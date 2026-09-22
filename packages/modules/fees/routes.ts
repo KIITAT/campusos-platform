@@ -7,8 +7,18 @@ import {
 import { eq } from 'drizzle-orm'
 import { db, institutions } from '@campusos/db'
 import {
+  assessAid,
+  awardScholarship,
   createFeeItem,
+  createScholarship,
   duesReport,
+  listAwards,
+  listDropCredits,
+  listRefundRules,
+  listScholarships,
+  prorateDrops,
+  revokeAward,
+  setRefundRules,
   grantWaiver,
   issueInvoices,
   listFeeItems,
@@ -24,6 +34,66 @@ import {
 } from './api'
 
 export const routes: PluginRoute[] = [
+  {
+    method: 'GET',
+    path: '/scholarships',
+    handler: (actor) => listScholarships(actor as Actor),
+  },
+  {
+    method: 'POST',
+    path: '/scholarships',
+    handler: async (actor, req) => createScholarship(actor as Actor, await jsonBody(req)),
+  },
+  {
+    method: 'GET',
+    path: '/aid',
+    handler: (actor, req) =>
+      assessAid(actor as Actor, {
+        studentId: requiredParam(req, 'studentId'),
+        termId: requiredParam(req, 'termId'),
+      }),
+  },
+  {
+    method: 'POST',
+    path: '/aid/award',
+    handler: async (actor, req) => awardScholarship(actor as Actor, await jsonBody(req)),
+  },
+  {
+    method: 'POST',
+    path: '/aid/revoke',
+    handler: async (actor, req) => revokeAward(actor as Actor, await jsonBody(req)),
+  },
+  {
+    method: 'GET',
+    path: '/aid/awards',
+    handler: (actor, req) =>
+      listAwards(actor as Actor, {
+        termId: requiredParam(req, 'termId'),
+        studentId: param(req, 'studentId'),
+      }),
+  },
+
+  {
+    method: 'GET',
+    path: '/refund-rules',
+    handler: (actor, req) => listRefundRules(actor as Actor, requiredParam(req, 'termId')),
+  },
+  {
+    method: 'POST',
+    path: '/refund-rules',
+    handler: async (actor, req) => setRefundRules(actor as Actor, await jsonBody(req)),
+  },
+  {
+    method: 'GET',
+    path: '/drops',
+    handler: (actor, req) => listDropCredits(actor as Actor, requiredParam(req, 'termId')),
+  },
+  {
+    method: 'POST',
+    path: '/drops/prorate',
+    handler: async (actor, req) => prorateDrops(actor as Actor, await jsonBody(req)),
+  },
+
   {
     method: 'GET',
     path: '/items',

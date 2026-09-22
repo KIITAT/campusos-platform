@@ -8,7 +8,9 @@ import {
   terms,
 } from '@campusos/module-academic/schema'
 import {
+  dropCredits,
   feeInvoices,
+  scholarshipAwards,
   feeItems,
   feePayments,
   feeRefunds,
@@ -72,7 +74,7 @@ const requireFinance = (actor: Actor) => {
  * Issuing charges and giving money back are decisions, not counter work -- the
  * same line waivers already sit on the far side of.
  */
-const requireAdmin = (actor: Actor) => {
+export const requireAdmin = (actor: Actor) => {
   const tenant = tenantOf(actor)
   if (!canWaive(actor.role)) throw new FeeError(403, 'forbidden', 'not permitted')
   return tenant
@@ -111,6 +113,7 @@ export async function createFeeItem(actor: Actor, input: unknown) {
         termId: data.termId,
         label: data.label,
         amountPaise: data.amount,
+        proratable: data.proratable,
         dueOn: data.dueOn ? new Date(data.dueOn) : null,
       })
       .onConflictDoNothing()
@@ -700,6 +703,29 @@ async function chargesFor(tx: Tx, studentId: string, termId: string) {
     .orderBy(asc(feeItems.label))
 }
 
+/**
+ * What the institution has taken off this student's bill without any money
+ * moving: scholarships it is funding, and credit for courses dropped inside the
+ * refund window. Both are already in the books by the time they are read here.
+ */
+async function creditsFor(tx: Tx, studentId: string, termId: string) {
+  const aid = await tx
+    .select({ amountPaise: scholarshipAwards.amountPaise })
+    .from(scholarshipAwards)
+    .where(
+      and(
+        eq(scholarshipAwards.studentId, studentId),
+        eq(scholarshipAwards.termId, termId),
+        eq(scholarshipAwards.status, 'awarded'),
+      ),
+    )
+  const dropped = await tx
+    .select({ amountPaise: dropCredits.amountPaise })
+    .from(dropCredits)
+    .where(and(eq(dropCredits.studentId, studentId), eq(dropCredits.termId, termId)))
+  return [...aid, ...dropped]
+}
+
 /** What has gone back out to this student for this term. */
 function refundsFor(tx: Tx, studentId: string, termId: string) {
   return tx
@@ -751,7 +777,7 @@ export async function studentLedger(
       chargedPaise: c.chargedPaise,
       waivedPaise: c.waivedPaise ?? 0,
     }))
-    const l = ledger(lines, payments, refunds)
+    const l = ledger(lines, payments, refunds, await creditsFor(tx, studentId, termId))
 
     return {
       studentId,
@@ -778,6 +804,7 @@ export async function studentLedger(
       })),
       chargedPaise: l.chargedPaise,
       waivedPaise: l.waivedPaise,
+      creditedPaise: l.creditedPaise,
       payablePaise: l.payablePaise,
       paidPaise: l.paidPaise,
       refundedPaise: l.refundedPaise,
@@ -834,6 +861,7 @@ export async function duesReport(actor: Actor, termId: string): Promise<DuesRepo
         })),
         payments,
         await refundsFor(tx, s.studentId, termId),
+        await creditsFor(tx, s.studentId, termId),
       )
       if (l.payablePaise === 0 && l.paidPaise === 0) continue
 
@@ -842,6 +870,7 @@ export async function duesReport(actor: Actor, termId: string): Promise<DuesRepo
         studentName: s.studentName,
         studentEmail: s.studentEmail,
         programCode: s.programCode,
+        creditedPaise: l.creditedPaise,
         payablePaise: l.payablePaise,
         paidPaise: l.paidPaise,
         refundedPaise: l.refundedPaise,

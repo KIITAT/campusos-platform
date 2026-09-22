@@ -1,4 +1,5 @@
 export * from './operations'
+export * from './aid'
 export * from './schemas'
 export * from './ledger'
 export { formatPaise, parseRupeesToPaise, plainPaise } from '@campusos/money'

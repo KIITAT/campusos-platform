@@ -1,11 +1,15 @@
 import { sql } from 'drizzle-orm'
 import {
   bigint,
+  boolean,
   check,
+  date,
   index,
   integer,
+  numeric,
   pgEnum,
   pgTable,
+  smallint,
   text,
   timestamp,
   uniqueIndex,
@@ -68,6 +72,13 @@ export const feeItems = pgTable(
       .references(() => terms.id, { onDelete: 'cascade' }),
     label: text().notNull(),
     amountPaise: paise('amount_paise').notNull(),
+    /**
+     * Whether dropping a course reduces this line. Tuition does; a one-off
+     * registration or examination fee does not, and defaulting to false is the
+     * safe direction -- refunding nothing is an argument, refunding wrongly is
+     * an audit finding.
+     */
+    proratable: boolean().notNull().default(false),
     dueOn: timestamp('due_on', { withTimezone: true }),
     createdAt: createdAt(),
   },
@@ -259,5 +270,190 @@ export const feeRefunds = pgTable(
     check('fee_refunds_amount', sql`amount_paise > 0`),
     check('fee_refunds_reason', sql`length(trim(reason)) >= 5`),
     tenantPolicy('fee_refunds'),
+  ],
+)
+
+// --- what the institution pays for a student -------------------------------
+
+export const scholarshipKindEnum = pgEnum('fee_scholarship_kind', [
+  'merit',
+  'need',
+  'staff',
+  'sport',
+  'other',
+])
+
+export const awardBasisEnum = pgEnum('fee_award_basis', [
+  /** A fixed sum per term. */
+  'fixed',
+  /** A share of what the student was charged that term. */
+  'proportional',
+])
+
+/**
+ * A scholarship the institution itself funds and defines.
+ *
+ * Deliberately data rather than code. Every institution's rules are its own,
+ * they change between intakes, and a rule compiled into the product is a rule
+ * nobody can correct without a release. What the product supplies is the shape:
+ * who qualifies, how much, and whether the amount is fixed or a share of the
+ * bill.
+ *
+ * Government and state schemes are not modelled here. Their eligibility is
+ * statutory, changes by notification, and getting it subtly wrong produces a
+ * number that looks right and is not -- which is worse than not offering it. An
+ * institution that administers one records the outcome as an ordinary award
+ * with the scheme named on it.
+ */
+export const scholarships = pgTable(
+  'fee_scholarships',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    code: text().notNull(),
+    name: text().notNull(),
+    kind: scholarshipKindEnum().notNull(),
+    basis: awardBasisEnum().notNull(),
+    /** For a fixed award. Null when the award is proportional. */
+    amountPaise: paise('amount_paise'),
+    /** For a proportional award: basis points of the term's charges. */
+    percentBps: integer('percent_bps'),
+    /** Minimum registered credits that term. Zero asks nothing. */
+    minCredits: smallint('min_credits').notNull().default(0),
+    /** Minimum cumulative average. Null asks nothing. */
+    minCgpa: numeric('min_cgpa', { precision: 4, scale: 2 }),
+    /** Awards may still be revoked; this only stops new ones. */
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('fee_scholarships_code').on(t.institutionId, t.code),
+    check(
+      'fee_scholarships_amount',
+      sql`(basis = 'fixed' and amount_paise > 0 and percent_bps is null)
+          or (basis = 'proportional' and percent_bps between 1 and 10000 and amount_paise is null)`,
+    ),
+    check('fee_scholarships_credits', sql`min_credits between 0 and 60`),
+    tenantPolicy('fee_scholarships'),
+  ],
+)
+
+export const awardStatusEnum = pgEnum('fee_award_status', ['awarded', 'revoked'])
+
+/**
+ * One student, one scholarship, one term.
+ *
+ * The amount is settled and frozen when the award is made rather than computed
+ * on read: a proportional award is a share of what the student was charged that
+ * term, and re-deriving it after a supplementary charge would silently change
+ * an award somebody was told about in writing.
+ *
+ * Revoking sets the status and posts the reversal; it never deletes. A student
+ * who lost a scholarship and a student who never had one are different facts.
+ */
+export const scholarshipAwards = pgTable(
+  'fee_scholarship_awards',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    scholarshipId: uuid('scholarship_id')
+      .notNull()
+      .references(() => scholarships.id, { onDelete: 'restrict' }),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    termId: uuid('term_id')
+      .notNull()
+      .references(() => terms.id, { onDelete: 'cascade' }),
+    amountPaise: paise('amount_paise').notNull(),
+    status: awardStatusEnum().notNull().default('awarded'),
+    /** What was true when it was granted, kept so the decision can be explained. */
+    creditsAtAward: smallint('credits_at_award'),
+    cgpaAtAward: numeric('cgpa_at_award', { precision: 4, scale: 2 }),
+    reason: text(),
+    awardedBy: text('awarded_by').references(() => users.id, { onDelete: 'set null' }),
+    revokedReason: text('revoked_reason'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('fee_scholarship_awards_once').on(t.scholarshipId, t.studentId, t.termId),
+    index('fee_scholarship_awards_student').on(t.studentId, t.termId),
+    check('fee_scholarship_awards_amount', sql`amount_paise > 0`),
+    check(
+      'fee_scholarship_awards_revoked',
+      sql`(status = 'revoked') = (revoked_reason is not null)`,
+    ),
+    tenantPolicy('fee_scholarship_awards'),
+  ],
+)
+
+// --- what comes back when a course is dropped ------------------------------
+
+/**
+ * How much of a charge survives a drop, by the date the drop counts from.
+ *
+ * One row per bracket: "through the 14th, none of it is kept". The last bracket
+ * a drop date falls within decides it, and a drop after every bracket keeps the
+ * whole charge -- which is the default a term with no rules at all gets, and the
+ * safe direction to be wrong in, because refunding nothing is an argument and
+ * refunding wrongly is an audit finding.
+ */
+export const refundRules = pgTable(
+  'fee_refund_rules',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    termId: uuid('term_id')
+      .notNull()
+      .references(() => terms.id, { onDelete: 'cascade' }),
+    /** Drops effective on or before this date fall in this bracket. */
+    throughOn: date('through_on').notNull(),
+    /** Basis points of the proratable charge returned. 10000 is all of it. */
+    refundBps: integer('refund_bps').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('fee_refund_rules_bracket').on(t.termId, t.throughOn),
+    check('fee_refund_rules_bps', sql`refund_bps between 0 and 10000`),
+    tenantPolicy('fee_refund_rules'),
+  ],
+)
+
+/**
+ * The credit a dropped course earned, once, per offering.
+ *
+ * Unique on the offering so that running the proration again after a second
+ * drop credits the new one and not the old one -- the bursar's run is a sweep
+ * over a term, and a sweep that double-credits is worse than one nobody runs.
+ *
+ * Posted as a debit against fee income rather than into the waiver account: the
+ * institution is not forgiving a charge, it is not earning revenue for teaching
+ * it did not do.
+ */
+export const dropCredits = pgTable(
+  'fee_drop_credits',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    termId: uuid('term_id')
+      .notNull()
+      .references(() => terms.id, { onDelete: 'cascade' }),
+    /** The registration this came from, in the enrollment module. */
+    offeringId: uuid('offering_id').notNull(),
+    creditsDropped: smallint('credits_dropped').notNull(),
+    /** The day the drop counted from, which chose the bracket. */
+    effectiveOn: date('effective_on').notNull(),
+    refundBps: integer('refund_bps').notNull(),
+    amountPaise: paise('amount_paise').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('fee_drop_credits_once').on(t.studentId, t.offeringId),
+    index('fee_drop_credits_term').on(t.termId, t.studentId),
+    check('fee_drop_credits_amount', sql`amount_paise > 0`),
+    tenantPolicy('fee_drop_credits'),
   ],
 )

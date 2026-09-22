@@ -179,3 +179,93 @@ export async function postWaiverChange(
         ],
   })
 }
+
+/**
+ * A scholarship the institution funds.
+ *
+ *   debit  scholarships awarded   what it cost the institution
+ *   credit fees receivable        the student owes that much less
+ *
+ * Its own expense account, not the waiver one. A waiver is a charge the
+ * institution decided not to make; a scholarship is a charge it decided to pay.
+ * A principal asking what the scholarship programme cost this year should not
+ * have to read it out of a line that also holds every hardship concession the
+ * bursar granted at the counter.
+ *
+ * Nothing moves between accounts outside the institution, which is the honest
+ * shape: no cash leaves, the student's bill simply gets smaller.
+ */
+export async function postScholarship(
+  tx: Tx,
+  institutionId: string,
+  actorId: string | null,
+  award: {
+    id: string
+    studentName: string | null
+    termCode: string
+    scholarshipName: string
+    amountPaise: number
+    reversing?: boolean
+  },
+): Promise<void> {
+  if (award.amountPaise <= 0) return
+  const who = award.studentName ?? 'student'
+  const back = award.reversing === true
+
+  await postWithin(tx, institutionId, actorId, {
+    memo: `${back ? 'Scholarship withdrawn' : 'Scholarship'}, ${award.scholarshipName}, ${who} (${award.termCode})`,
+    sourceModule: 'fees',
+    sourceRef: `${back ? 'award-revoked' : 'award'}:${award.id}`,
+    lines: back
+      ? [
+          { purpose: 'fees_receivable', debitPaise: award.amountPaise },
+          { purpose: 'scholarship_expense', creditPaise: award.amountPaise },
+        ]
+      : [
+          { purpose: 'scholarship_expense', debitPaise: award.amountPaise },
+          { purpose: 'fees_receivable', creditPaise: award.amountPaise },
+        ],
+  })
+}
+
+/**
+ * A course dropped inside the refund window.
+ *
+ *   debit  fee income        revenue for teaching that did not happen
+ *   credit fees receivable   the student owes that much less
+ *
+ * Deliberately against income rather than into the waiver account. The
+ * institution has not forgiven anything: it billed for a term of teaching, some
+ * of that teaching was cancelled by the student inside the window the calendar
+ * allows, and the revenue was never earned. Filing that as a concession would
+ * overstate both what was earned and what was given away.
+ *
+ * If the student had already paid, this leaves them in credit, and money going
+ * back out is a refund against the payment it came in on -- which fees already
+ * knows how to do, and which needs a bank instruction rather than a calendar.
+ */
+export async function postDropCredit(
+  tx: Tx,
+  institutionId: string,
+  actorId: string | null,
+  credit: {
+    id: string
+    studentName: string | null
+    termCode: string
+    courseCode: string
+    effectiveOn: string
+    amountPaise: number
+  },
+): Promise<void> {
+  if (credit.amountPaise <= 0) return
+
+  await postWithin(tx, institutionId, actorId, {
+    memo: `${credit.courseCode} dropped ${credit.effectiveOn}, ${credit.studentName ?? 'student'} (${credit.termCode})`,
+    sourceModule: 'fees',
+    sourceRef: `drop:${credit.id}`,
+    lines: [
+      { purpose: 'fee_income', debitPaise: credit.amountPaise },
+      { purpose: 'fees_receivable', creditPaise: credit.amountPaise },
+    ],
+  })
+}

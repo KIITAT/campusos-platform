@@ -14,6 +14,12 @@ export interface Ledger {
   lines: LedgerLine[]
   chargedPaise: number
   waivedPaise: number
+  /**
+   * Scholarships the institution is paying, and credit for courses dropped
+   * inside the refund window. Both reduce the bill without any money moving,
+   * and both have already been posted to the books when they got here.
+   */
+  creditedPaise: number
   payablePaise: number
   /** What came in, less anything that went back out. */
   paidPaise: number
@@ -36,6 +42,7 @@ export function ledger(
   lines: LedgerLine[],
   payments: { amountPaise: number; reconciledAt: Date | null }[],
   refunds: { amountPaise: number }[] = [],
+  credits: { amountPaise: number }[] = [],
 ): Ledger {
   const chargedPaise = lines.reduce((n, l) => n + l.chargedPaise, 0)
   const waivedPaise = lines.reduce((n, l) => n + l.waivedPaise, 0)
@@ -48,11 +55,17 @@ export function ledger(
     .filter((p) => p.reconciledAt === null)
     .reduce((n, p) => n + p.amountPaise, 0)
 
-  const payablePaise = chargedPaise - waivedPaise
+  // Aid and drop credits sit beside waivers rather than inside them: all three
+  // reduce the bill, and an institution needs to see separately what it forgave,
+  // what it paid for, and what it never earned.
+  const creditedPaise = credits.reduce((n, c) => n + c.amountPaise, 0)
+
+  const payablePaise = Math.max(0, chargedPaise - waivedPaise - creditedPaise)
   return {
     lines,
     chargedPaise,
     waivedPaise,
+    creditedPaise,
     payablePaise,
     paidPaise,
     refundedPaise,

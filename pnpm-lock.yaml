@@ -255,6 +255,9 @@ importers:
       '@campusos/module-academic':
         specifier: workspace:*
         version: link:../academic
+      '@campusos/module-enrollment':
+        specifier: workspace:*
+        version: link:../enrollment
       '@campusos/module-finance':
         specifier: workspace:*
         version: link:../finance

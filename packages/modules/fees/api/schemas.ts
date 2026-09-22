@@ -1,5 +1,5 @@
 import * as z from 'zod'
-import { paymentMethodEnum } from '../schema'
+import { awardBasisEnum, paymentMethodEnum, scholarshipKindEnum } from '../schema'
 import { parseRupeesToPaise } from '@campusos/money'
 
 const uuid = z.uuid()
@@ -26,6 +26,11 @@ export const createFeeItemSchema = z
     termId: uuid,
     label,
     amount: positiveRupees,
+    /**
+     * Whether dropping a course reduces this line. Tuition does; a one-off
+     * registration or examination fee does not.
+     */
+    proratable: z.coerce.boolean().default(false),
     dueOn: z.iso.date().nullish(),
   })
   .meta({ id: 'FeeItemCreate' })
@@ -129,6 +134,8 @@ export const studentLedgerSchema = z
     payments: z.array(paymentSchema),
     chargedPaise: z.number().int(),
     waivedPaise: z.number().int(),
+    /** Scholarships funded and credit for dropped courses, both already posted. */
+    creditedPaise: z.number().int(),
     payablePaise: z.number().int(),
     paidPaise: z.number().int(),
     refundedPaise: z.number().int(),
@@ -146,6 +153,7 @@ export const duesRowSchema = z
     studentName: z.string().nullable(),
     studentEmail: z.string().nullable(),
     programCode: z.string(),
+    creditedPaise: z.number().int(),
     payablePaise: z.number().int(),
     paidPaise: z.number().int(),
     refundedPaise: z.number().int(),
@@ -165,3 +173,105 @@ export const duesReportSchema = z
 
 export type StudentLedger = z.infer<typeof studentLedgerSchema>
 export type DuesReport = z.infer<typeof duesReportSchema>
+
+// --- student financials ----------------------------------------------------
+
+export const createScholarshipSchema = z
+  .object({
+    code: z.string().min(1).max(24).trim().toUpperCase(),
+    name: z.string().min(1).max(200).trim(),
+    kind: z.enum(scholarshipKindEnum.enumValues),
+    basis: z.enum(awardBasisEnum.enumValues),
+    /** For a fixed award, in rupees. */
+    amountPaise: positiveRupees.optional(),
+    /** For a proportional award: basis points of the term's charges. */
+    percentBps: z.coerce.number().int().min(1).max(10_000).optional(),
+    minCredits: z.coerce.number().int().min(0).max(60).default(0),
+    minCgpa: z.coerce.number().min(0).max(100).optional(),
+  })
+  .refine((s) => (s.basis === 'fixed') === (s.amountPaise !== undefined), {
+    message: 'a fixed award needs an amount, and a proportional one does not take it',
+    path: ['amountPaise'],
+  })
+  .refine((s) => (s.basis === 'proportional') === (s.percentBps !== undefined), {
+    message: 'a proportional award needs a share, and a fixed one does not take it',
+    path: ['percentBps'],
+  })
+  .meta({ id: 'FeesCreateScholarship' })
+
+export const assessAidSchema = z
+  .object({ studentId: z.string().min(1), termId: z.uuid() })
+  .meta({ id: 'FeesAssessAid' })
+
+export const awardScholarshipSchema = z
+  .object({
+    scholarshipId: z.uuid(),
+    studentId: z.string().min(1),
+    termId: z.uuid(),
+    reason: z.string().max(500).trim().optional(),
+  })
+  .meta({ id: 'FeesAwardScholarship' })
+
+export const revokeAwardSchema = z
+  .object({
+    awardId: z.uuid(),
+    /** On the record, beside the reversal in the books. */
+    reason: z.string().min(5).max(500).trim(),
+  })
+  .meta({ id: 'FeesRevokeAward' })
+
+export const setRefundRulesSchema = z
+  .object({
+    termId: z.uuid(),
+    /**
+     * Replaced as a set: a bracket only means anything beside the others, and
+     * editing them one at a time leaves a moment when the policy says something
+     * nobody decided. An empty list is a term that refunds nothing.
+     */
+    brackets: z
+      .array(
+        z.object({
+          throughOn: z.iso.date(),
+          refundBps: z.coerce.number().int().min(0).max(10_000),
+        }),
+      )
+      .max(12),
+  })
+  .meta({ id: 'FeesSetRefundRules' })
+
+export const prorateDropsSchema = z
+  .object({
+    termId: z.uuid(),
+    /** Omitted sweeps the whole term, which is how a bursar runs it. */
+    studentId: z.string().min(1).optional(),
+  })
+  .meta({ id: 'FeesProrateDrops' })
+
+const aidOfferSchema = z.object({
+  scholarshipId: z.uuid(),
+  code: z.string(),
+  name: z.string(),
+  kind: z.enum(scholarshipKindEnum.enumValues),
+  amountPaise: z.number().int(),
+  eligible: z.boolean(),
+  /**
+   * Why not, in the institution's own terms. `credit_load_unknown` is a
+   * genuine third answer, distinct from failing the rule: it means nobody can
+   * tell, and awarding on it anyway would be a number nobody could defend.
+   */
+  reasons: z.array(z.string()),
+})
+
+export const aidAssessmentSchema = z
+  .object({
+    studentId: z.string(),
+    studentName: z.string().nullable(),
+    termId: z.uuid(),
+    credits: z.number().int().nullable(),
+    cgpa: z.number().nullable(),
+    chargedPaise: z.number().int(),
+    offers: z.array(aidOfferSchema),
+  })
+  .meta({ id: 'FeesAidAssessment' })
+
+export type AidAssessment = z.infer<typeof aidAssessmentSchema>

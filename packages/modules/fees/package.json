@@ -1,6 +1,6 @@
 {
   "name": "@campusos/module-fees",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -22,6 +22,7 @@
   "dependencies": {
     "@campusos/db": "workspace:*",
     "@campusos/module-academic": "workspace:*",
+    "@campusos/module-enrollment": "workspace:*",
     "@campusos/module-finance": "workspace:*",
     "@campusos/module-framework": "workspace:*",
     "@campusos/money": "workspace:*",

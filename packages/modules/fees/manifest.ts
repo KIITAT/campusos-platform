@@ -5,7 +5,7 @@ export const manifest: ModuleManifest = {
   name: 'Fees & Finance',
   description:
     'Fee structures per programme and term, scholarships and waivers, payment recording with manual reconciliation, receipts and defaulter reporting.',
-  version: '0.2.0',
+  version: '0.3.0',
   alwaysEnabled: false,
   /**
    * finance, because every charge, payment, waiver and refund posts a balanced
@@ -14,6 +14,15 @@ export const manifest: ModuleManifest = {
    * than one.
    */
   dependsOn: ['academic', 'finance'],
+  /**
+   * enrollment, softly: scholarships and charges work without it, and what
+   * cannot work without it is anything keyed to a course being dropped on a
+   * particular day. A rule asking for a credit load at an institution that
+   * keeps no registrations is reported as unassessable rather than assumed to
+   * pass, and the drop sweep refuses outright rather than prorating against
+   * numbers nobody has.
+   */
+  softDependsOn: ['enrollment'],
   pricing: { model: 'not_priced_yet', priceINR: null },
 
   rolesWithAccess: [
@@ -25,6 +34,11 @@ export const manifest: ModuleManifest = {
   ],
 
   navEntries: [
+    {
+      label: 'Aid',
+      href: '/m/fees/aid',
+      roles: ['institution_admin', 'accounts_staff'],
+    },
     { label: 'Fees', href: '/m/fees', roles: ['institution_admin', 'accounts_staff'] },
     { label: 'Dues', href: '/m/fees/dues', roles: ['institution_admin', 'accounts_staff', 'hod'] },
     { label: 'My fees', href: '/m/fees/me', roles: ['student'] },

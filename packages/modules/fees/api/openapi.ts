@@ -1,7 +1,13 @@
 import * as z from 'zod'
 import { manifest } from '../manifest'
 import {
+  aidAssessmentSchema,
+  awardScholarshipSchema,
   createFeeItemSchema,
+  createScholarshipSchema,
+  prorateDropsSchema,
+  revokeAwardSchema,
+  setRefundRulesSchema,
   duesReportSchema,
   grantWaiverSchema,
   issueInvoicesSchema,
@@ -20,6 +26,88 @@ const gated = {
 }
 
 export const paths = {
+  [`${base}/scholarships`]: {
+    get: {
+      summary: 'The scholarships this institution funds and defines',
+      tags: ['fees'],
+      responses: { '200': { description: 'OK' }, ...gated },
+    },
+    post: {
+      summary: 'Define a scholarship: who qualifies, and how much',
+      tags: ['fees'],
+      requestBody: { content: json(createScholarshipSchema) },
+      responses: { '200': { description: 'Created' }, ...gated },
+    },
+  },
+  [`${base}/aid`]: {
+    get: {
+      summary:
+        "Every live scholarship against one student's term, with the amount and, where not eligible, why not",
+      tags: ['fees'],
+      responses: {
+        '200': { description: 'OK', content: json(aidAssessmentSchema) },
+        ...gated,
+      },
+    },
+  },
+  [`${base}/aid/award`]: {
+    post: {
+      summary: 'Award a scholarship, settling the amount and posting it to the ledger',
+      tags: ['fees'],
+      requestBody: { content: json(awardScholarshipSchema) },
+      responses: { '200': { description: 'Awarded' }, ...gated },
+    },
+  },
+  [`${base}/aid/revoke`]: {
+    post: {
+      summary: 'Withdraw an award, with a reason and a reversal in the books',
+      tags: ['fees'],
+      requestBody: { content: json(revokeAwardSchema) },
+      responses: { '200': { description: 'Revoked' }, ...gated },
+    },
+  },
+  [`${base}/aid/awards`]: {
+    get: {
+      summary: 'Awards made in a term',
+      tags: ['fees'],
+      responses: { '200': { description: 'OK' }, ...gated },
+    },
+  },
+  [`${base}/refund-rules`]: {
+    get: {
+      summary: "A term's refund brackets, by the date a drop counts from",
+      tags: ['fees'],
+      responses: { '200': { description: 'OK' }, ...gated },
+    },
+    post: {
+      summary: "Replace a term's refund brackets as a set",
+      tags: ['fees'],
+      requestBody: { content: json(setRefundRulesSchema) },
+      responses: { '200': { description: 'Applied' }, ...gated },
+    },
+  },
+  [`${base}/drops`]: {
+    get: {
+      summary: 'Credits already worked out for courses dropped in a term',
+      tags: ['fees'],
+      responses: { '200': { description: 'OK' }, ...gated },
+    },
+  },
+  [`${base}/drops/prorate`]: {
+    post: {
+      summary: "Work a term's drops into credits, once each, and post them",
+      tags: ['fees'],
+      requestBody: { content: json(prorateDropsSchema) },
+      responses: {
+        '200': { description: 'Applied' },
+        ...gated,
+        '409': {
+          description: 'This institution does not keep registrations in the product',
+          content: json(err),
+        },
+      },
+    },
+  },
   [`${base}/items`]: {
     get: {
       summary: 'Charged fee lines, optionally for one term',

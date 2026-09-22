@@ -106,10 +106,10 @@ test('an institution that has never opened the screen still has a chart', async 
   const b = await books()
   const chart = await listAccounts(b.admin)
 
-  assert.equal(chart.length, 10)
+  assert.equal(chart.length, 11)
   assert.equal(chart.find((a) => a.code === '4000')!.purpose, 'fee_income')
   // Reading twice does not write it twice.
-  assert.equal((await listAccounts(b.admin)).length, 10)
+  assert.equal((await listAccounts(b.admin)).length, 11)
 })
 
 test('two accounts cannot share a code, or a purpose', async () => {
