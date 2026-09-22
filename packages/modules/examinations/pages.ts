@@ -1,8 +1,13 @@
 import { param, type PluginPage } from '@campusos/module-framework'
-import { listOfferings } from '@campusos/module-academic/api'
+import {
+  listOfferings,
+  listStructure,
+  type Actor as AcademicActor,
+} from '@campusos/module-academic/api'
 import {
   DEFAULT_GPA_BANDS,
   listExams,
+  listProgramSchemes,
   listSchemes,
   sheet,
   transcript,
@@ -125,6 +130,27 @@ export const pages: PluginPage[] = [
       },
       {
         kind: 'form',
+        title: 'Finalise this course',
+        note:
+          'Turns the published marks into the academic record: the prerequisite ' +
+          'check, the degree audit and the official transcript all read it from ' +
+          'there afterwards. Safe to run again after a revision -- the record is ' +
+          'corrected with the reason attached, never rewritten quietly.',
+        submit: 'Finalise',
+        path: '/finalise',
+        roles: [...ADMIN],
+        fields: [
+          { name: 'offeringId', label: 'Offering', value: String(data.offeringId ?? '') },
+          {
+            name: 'reason',
+            label: 'Reason',
+            optional: true,
+            hint: 'Only needed when this corrects a result already on the record.',
+          },
+        ],
+      },
+      {
+        kind: 'form',
         title: 'Revise a published mark',
         note: 'The only way to change one. Reason mandatory, and the history survives.',
         submit: 'Revise',
@@ -145,8 +171,18 @@ export const pages: PluginPage[] = [
     menu: 'Scales',
     roles: [...ADMIN],
     async load(actor) {
-      const schemes = await listSchemes(actor as Actor)
+      const [schemes, programScales, structure] = await Promise.all([
+        listSchemes(actor as Actor),
+        listProgramSchemes(actor as Actor),
+        listStructure(actor as unknown as AcademicActor),
+      ])
       return {
+        programScales,
+        programOptions: structure.programs.map((p) => ({
+          value: p.id,
+          label: `${p.code} - ${p.name}`,
+        })),
+        schemeOptions: schemes.map((s) => ({ value: s.id, label: s.name })),
         schemes: schemes.map((s) => ({
           ...s,
           bandCount: s.bands.length,
@@ -174,6 +210,31 @@ export const pages: PluginPage[] = [
           { key: 'kind', label: 'Kind' },
           { key: 'isDefault', label: 'Default', kind: 'bool' },
           { key: 'summary', label: 'Bands' },
+        ],
+      },
+      {
+        kind: 'table',
+        title: 'Programmes on their own scale',
+        note: 'Everything else grades on the institution default.',
+        rows: 'programScales',
+        empty: 'None. Every programme uses the default.',
+        columns: [
+          { key: 'programCode', label: 'Programme', kind: 'code' },
+          { key: 'programName', label: 'Name' },
+          { key: 'schemeName', label: 'Scale' },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Give a programme its own scale',
+        note:
+          'A ten-point scale for the degrees and a percentage with divisions for ' +
+          'an affiliated diploma is one institution, not two.',
+        submit: 'Set',
+        path: '/scales/programs',
+        fields: [
+          { name: 'programId', label: 'Programme', kind: 'select', options: 'programOptions' },
+          { name: 'schemeId', label: 'Scale', kind: 'select', options: 'schemeOptions' },
         ],
       },
       {

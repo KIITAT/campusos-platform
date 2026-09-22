@@ -5,7 +5,7 @@ export const manifest: ModuleManifest = {
   name: 'Examinations & Grading',
   description:
     'Exam scheduling, marks entry with publish-locking, configurable grade scales, and transcripts.',
-  version: '0.1.0',
+  version: '0.2.0',
   alwaysEnabled: false,
   dependsOn: ['academic'],
   pricing: { model: 'not_priced_yet', priceINR: null },

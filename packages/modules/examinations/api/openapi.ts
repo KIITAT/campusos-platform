@@ -4,6 +4,8 @@ import {
   createExamSchema,
   createSchemeSchema,
   enterMarksSchema,
+  finaliseCourseSchema,
+  setProgramSchemeSchema,
   publishExamSchema,
   reviseMarkSchema,
   transcriptSchema,
@@ -94,6 +96,43 @@ export const paths = {
       summary: 'Grading schemes for this institution',
       tags: ['examinations'],
       responses: { '200': { description: 'OK' }, ...gated },
+    },
+  },
+  [`${base}/finalise`]: {
+    post: {
+      summary:
+        'Turn a course’s published marks into the academic record, correcting it where a mark has since been revised',
+      tags: ['examinations'],
+      requestBody: { content: json(finaliseCourseSchema) },
+      responses: {
+        '200': { description: 'Posted' },
+        ...gated,
+        '409': { description: 'Nothing has been published for that course', content: json(err) },
+      },
+    },
+  },
+  [`${base}/scales/programs`]: {
+    get: {
+      summary: 'Programmes that grade on their own scale rather than the default',
+      tags: ['examinations'],
+      responses: { '200': { description: 'OK' }, ...gated },
+    },
+    post: {
+      summary: 'Point a programme at its own grading scale',
+      tags: ['examinations'],
+      requestBody: { content: json(setProgramSchemeSchema) },
+      responses: { '200': { description: 'Applied' }, ...gated },
+    },
+  },
+  [`${base}/transcript/official`]: {
+    get: {
+      summary:
+        'The transcript as the record has it: finalised courses and transfer credit only, nothing provisional',
+      tags: ['examinations'],
+      responses: {
+        '200': { description: 'OK', content: json(transcriptSchema) },
+        ...gated,
+      },
     },
   },
   [`${base}/transcript`]: {

@@ -3,6 +3,7 @@ import {
   boolean,
   check,
   index,
+  primaryKey,
   numeric,
   pgEnum,
   pgTable,
@@ -13,7 +14,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core'
 import { institutions, tenantPolicy, users } from '@campusos/db'
-import { offerings, rooms } from '@campusos/module-academic/schema'
+import { offerings, programs, rooms } from '@campusos/module-academic/schema'
 
 /**
  * Examinations and grading.
@@ -103,6 +104,35 @@ export const bands = pgTable(
     uniqueIndex('exam_bands_floor').on(t.schemeId, t.minPercent),
     check('exam_bands_percent', sql`min_percent between 0 and 100`),
     tenantPolicy('exam_grade_bands'),
+  ],
+)
+
+/**
+ * A programme that grades on its own scale.
+ *
+ * One university can run a ten-point scale for its engineering degrees, a
+ * percentage with divisions for an affiliated diploma and a pass/fail scheme
+ * for a certificate, at the same time. Holding one scheme per institution makes
+ * the second programme somebody's spreadsheet, so a programme may name its own
+ * and the institution's default is the fallback.
+ */
+export const schemePrograms = pgTable(
+  'exam_scheme_programs',
+  {
+    institutionId: tenantId(),
+    programId: uuid('program_id')
+      .notNull()
+      .references(() => programs.id, { onDelete: 'cascade' }),
+    schemeId: uuid('scheme_id')
+      .notNull()
+      .references(() => schemes.id, { onDelete: 'cascade' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // One per programme: two scales for one degree is not a policy, it is an
+    // argument.
+    primaryKey({ columns: [t.programId] }),
+    tenantPolicy('exam_scheme_programs'),
   ],
 )
 

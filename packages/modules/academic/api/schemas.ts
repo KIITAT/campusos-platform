@@ -321,3 +321,67 @@ export const eligibilityResultSchema = z
   .meta({ id: 'AcademicEligibility' })
 
 export type Eligibility = z.infer<typeof eligibilityResultSchema>
+
+// --- the degree audit ------------------------------------------------------
+
+export const correctCompletionSchema = z
+  .object({
+    completionId: uuid,
+    credits: z.coerce.number().int().min(0).max(30).optional(),
+    gradePoints: gradePoints.nullish(),
+    gradeLabel: z.string().max(12).trim().nullish(),
+    passed: z.coerce.boolean().optional(),
+    /** On the record, next to the change. A correction with no reason is not one. */
+    reason: z.string().min(5).max(500).trim(),
+  })
+  .meta({ id: 'AcademicCorrectCompletion' })
+
+export const degreeAuditQuerySchema = z
+  .object({
+    studentId: z.string().min(1),
+    /** Which degree, when there are two. Defaults to the one that leads. */
+    studentProgramId: uuid.optional(),
+  })
+  .meta({ id: 'AcademicDegreeAuditQuery' })
+
+const auditedRequirementSchema = z.object({
+  code: z.string(),
+  title: z.string(),
+  kind: z.enum(requirementKindEnum.enumValues),
+  minCredits: z.number().int(),
+  minCourses: z.number().int(),
+  creditsEarned: z.number().int(),
+  coursesPassed: z.number().int(),
+  satisfied: z.boolean(),
+  /** Named courses still to pass. Empty for a pool, which asks for a total. */
+  outstanding: z.array(z.object({ courseCode: z.string(), courseTitle: z.string() })),
+  counted: z.array(z.string()),
+})
+
+export const degreeAuditSchema = z
+  .object({
+    studentId: z.string(),
+    studentName: z.string().nullable(),
+    programCode: z.string(),
+    programName: z.string(),
+    catalogYear: z.number().int().nullable(),
+    totalCredits: z.number().int().nullable(),
+    creditsEarned: z.number().int(),
+    creditsRemaining: z.number().int().nullable(),
+    /** Credit-weighted over graded passes. Transfer credit with no grade is not one. */
+    cgpa: z.number().nullable(),
+    complete: z.boolean(),
+    requirements: z.array(auditedRequirementSchema),
+    /** The exceptions that got this student here, so the audit can explain itself. */
+    overrides: z.array(
+      z.object({
+        courseCode: z.string(),
+        reason: z.string(),
+        approvedBy: z.string().nullable(),
+      }),
+    ),
+    note: z.string().nullable(),
+  })
+  .meta({ id: 'AcademicDegreeAudit' })
+
+export type DegreeAudit = z.infer<typeof degreeAuditSchema>

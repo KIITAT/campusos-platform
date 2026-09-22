@@ -10,11 +10,14 @@ import {
   createProgramSchema,
   createRoomSchema,
   createSectionSchema,
+  correctCompletionSchema,
   createCurriculumSchema,
   createRequirementSchema,
   createSlotSchema,
   createTermSchema,
   declareProgramSchema,
+  degreeAuditQuerySchema,
+  degreeAuditSchema,
   eligibilityResultSchema,
   eligibilitySchema,
   endStudentProgramSchema,
@@ -132,6 +135,31 @@ export const paths = {
   [`${base}/completions`]: {
     ...post('Record a passed course, earned here or accepted in transfer', recordCompletionSchema),
     ...list("A student's completed courses"),
+  },
+  [`${base}/completions/correct`]: post(
+    'Correct a completed course, with a reason that goes on the record',
+    correctCompletionSchema,
+  ),
+  [`${base}/degree-audit`]: {
+    post: {
+      summary: "What a student's degree still needs, and what the average is",
+      tags: ['academic'],
+      requestBody: { content: { 'application/json': { schema: degreeAuditQuerySchema } } },
+      responses: {
+        '200': {
+          description: 'OK',
+          content: { 'application/json': { schema: degreeAuditSchema } },
+        },
+        '403': {
+          description: 'Forbidden, or the module is not enabled',
+          content: { 'application/json': { schema: errorRef } },
+        },
+        '404': {
+          description: 'No such student, or no programme declared',
+          content: { 'application/json': { schema: errorRef } },
+        },
+      },
+    },
   },
   [`${base}/eligibility`]: {
     post: {

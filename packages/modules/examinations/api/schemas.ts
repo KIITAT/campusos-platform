@@ -95,6 +95,22 @@ export const createSchemeSchema = z
   )
   .meta({ id: 'ExamCreateScheme' })
 
+export const setProgramSchemeSchema = z
+  .object({ programId: z.uuid(), schemeId: z.uuid() })
+  .meta({ id: 'ExamSetProgramScheme' })
+
+export const finaliseCourseSchema = z
+  .object({
+    offeringId: z.uuid(),
+    /**
+     * Required in spirit rather than by the schema on a first finalise, because
+     * "results finalised" is the reason. A correction supplies its own, and the
+     * trigger on the record refuses the change without one.
+     */
+    reason: z.string().min(5).max(500).trim().optional(),
+  })
+  .meta({ id: 'ExamFinaliseCourse' })
+
 // --- reads -----------------------------------------------------------------
 
 export const gradeSchema = z

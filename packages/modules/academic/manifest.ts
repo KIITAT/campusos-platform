@@ -11,7 +11,7 @@ export const manifest: ModuleManifest = {
   name: 'Academic Core',
   description:
     'Departments, programmes, courses, terms, cohorts, rooms and the weekly timetable.',
-  version: '0.2.0',
+  version: '0.3.0',
   alwaysEnabled: true,
   dependsOn: [],
   pricing: { model: 'included_in_base', priceINR: null },

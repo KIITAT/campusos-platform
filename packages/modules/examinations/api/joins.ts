@@ -5,11 +5,13 @@
  * place.
  */
 export {
+  courseCompletions,
   courses,
   offerings,
   programs,
   sectionMembers,
   sections,
+  studentPrograms,
   terms,
 } from '@campusos/module-academic/schema'
-export { institutions } from '@campusos/db'
+export { institutions, users } from '@campusos/db'

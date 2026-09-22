@@ -1,5 +1,6 @@
 import type { PluginPage } from '@campusos/module-framework'
 import {
+  degreeAudit,
   getTimetable,
   listCompletions,
   listCurricula,
@@ -627,10 +628,37 @@ export const pages: PluginPage[] = [
         registrar ? listCurricula(a) : Promise.resolve([]),
       ])
 
+      // Null when nothing has been declared, or when the declaration named no
+      // catalogue: there is then nothing to audit against, and saying so beats
+      // an audit of zero requirements that reads like a finished degree.
+      const outstanding = programmes.some((p) => p.status === 'active')
+        ? await degreeAudit(a, { studentId }).catch(() => null)
+        : null
+
       const passed = completions.filter((c) => c.passed)
       return {
         studentId,
         mine: studentId === a.id,
+        cgpa: outstanding?.cgpa === null || outstanding === null ? '--' : String(outstanding.cgpa),
+        creditsRemaining:
+          outstanding?.creditsRemaining === null || outstanding === null
+            ? '--'
+            : String(outstanding.creditsRemaining),
+        degreeNote:
+          outstanding === null
+            ? null
+            : outstanding.note
+              ? outstanding.note
+              : outstanding.complete
+                ? `Every requirement of ${outstanding.programCode} is satisfied.`
+                : `Reading ${outstanding.programCode} against the ${String(outstanding.catalogYear ?? '')} catalogue.`,
+        requirements: (outstanding?.requirements ?? []).map((r) => ({
+          ...r,
+          asks: r.minCredits > 0 ? `${r.minCredits} credits` : `${r.minCourses} courses`,
+          has: r.minCredits > 0 ? String(r.creditsEarned) : String(r.coursesPassed),
+          short: r.outstanding.map((o) => o.courseCode).join(', '),
+        })),
+        overrides: outstanding?.overrides ?? [],
         programmes: programmes.map((p) => ({
           ...p,
           programme: `${p.programCode} - ${p.programName}`,
@@ -673,8 +701,38 @@ export const pages: PluginPage[] = [
         kind: 'figures',
         figures: [
           { label: 'Credits earned', value: String(data.creditsEarned) },
+          { label: 'Still to earn', value: String(data.creditsRemaining) },
+          { label: 'Cumulative average', value: String(data.cgpa) },
           { label: 'Courses passed', value: String(data.coursesPassed) },
           { label: 'Transferred in', value: String(data.transferred) },
+        ],
+      },
+      ...(data.degreeNote
+        ? [{ kind: 'note' as const, text: String(data.degreeNote) }]
+        : []),
+      {
+        kind: 'table',
+        title: 'Degree requirements',
+        note: 'Each passed course is spent once: named requirements are filled before pools, and pools before anything that counts.',
+        rows: 'requirements',
+        empty: 'Nothing to audit against yet.',
+        columns: [
+          { key: 'code', label: 'Code', kind: 'code' },
+          { key: 'title', label: 'Requirement' },
+          { key: 'asks', label: 'Asks for' },
+          { key: 'has', label: 'Has' },
+          { key: 'satisfied', label: 'Met', kind: 'bool' },
+          { key: 'short', label: 'Still needed' },
+        ],
+      },
+      {
+        kind: 'table',
+        title: 'Exceptions on the way here',
+        rows: 'overrides',
+        empty: 'None. Every course was taken on the chain as written.',
+        columns: [
+          { key: 'courseCode', label: 'Course', kind: 'code' },
+          { key: 'reason', label: 'Reason' },
         ],
       },
       {

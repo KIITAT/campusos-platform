@@ -91,10 +91,12 @@ test('the whole product still answers the same number of endpoints', () => {
   // these tables declared 101 endpoints, which was the same surface counted
   // honestly. Finance added 8 more, fees three for issuing and refunds, hr two
   // for paying a month's salaries, and the academic core fifteen for curricula,
-  // the prerequisite chain and a student's record, and enrollment eight for
-  // registration itself. A regression guard on the conversion, not a target.
+  // the prerequisite chain and a student's record, enrollment eight for
+  // registration itself, and six more for the degree audit, finalising a course
+  // and the scale a programme grades on. A regression guard on the conversion,
+  // not a target.
   const total = PLUGINS.reduce((n, p) => n + p.routes.length, 0)
-  assert.equal(total, 137, `expected 137 endpoints across all modules, found ${total}`)
+  assert.equal(total, 143, `expected 143 endpoints across all modules, found ${total}`)
 })
 
 test('a longer path is never swallowed by a shorter one', () => {

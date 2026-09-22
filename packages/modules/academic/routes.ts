@@ -14,7 +14,9 @@ import {
   createSlot,
   createTerm,
   checkEligibility,
+  correctCompletion,
   declareProgram,
+  degreeAudit,
   endStudentProgram,
   getTimetable,
   listCompletions,
@@ -61,6 +63,8 @@ export const routes: PluginRoute[] = [
   post('/students/programs/end', endStudentProgram),
   post('/completions', recordCompletion),
   post('/eligibility', checkEligibility),
+  post('/completions/correct', correctCompletion),
+  post('/degree-audit', degreeAudit),
 
   { method: 'GET', path: '/curricula', handler: (actor) => listCurricula(actor as Actor) },
   {

@@ -616,6 +616,8 @@ export const courseCompletions = pgTable(
     gradePoints: numeric('grade_points', { precision: 4, scale: 2 }),
     gradeLabel: text('grade_label'),
     passed: boolean().notNull().default(true),
+    /** Bumped by every audited correction, so a disputed grade shows its depth. */
+    revision: smallint().notNull().default(0),
     source: completionSourceEnum().notNull().default('internal'),
     note: text(),
     recordedBy: text('recorded_by').references(() => users.id, {

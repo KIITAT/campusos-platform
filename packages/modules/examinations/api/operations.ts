@@ -10,13 +10,14 @@ import {
   sections,
   terms,
 } from './joins'
-import { bands, examMarks, exams, schemes } from '../schema'
+import { bands, examMarks, exams, schemePrograms, schemes } from '../schema'
 import {
   createExamSchema,
   createSchemeSchema,
   enterMarksSchema,
   publishExamSchema,
   reviseMarkSchema,
+  setProgramSchemeSchema,
   unpublishExamSchema,
   type Transcript,
 } from './schemas'
@@ -144,16 +145,23 @@ export async function listSchemes(actor: Actor) {
 }
 
 /**
- * The scheme in force. Falls back to a built-in 10-point scale rather than
- * refusing to grade: an institution that has not configured one still needs its
- * transcripts to say something, and the fallback is visible on the document.
+ * The scheme in force, for a programme if one is named and for the institution
+ * otherwise. Falls back to a built-in 10-point scale rather than refusing to
+ * grade: an institution that has not configured one still needs its transcripts
+ * to say something, and the fallback is visible on the document.
  */
-async function schemeInForce(tx: Tx) {
-  const [scheme] = await tx
-    .select()
-    .from(schemes)
-    .where(eq(schemes.isDefault, true))
-    .limit(1)
+export async function schemeInForce(tx: Tx, programId?: string | null) {
+  const [own] = programId
+    ? await tx
+        .select({ schemeId: schemePrograms.schemeId })
+        .from(schemePrograms)
+        .where(eq(schemePrograms.programId, programId))
+        .limit(1)
+    : []
+
+  const [scheme] = own
+    ? await tx.select().from(schemes).where(eq(schemes.id, own.schemeId)).limit(1)
+    : await tx.select().from(schemes).where(eq(schemes.isDefault, true)).limit(1)
   if (!scheme) {
     return { name: 'Default 10-point scale', kind: 'gpa' as const, bands: DEFAULT_GPA_BANDS }
   }
@@ -169,6 +177,50 @@ async function schemeInForce(tx: Tx) {
     kind: scheme.kind,
     bands: list.length ? list : DEFAULT_GPA_BANDS,
   }
+}
+
+/**
+ * Point a programme at its own scale. Admin only: which scale a degree is
+ * graded on is a regulation, not a lecturer's preference.
+ */
+export async function setProgramScheme(actor: Actor, input: unknown) {
+  const tenant = tenantOf(actor)
+  if (!isAdmin(actor.role)) throw new ExamError(403, 'forbidden', 'not permitted')
+  const data = setProgramSchemeSchema.parse(input)
+
+  return withTenant(tenant, async (tx) => {
+    const [scheme] = await tx.select().from(schemes).where(eq(schemes.id, data.schemeId))
+    if (!scheme) throw new ExamError(404, 'no_such_scheme', 'no such grading scheme')
+    const [program] = await tx.select().from(programs).where(eq(programs.id, data.programId))
+    if (!program) throw new ExamError(404, 'no_such_program', 'no such programme')
+
+    await tx
+      .insert(schemePrograms)
+      .values({ institutionId: tenant, programId: data.programId, schemeId: data.schemeId })
+      .onConflictDoUpdate({
+        target: schemePrograms.programId,
+        set: { schemeId: data.schemeId },
+      })
+  })
+}
+
+export async function listProgramSchemes(actor: Actor) {
+  const tenant = tenantOf(actor)
+  return withTenant(tenant, (tx) =>
+    tx
+      .select({
+        programId: schemePrograms.programId,
+        programCode: programs.code,
+        programName: programs.name,
+        schemeId: schemePrograms.schemeId,
+        schemeName: schemes.name,
+        schemeKind: schemes.kind,
+      })
+      .from(schemePrograms)
+      .innerJoin(programs, eq(programs.id, schemePrograms.programId))
+      .innerJoin(schemes, eq(schemes.id, schemePrograms.schemeId))
+      .orderBy(programs.code),
+  )
 }
 
 // --- exams -----------------------------------------------------------------
