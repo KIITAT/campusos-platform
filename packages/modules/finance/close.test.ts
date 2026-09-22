@@ -109,10 +109,11 @@ test('nothing lands in a closed month, including something backdated into it', a
   assert.ok(closed.closedAt)
 
   // Backdating into it is exactly what closing prevents, so it is checked
-  // against the date the entry says it happened on.
+  // against the date the entry says it happened on -- and the refusal comes back
+  // named, not as the trigger's constraint violation.
   await assert.rejects(
     () => entry(b, { occurredAt: past.on.toISOString(), sourceRef: 'after-the-close' }),
-    (e: unknown) => /closed/.test(String((e as Error).message)) || errorCode(e) === undefined,
+    (e: unknown) => errorCode(e) === 'period_closed',
   )
 
   // This month is untouched.

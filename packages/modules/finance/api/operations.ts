@@ -257,13 +257,25 @@ export async function postWithin(
       .returning({ id: entries.id })
     entryId = row!.id
   } catch (e) {
-    if ((e as { cause?: { code?: string } }).cause?.code === '23505') {
+    const cause = (e as { cause?: { code?: string; message?: string } }).cause
+    if (cause?.code === '23505') {
       throw new FinanceError(
         409,
         'already_posted',
         'that source reference is already in the journal',
         { sourceModule: data.sourceModule, sourceRef: data.sourceRef },
       )
+    }
+    // The close is enforced by a trigger, because a closed month that only some
+    // code paths respect is not closed. That leaves the refusal arriving here as
+    // a constraint violation, and a caller shown a raw query has been told
+    // nothing -- so it is named on the way out.
+    if (cause?.code === '23514' && /accounting period is closed/.test(cause.message ?? '')) {
+      const on = data.occurredAt ?? new Date()
+      throw new FinanceError(409, 'period_closed', 'that accounting period is closed', {
+        year: on.getUTCFullYear(),
+        month: on.getUTCMonth() + 1,
+      })
     }
     throw e
   }
