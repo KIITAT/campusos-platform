@@ -16,6 +16,9 @@ const READERS = ['institution_admin', 'super_admin', 'hod'] as const
 const MARSHALS = ['institution_admin', 'super_admin', 'hod', 'faculty'] as const
 const PDF = '/api/v1/modules/ceremonies/certificate.pdf?certificateId='
 
+/** A certificate stands or was revoked; the lifecycle's own words are for the machinery. */
+const standing = (d: string) => (d === 'submitted' ? 'valid' : d === 'cancelled' ? 'revoked' : d)
+
 const next: Record<string, { value: string; label: string }[]> = {
   planning: [{ value: 'open', label: 'open for replies' }],
   open: [{ value: 'held', label: 'held' }],
@@ -116,7 +119,7 @@ export const pages: PluginPage[] = [
           reply: x.attendance ? `${x.attendance.replace('_', ' ')}${x.guests ? `, ${x.guests} guests` : ''}` : '',
         })),
         holds: hs.map((h) => ({ ...h, open: !h.clearedAt })),
-        certificates: certs,
+        certificates: certs.map((x) => ({ ...x, standing: standing(x.docstatus) })),
         statusOptions: next[c.status] ?? [],
         candidateOptions: cands.map((x) => ({ value: x.id, label: `${x.name ?? x.email} (${x.programCode})` })),
         openHoldOptions: hs.filter((h) => !h.clearedAt).map((h) => ({ value: h.id, label: `${h.name}: ${h.reason}` })),
@@ -213,7 +216,7 @@ export const pages: PluginPage[] = [
             { key: 'studentName', label: 'Name' },
             { key: 'programCode', label: 'Programme', kind: 'code' },
             { key: 'cgpa', label: 'CGPA' },
-            { key: 'docstatus', label: 'Status', kind: 'status' },
+            { key: 'standing', label: 'Status', kind: 'status' },
             { key: 'cancelReason', label: 'Revoked because' },
           ],
         },
@@ -314,6 +317,7 @@ export const pages: PluginPage[] = [
           amend: '/certificates/reissue',
           roles: [...OFFICE],
           labels: { cancel: 'Revoke', amend: 'Reissue' },
+          states: { submitted: 'valid', cancelled: 'revoked' },
         },
       }
     },
@@ -401,6 +405,7 @@ export const pages: PluginPage[] = [
         })),
         certificates: g.certificates.map((c) => ({
           ...c,
+          standing: standing(c.docstatus),
           print: c.docstatus === 'submitted' ? 'print' : '',
         })),
         openId: open?.ceremonyId ?? '',
@@ -464,7 +469,7 @@ export const pages: PluginPage[] = [
           { key: 'serial', label: 'Serial', kind: 'code', href: '/m/ceremonies/certificate?certificateId={id}' },
           { key: 'programName', label: 'Programme' },
           { key: 'conferredOn', label: 'Conferred', kind: 'date' },
-          { key: 'docstatus', label: 'Status', kind: 'status' },
+          { key: 'standing', label: 'Status', kind: 'status' },
           { key: 'print', label: 'Print', href: `${PDF}{id}` },
         ],
       },

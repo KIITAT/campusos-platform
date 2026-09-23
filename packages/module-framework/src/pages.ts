@@ -86,11 +86,14 @@ export type FieldKind =
   | 'text'
   | 'number'
   | 'date'
+  | 'datetime' // a wall-clock date and time, sent without a zone: the module reads it in its own
   | 'money'
   | 'textarea'
   | 'select'
   | 'checkbox'
   | 'hidden'
+  | 'radio'      // one of the options, all shown: a question with one answer
+  | 'checkboxes' // any of the options, posted as a list: a question with several
 
 export interface PluginField {
   name: string
@@ -106,6 +109,8 @@ export interface PluginField {
    */
   options?: { value: string; label: string }[] | string
   rows?: number
+  /** For a number: the smallest step. Default a whole number; `any` for a decimal answer. */
+  step?: string
 }
 
 export interface PluginForm {
@@ -259,6 +264,8 @@ export interface PluginRecord {
     roles?: Role[]
     /** The buttons' words, when the record has its own: a certificate is revoked, not cancelled. */
     labels?: { submit?: string; cancel?: string; amend?: string }
+    /** The states' words, likewise: a quiz is published and withdrawn, a certificate valid and revoked. */
+    states?: Partial<Record<DocStatus, string>>
   }
 }
 

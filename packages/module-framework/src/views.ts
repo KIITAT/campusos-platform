@@ -15,12 +15,12 @@ import type { CellKind, PluginColumn, Tone } from './pages'
  */
 const TONES: Record<string, Tone> = {}
 const tone = (t: Tone, words: string) => words.split(' ').forEach((w) => (TONES[w] = t))
-tone('green', 'paid accepted approved verified completed complete done filled hired active present passed cleared settled closed_ok posted issued eligible awarded')
-tone('red', 'cancelled canceled refused rejected revoked expired overdue withdrawn failed absent lapsed separated terminated blocked ineligible void')
+tone('green', 'paid accepted approved verified completed complete done filled hired active present passed cleared settled closed_ok posted issued eligible awarded valid correct')
+tone('red', 'cancelled canceled refused rejected revoked expired overdue withdrawn failed absent lapsed separated terminated blocked ineligible void missed wrong')
 tone('orange', 'not_eligible short awaiting pending waiting partial due submitted_for_review requested applied screening self_review manager_review held withheld outstanding')
-tone('blue', 'open submitted scheduled interviewing offered offer in_progress ongoing running published sanctioned current live')
+tone('blue', 'open submitted scheduled interviewing offered offer in_progress ongoing running published sanctioned current live retake')
 tone('violet', 'amended superseded transferred promoted')
-tone('gray', 'draft new closed inactive none unused not_started')
+tone('gray', 'draft new closed inactive none unused not_started upcoming retired blank')
 
 export function statusTone(word: unknown): Tone {
   if (typeof word !== 'string') return 'gray'
