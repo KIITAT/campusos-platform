@@ -93,10 +93,12 @@ test('the whole product still answers the same number of endpoints', () => {
   // for paying a month's salaries, and the academic core fifteen for curricula,
   // the prerequisite chain and a student's record, enrollment eight for
   // registration itself, and six more for the degree audit, finalising a course
-  // and the scale a programme grades on. A regression guard on the conversion,
-  // not a target.
+  // and the scale a programme grades on. HR then became the whole of HR --
+  // employment history, leave policy, shifts, recruitment, appraisals, claims
+  // and advances, salary structures, tax and gratuity -- and went from 17 to
+  // 110. A regression guard on the conversion, not a target.
   const total = PLUGINS.reduce((n, p) => n + p.routes.length, 0)
-  assert.equal(total, 158, `expected 158 endpoints across all modules, found ${total}`)
+  assert.equal(total, 251, `expected 251 endpoints across all modules, found ${total}`)
 })
 
 test('a longer path is never swallowed by a shorter one', () => {

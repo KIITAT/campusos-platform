@@ -161,7 +161,8 @@ export const performancePages: PluginPage[] = [
       }
     },
     sections: (data) => {
-      const v = data.view as View | null
+      // Anything without KRA lines is not an appraisal to show.
+      const v = data.view && Array.isArray((data.view as View).lines) ? (data.view as View) : null
       const out: ReturnType<PluginPage['sections']> = [
         {
           kind: 'table',
