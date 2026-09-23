@@ -257,6 +257,8 @@ export interface PluginRecord {
     cancel?: string
     amend?: string
     roles?: Role[]
+    /** The buttons' words, when the record has its own: a certificate is revoked, not cancelled. */
+    labels?: { submit?: string; cancel?: string; amend?: string }
   }
 }
 
