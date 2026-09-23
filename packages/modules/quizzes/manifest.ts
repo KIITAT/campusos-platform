@@ -5,7 +5,7 @@ export const manifest: ModuleManifest = {
   name: 'Quizzes',
   description:
     "A question bank per course; quizzes set from it for a class, with a window, a time limit and attempts; answers scored by the machine the moment they are submitted, with item analysis for the teacher. Practice and feedback, kept apart from grades: nothing here writes a mark.",
-  version: '0.1.1',
+  version: '0.1.2',
   alwaysEnabled: false,
   dependsOn: ['academic'],
   softDependsOn: [],

@@ -676,11 +676,11 @@ export const pages: PluginPage[] = [
         columns: [
           { key: 'n', label: '#' },
           { key: 'short', label: 'Question' },
-          { key: 'yourAnswer', label: 'Answer given' },
-          { key: 'key', label: 'Right answer' },
           { key: 'verdict', label: '', kind: 'status' },
           { key: 'awarded', label: 'Mark' },
           { key: 'points', label: 'Of' },
+          { key: 'yourAnswer', label: 'Answer given' },
+          { key: 'key', label: 'Right answer' },
           { key: 'explanation', label: 'Why' },
           { key: 'overridden', label: 'Mark changed because', alertWhen: 'flagged' },
         ],
