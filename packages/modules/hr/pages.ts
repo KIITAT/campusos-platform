@@ -1,3 +1,4 @@
+import { shiftsPages } from './pages-shifts'
 import { leavePages } from './pages-leave'
 import { lifecyclePages } from './pages-lifecycle'
 import { formatPaise } from '@campusos/money'
@@ -505,4 +506,4 @@ const corePages: PluginPage[] = [
   },
 ]
 
-export const pages: PluginPage[] = [...corePages, ...lifecyclePages, ...leavePages]
+export const pages: PluginPage[] = [...corePages, ...lifecyclePages, ...leavePages, ...shiftsPages]

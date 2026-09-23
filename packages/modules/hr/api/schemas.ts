@@ -496,3 +496,63 @@ export const decideEncashmentSchema = z
     approve: z.coerce.boolean(),
   })
   .meta({ id: 'HrEncashmentDecide' })
+
+// --- shifts ----------------------------------------------------------------
+
+const clock = z
+  .string()
+  .trim()
+  .regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/, 'expected HH:MM, 24-hour')
+
+export const createShiftTypeSchema = z
+  .object({
+    code: z.string().trim().min(1).max(20),
+    name: z.string().trim().min(1).max(120),
+    startsAt: clock,
+    endsAt: clock,
+    breakMinutes: z.coerce.number().int().min(0).max(240).default(0),
+    /** Rupees per day actually worked on this shift. */
+    allowance: rupees.default(0),
+  })
+  .refine((d) => d.startsAt !== d.endsAt, {
+    message: 'a shift has to last some time',
+    path: ['endsAt'],
+  })
+  .meta({ id: 'HrShiftTypeCreate' })
+
+export const assignShiftSchema = z
+  .object({
+    staffId: uuid,
+    shiftTypeId: uuid,
+    fromOn: day,
+    /** Omitted: until further notice. */
+    toOn: day.nullish(),
+  })
+  .meta({ id: 'HrShiftAssign' })
+
+export const rotateShiftsSchema = z
+  .object({
+    staffIds: z.array(uuid).min(1).max(200),
+    shiftTypeIds: z.array(uuid).min(2).max(10),
+    fromOn: day,
+    weeks: z.coerce.number().int().min(1).max(26),
+  })
+  .meta({ id: 'HrShiftRotate' })
+
+export const requestShiftSchema = z
+  .object({
+    staffId: uuid,
+    shiftTypeId: uuid,
+    fromOn: day,
+    toOn: day,
+    reason: z.string().trim().min(5).max(500),
+  })
+  .meta({ id: 'HrShiftRequest' })
+
+export const decideShiftSchema = z
+  .object({
+    requestId: uuid,
+    approve: z.coerce.boolean(),
+    note: z.string().trim().max(500).nullish(),
+  })
+  .meta({ id: 'HrShiftDecide' })

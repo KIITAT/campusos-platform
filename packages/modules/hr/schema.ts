@@ -790,3 +790,109 @@ export type LeavePolicyAssignment = typeof leavePolicyAssignments.$inferSelect
 export type LeaveAllocation = typeof leaveAllocations.$inferSelect
 export type CompOffRequest = typeof compOffRequests.$inferSelect
 export type LeaveEncashment = typeof leaveEncashments.$inferSelect
+
+// --- shifts ----------------------------------------------------------------
+
+/**
+ * A kind of shift: when it starts, when it ends, and what a day on it is
+ * worth on top of salary.
+ *
+ * Most teaching staff never have one. Hostel wardens, security, the library's
+ * late desk and the hospital attached to a medical college do, and their pay
+ * depends on it -- which is the only reason the allowance lives here rather
+ * than as a pay component somebody remembers to set each month.
+ */
+export const shiftTypes = pgTable(
+  'hr_shift_types',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    code: text().notNull(),
+    name: text().notNull(),
+    /** Wall-clock times, 'HH:MM'. An end before the start crosses midnight. */
+    startsAt: text('starts_at').notNull(),
+    endsAt: text('ends_at').notNull(),
+    breakMinutes: smallint('break_minutes').notNull().default(0),
+    /** Paid per day actually on this shift. Zero for an ordinary day shift. */
+    allowancePaise: paise('allowance_paise').notNull().default(0),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hr_shift_types_code').on(t.institutionId, t.code),
+    check('hr_shift_types_code_shape', sql`length(trim(code)) > 0`),
+    check(
+      'hr_shift_types_times',
+      sql`starts_at ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$' and ends_at ~ '^([01][0-9]|2[0-3]):[0-5][0-9]$'`,
+    ),
+    check('hr_shift_types_not_empty', sql`starts_at <> ends_at`),
+    check('hr_shift_types_break', sql`break_minutes between 0 and 240`),
+    check('hr_shift_types_allowance', sql`allowance_paise >= 0`),
+    tenantPolicy('hr_shift_types'),
+  ],
+)
+
+/**
+ * Who is on which shift, over which dates. Never two shifts at once for one
+ * person: "was the warden on nights on the 14th" must have one answer, because
+ * both the roll call and the payslip read it.
+ */
+export const shiftAssignments = pgTable(
+  'hr_shift_assignments',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    staffId: uuid('staff_id')
+      .notNull()
+      .references(() => staff.id, { onDelete: 'cascade' }),
+    shiftTypeId: uuid('shift_type_id')
+      .notNull()
+      .references(() => shiftTypes.id, { onDelete: 'restrict' }),
+    fromOn: date('from_on').notNull(),
+    /** Null: until further notice. */
+    toOn: date('to_on'),
+    /** Where it came from, when it came from a request or a rotation. */
+    requestId: uuid('request_id'),
+    createdBy: text('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('hr_shift_assignments_staff').on(t.staffId, t.fromOn),
+    index('hr_shift_assignments_when').on(t.institutionId, t.fromOn),
+    check('hr_shift_assignments_dates', sql`to_on is null or to_on >= from_on`),
+    tenantPolicy('hr_shift_assignments'),
+  ],
+)
+
+/** Somebody asking to work a different shift for a while. */
+export const shiftRequests = pgTable(
+  'hr_shift_requests',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    staffId: uuid('staff_id')
+      .notNull()
+      .references(() => staff.id, { onDelete: 'cascade' }),
+    shiftTypeId: uuid('shift_type_id')
+      .notNull()
+      .references(() => shiftTypes.id, { onDelete: 'restrict' }),
+    fromOn: date('from_on').notNull(),
+    toOn: date('to_on').notNull(),
+    reason: text().notNull(),
+    status: leaveStatusEnum().notNull().default('pending'),
+    decidedBy: text('decided_by').references(() => users.id, { onDelete: 'set null' }),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    decisionNote: text('decision_note'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('hr_shift_requests_pending').on(t.institutionId, t.status),
+    check('hr_shift_requests_dates', sql`to_on >= from_on`),
+    check('hr_shift_requests_span', sql`to_on - from_on <= 366`),
+    check('hr_shift_requests_reason', sql`length(trim(reason)) >= 5`),
+    tenantPolicy('hr_shift_requests'),
+  ],
+)
+
+export type ShiftType = typeof shiftTypes.$inferSelect
+export type ShiftAssignment = typeof shiftAssignments.$inferSelect
+export type ShiftRequest = typeof shiftRequests.$inferSelect

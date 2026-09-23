@@ -1,3 +1,4 @@
+import { shiftsPaths } from './openapi-shifts'
 import { leavePaths } from './openapi-leave'
 import { lifecyclePaths } from './openapi-lifecycle'
 import * as z from 'zod'
@@ -207,4 +208,4 @@ const corePaths = {
   },
 }
 
-export const paths = { ...corePaths, ...lifecyclePaths, ...leavePaths }
+export const paths = { ...corePaths, ...lifecyclePaths, ...leavePaths, ...shiftsPaths }

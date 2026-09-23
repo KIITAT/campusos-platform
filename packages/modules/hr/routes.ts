@@ -1,3 +1,4 @@
+import { shiftsRoutes } from './routes-shifts'
 import { leaveRoutes } from './routes-leave'
 import { lifecycleRoutes } from './routes-lifecycle'
 import { flag, jsonBody, param, requiredParam, type PluginRoute } from '@campusos/module-framework'
@@ -109,4 +110,4 @@ const coreRoutes: PluginRoute[] = [
 ]
 
 /** Everything the module answers, in one table for the host to validate. */
-export const routes: PluginRoute[] = [...coreRoutes, ...lifecycleRoutes, ...leaveRoutes]
+export const routes: PluginRoute[] = [...coreRoutes, ...lifecycleRoutes, ...leaveRoutes, ...shiftsRoutes]

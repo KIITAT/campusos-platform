@@ -45,6 +45,7 @@ import {
 import { postPayslip, postSalaryPayment } from './posting'
 import { balancesFor } from './balances'
 import { assertBalance, encashmentsDue } from './leave'
+import { shiftAllowances } from './shifts'
 import { leaveEncashments } from '../schema'
 
 // --- staff -----------------------------------------------------------------
@@ -506,6 +507,8 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
         kind: 'earning',
         amountPaise: e.amountPaise,
       }))
+      // Shift allowances ride alongside, for the days actually worked on a shift.
+      extras.push(...(await shiftAllowances(tx, person, period)))
 
       const slip = payslipFor(inForceComponents, { workingDays, unpaidLeaveDays, extras })
 
