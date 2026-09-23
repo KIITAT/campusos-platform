@@ -67,8 +67,11 @@ for (const id of ordered) {
         stdio: ['pipe', 'inherit', 'inherit'],
       })
       applied++
-    } catch {
-      console.error(`\nfailed: ${id}/${file}`)
+    } catch (e) {
+      // psql has already printed a SQL error above. What it cannot print is
+      // its own absence, which used to look exactly like a broken migration.
+      const why = e?.code === 'ENOENT' ? ' (psql is not installed or not on PATH)' : ''
+      console.error(`\nfailed: ${id}/${file}${why}`)
       process.exit(1)
     }
   }

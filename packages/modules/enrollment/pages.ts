@@ -103,7 +103,7 @@ export const pages: PluginPage[] = [
           { key: 'termCode', label: 'Term', kind: 'code' },
           { key: 'course', label: 'Course' },
           { key: 'credits', label: 'Credits' },
-          { key: 'status', label: 'Status' },
+          { key: 'status', label: 'Status', kind: 'status' },
           { key: 'endedOn', label: 'Ended', kind: 'date' },
         ],
       },
@@ -204,7 +204,7 @@ export const pages: PluginPage[] = [
         empty: 'Nobody has left.',
         columns: [
           { key: 'studentName', label: 'Student' },
-          { key: 'status', label: 'How' },
+          { key: 'status', label: 'How', kind: 'status' },
           { key: 'endedOn', label: 'On', kind: 'date' },
         ],
       },

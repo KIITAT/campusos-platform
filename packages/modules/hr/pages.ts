@@ -10,6 +10,10 @@ import { param, type PluginPage } from '@campusos/module-framework'
 import {
   componentsFor,
   leaveBalances,
+  listClaims,
+  listOpenings,
+  listRuns,
+  openOnboardings,
   listLeave,
   listLeaveTypes,
   listPayslips,
@@ -24,18 +28,71 @@ const ADMIN = ['institution_admin', 'super_admin'] as const
 
 const thisMonth = () => new Date().toISOString().slice(0, 7)
 
+/** The HR workspace's headline numbers, each a way into the screen behind it. */
+const figuresOf = (f: Record<string, string | number>) => [
+  { label: 'Employed', value: String(f.employed), hint: 'on the books today' },
+  { label: 'Monthly gross', value: String(f.monthly), hint: 'from each person’s pay' },
+  {
+    label: 'Leave to decide',
+    value: String(f.leave),
+    tone: Number(f.leave) > 0 ? ('due' as const) : undefined,
+    href: '/m/hr/leave',
+  },
+  {
+    label: 'Claims to decide',
+    value: String(f.claims),
+    tone: Number(f.claims) > 0 ? ('due' as const) : undefined,
+    href: '/m/hr/claims',
+  },
+  { label: 'Vacancies', value: String(f.vacancies), href: '/m/hr/recruitment' },
+  {
+    label: 'Onboarding',
+    value: String(f.onboarding),
+    hint: 'checklists still open',
+    href: '/m/hr/onboarding',
+  },
+]
+
 const corePages: PluginPage[] = [
   {
     path: '/',
-    title: 'Staff',
+    title: 'Human resources',
     menu: 'Staff',
     roles: [...OFFICE],
     async load(actor, req) {
       const a = actor as Actor
-      const staff = await listStaff(a, true)
+      const [staff, leave, claims, openings, onboarding, runs] = await Promise.all([
+        listStaff(a, true),
+        listLeave(a, true),
+        listClaims(a),
+        listOpenings(a),
+        openOnboardings(a),
+        listRuns(a),
+      ])
       const staffId = param(req, 'staffId')
       const active = staff.filter((s) => !s.leftOn)
+      // Payroll by month, oldest first, the last twelve with a run.
+      const byMonth = new Map<string, { month: string; grossPaise: number; netPaise: number }>()
+      for (const r of runs) {
+        const month = String(r.period).slice(0, 7)
+        const m = byMonth.get(month) ?? { month, grossPaise: 0, netPaise: 0 }
+        m.grossPaise += r.grossPaise
+        m.netPaise += r.netPaise
+        byMonth.set(month, m)
+      }
+      const vacancies = openings
+        .filter((o) => o.live)
+        .reduce((n, o) => n + Math.max(0, o.positions - o.hired), 0)
       return {
+        figures: {
+          employed: String(active.length),
+          monthly: formatPaise(active.reduce((n, s) => n + s.monthlyGrossPaise, 0)),
+          leave: leave.length,
+          claims: claims.filter((c) => c.status === 'submitted').length,
+          vacancies,
+          onboarding: onboarding.length,
+        },
+        payroll: [...byMonth.values()].sort((x, y) => x.month.localeCompare(y.month)).slice(-12),
         staff: staff.map((s) => ({ ...s, unpaid: s.monthlyGrossPaise === 0 })),
         monthly: formatPaise(active.reduce((n, s) => n + s.monthlyGrossPaise, 0)),
         employed: active.length,
@@ -50,14 +107,28 @@ const corePages: PluginPage[] = [
     },
     sections: (data) => [
       {
-        kind: 'note',
-        text:
-          `${data.employed} employed, ${data.monthly} of monthly gross on the ` +
-          `books. A staff record is independent of the academic roster: a cook ` +
-          `and a driver belong here and never teach a section.`,
+        kind: 'figures',
+        figures: figuresOf(data.figures as Record<string, string | number>),
+      },
+      {
+        kind: 'chart',
+        title: 'Payroll by month',
+        type: 'bar',
+        rows: 'payroll',
+        x: 'month',
+        unit: 'money',
+        series: [
+          { key: 'grossPaise', label: 'Gross' },
+          { key: 'netPaise', label: 'Net paid' },
+        ],
+        empty: 'No payroll has been run yet.',
       },
       {
         kind: 'table',
+        title: 'Staff',
+        note:
+          'A staff record is independent of the academic roster: a cook and a driver belong ' +
+          'here and never teach a section.',
         rows: 'staff',
         empty: 'Nobody on record yet.',
         columns: [
@@ -230,7 +301,7 @@ const corePages: PluginPage[] = [
           { key: 'typeName', label: 'Type' },
           { key: 'span', label: 'Dates' },
           { key: 'days', label: 'Days', kind: 'days' },
-          { key: 'status', label: 'Status', alertWhen: 'waiting' },
+          { key: 'status', label: 'Status', kind: 'status', alertWhen: 'waiting' },
         ],
       },
       {
@@ -274,7 +345,7 @@ const corePages: PluginPage[] = [
           { key: 'staffName', label: 'Who' },
           { key: 'typeName', label: 'Type' },
           { key: 'span', label: 'Dates' },
-          { key: 'status', label: 'Status' },
+          { key: 'status', label: 'Status', kind: 'status' },
           { key: 'decisionNote', label: 'Note' },
         ],
       },
@@ -483,7 +554,7 @@ const corePages: PluginPage[] = [
                 { key: 'typeName', label: 'Type' },
                 { key: 'span', label: 'Dates' },
                 { key: 'days', label: 'Days', kind: 'days' },
-                { key: 'status', label: 'Status' },
+                { key: 'status', label: 'Status', kind: 'status' },
               ],
             },
             {

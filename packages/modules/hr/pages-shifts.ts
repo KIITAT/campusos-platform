@@ -104,7 +104,7 @@ export const shiftsPages: PluginPage[] = [
             { key: 'fromOn', label: 'From', kind: 'date' },
             { key: 'toOn', label: 'To', kind: 'date' },
             { key: 'reason', label: 'Why' },
-            { key: 'status', label: 'Status', alertWhen: 'waiting' },
+            { key: 'status', label: 'Status', kind: 'status', alertWhen: 'waiting' },
           ],
         },
         {

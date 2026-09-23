@@ -58,7 +58,7 @@ export const performancePages: PluginPage[] = [
           { key: 'name', label: 'Cycle', href: '/m/hr/performance?cycleId={id}' },
           { key: 'startsOn', label: 'From', kind: 'date' },
           { key: 'endsOn', label: 'To', kind: 'date' },
-          { key: 'status', label: 'Status' },
+          { key: 'status', label: 'Status', kind: 'status' },
           { key: 'progress', label: 'Progress' },
         ],
       },
@@ -71,7 +71,7 @@ export const performancePages: PluginPage[] = [
           { key: 'employeeCode', label: 'Code', kind: 'code', href: '/m/hr/appraisal?appraisalId={id}' },
           { key: 'staffName', label: 'Name' },
           { key: 'reviewer', label: 'Reviewer' },
-          { key: 'status', label: 'Stage' },
+          { key: 'status', label: 'Stage', kind: 'status' },
           { key: 'score', label: 'Score' },
         ],
       },
@@ -158,6 +158,31 @@ export const performancePages: PluginPage[] = [
         canReview: !!view && me?.role === 'reviewer' && view.status === 'manager_review',
         canComment: !!view && me?.role !== 'appraisee' && view.status !== 'completed',
         appraisalId: appraisalId ?? '',
+        cycle: me?.cycle ?? '',
+      }
+    },
+    // With an appraisal open, the page is its form view: the facts, the
+    // sidebar, and when each stage was reached.
+    record: (data) => {
+      const v = data.view && Array.isArray((data.view as View).lines) ? (data.view as View) : null
+      if (!v) return null
+      const at = (d: unknown) => (d ? new Date(d as string).toISOString() : null)
+      return {
+        title: v.staffName,
+        subtitle: data.cycle ? `Appraisal, ${String(data.cycle)}` : 'Appraisal',
+        status: { label: v.status },
+        fields: [
+          { label: 'Stage', value: v.status, kind: 'status' },
+          { label: 'Weighted score', value: v.score === null ? null : v.score.toFixed(2) },
+          { label: 'Self review submitted', value: at(v.selfSubmittedAt), kind: 'when' },
+          { label: 'Completed', value: at(v.completedAt), kind: 'when' },
+        ],
+        createdAt: at(v.createdAt),
+        timeline: [
+          { at: at(v.createdAt)!, text: 'Enrolled in the cycle' },
+          ...(v.selfSubmittedAt ? [{ at: at(v.selfSubmittedAt)!, text: 'Self review submitted' }] : []),
+          ...(v.completedAt ? [{ at: at(v.completedAt)!, text: 'Reviewed; score frozen' }] : []),
+        ],
       }
     },
     sections: (data) => {
@@ -173,7 +198,7 @@ export const performancePages: PluginPage[] = [
             { key: 'cycle', label: 'Cycle', href: '/m/hr/appraisal?appraisalId={id}' },
             { key: 'staffName', label: 'Who' },
             { key: 'role', label: 'You are' },
-            { key: 'status', label: 'Stage' },
+            { key: 'status', label: 'Stage', kind: 'status' },
             { key: 'waiting', label: 'Waiting on you', kind: 'bool', alertWhen: 'waiting' },
             { key: 'score', label: 'Score' },
           ],
@@ -182,7 +207,7 @@ export const performancePages: PluginPage[] = [
       if (v) {
         out.push({
           kind: 'table',
-          title: data.heading as string,
+          title: 'Key result areas',
           rows: 'lines',
           columns: [
             { key: 'name', label: 'KRA' },
@@ -270,7 +295,7 @@ export const performancePages: PluginPage[] = [
           { key: 'kra', label: 'KRA', kind: 'code' },
           { key: 'targetOn', label: 'By', kind: 'date' },
           { key: 'progress', label: 'Progress %' },
-          { key: 'status', label: 'Status' },
+          { key: 'status', label: 'Status', kind: 'status' },
         ],
       })
       return out

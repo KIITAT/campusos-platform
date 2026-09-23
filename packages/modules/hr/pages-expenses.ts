@@ -70,7 +70,7 @@ export const expensesPages: PluginPage[] = [
           { key: 'sanctionedPaise', label: 'Agreed', kind: 'money', alertWhen: 'cut' },
           { key: 'advanceAppliedPaise', label: 'Against advance', kind: 'money' },
           { key: 'paidPaise', label: 'Paid', kind: 'money' },
-          { key: 'status', label: 'Status', alertWhen: 'waiting' },
+          { key: 'status', label: 'Status', kind: 'status', alertWhen: 'waiting' },
         ],
       },
       {
@@ -149,7 +149,7 @@ export const expensesPages: PluginPage[] = [
           { key: 'monthlyRecoveryPaise', label: 'From pay monthly', kind: 'money' },
           { key: 'recoveredPaise', label: 'Back', kind: 'money' },
           { key: 'outstandingPaise', label: 'Outstanding', kind: 'money', alertWhen: 'open' },
-          { key: 'status', label: 'Status' },
+          { key: 'status', label: 'Status', kind: 'status' },
         ],
       },
       {

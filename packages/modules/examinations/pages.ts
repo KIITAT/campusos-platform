@@ -69,7 +69,7 @@ export const pages: PluginPage[] = [
           { key: 'kind', label: 'Kind' },
           { key: 'maxMarks', label: 'Out of' },
           { key: 'weightPercent', label: 'Weight' },
-          { key: 'state', label: 'Status', alertWhen: 'open' },
+          { key: 'state', label: 'Status', kind: 'status', alertWhen: 'open' },
         ],
       },
       {

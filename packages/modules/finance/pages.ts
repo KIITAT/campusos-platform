@@ -42,6 +42,15 @@ export const pages: PluginPage[] = [
         totalCredit: formatPaise(tb.creditPaise),
         difference: formatPaise(tb.differencePaise),
         outOfBalance: tb.differencePaise !== 0,
+        // Each side of the books at a glance, in the order a balance sheet reads.
+        byType: ['asset', 'liability', 'equity', 'income', 'expense']
+          .map((type) => ({
+            type: type[0]!.toUpperCase() + type.slice(1),
+            balancePaise: Math.abs(
+              tb.rows.filter((r) => r.type === type).reduce((n, r) => n + r.balancePaise, 0),
+            ),
+          }))
+          .filter((t) => t.balancePaise !== 0),
       }
     },
     sections: (data) => [
@@ -56,6 +65,16 @@ export const pages: PluginPage[] = [
             tone: data.outOfBalance ? 'due' : 'clear',
           },
         ],
+      },
+      {
+        kind: 'chart',
+        title: 'Balances by kind of account',
+        type: 'bar',
+        rows: 'byType',
+        x: 'type',
+        unit: 'money',
+        series: [{ key: 'balancePaise', label: 'Balance' }],
+        empty: 'Nothing posted yet.',
       },
       ...(data.outOfBalance
         ? [
@@ -248,7 +267,7 @@ export const pages: PluginPage[] = [
         empty: 'Nothing closed yet, so every month is open.',
         columns: [
           { key: 'month', label: 'Month', kind: 'code' },
-          { key: 'status', label: 'Status' },
+          { key: 'status', label: 'Status', kind: 'status' },
           { key: 'closedAt', label: 'Closed', kind: 'when' },
           { key: 'reopened', label: 'Reopened because', alertWhen: 'reopened' },
         ],

@@ -102,7 +102,7 @@ export const pages: PluginPage[] = [
         empty: 'Pick a session above.',
         columns: [
           { key: 'who', label: 'Student' },
-          { key: 'state', label: 'Status', alertWhen: 'missing' },
+          { key: 'state', label: 'Status', kind: 'status', alertWhen: 'missing' },
           { key: 'markedAt', label: 'When', kind: 'when' },
           { key: 'overrideReason', label: 'Reason' },
         ],

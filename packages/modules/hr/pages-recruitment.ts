@@ -79,22 +79,36 @@ export const recruitmentPages: PluginPage[] = [
           { key: 'live', label: 'Live', kind: 'bool' },
         ],
       },
-      {
-        kind: 'table',
-        title: data.openingTitle ? `Applicants: ${data.openingTitle}` : 'Applicants',
-        rows: 'applicants',
-        empty: 'Pick an opening above.',
-        columns: [
-          {
-            key: 'name',
-            label: 'Name',
-            href: `/m/hr/recruitment?openingId=${data.openingId}&applicantId={id}`,
+      data.openingId
+        ? {
+            kind: 'kanban',
+            title: `Pipeline: ${data.openingTitle}`,
+            note: 'Each applicant in the stage they have reached. Open a card for their interview feedback and offers.',
+            rows: 'applicants',
+            groupBy: 'status',
+            lanes: [
+              { value: 'applied', label: 'Applied' },
+              { value: 'shortlisted', label: 'Shortlisted', tone: 'orange' },
+              { value: 'interviewing', label: 'Interviewing', tone: 'blue' },
+              { value: 'offered', label: 'Offered', tone: 'violet' },
+              { value: 'hired', label: 'Hired', tone: 'green' },
+              { value: 'rejected', label: 'Rejected', tone: 'red' },
+              { value: 'withdrawn', label: 'Withdrawn', tone: 'gray' },
+            ],
+            card: {
+              title: 'name',
+              subtitle: 'email',
+              meta: [
+                { key: 'source', label: 'Source' },
+                { key: 'createdAt', label: 'Applied', kind: 'date' },
+              ],
+              href: `/m/hr/recruitment?openingId=${data.openingId}&applicantId={id}`,
+            },
+          }
+        : {
+            kind: 'note',
+            text: 'Pick an opening to see its applicants as a pipeline.',
           },
-          { key: 'email', label: 'Email' },
-          { key: 'source', label: 'Source' },
-          { key: 'status', label: 'Status' },
-        ],
-      },
       {
         kind: 'table',
         title: data.fileName ? `Feedback on ${data.fileName}` : 'Feedback',
@@ -118,7 +132,7 @@ export const recruitmentPages: PluginPage[] = [
           { key: 'monthlyPaise', label: 'Monthly', kind: 'money' },
           { key: 'joiningOn', label: 'Joining', kind: 'date' },
           { key: 'expiresOn', label: 'Expires', kind: 'date' },
-          { key: 'status', label: 'Status' },
+          { key: 'status', label: 'Status', kind: 'status' },
         ],
       },
       {
@@ -207,7 +221,7 @@ export const recruitmentPages: PluginPage[] = [
           { key: 'department', label: 'Department' },
           { key: 'filled', label: 'Filled' },
           { key: 'reason', label: 'Why' },
-          { key: 'status', label: 'Status', alertWhen: 'waiting' },
+          { key: 'status', label: 'Status', kind: 'status', alertWhen: 'waiting' },
         ],
       },
       {

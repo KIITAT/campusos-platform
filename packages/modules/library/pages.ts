@@ -161,7 +161,7 @@ export const pages: PluginPage[] = [
         empty: 'Pick a title above to see its copies.',
         columns: [
           { key: 'accessionNo', label: 'Accession', kind: 'code' },
-          { key: 'status', label: 'Status' },
+          { key: 'status', label: 'Status', kind: 'status' },
           { key: 'shelf', label: 'Shelf' },
           { key: 'borrowerName', label: 'Held by' },
           { key: 'dueOn', label: 'Due', kind: 'date' },

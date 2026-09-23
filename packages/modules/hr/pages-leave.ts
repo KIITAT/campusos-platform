@@ -129,7 +129,7 @@ export const leavePages: PluginPage[] = [
           { key: 'workedOn', label: 'Worked', kind: 'date' },
           { key: 'days', label: 'Days', kind: 'days' },
           { key: 'reason', label: 'Why' },
-          { key: 'status', label: 'Status', alertWhen: 'waiting' },
+          { key: 'status', label: 'Status', kind: 'status', alertWhen: 'waiting' },
         ],
       },
       {
@@ -155,7 +155,7 @@ export const leavePages: PluginPage[] = [
           { key: 'days', label: 'Days', kind: 'days' },
           { key: 'month', label: 'Paid in' },
           { key: 'amountPaise', label: 'Amount', kind: 'money' },
-          { key: 'status', label: 'Status', alertWhen: 'waiting' },
+          { key: 'status', label: 'Status', kind: 'status', alertWhen: 'waiting' },
           { key: 'paid', label: 'On a payslip', kind: 'bool' },
         ],
       },

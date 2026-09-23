@@ -742,7 +742,7 @@ export const pages: PluginPage[] = [
         empty: 'Nothing declared.',
         columns: [
           { key: 'programme', label: 'Programme' },
-          { key: 'status', label: 'Status' },
+          { key: 'status', label: 'Status', kind: 'status' },
           { key: 'lead', label: 'Leads' },
           { key: 'declaredOn', label: 'Declared', kind: 'date' },
           { key: 'endedOn', label: 'Ended', kind: 'date' },

@@ -204,7 +204,7 @@ export const pages: PluginPage[] = [
         columns: [
           { key: 'roomNumber', label: 'Room', kind: 'code' },
           { key: 'who', label: 'Resident' },
-          { key: 'state', label: 'Status', alertWhen: 'missing' },
+          { key: 'state', label: 'Status', kind: 'status', alertWhen: 'missing' },
           { key: 'method', label: 'How' },
           { key: 'note', label: 'Note' },
         ],
@@ -387,7 +387,7 @@ export const pages: PluginPage[] = [
               empty: 'Nothing recorded yet.',
               columns: [
                 { key: 'onNight', label: 'Night', kind: 'date' },
-                { key: 'status', label: 'Status' },
+                { key: 'status', label: 'Status', kind: 'status' },
                 { key: 'method', label: 'How' },
               ],
             },
