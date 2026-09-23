@@ -335,23 +335,23 @@ export async function inviteGuardian(actor: Actor, input: unknown): Promise<Invi
   const tenant = requireAdmin(actor)
   const d = inviteGuardianSchema.parse(input)
 
-  const status = await addressStatus(tenant, d.email)
-  if (status.kind === 'taken') {
-    throw new ParentError(
-      409,
-      'address_in_use',
-      'That address already belongs to an account at another institution, so it cannot be invited here.',
-    )
-  }
-  if (status.kind === 'member' && status.role !== 'parent') {
-    throw new ParentError(
-      409,
-      'member_address',
-      'That address is already an account here with another role. Invite the guardian at a personal address.',
-    )
-  }
-
   return withTenant(tenant, async (tx): Promise<InviteOutcome> => {
+    const status = await addressStatus(tx, d.email)
+    if (status.kind === 'taken') {
+      throw new ParentError(
+        409,
+        'address_in_use',
+        'That address already belongs to an account at another institution, so it cannot be invited here.',
+      )
+    }
+    if (status.kind === 'member' && status.role !== 'parent') {
+      throw new ParentError(
+        409,
+        'member_address',
+        'That address is already an account here with another role. Invite the guardian at a personal address.',
+      )
+    }
+
     const [student] = await tx
       .select({ role: users.role, name: users.name })
       .from(users)

@@ -22,6 +22,13 @@
       "when": 1790154169754,
       "tag": "0002_docstatus",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790156396546,
+      "tag": "0003_address_taken",
+      "breakpoints": true
     }
   ]
 }

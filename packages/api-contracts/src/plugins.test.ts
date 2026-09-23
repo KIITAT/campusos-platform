@@ -222,3 +222,24 @@ test('every form on a page posts to a route the module answers', () => {
     }
   }
 })
+
+test('no module reaches for the owner connection', async () => {
+  // A plugin runs as the application role, under row level security, and its
+  // bundle cannot open a pool of its own. Code that reaches for the owner
+  // connection passes every test in this workspace -- where it can -- and
+  // fails the first time an installed module runs it. So: never, statically.
+  const { readdirSync, readFileSync, statSync } = await import('node:fs')
+  const { join, resolve } = await import('node:path')
+  const root = resolve(import.meta.dirname, '../../modules')
+  const OWNER_ONLY = /\b(authDb|invitedAccess|bindInvitedUser|corePool)\b/
+  const walk = (dir: string): string[] =>
+    readdirSync(dir).flatMap((f) => {
+      const p = join(dir, f)
+      if (f === 'node_modules' || f === 'migrations') return []
+      return statSync(p).isDirectory() ? walk(p) : [p]
+    })
+  const offenders = walk(root)
+    .filter((f) => /\.tsx?$/.test(f) && !/\.test\.ts$/.test(f))
+    .filter((f) => OWNER_ONLY.test(readFileSync(f, 'utf8')))
+  assert.deepEqual(offenders, [], `module code reaching for the owner connection: ${offenders.join(', ')}`)
+})

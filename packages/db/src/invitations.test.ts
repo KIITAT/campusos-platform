@@ -1,7 +1,7 @@
 import { after, before, beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { eq, inArray, sql } from 'drizzle-orm'
-import { authDb, withTenant } from './client'
+import { authDb, db, withTenant } from './client'
 import {
   InvitationError,
   acceptInvitation,
@@ -175,13 +175,28 @@ test('withdrawing an accepted invitation takes the account back to pending and e
 })
 
 test('an address is free, a member here, or taken -- and taken says nothing more', async () => {
-  assert.deepEqual(await addressStatus(inst, 'nobody@guardian.test'), { kind: 'free' })
-  const here = await addressStatus(inst, 'ADM@invite.test')
+  const status = (institutionId: string, email: string) =>
+    withTenant(institutionId, (tx) => addressStatus(tx, email))
+  assert.deepEqual(await status(inst, 'nobody@guardian.test'), { kind: 'free' })
+  const here = await status(inst, 'ADM@invite.test')
   assert.equal(here.kind, 'member')
-  assert.deepEqual(await addressStatus(inst, 'adm@inviteother.test'), { kind: 'taken' })
+  assert.deepEqual(await status(inst, 'adm@inviteother.test'), { kind: 'taken' })
 
   const b = await issue(other, otherAdmin, 'mum@guardian.test')
-  assert.deepEqual(await addressStatus(inst, 'mum@guardian.test'), { kind: 'free' }, 'an open invitation elsewhere is not yet anything')
+  assert.deepEqual(await status(inst, 'mum@guardian.test'), { kind: 'free' }, 'an open invitation elsewhere is not yet anything')
   await acceptInvitation(other, b.token)
-  assert.deepEqual(await addressStatus(inst, 'mum@guardian.test'), { kind: 'taken' })
+  assert.deepEqual(await status(inst, 'mum@guardian.test'), { kind: 'taken' })
+})
+
+test('the application role can ask whether an address is taken, and only from inside a tenant', async () => {
+  // As a module would: the app role, under row level security, which hides
+  // the other institution's user entirely.
+  const hidden = await withTenant(inst, (tx) =>
+    tx.select().from(users).where(eq(users.email, 'adm@inviteother.test')),
+  )
+  assert.equal(hidden.length, 0, 'the other institution is invisible to the app role')
+  assert.deepEqual(await withTenant(inst, (tx) => addressStatus(tx, 'adm@inviteother.test')), { kind: 'taken' })
+
+  const res = await db.execute(sql`select campusos_address_taken_elsewhere('adm@inviteother.test') as taken`)
+  assert.equal((res.rows[0] as { taken: unknown }).taken, null, 'no tenant, no answer')
 })

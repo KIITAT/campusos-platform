@@ -289,32 +289,25 @@ export type AddressStatus =
  * An account belongs to one institution, and an address to one account, so an
  * address that is somebody's elsewhere cannot be invited here: it would sign
  * in to the account it already has, or -- if two institutions had both invited
- * it -- to neither. Read through the owner connection because the users policy
- * hides other institutions' rows, and answered as a bare "taken" so that no
- * more crosses the boundary than the one fact the caller has to act on.
+ * it -- to neither.
+ *
+ * Runs in the caller's tenant transaction, as the application role: a module
+ * cannot open the owner connection, and should not. The member check is an
+ * ordinary query the users policy already scopes to this institution; the
+ * question about everybody else is asked of campusos_address_taken_elsewhere
+ * (core migration 0003), which answers yes or no and nothing more.
  */
-export async function addressStatus(institutionId: string, email: string): Promise<AddressStatus> {
+export async function addressStatus(tx: Tx, email: string): Promise<AddressStatus> {
   const address = normaliseEmail(email)
-  const [user] = await authDb
-    .select({ id: users.id, institutionId: users.institutionId, role: users.role })
+  const [user] = await tx
+    .select({ id: users.id, role: users.role })
     .from(users)
     .where(sql`lower(${users.email}) = ${address}`)
-  if (user) {
-    return user.institutionId === institutionId
-      ? { kind: 'member', userId: user.id, role: user.role }
-      : { kind: 'taken' }
+  if (user) return { kind: 'member', userId: user.id, role: user.role }
+  const res = await tx.execute(sql`select campusos_address_taken_elsewhere(${address}) as taken`)
+  const taken = (res.rows[0] as { taken: boolean | null } | undefined)?.taken
+  if (taken === null || taken === undefined) {
+    throw new Error('addressStatus needs a tenant transaction')
   }
-  const [elsewhere] = await authDb
-    .select({ id: invitations.id })
-    .from(invitations)
-    .where(
-      and(
-        eq(invitations.email, address),
-        sql`${invitations.institutionId} <> ${institutionId}`,
-        isNotNull(invitations.acceptedAt),
-        isNull(invitations.revokedAt),
-      ),
-    )
-    .limit(1)
-  return elsewhere ? { kind: 'taken' } : { kind: 'free' }
+  return taken ? { kind: 'taken' } : { kind: 'free' }
 }
