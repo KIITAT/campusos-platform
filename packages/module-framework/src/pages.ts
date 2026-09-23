@@ -210,6 +210,12 @@ export interface PluginChart {
   series: { key: string; label: string }[]
   /** How values read: integer paise, or plain numbers. */
   unit?: 'money' | 'number'
+  /**
+   * The top of the scale: a number, or the data key holding one. Absent, the
+   * axis stops at the largest value -- wrong for a rating out of four, where a
+   * 3 would fill the chart.
+   */
+  max?: number | string
   empty?: string
 }
 

@@ -5,7 +5,7 @@ export const manifest: ModuleManifest = {
   name: 'Skills',
   description:
     'What students can do, judged against a scale the institution writes: by the student themselves and by their teachers, with the evidence, as a history that shows a skill growing. Kept apart from grades; depends on no other module.',
-  version: '0.1.1',
+  version: '0.1.2',
   alwaysEnabled: false,
   dependsOn: [],
   softDependsOn: [],

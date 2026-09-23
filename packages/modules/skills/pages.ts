@@ -32,6 +32,7 @@ function profileData(p: Profile) {
       apart: s.gap !== null && Math.abs(s.gap) >= 2,
     })),
     history: p.history,
+    scaleTop: Math.max(0, ...p.skills.map((s) => s.outOf)),
     chart: p.skills
       .filter((s) => s.selfRank !== null || s.teacherRank !== null)
       .map((s) => ({ code: s.code, self: s.selfRank ?? 0, teacher: s.teacherRank ?? 0 })),
@@ -50,6 +51,7 @@ function profileSections(data: Record<string, unknown>, mine: boolean): PluginSe
         { key: 'self', label: mine ? 'You' : 'Self' },
         { key: 'teacher', label: 'Teacher' },
       ],
+      max: 'scaleTop',
       empty: 'No judgements yet.',
     },
     {
@@ -101,6 +103,7 @@ export const pages: PluginPage[] = [
       const [fws, cov] = await Promise.all([listFrameworks(a), coverage(a)])
       return {
         frameworks: fws,
+        scaleTop: Math.max(0, ...fws.map((f) => f.levels)),
         coverage: cov.map((c) => ({
           ...c,
           gap: c.selfAvg !== null && c.teacherAvg !== null ? Math.round((c.teacherAvg - c.selfAvg) * 100) / 100 : null,
@@ -137,6 +140,7 @@ export const pages: PluginPage[] = [
             { key: 'self', label: 'Self' },
             { key: 'teacher', label: 'Teacher' },
           ],
+          max: 'scaleTop',
           empty: 'No judgements yet.',
         },
         {
