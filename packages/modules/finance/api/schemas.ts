@@ -17,6 +17,9 @@ export const accountPurposes = [
   'employer_cost',
   'salaries_payable',
   'withholdings_payable',
+  'employee_advances',
+  'staff_expenses',
+  'expense_claims_payable',
 ] as const
 
 export type AccountPurpose = (typeof accountPurposes)[number]

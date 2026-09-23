@@ -74,6 +74,9 @@ export const accountPurposeEnum = pgEnum('finance_account_purpose', [
   'employer_cost',
   'salaries_payable',
   'withholdings_payable',
+  'employee_advances',
+  'staff_expenses',
+  'expense_claims_payable',
 ])
 
 // --- the chart -------------------------------------------------------------

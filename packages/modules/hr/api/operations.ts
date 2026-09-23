@@ -46,6 +46,7 @@ import { postPayslip, postSalaryPayment } from './posting'
 import { balancesFor } from './balances'
 import { assertBalance, encashmentsDue } from './leave'
 import { shiftAllowances } from './shifts'
+import { advanceDeductions, recordPayrollRecoveries } from './expenses'
 import { leaveEncashments } from '../schema'
 
 // --- staff -----------------------------------------------------------------
@@ -510,7 +511,17 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
       // Shift allowances ride alongside, for the days actually worked on a shift.
       extras.push(...(await shiftAllowances(tx, person, period)))
 
-      const slip = payslipFor(inForceComponents, { workingDays, unpaidLeaveDays, extras })
+      // Advances come back out of what is left after everything else: the room
+      // is worked out first so a recovery never pushes the payslip below zero.
+      const before = payslipFor(inForceComponents, { workingDays, unpaidLeaveDays, extras })
+      const recoveries = await advanceDeductions(
+        tx,
+        person.id,
+        before.grossPaise - before.deductionsPaise,
+      )
+      const slip = recoveries.length
+        ? payslipFor([...inForceComponents, ...recoveries], { workingDays, unpaidLeaveDays, extras })
+        : before
 
       const [row] = await tx
         .insert(payslips)
@@ -527,6 +538,8 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
           generatedBy: actor.id,
         })
         .returning()
+
+      await recordPayrollRecoveries(tx, tenant, row!.id, period, recoveries)
 
       if (encashments.length > 0) {
         await tx
@@ -546,6 +559,7 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
         grossPaise: slip.grossPaise,
         deductionsPaise: slip.deductionsPaise,
         netPaise: slip.netPaise,
+        advanceRecoveryPaise: recoveries.reduce((n, r) => n + r.amountPaise, 0),
       })
 
       made.push({

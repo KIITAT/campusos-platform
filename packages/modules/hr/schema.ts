@@ -1301,3 +1301,173 @@ export type Appraisal = typeof appraisals.$inferSelect
 export type AppraisalKra = typeof appraisalKras.$inferSelect
 export type Goal = typeof goals.$inferSelect
 export type AppraisalFeedback = typeof appraisalFeedback.$inferSelect
+
+// --- expense claims and advances -------------------------------------------
+
+export const claimStatusEnum = pgEnum('hr_claim_status', [
+  'submitted',
+  'approved',
+  'rejected',
+  'paid',
+])
+
+export const advanceStatusEnum = pgEnum('hr_advance_status', [
+  'requested',
+  'approved',
+  'rejected',
+  'paid',
+  'settled',
+])
+
+export const recoverySourceEnum = pgEnum('hr_recovery_source', ['claim', 'payroll', 'cash'])
+
+/**
+ * Money spent on the institution's behalf, asked back.
+ *
+ * The approver may sanction less than was claimed, line by line, so the claim
+ * keeps both figures: what was asked and what was agreed. The difference is
+ * something the claimant is entitled to see.
+ */
+export const expenseClaims = pgTable(
+  'hr_expense_claims',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    staffId: uuid('staff_id')
+      .notNull()
+      .references(() => staff.id, { onDelete: 'restrict' }),
+    title: text().notNull(),
+    status: claimStatusEnum().notNull().default('submitted'),
+    claimedPaise: paise('claimed_paise').notNull(),
+    sanctionedPaise: paise('sanctioned_paise'),
+    /** Set against an open advance when the claim was settled. */
+    advanceAppliedPaise: paise('advance_applied_paise').notNull().default(0),
+    /** Paid out in money, on settlement. */
+    paidPaise: paise('paid_paise').notNull().default(0),
+    decidedBy: text('decided_by').references(() => users.id, { onDelete: 'set null' }),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    decisionNote: text('decision_note'),
+    paidOn: date('paid_on'),
+    paidFrom: text('paid_from'),
+    createdBy: text('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('hr_expense_claims_staff').on(t.staffId, t.status),
+    index('hr_expense_claims_status').on(t.institutionId, t.status),
+    check('hr_expense_claims_title', sql`length(trim(title)) > 0`),
+    check('hr_expense_claims_claimed', sql`claimed_paise > 0`),
+    check(
+      'hr_expense_claims_sanctioned',
+      sql`sanctioned_paise is null or sanctioned_paise between 0 and claimed_paise`,
+    ),
+    check(
+      'hr_expense_claims_settled',
+      sql`status <> 'paid' or advance_applied_paise + paid_paise = sanctioned_paise`,
+    ),
+    check('hr_expense_claims_route', sql`paid_from is null or paid_from in ('bank', 'cash')`),
+    tenantPolicy('hr_expense_claims'),
+  ],
+)
+
+export const expenseClaimLines = pgTable(
+  'hr_expense_claim_lines',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    claimId: uuid('claim_id')
+      .notNull()
+      .references(() => expenseClaims.id, { onDelete: 'cascade' }),
+    spentOn: date('spent_on').notNull(),
+    /** "Travel", "Conference fee", "Lab consumables". */
+    category: text().notNull(),
+    description: text().notNull(),
+    amountPaise: paise('amount_paise').notNull(),
+    sanctionedPaise: paise('sanctioned_paise'),
+    /** Bill or ticket number: what the auditor asks for. */
+    receiptRef: text('receipt_ref'),
+  },
+  (t) => [
+    index('hr_expense_claim_lines_claim').on(t.claimId),
+    check('hr_expense_claim_lines_amount', sql`amount_paise > 0`),
+    check(
+      'hr_expense_claim_lines_sanctioned',
+      sql`sanctioned_paise is null or sanctioned_paise between 0 and amount_paise`,
+    ),
+    tenantPolicy('hr_expense_claim_lines'),
+  ],
+)
+
+/**
+ * Money handed to somebody before they spend it. It stays the institution's
+ * until it is accounted for -- by a claim set against it, by deductions from
+ * pay, or by being handed back -- which is why the books carry it as an asset.
+ */
+export const employeeAdvances = pgTable(
+  'hr_employee_advances',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    staffId: uuid('staff_id')
+      .notNull()
+      .references(() => staff.id, { onDelete: 'restrict' }),
+    purpose: text().notNull(),
+    amountPaise: paise('amount_paise').notNull(),
+    status: advanceStatusEnum().notNull().default('requested'),
+    /** When set, payroll deducts up to this much a month until it is recovered. */
+    monthlyRecoveryPaise: paise('monthly_recovery_paise'),
+    decidedBy: text('decided_by').references(() => users.id, { onDelete: 'set null' }),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    paidOn: date('paid_on'),
+    paidFrom: text('paid_from'),
+    createdBy: text('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('hr_employee_advances_staff').on(t.staffId, t.status),
+    check('hr_employee_advances_amount', sql`amount_paise > 0`),
+    check('hr_employee_advances_purpose', sql`length(trim(purpose)) >= 5`),
+    check(
+      'hr_employee_advances_monthly',
+      sql`monthly_recovery_paise is null or monthly_recovery_paise between 1 and amount_paise`,
+    ),
+    check('hr_employee_advances_route', sql`paid_from is null or paid_from in ('bank', 'cash')`),
+    tenantPolicy('hr_employee_advances'),
+  ],
+)
+
+/**
+ * Every rupee of an advance coming back, and how. What is still outstanding is
+ * the advance less these, computed rather than kept, and a trigger refuses a
+ * recovery that would take more back than was ever handed out.
+ */
+export const advanceRecoveries = pgTable(
+  'hr_advance_recoveries',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    advanceId: uuid('advance_id')
+      .notNull()
+      .references(() => employeeAdvances.id, { onDelete: 'restrict' }),
+    source: recoverySourceEnum().notNull(),
+    claimId: uuid('claim_id').references(() => expenseClaims.id, { onDelete: 'restrict' }),
+    payslipId: uuid('payslip_id').references(() => payslips.id, { onDelete: 'restrict' }),
+    amountPaise: paise('amount_paise').notNull(),
+    recoveredOn: date('recovered_on').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('hr_advance_recoveries_advance').on(t.advanceId),
+    check('hr_advance_recoveries_amount', sql`amount_paise > 0`),
+    check(
+      'hr_advance_recoveries_source',
+      sql`(source = 'claim') = (claim_id is not null) and (source = 'payroll') = (payslip_id is not null)`,
+    ),
+    tenantPolicy('hr_advance_recoveries'),
+  ],
+)
+
+export type ExpenseClaim = typeof expenseClaims.$inferSelect
+export type ExpenseClaimLine = typeof expenseClaimLines.$inferSelect
+export type EmployeeAdvance = typeof employeeAdvances.$inferSelect
+export type AdvanceRecovery = typeof advanceRecoveries.$inferSelect

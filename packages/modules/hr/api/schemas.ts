@@ -770,3 +770,79 @@ export const giveAppraisalFeedbackSchema = z
     rating: z.coerce.number().int().min(1).max(5),
   })
   .meta({ id: 'HrAppraisalFeedback' })
+
+// --- expense claims and advances -------------------------------------------
+
+const route = z.enum(['bank', 'cash']).default('bank')
+
+/** A form posts one line flat; the API takes a list. Fold one into the other. */
+const foldClaimLine = (v: unknown) => {
+  if (!v || typeof v !== 'object' || 'lines' in v) return v
+  const { spentOn, category, description, amount, receiptRef, ...rest } = v as Record<string, unknown>
+  return { ...rest, lines: [{ spentOn, category, description, amount, receiptRef: receiptRef || null }] }
+}
+
+export const submitClaimSchema = z
+  .object({
+    staffId: uuid,
+    title: z.string().trim().min(1).max(200),
+    lines: z
+      .array(
+        z.object({
+          spentOn: day,
+          category: z.string().trim().min(1).max(80),
+          description: z.string().trim().min(1).max(500),
+          amount: rupees,
+          receiptRef: z.string().trim().max(120).nullish(),
+        }),
+      )
+      .min(1)
+      .max(100),
+  })
+  .meta({ id: 'HrClaimSubmit' })
+export const submitClaimInput = z.preprocess(foldClaimLine, submitClaimSchema)
+
+export const decideClaimSchema = z
+  .object({
+    claimId: uuid,
+    approve: z.coerce.boolean(),
+    /** Per line, what is agreed. Omitted lines are sanctioned in full. */
+    sanction: z.array(z.object({ lineId: uuid, amount: rupees })).max(100).default([]),
+    note: z.string().trim().max(500).nullish(),
+  })
+  .meta({ id: 'HrClaimDecide' })
+
+export const settleClaimSchema = z
+  .object({
+    claimId: uuid,
+    /** Set the claim against this open advance first, up to what is outstanding. */
+    advanceId: uuid.nullish(),
+    paidOn: day,
+    paidFrom: route,
+  })
+  .meta({ id: 'HrClaimSettle' })
+
+export const requestAdvanceSchema = z
+  .object({
+    staffId: uuid,
+    purpose: z.string().trim().min(5).max(500),
+    amount: rupees,
+  })
+  .meta({ id: 'HrAdvanceRequest' })
+
+export const decideAdvanceSchema = z
+  .object({
+    advanceId: uuid,
+    approve: z.coerce.boolean(),
+    /** Recover from pay at most this much a month. Omitted: recovered by claims or repayment. */
+    monthlyRecovery: rupees.nullish(),
+  })
+  .meta({ id: 'HrAdvanceDecide' })
+
+export const payAdvanceSchema = z
+  .object({ advanceId: uuid, paidOn: day, paidFrom: route })
+  .meta({ id: 'HrAdvancePay' })
+
+export const repayAdvanceSchema = z
+  .object({ advanceId: uuid, amount: rupees, on: day, into: route })
+  .meta({ id: 'HrAdvanceRepay' })

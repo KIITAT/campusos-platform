@@ -1,7 +1,7 @@
 /**
  * The chart an institution gets if it never builds its own.
  *
- * Eleven accounts, which is the smallest set that lets fees, aid, the library
+ * Fourteen accounts, which is the smallest set that lets fees, aid, the library
  * and payroll all post something an accountant would recognise. Codes follow the
  * convention almost every Indian college's auditor already uses -- 1000s
  * assets, 2000s liabilities, 4000s income, 5000s expense -- so the first
@@ -15,6 +15,7 @@ export const DEFAULT_CHART = [
   { code: '1000', name: 'Cash in hand', type: 'asset', purpose: 'cash' },
   { code: '1010', name: 'Bank account', type: 'asset', purpose: 'bank' },
   { code: '1100', name: 'Fees receivable', type: 'asset', purpose: 'fees_receivable' },
+  { code: '1200', name: 'Advances to staff', type: 'asset', purpose: 'employee_advances' },
   {
     code: '2100',
     name: 'Salaries payable',
@@ -26,6 +27,12 @@ export const DEFAULT_CHART = [
     name: 'Statutory withholdings payable',
     type: 'liability',
     purpose: 'withholdings_payable',
+  },
+  {
+    code: '2300',
+    name: 'Expense claims payable',
+    type: 'liability',
+    purpose: 'expense_claims_payable',
   },
   { code: '4000', name: 'Tuition and fees', type: 'income', purpose: 'fee_income' },
   { code: '4100', name: 'Fines and charges', type: 'income', purpose: 'fine_income' },
@@ -48,6 +55,7 @@ export const DEFAULT_CHART = [
     type: 'expense',
     purpose: 'employer_cost',
   },
+  { code: '5300', name: 'Staff expenses reimbursed', type: 'expense', purpose: 'staff_expenses' },
 ] as const
 
 /** Which side of an account a positive balance sits on. */

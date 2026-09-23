@@ -31,6 +31,7 @@ export const manifest: ModuleManifest = {
     { label: 'My employment', href: '/m/hr/me', roles: ['faculty'] },
     { label: 'My interviews', href: '/m/hr/interviews', roles: ['faculty', 'hod'] },
     { label: 'My appraisals', href: '/m/hr/appraisal', roles: ['faculty', 'hod'] },
+    { label: 'Claims', href: '/m/hr/claims', roles: ['institution_admin', 'accounts_staff', 'faculty', 'hod'] },
   ],
 
   apiBasePath: '/api/v1/modules/hr',

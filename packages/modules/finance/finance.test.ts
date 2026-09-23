@@ -106,10 +106,34 @@ test('an institution that has never opened the screen still has a chart', async 
   const b = await books()
   const chart = await listAccounts(b.admin)
 
-  assert.equal(chart.length, 11)
+  assert.equal(chart.length, 14)
   assert.equal(chart.find((a) => a.code === '4000')!.purpose, 'fee_income')
   // Reading twice does not write it twice.
-  assert.equal((await listAccounts(b.admin)).length, 11)
+  assert.equal((await listAccounts(b.admin)).length, 14)
+})
+
+test('a chart made before a purpose existed picks its account up on first use', async () => {
+  // Institutions whose books predate the staff-money accounts have eleven
+  // rows. The first posting that asks for one of the new purposes re-applies
+  // the default chart, idempotently, rather than failing.
+  const b = await books()
+  await withTenant(b.id, (tx) =>
+    tx.insert(accounts).values([
+      { institutionId: b.id, code: '1010', name: 'Bank', type: 'asset', purpose: 'bank' },
+    ]),
+  )
+  await postEntry(b.admin, {
+    memo: 'Advance for a conference',
+    sourceModule: 'manual',
+    sourceRef: 'advance:old-chart',
+    lines: [
+      { purpose: 'employee_advances', debitPaise: 500_000 },
+      { purpose: 'bank', creditPaise: 500_000 },
+    ],
+  })
+  const chart = await listAccounts(b.admin)
+  assert.equal(chart.find((a) => a.purpose === 'employee_advances')!.code, '1200')
+  assert.equal((await trialBalance(b.admin)).differencePaise, 0)
 })
 
 test('two accounts cannot share a code, or a purpose', async () => {

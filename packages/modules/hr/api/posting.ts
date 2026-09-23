@@ -45,9 +45,13 @@ export async function postPayslip(
     grossPaise: number
     deductionsPaise: number
     netPaise: number
+    /** The part of the deductions that is an advance coming back, not a withholding. */
+    advanceRecoveryPaise?: number
   },
 ): Promise<void> {
   if (slip.grossPaise === 0) return
+  const recovered = slip.advanceRecoveryPaise ?? 0
+  const withheld = slip.deductionsPaise - recovered
 
   const costCenter = slip.department ?? null
 
@@ -60,8 +64,13 @@ export async function postPayslip(
     sourceRef: `payslip:${slip.id}`,
     lines: [
       { purpose: 'salaries_expense', debitPaise: slip.grossPaise, costCenter },
-      ...(slip.deductionsPaise > 0
-        ? [{ purpose: 'withholdings_payable', creditPaise: slip.deductionsPaise, costCenter }]
+      ...(withheld > 0
+        ? [{ purpose: 'withholdings_payable', creditPaise: withheld, costCenter }]
+        : []),
+      // An advance deducted from pay is the advance coming home, not money owed
+      // to a tax office.
+      ...(recovered > 0
+        ? [{ purpose: 'employee_advances', creditPaise: recovered, costCenter }]
         : []),
       ...(slip.netPaise > 0
         ? [{ purpose: 'salaries_payable', creditPaise: slip.netPaise, costCenter }]
@@ -113,4 +122,113 @@ function monthEnd(period: string): Date {
   const year = Number(period.slice(0, 4))
   const month = Number(period.slice(5, 7))
   return new Date(Date.UTC(year, month, 0, 23, 59, 59))
+}
+
+// --- staff money outside payroll --------------------------------------------
+
+type Route = 'bank' | 'cash'
+const routeOf = (r: string | null | undefined): Route => (r === 'cash' ? 'cash' : 'bank')
+
+/**
+ * An advance handed over: still the institution's money, now in somebody's
+ * pocket rather than its bank.
+ *
+ *   debit  advances to staff
+ *   credit bank or cash
+ */
+export async function postAdvancePaid(
+  tx: Tx,
+  institutionId: string,
+  actorId: string | null,
+  a: { id: string; amountPaise: number; paidOn: string; paidFrom: string; staffName: string },
+): Promise<void> {
+  await postWithin(tx, institutionId, actorId, {
+    occurredAt: new Date(`${a.paidOn}T00:00:00Z`),
+    memo: `Advance to ${a.staffName}`,
+    sourceModule: 'hr',
+    sourceRef: `advance:${a.id}`,
+    lines: [
+      { purpose: 'employee_advances', debitPaise: a.amountPaise },
+      { purpose: routeOf(a.paidFrom), creditPaise: a.amountPaise },
+    ],
+  })
+}
+
+/** An advance handed back in money. */
+export async function postAdvanceRepaid(
+  tx: Tx,
+  institutionId: string,
+  actorId: string | null,
+  r: { id: string; amountPaise: number; on: string; into: string; staffName: string },
+): Promise<void> {
+  await postWithin(tx, institutionId, actorId, {
+    occurredAt: new Date(`${r.on}T00:00:00Z`),
+    memo: `Advance repaid by ${r.staffName}`,
+    sourceModule: 'hr',
+    sourceRef: `advance-repaid:${r.id}`,
+    lines: [
+      { purpose: routeOf(r.into), debitPaise: r.amountPaise },
+      { purpose: 'employee_advances', creditPaise: r.amountPaise },
+    ],
+  })
+}
+
+/**
+ * A claim approved: the expense happened, and the claimant is owed it.
+ *
+ *   debit  staff expenses          against their department
+ *   credit expense claims payable
+ */
+export async function postClaimApproved(
+  tx: Tx,
+  institutionId: string,
+  actorId: string | null,
+  c: { id: string; sanctionedPaise: number; title: string; staffName: string; department: string | null },
+): Promise<void> {
+  if (c.sanctionedPaise === 0) return
+  await postWithin(tx, institutionId, actorId, {
+    memo: `Expense claim: ${c.title} (${c.staffName})`,
+    sourceModule: 'hr',
+    sourceRef: `claim:${c.id}`,
+    lines: [
+      { purpose: 'staff_expenses', debitPaise: c.sanctionedPaise, costCenter: c.department },
+      { purpose: 'expense_claims_payable', creditPaise: c.sanctionedPaise },
+    ],
+  })
+}
+
+/**
+ * A claim settled: what is owed discharged, partly against an advance they
+ * already hold and partly in money.
+ *
+ *   debit  expense claims payable   the whole sanctioned amount
+ *   credit advances to staff        the part set against an advance
+ *   credit bank or cash             the rest
+ */
+export async function postClaimSettled(
+  tx: Tx,
+  institutionId: string,
+  actorId: string | null,
+  c: {
+    id: string
+    advancePaise: number
+    paidPaise: number
+    paidOn: string
+    paidFrom: string | null
+    staffName: string
+  },
+): Promise<void> {
+  const total = c.advancePaise + c.paidPaise
+  if (total === 0) return
+  await postWithin(tx, institutionId, actorId, {
+    occurredAt: new Date(`${c.paidOn}T00:00:00Z`),
+    memo: `Expense claim settled, ${c.staffName}`,
+    sourceModule: 'hr',
+    sourceRef: `claim-settled:${c.id}`,
+    lines: [
+      { purpose: 'expense_claims_payable', debitPaise: total },
+      ...(c.advancePaise > 0 ? [{ purpose: 'employee_advances', creditPaise: c.advancePaise }] : []),
+      ...(c.paidPaise > 0 ? [{ purpose: routeOf(c.paidFrom), creditPaise: c.paidPaise }] : []),
+    ],
+  })
 }

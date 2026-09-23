@@ -1,3 +1,4 @@
+import { expensesPages } from './pages-expenses'
 import { performancePages } from './pages-performance'
 import { recruitmentPages } from './pages-recruitment'
 import { shiftsPages } from './pages-shifts'
@@ -508,4 +509,4 @@ const corePages: PluginPage[] = [
   },
 ]
 
-export const pages: PluginPage[] = [...corePages, ...lifecyclePages, ...leavePages, ...shiftsPages, ...recruitmentPages, ...performancePages]
+export const pages: PluginPage[] = [...corePages, ...lifecyclePages, ...leavePages, ...shiftsPages, ...recruitmentPages, ...performancePages, ...expensesPages]
