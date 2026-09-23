@@ -1,4 +1,5 @@
 export * from './guards'
+export * from './pay'
 export * from './expenses'
 export * from './performance'
 export * from './recruitment'

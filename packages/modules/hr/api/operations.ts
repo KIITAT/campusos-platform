@@ -15,6 +15,7 @@ import {
   leaveRequests,
   leaveTypes,
   payComponents,
+  payrollRuns,
   payslips,
   salaryPayments,
   staff,
@@ -22,7 +23,6 @@ import {
 import {
   daysInMonth,
   daysInPeriod,
-  inForce,
   payslipFor,
   type Component,
 } from './payroll'
@@ -47,6 +47,7 @@ import { balancesFor } from './balances'
 import { assertBalance, encashmentsDue } from './leave'
 import { shiftAllowances } from './shifts'
 import { advanceDeductions, recordPayrollRecoveries } from './expenses'
+import { isWithheld, payableComponents, taxDeduction } from './pay'
 import { leaveEncashments } from '../schema'
 
 // --- staff -----------------------------------------------------------------
@@ -129,16 +130,11 @@ export async function listStaff(actor: Actor, includeLeft = false): Promise<Staf
 
     if (rows.length === 0) return []
 
-    const components = await tx
-      .select()
-      .from(payComponents)
-      .where(inArray(payComponents.staffId, rows.map((r) => r.id)))
-
-    return rows.map((r) => {
-      const mine = components.filter(
-        (c) => c.staffId === r.id && c.kind === 'earning' && inForce(c, period),
-      )
-      return {
+    // ponytail: one payable lookup per person, fine for a college's staff list.
+    const out: StaffRow[] = []
+    for (const r of rows) {
+      const { components } = await payableComponents(tx, r.id, period)
+      out.push({
         id: r.id,
         employeeCode: r.employeeCode,
         name: r.name,
@@ -149,9 +145,12 @@ export async function listStaff(actor: Actor, includeLeft = false): Promise<Staf
         leftOn: r.leftOn,
         email: r.email,
         phone: r.phone,
-        monthlyGrossPaise: mine.reduce((n, c) => n + c.amountPaise, 0),
-      }
-    })
+        monthlyGrossPaise: components
+          .filter((c) => c.kind === 'earning')
+          .reduce((n, c) => n + c.amountPaise, 0),
+      })
+    }
+    return out
   })
 }
 
@@ -461,6 +460,19 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
       .where(eq(payslips.period, period))
     const already = new Set(existing.map((e) => e.staffId))
 
+    const [run] = await tx
+      .insert(payrollRuns)
+      .values({
+        institutionId: tenant,
+        period,
+        generated: 0,
+        skipped: 0,
+        grossPaise: 0,
+        netPaise: 0,
+        runBy: actor.id,
+      })
+      .returning({ id: payrollRuns.id })
+
     const workingDays = daysInMonth(new Date(`${period}T00:00:00Z`))
     const made: PayslipRow[] = []
     let skipped = 0
@@ -473,10 +485,11 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
 
       // ponytail: a query pair per person. Fine for a college's staff list; if
       // this ever runs for thousands, fold into two grouped queries.
-      const components = await tx
-        .select()
-        .from(payComponents)
-        .where(eq(payComponents.staffId, person.id))
+      // What they are paid: their structure at their base, with per-person
+      // components taking precedence, and tax on the taxable part if they have
+      // chosen a regime for the year.
+      const payable = await payableComponents(tx, person.id, period)
+      const tax = await taxDeduction(tx, person.id, period, payable.taxablePaise)
 
       const unpaid = await tx
         .select({ fromOn: leaveRequests.fromOn, toOn: leaveRequests.toOn })
@@ -492,14 +505,7 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
 
       const unpaidLeaveDays = unpaid.reduce((n, l) => n + daysInPeriod(l, period), 0)
 
-      const inForceComponents: Component[] = components
-        .filter((c) => inForce(c, period))
-        .map((c) => ({
-          code: c.code,
-          label: c.label,
-          kind: c.kind,
-          amountPaise: c.amountPaise,
-        }))
+      const inForceComponents: Component[] = tax ? [...payable.components, tax] : payable.components
 
       const encashments = await encashmentsDue(tx, person.id, period)
       const extras: Component[] = encashments.map((e) => ({
@@ -535,6 +541,8 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
           unpaidLeaveDays: slip.unpaidLeaveDays,
           lossOfPayPaise: slip.lossOfPayPaise,
           lines: slip.lines,
+          runId: run!.id,
+          withheld: await isWithheld(tx, person.id, period),
           generatedBy: actor.id,
         })
         .returning()
@@ -579,6 +587,16 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
       })
     }
 
+    await tx
+      .update(payrollRuns)
+      .set({
+        generated: made.length,
+        skipped,
+        grossPaise: made.reduce((n, p) => n + p.grossPaise, 0),
+        netPaise: made.reduce((n, p) => n + p.netPaise, 0),
+      })
+      .where(eq(payrollRuns.id, run!.id))
+
     return {
       period,
       generated: made.length,
@@ -605,7 +623,8 @@ export async function paySalaries(actor: Actor, input: unknown) {
     const [owed] = await tx
       .select({ total: sql<number>`coalesce(sum(${payslips.netPaise}), 0)::bigint` })
       .from(payslips)
-      .where(eq(payslips.period, d.period))
+      // Held-back payslips are released one at a time, not in the run.
+      .where(and(eq(payslips.period, d.period), eq(payslips.withheld, false)))
     const amountPaise = Number(owed?.total ?? 0)
 
     if (amountPaise === 0) {
@@ -731,10 +750,6 @@ export async function myEmployment(actor: Actor): Promise<MyEmployment> {
       return { onRecord: false, staff: null, balances: [], leave: [], payslips: [] }
     }
 
-    const components = await tx
-      .select()
-      .from(payComponents)
-      .where(eq(payComponents.staffId, person.id))
     const period = `${today().slice(0, 7)}-01`
 
     const mine = await tx
@@ -767,8 +782,8 @@ export async function myEmployment(actor: Actor): Promise<MyEmployment> {
         leftOn: person.leftOn,
         email: person.email,
         phone: person.phone,
-        monthlyGrossPaise: components
-          .filter((c) => c.kind === 'earning' && inForce(c, period))
+        monthlyGrossPaise: (await payableComponents(tx, person.id, period)).components
+          .filter((c) => c.kind === 'earning')
           .reduce((n, c) => n + c.amountPaise, 0),
       },
       balances: await balancesFor(tx, person.id, String(new Date().getFullYear())),

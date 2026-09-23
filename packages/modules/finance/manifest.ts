@@ -16,7 +16,7 @@ export const manifest: ModuleManifest = {
   name: 'Finance & Books',
   description:
     'Double-entry accounting: a chart of accounts, a journal every other module posts to, and a trial balance.',
-  version: '0.2.0',
+  version: '0.3.0',
   alwaysEnabled: false,
   dependsOn: [],
   pricing: { model: 'flat_monthly', priceINR: 2000 },

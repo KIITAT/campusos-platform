@@ -240,6 +240,11 @@ export const payslips = pgTable(
     unpaidLeaveDays: smallint('unpaid_leave_days').notNull().default(0),
     lossOfPayPaise: paise('loss_of_pay_paise').notNull().default(0),
     lines: jsonb().notNull(),
+    /** The run that produced it. Null for payslips older than runs. */
+    runId: uuid('run_id').references(() => payrollRuns.id, { onDelete: 'set null' }),
+    /** Held back from the payment run; still a cost of its month. */
+    withheld: boolean().notNull().default(false),
+    releasedAt: timestamp('released_at', { withTimezone: true }),
     generatedBy: text('generated_by').references(() => users.id, { onDelete: 'set null' }),
     generatedAt: timestamp('generated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -1471,3 +1476,290 @@ export type ExpenseClaim = typeof expenseClaims.$inferSelect
 export type ExpenseClaimLine = typeof expenseClaimLines.$inferSelect
 export type EmployeeAdvance = typeof employeeAdvances.$inferSelect
 export type AdvanceRecovery = typeof advanceRecoveries.$inferSelect
+
+// --- payroll, expanded -----------------------------------------------------
+
+/**
+ * How a structure line gets its amount.
+ *
+ *   base        the amount on the person's assignment -- their basic, usually
+ *   fixed       the same for everybody on the structure
+ *   percent_of  a share of another line: HRA at 40% of basic
+ *
+ * Deliberately no expression language. Every institution's pay can be written
+ * as a base, some fixed amounts and some percentages of other lines, and a
+ * formula field is how payroll becomes something only its author can read.
+ */
+export const structureCalcEnum = pgEnum('hr_structure_calc', ['base', 'fixed', 'percent_of'])
+
+export const salaryStructures = pgTable(
+  'hr_salary_structures',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    code: text().notNull(),
+    name: text().notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hr_salary_structures_code').on(t.institutionId, t.code),
+    check('hr_salary_structures_code_shape', sql`length(trim(code)) > 0`),
+    tenantPolicy('hr_salary_structures'),
+  ],
+)
+
+export const salaryStructureLines = pgTable(
+  'hr_salary_structure_lines',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    structureId: uuid('structure_id')
+      .notNull()
+      .references(() => salaryStructures.id, { onDelete: 'cascade' }),
+    seq: smallint().notNull(),
+    code: text().notNull(),
+    label: text().notNull(),
+    kind: componentKindEnum().notNull(),
+    calc: structureCalcEnum().notNull(),
+    amountPaise: paise('amount_paise'),
+    /** Basis points of `of`: 4000 is 40%. */
+    percentBp: smallint('percent_bp'),
+    of: text(),
+    /** Whether it counts toward income for tax. The institution says, per line. */
+    taxable: boolean().notNull().default(true),
+  },
+  (t) => [
+    uniqueIndex('hr_salary_structure_lines_code').on(t.structureId, t.code),
+    uniqueIndex('hr_salary_structure_lines_seq').on(t.structureId, t.seq),
+    check(
+      'hr_salary_structure_lines_calc',
+      sql`(calc = 'base' and amount_paise is null and percent_bp is null and of is null)
+          or (calc = 'fixed' and amount_paise > 0 and percent_bp is null and of is null)
+          or (calc = 'percent_of' and amount_paise is null and percent_bp between 1 and 10000 and of is not null)`,
+    ),
+    tenantPolicy('hr_salary_structure_lines'),
+  ],
+)
+
+/** Who is on which structure, at what base, over which dates. Never two at once. */
+export const salaryAssignments = pgTable(
+  'hr_salary_assignments',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    staffId: uuid('staff_id')
+      .notNull()
+      .references(() => staff.id, { onDelete: 'cascade' }),
+    structureId: uuid('structure_id')
+      .notNull()
+      .references(() => salaryStructures.id, { onDelete: 'restrict' }),
+    basePaise: paise('base_paise').notNull(),
+    effectiveFrom: date('effective_from').notNull(),
+    effectiveTo: date('effective_to'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('hr_salary_assignments_staff').on(t.staffId, t.effectiveFrom),
+    check('hr_salary_assignments_base', sql`base_paise > 0`),
+    check(
+      'hr_salary_assignments_dates',
+      sql`effective_to is null or effective_to >= effective_from`,
+    ),
+    tenantPolicy('hr_salary_assignments'),
+  ],
+)
+
+/**
+ * An income-tax regime as the institution enters it: when its year starts,
+ * the standard deduction, the cess, and its slabs.
+ *
+ * Nothing is seeded. Rates are set by the Finance Act and change by
+ * notification; a default shipped here would silently compute wrong salaries
+ * the first February it went stale. The institution's accountant enters them.
+ */
+export const taxRegimes = pgTable(
+  'hr_tax_regimes',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    code: text().notNull(),
+    name: text().notNull(),
+    /** Calendar month the tax year starts in; 4 is April. */
+    yearStartsMonth: smallint('year_starts_month').notNull().default(4),
+    standardDeductionPaise: paise('standard_deduction_paise').notNull().default(0),
+    /** On the tax, in basis points: 400 is 4%. */
+    cessBp: smallint('cess_bp').notNull().default(0),
+    /** Taxable income at or under this pays nothing (a full rebate). Null: no such rule. */
+    rebateUpToPaise: paise('rebate_up_to_paise'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hr_tax_regimes_code').on(t.institutionId, t.code),
+    check('hr_tax_regimes_month', sql`year_starts_month between 1 and 12`),
+    check('hr_tax_regimes_cess', sql`cess_bp between 0 and 5000`),
+    check('hr_tax_regimes_deduction', sql`standard_deduction_paise >= 0`),
+    tenantPolicy('hr_tax_regimes'),
+  ],
+)
+
+export const taxSlabs = pgTable(
+  'hr_tax_slabs',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    regimeId: uuid('regime_id')
+      .notNull()
+      .references(() => taxRegimes.id, { onDelete: 'cascade' }),
+    fromPaise: paise('from_paise').notNull(),
+    /** Null: and everything above. */
+    toPaise: paise('to_paise'),
+    rateBp: smallint('rate_bp').notNull(),
+  },
+  (t) => [
+    uniqueIndex('hr_tax_slabs_from').on(t.regimeId, t.fromPaise),
+    check('hr_tax_slabs_range', sql`to_paise is null or to_paise > from_paise`),
+    check('hr_tax_slabs_rate', sql`rate_bp between 0 and 10000`),
+    tenantPolicy('hr_tax_slabs'),
+  ],
+)
+
+/** Which regime somebody has chosen for a tax year. */
+export const taxElections = pgTable(
+  'hr_tax_elections',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    staffId: uuid('staff_id')
+      .notNull()
+      .references(() => staff.id, { onDelete: 'cascade' }),
+    regimeId: uuid('regime_id')
+      .notNull()
+      .references(() => taxRegimes.id, { onDelete: 'restrict' }),
+    /** The calendar year the tax year starts in: 2026 for 2026-27. */
+    taxYear: smallint('tax_year').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hr_tax_elections_once').on(t.staffId, t.taxYear),
+    tenantPolicy('hr_tax_elections'),
+  ],
+)
+
+/**
+ * A gratuity rule as the institution states it: who qualifies, how many days'
+ * wages per year of service, over what divisor, from which components, and
+ * any ceiling. The statutory figures are the institution's to enter.
+ */
+export const gratuityRules = pgTable(
+  'hr_gratuity_rules',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    code: text().notNull(),
+    name: text().notNull(),
+    minServiceYears: smallint('min_service_years').notNull(),
+    daysPerYear: smallint('days_per_year').notNull(),
+    divisorDays: smallint('divisor_days').notNull(),
+    wageCodes: text('wage_codes').array().notNull(),
+    /** A part-year of at least this many months counts as a whole year. Null: never. */
+    roundUpMonths: smallint('round_up_months'),
+    maxPaise: paise('max_paise'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hr_gratuity_rules_code').on(t.institutionId, t.code),
+    check('hr_gratuity_rules_service', sql`min_service_years between 0 and 50`),
+    check('hr_gratuity_rules_days', sql`days_per_year between 1 and 366 and divisor_days between 1 and 31`),
+    check('hr_gratuity_rules_wage', sql`cardinality(wage_codes) > 0`),
+    check('hr_gratuity_rules_round', sql`round_up_months is null or round_up_months between 1 and 11`),
+    tenantPolicy('hr_gratuity_rules'),
+  ],
+)
+
+/** A gratuity paid, once per employment, with the arithmetic that produced it. */
+export const gratuityPayouts = pgTable(
+  'hr_gratuity_payouts',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    staffId: uuid('staff_id')
+      .notNull()
+      .references(() => staff.id, { onDelete: 'restrict' }),
+    ruleId: uuid('rule_id')
+      .notNull()
+      .references(() => gratuityRules.id, { onDelete: 'restrict' }),
+    serviceYears: smallint('service_years').notNull(),
+    monthlyWagePaise: paise('monthly_wage_paise').notNull(),
+    amountPaise: paise('amount_paise').notNull(),
+    paidOn: date('paid_on').notNull(),
+    paidFrom: text('paid_from').notNull().default('bank'),
+    paidBy: text('paid_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hr_gratuity_payouts_once').on(t.staffId),
+    check('hr_gratuity_payouts_amount', sql`amount_paise > 0`),
+    check('hr_gratuity_payouts_route', sql`paid_from in ('bank', 'cash')`),
+    tenantPolicy('hr_gratuity_payouts'),
+  ],
+)
+
+/**
+ * Salary held back: payslips are still generated -- the cost belongs to the
+ * month -- but they are left out of the payment run until released.
+ */
+export const salaryWithholdings = pgTable(
+  'hr_salary_withholdings',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    staffId: uuid('staff_id')
+      .notNull()
+      .references(() => staff.id, { onDelete: 'cascade' }),
+    fromPeriod: date('from_period').notNull(),
+    reason: text().notNull(),
+    liftedAt: timestamp('lifted_at', { withTimezone: true }),
+    liftedBy: text('lifted_by').references(() => users.id, { onDelete: 'set null' }),
+    createdBy: text('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hr_salary_withholdings_open')
+      .on(t.staffId)
+      .where(sql`lifted_at is null`),
+    check('hr_salary_withholdings_reason', sql`length(trim(reason)) >= 5`),
+    check('hr_salary_withholdings_period', sql`extract(day from from_period) = 1`),
+    tenantPolicy('hr_salary_withholdings'),
+  ],
+)
+
+/** One press of "generate payroll": when, by whom, for which month, for how much. */
+export const payrollRuns = pgTable(
+  'hr_payroll_runs',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    period: date().notNull(),
+    generated: smallint().notNull(),
+    skipped: smallint().notNull(),
+    grossPaise: paise('gross_paise').notNull(),
+    netPaise: paise('net_paise').notNull(),
+    runBy: text('run_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('hr_payroll_runs_period').on(t.institutionId, t.period),
+    check('hr_payroll_runs_period_start', sql`extract(day from period) = 1`),
+    tenantPolicy('hr_payroll_runs'),
+  ],
+)
+
+export type SalaryStructure = typeof salaryStructures.$inferSelect
+export type SalaryStructureLine = typeof salaryStructureLines.$inferSelect
+export type SalaryAssignment = typeof salaryAssignments.$inferSelect
+export type TaxRegime = typeof taxRegimes.$inferSelect
+export type TaxSlab = typeof taxSlabs.$inferSelect
+export type GratuityRule = typeof gratuityRules.$inferSelect
+export type GratuityPayout = typeof gratuityPayouts.$inferSelect
+export type SalaryWithholding = typeof salaryWithholdings.$inferSelect
+export type PayrollRunRecord = typeof payrollRuns.$inferSelect

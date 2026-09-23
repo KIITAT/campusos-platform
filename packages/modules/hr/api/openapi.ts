@@ -1,3 +1,4 @@
+import { payPaths } from './openapi-pay'
 import { expensesPaths } from './openapi-expenses'
 import { performancePaths } from './openapi-performance'
 import { recruitmentPaths } from './openapi-recruitment'
@@ -211,4 +212,4 @@ const corePaths = {
   },
 }
 
-export const paths = { ...corePaths, ...lifecyclePaths, ...leavePaths, ...shiftsPaths, ...recruitmentPaths, ...performancePaths, ...expensesPaths }
+export const paths = { ...corePaths, ...lifecyclePaths, ...leavePaths, ...shiftsPaths, ...recruitmentPaths, ...performancePaths, ...expensesPaths, ...payPaths }

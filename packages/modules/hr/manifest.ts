@@ -4,8 +4,8 @@ export const manifest: ModuleManifest = {
   id: 'hr',
   name: 'HR & Payroll',
   description:
-    'Staff records independent of the academic roster, leave types with an approval workflow, dated pay components, and generated payslips. No statutory filing: the figures are produced and the institution files them.',
-  version: '0.2.0',
+    'The whole of HR: staff records and their history (onboarding, transfers, promotions, separation and exit interviews), leave policies with allocation, carry-forward, earned and encashed days, shifts and rosters, recruitment from requisition to hire, appraisals with KRAs, goals and colleague feedback, expense claims and advances, and payroll from salary structures with configurable tax and gratuity, posting to the books. No statutory filing, and no statutory rate seeded: the institution enters its own.',
+  version: '0.3.0',
   alwaysEnabled: false,
   /**
    * finance, and nothing else. No academic module: a cook needs a payslip and
@@ -28,6 +28,7 @@ export const manifest: ModuleManifest = {
     { label: 'Shifts', href: '/m/hr/shifts', roles: ['institution_admin', 'accounts_staff'] },
     { label: 'Recruitment', href: '/m/hr/recruitment', roles: ['institution_admin', 'accounts_staff'] },
     { label: 'Performance', href: '/m/hr/performance', roles: ['institution_admin', 'accounts_staff'] },
+    { label: 'Pay setup', href: '/m/hr/payroll/setup', roles: ['institution_admin', 'accounts_staff'] },
     { label: 'My employment', href: '/m/hr/me', roles: ['faculty'] },
     { label: 'My interviews', href: '/m/hr/interviews', roles: ['faculty', 'hod'] },
     { label: 'My appraisals', href: '/m/hr/appraisal', roles: ['faculty', 'hod'] },

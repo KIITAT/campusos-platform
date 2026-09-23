@@ -846,3 +846,82 @@ export const payAdvanceSchema = z
 export const repayAdvanceSchema = z
   .object({ advanceId: uuid, amount: rupees, on: day, into: route })
   .meta({ id: 'HrAdvanceRepay' })
+
+// --- payroll, expanded -----------------------------------------------------
+
+export const createStructureSchema = z
+  .object({
+    code: z.string().trim().min(1).max(30),
+    name: z.string().trim().min(1).max(120),
+    lines: z
+      .array(
+        z.object({
+          code: z.string().trim().min(1).max(30),
+          label: z.string().trim().min(1).max(120),
+          kind: z.enum(componentKindEnum.enumValues),
+          calc: z.enum(['base', 'fixed', 'percent_of']),
+          amountPaise: z.coerce.number().int().positive().nullish(),
+          percentBp: z.coerce.number().int().min(1).max(10_000).nullish(),
+          of: z.string().trim().min(1).max(30).nullish(),
+          taxable: z.coerce.boolean().default(true),
+        }),
+      )
+      .min(1)
+      .max(40),
+  })
+  .meta({ id: 'HrStructureCreate' })
+
+export const assignStructureSchema = z
+  .object({ staffId: uuid, structureId: uuid, base: rupees, effectiveFrom: day })
+  .meta({ id: 'HrStructureAssign' })
+
+export const createTaxRegimeSchema = z
+  .object({
+    code: z.string().trim().min(1).max(30),
+    name: z.string().trim().min(1).max(120),
+    yearStartsMonth: z.coerce.number().int().min(1).max(12).default(4),
+    standardDeduction: rupees.default(0),
+    cessBp: z.coerce.number().int().min(0).max(5000).default(0),
+    rebateUpTo: rupees.nullish(),
+    slabs: z
+      .array(z.object({ from: rupees, to: rupees.nullish(), rateBp: z.coerce.number().int().min(0).max(10_000) }))
+      .min(1)
+      .max(20),
+  })
+  .meta({ id: 'HrTaxRegimeCreate' })
+
+export const electRegimeSchema = z
+  .object({ staffId: uuid, regimeId: uuid, taxYear: z.coerce.number().int().min(2000).max(2100) })
+  .meta({ id: 'HrTaxElect' })
+
+export const createGratuityRuleSchema = z
+  .object({
+    code: z.string().trim().min(1).max(30),
+    name: z.string().trim().min(1).max(120),
+    minServiceYears: z.coerce.number().int().min(0).max(50),
+    daysPerYear: z.coerce.number().int().min(1).max(366),
+    divisorDays: z.coerce.number().int().min(1).max(31),
+    wageCodes: z.array(z.string().trim().min(1).max(30)).min(1).max(20),
+    roundUpMonths: z.coerce.number().int().min(1).max(11).nullish(),
+    max: rupees.nullish(),
+  })
+  .meta({ id: 'HrGratuityRuleCreate' })
+
+export const payGratuitySchema = z
+  .object({ staffId: uuid, ruleId: uuid, paidOn: day, paidFrom: z.enum(['bank', 'cash']).default('bank') })
+  .meta({ id: 'HrGratuityPay' })
+
+export const withholdSalarySchema = z
+  .object({ staffId: uuid, fromPeriod: period, reason: z.string().trim().min(5).max(500) })
+  .meta({ id: 'HrSalaryWithhold' })
+
+export const liftWithholdingSchema = z.object({ staffId: uuid }).meta({ id: 'HrSalaryWithholdLift' })
+
+export const releasePayslipSchema = z
+  .object({
+    payslipId: uuid,
+    paidOn: day,
+    paidFrom: z.enum(['bank', 'cash']).default('bank'),
+    reason: z.string().trim().min(5).max(500),
+  })
+  .meta({ id: 'HrPayslipRelease' })

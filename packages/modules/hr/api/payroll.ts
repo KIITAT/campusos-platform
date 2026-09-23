@@ -166,3 +166,131 @@ export function leaveRemaining(annualDays: number, takenDays: number): number | 
   if (annualDays === 0) return null
   return Math.max(0, annualDays - takenDays)
 }
+
+// --- structures, tax, gratuity ---------------------------------------------
+
+export interface StructureLine {
+  code: string
+  label: string
+  kind: 'earning' | 'deduction'
+  calc: 'base' | 'fixed' | 'percent_of'
+  amountPaise: number | null
+  percentBp: number | null
+  of: string | null
+  taxable: boolean
+}
+
+/**
+ * A structure's lines, as amounts for somebody on a given base.
+ *
+ * Percentages may refer to lines in any order -- PF at 12% of basic, basic
+ * listed last -- so this resolves until nothing changes and refuses a cycle
+ * rather than looping on one.
+ */
+export function structureAmounts(
+  lines: StructureLine[],
+  basePaise: number,
+): (Component & { taxable: boolean })[] {
+  const done = new Map<string, number>()
+  let progressed = true
+  while (progressed && done.size < lines.length) {
+    progressed = false
+    for (const l of lines) {
+      if (done.has(l.code)) continue
+      if (l.calc === 'base') done.set(l.code, basePaise)
+      else if (l.calc === 'fixed') done.set(l.code, l.amountPaise ?? 0)
+      else if (l.of !== null && done.has(l.of)) {
+        done.set(l.code, Math.round((done.get(l.of)! * (l.percentBp ?? 0)) / 10_000))
+      } else continue
+      progressed = true
+    }
+  }
+  if (done.size < lines.length) {
+    const stuck = lines.filter((l) => !done.has(l.code)).map((l) => l.code)
+    throw new Error(`structure lines refer to each other in a circle, or to nothing: ${stuck.join(', ')}`)
+  }
+  return lines.map((l) => ({
+    code: l.code,
+    label: l.label,
+    kind: l.kind,
+    amountPaise: done.get(l.code)!,
+    taxable: l.taxable,
+  }))
+}
+
+export interface Regime {
+  standardDeductionPaise: number
+  cessBp: number
+  rebateUpToPaise: number | null
+  slabs: { fromPaise: number; toPaise: number | null; rateBp: number }[]
+}
+
+/**
+ * Tax on a year's taxable income under a regime the institution entered:
+ * standard deduction off the top, each slab's rate on the part of income that
+ * falls in it, a full rebate at or below the threshold if the regime has one,
+ * cess on the tax, rounded to the rupee.
+ *
+ * No rate here is a default. The regime is data.
+ */
+export function annualTax(taxableIncomePaise: number, regime: Regime): number {
+  const income = Math.max(0, taxableIncomePaise - regime.standardDeductionPaise)
+  if (regime.rebateUpToPaise !== null && income <= regime.rebateUpToPaise) return 0
+  let tax = 0
+  for (const s of regime.slabs) {
+    if (income <= s.fromPaise) continue
+    const top = s.toPaise === null ? income : Math.min(income, s.toPaise)
+    tax += ((top - s.fromPaise) * s.rateBp) / 10_000
+  }
+  tax += (tax * regime.cessBp) / 10_000
+  return Math.round(tax / 100) * 100
+}
+
+/**
+ * This month's deduction toward a year's tax: what is still owed, spread over
+ * the months left, this one included. A raise in October is absorbed by the
+ * months after it instead of being a surprise in March.
+ */
+export function monthlyTax(annual: number, alreadyDeducted: number, monthsLeft: number): number {
+  if (monthsLeft <= 0) return 0
+  return Math.max(0, Math.round((annual - alreadyDeducted) / monthsLeft / 100) * 100)
+}
+
+/** The tax year a month falls in, named by the calendar year it starts in. */
+export function taxYearOf(period: string, startsMonth: number): number {
+  const y = Number(period.slice(0, 4))
+  const m = Number(period.slice(5, 7))
+  return m >= startsMonth ? y : y - 1
+}
+
+/** Months from `period` to the end of its tax year, this one included. */
+export function monthsLeftInTaxYear(period: string, startsMonth: number): number {
+  const m = Number(period.slice(5, 7))
+  return ((startsMonth - m + 11) % 12) + 1
+}
+
+export interface GratuityRuleShape {
+  minServiceYears: number
+  daysPerYear: number
+  divisorDays: number
+  roundUpMonths: number | null
+  maxPaise: number | null
+}
+
+/** Completed years between two dates, with a part-year counted whole at `roundUpMonths`. */
+export function serviceYears(joinedOn: string, leftOn: string, roundUpMonths: number | null): number {
+  const [jy, jm, jd] = joinedOn.split('-').map(Number) as [number, number, number]
+  const [ly, lm, ld] = leftOn.split('-').map(Number) as [number, number, number]
+  let months = (ly - jy) * 12 + (lm - jm)
+  if (ld < jd) months--
+  const years = Math.floor(months / 12)
+  const rest = months - years * 12
+  return roundUpMonths !== null && rest >= roundUpMonths ? years + 1 : years
+}
+
+/** Gratuity: wage x days per year / divisor x years, nothing below the minimum service, capped. */
+export function gratuityAmount(monthlyWagePaise: number, years: number, rule: GratuityRuleShape): number {
+  if (years < rule.minServiceYears) return 0
+  const raw = Math.round((monthlyWagePaise * rule.daysPerYear * years) / rule.divisorDays)
+  return rule.maxPaise === null ? raw : Math.min(raw, rule.maxPaise)
+}
