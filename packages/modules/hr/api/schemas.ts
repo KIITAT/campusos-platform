@@ -556,3 +556,103 @@ export const decideShiftSchema = z
     note: z.string().trim().max(500).nullish(),
   })
   .meta({ id: 'HrShiftDecide' })
+
+// --- recruitment -----------------------------------------------------------
+
+export const raiseRequisitionSchema = z
+  .object({
+    designation: z.string().trim().min(1).max(120),
+    department: z.string().trim().max(120).nullish(),
+    positions: z.coerce.number().int().min(1).max(100).default(1),
+    reason: z.string().trim().min(5).max(1000),
+    expectedBy: day.nullish(),
+  })
+  .meta({ id: 'HrRequisitionRaise' })
+
+export const decideRequisitionSchema = z
+  .object({
+    requisitionId: uuid,
+    approve: z.coerce.boolean(),
+    note: z.string().trim().max(500).nullish(),
+  })
+  .meta({ id: 'HrRequisitionDecide' })
+
+export const openPositionSchema = z
+  .object({
+    requisitionId: uuid,
+    title: z.string().trim().min(1).max(200),
+    description: z.string().trim().max(8000).nullish(),
+    opensOn: day.nullish(),
+    closesOn: day.nullish(),
+  })
+  .meta({ id: 'HrOpeningCreate' })
+
+export const closeOpeningSchema = z
+  .object({ openingId: uuid })
+  .meta({ id: 'HrOpeningClose' })
+
+export const addApplicantSchema = z
+  .object({
+    openingId: uuid,
+    name: z.string().trim().min(1).max(160),
+    email: z.email(),
+    phone: z.string().trim().max(20).nullish(),
+    source: z.string().trim().max(200).nullish(),
+    notes: z.string().trim().max(4000).nullish(),
+  })
+  .meta({ id: 'HrApplicantAdd' })
+
+export const moveApplicantSchema = z
+  .object({
+    applicantId: uuid,
+    to: z.enum(['shortlisted', 'rejected', 'withdrawn']),
+    note: z.string().trim().max(1000).nullish(),
+  })
+  .meta({ id: 'HrApplicantMove' })
+
+export const scheduleInterviewSchema = z
+  .object({
+    applicantId: uuid,
+    scheduledAt: z.iso.datetime({ offset: true }),
+    /** User ids. Only these people may give feedback on the round. */
+    panel: z.array(z.string().min(1)).min(1).max(12),
+  })
+  .meta({ id: 'HrInterviewSchedule' })
+
+export const giveFeedbackSchema = z
+  .object({
+    interviewId: uuid,
+    rating: z.coerce.number().int().min(1).max(5),
+    recommendation: z.enum(['strong_hire', 'hire', 'no_hire', 'strong_no_hire']),
+    notes: z.string().trim().min(5).max(4000),
+  })
+  .meta({ id: 'HrInterviewFeedback' })
+
+export const makeOfferSchema = z
+  .object({
+    applicantId: uuid,
+    designation: z.string().trim().min(1).max(120).nullish(),
+    department: z.string().trim().max(120).nullish(),
+    employment: z.enum(employmentEnum.enumValues).default('permanent'),
+    monthly: rupees,
+    joiningOn: day,
+    expiresOn: day,
+  })
+  .meta({ id: 'HrOfferMake' })
+
+export const respondToOfferSchema = z
+  .object({ offerId: uuid, accept: z.coerce.boolean() })
+  .meta({ id: 'HrOfferRespond' })
+
+export const withdrawOfferSchema = z
+  .object({ offerId: uuid, reason: z.string().trim().min(5).max(500) })
+  .meta({ id: 'HrOfferWithdraw' })
+
+export const hireSchema = z
+  .object({
+    offerId: uuid,
+    employeeCode: z.string().trim().min(1).max(40),
+    /** Start this onboarding checklist in the same act. */
+    onboardingTemplateId: uuid.nullish(),
+  })
+  .meta({ id: 'HrHire' })

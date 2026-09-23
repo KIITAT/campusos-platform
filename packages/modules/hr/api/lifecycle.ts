@@ -143,54 +143,64 @@ export async function listOnboardingTemplates(actor: Actor) {
 export async function startOnboarding(actor: Actor, input: unknown) {
   const tenant = requireHr(actor)
   const d = startOnboardingSchema.parse(input)
+  return withTenant(tenant, (tx) =>
+    onboardIn(tx, tenant, d.staffId, d.templateId, d.startedOn ?? today()),
+  )
+}
 
-  return withTenant(tenant, async (tx) => {
-    const [person] = await tx.select().from(staff).where(eq(staff.id, d.staffId))
-    if (!person) throw new HrError(404, 'no_such_staff', 'no such staff record')
+/** The same, inside a transaction somebody else opened -- hiring, for one. */
+export async function onboardIn(
+  tx: Tx,
+  tenant: string,
+  staffId: string,
+  templateId: string,
+  startedOn: string,
+) {
+  const [person] = await tx.select().from(staff).where(eq(staff.id, staffId))
+  if (!person) throw new HrError(404, 'no_such_staff', 'no such staff record')
 
-    const [template] = await tx
-      .select()
-      .from(onboardingTemplates)
-      .where(eq(onboardingTemplates.id, d.templateId))
-    if (!template) throw new HrError(404, 'no_such_template', 'no such onboarding template')
+  const [template] = await tx
+    .select()
+    .from(onboardingTemplates)
+    .where(eq(onboardingTemplates.id, templateId))
+  if (!template) throw new HrError(404, 'no_such_template', 'no such onboarding template')
 
-    const steps = await tx
-      .select()
-      .from(onboardingTemplateActivities)
-      .where(eq(onboardingTemplateActivities.templateId, template.id))
-      .orderBy(asc(onboardingTemplateActivities.seq))
-    if (steps.length === 0) {
-      throw new HrError(400, 'empty_template', 'that template has no activities')
-    }
+  const steps = await tx
+    .select()
+    .from(onboardingTemplateActivities)
+    .where(eq(onboardingTemplateActivities.templateId, template.id))
+    .orderBy(asc(onboardingTemplateActivities.seq))
+  if (steps.length === 0) {
+    throw new HrError(400, 'empty_template', 'that template has no activities')
+  }
 
-    const [run] = await tx
-      .insert(onboardings)
-      .values({
-        institutionId: tenant,
-        staffId: person.id,
-        templateCode: template.code,
-        templateName: template.name,
-        startedOn: d.startedOn ?? today(),
-      })
-      .onConflictDoNothing()
-      .returning()
-    if (!run) {
-      throw new HrError(409, 'already_onboarding', 'that person is already being onboarded')
-    }
+  const [run] = await tx
+    .insert(onboardings)
+    .values({
+      institutionId: tenant,
+      staffId: person.id,
+      templateCode: template.code,
+      templateName: template.name,
+      startedOn,
+    })
+    .onConflictDoNothing()
+    .returning()
+  if (!run) {
+    throw new HrError(409, 'already_onboarding', 'that person is already being onboarded')
+  }
 
-    await tx.insert(onboardingActivities).values(
-      steps.map((s) => ({
-        institutionId: tenant,
-        onboardingId: run.id,
-        seq: s.seq,
-        title: s.title,
-        owner: s.owner,
-        dueOn: shiftDays(person.joinedOn, s.dueDayOffset),
-      })),
-    )
+  await tx.insert(onboardingActivities).values(
+    steps.map((s) => ({
+      institutionId: tenant,
+      onboardingId: run.id,
+      seq: s.seq,
+      title: s.title,
+      owner: s.owner,
+      dueOn: shiftDays(person.joinedOn, s.dueDayOffset),
+    })),
+  )
 
-    return { ...run, activities: steps.length }
-  })
+  return { ...run, activities: steps.length }
 }
 
 export async function completeOnboardingActivity(actor: Actor, input: unknown) {

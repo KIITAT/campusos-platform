@@ -16,7 +16,7 @@ export const manifest: ModuleManifest = {
   dependsOn: ['finance'],
   pricing: { model: 'not_priced_yet', priceINR: null },
 
-  rolesWithAccess: ['super_admin', 'institution_admin', 'accounts_staff', 'faculty'],
+  rolesWithAccess: ['super_admin', 'institution_admin', 'accounts_staff', 'hod', 'faculty'],
 
   navEntries: [
     { label: 'Staff', href: '/m/hr', roles: ['institution_admin', 'accounts_staff'] },
@@ -26,7 +26,9 @@ export const manifest: ModuleManifest = {
     { label: 'Employment history', href: '/m/hr/lifecycle', roles: ['institution_admin', 'accounts_staff'] },
     { label: 'Leave policy', href: '/m/hr/leave/policy', roles: ['institution_admin', 'accounts_staff'] },
     { label: 'Shifts', href: '/m/hr/shifts', roles: ['institution_admin', 'accounts_staff'] },
+    { label: 'Recruitment', href: '/m/hr/recruitment', roles: ['institution_admin', 'accounts_staff'] },
     { label: 'My employment', href: '/m/hr/me', roles: ['faculty'] },
+    { label: 'My interviews', href: '/m/hr/interviews', roles: ['faculty', 'hod'] },
   ],
 
   apiBasePath: '/api/v1/modules/hr',

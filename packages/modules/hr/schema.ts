@@ -896,3 +896,215 @@ export const shiftRequests = pgTable(
 export type ShiftType = typeof shiftTypes.$inferSelect
 export type ShiftAssignment = typeof shiftAssignments.$inferSelect
 export type ShiftRequest = typeof shiftRequests.$inferSelect
+
+// --- recruitment -----------------------------------------------------------
+
+export const requisitionStatusEnum = pgEnum('hr_requisition_status', [
+  'pending',
+  'approved',
+  'rejected',
+  'filled',
+  'cancelled',
+])
+
+export const applicantStatusEnum = pgEnum('hr_applicant_status', [
+  'applied',
+  'shortlisted',
+  'interviewing',
+  'offered',
+  'hired',
+  'rejected',
+  'withdrawn',
+])
+
+export const interviewStatusEnum = pgEnum('hr_interview_status', [
+  'scheduled',
+  'completed',
+  'cancelled',
+])
+
+export const recommendationEnum = pgEnum('hr_recommendation', [
+  'strong_hire',
+  'hire',
+  'no_hire',
+  'strong_no_hire',
+])
+
+export const offerStatusEnum = pgEnum('hr_offer_status', [
+  'issued',
+  'accepted',
+  'declined',
+  'withdrawn',
+])
+
+/**
+ * A department asking for somebody. Nothing is advertised until the
+ * institution has agreed the post exists and is paid for -- which is the whole
+ * reason a requisition is a separate step from an opening.
+ */
+export const jobRequisitions = pgTable(
+  'hr_job_requisitions',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    designation: text().notNull(),
+    department: text(),
+    positions: smallint().notNull().default(1),
+    reason: text().notNull(),
+    expectedBy: date('expected_by'),
+    status: requisitionStatusEnum().notNull().default('pending'),
+    requestedBy: text('requested_by').references(() => users.id, { onDelete: 'set null' }),
+    decidedBy: text('decided_by').references(() => users.id, { onDelete: 'set null' }),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    decisionNote: text('decision_note'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('hr_job_requisitions_status').on(t.institutionId, t.status),
+    check('hr_job_requisitions_positions', sql`positions between 1 and 100`),
+    check('hr_job_requisitions_reason', sql`length(trim(reason)) >= 5`),
+    tenantPolicy('hr_job_requisitions'),
+  ],
+)
+
+/** The advertised post, opened against an approved requisition. */
+export const jobOpenings = pgTable(
+  'hr_job_openings',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    requisitionId: uuid('requisition_id')
+      .notNull()
+      .references(() => jobRequisitions.id, { onDelete: 'restrict' }),
+    title: text().notNull(),
+    description: text(),
+    opensOn: date('opens_on').notNull(),
+    closesOn: date('closes_on'),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // One live advert per requisition; a re-advertised post closes the first.
+    uniqueIndex('hr_job_openings_live')
+      .on(t.requisitionId)
+      .where(sql`closed_at is null`),
+    check('hr_job_openings_dates', sql`closes_on is null or closes_on >= opens_on`),
+    tenantPolicy('hr_job_openings'),
+  ],
+)
+
+export const jobApplicants = pgTable(
+  'hr_job_applicants',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    openingId: uuid('opening_id')
+      .notNull()
+      .references(() => jobOpenings.id, { onDelete: 'restrict' }),
+    name: text().notNull(),
+    email: text().notNull(),
+    phone: text(),
+    /** Where they heard: "university website", "referral: Dr Rao", "LinkedIn". */
+    source: text(),
+    status: applicantStatusEnum().notNull().default('applied'),
+    notes: text(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hr_job_applicants_once').on(t.openingId, sql`lower(${t.email})`),
+    index('hr_job_applicants_status').on(t.openingId, t.status),
+    check('hr_job_applicants_name', sql`length(trim(name)) > 0`),
+    tenantPolicy('hr_job_applicants'),
+  ],
+)
+
+export const interviews = pgTable(
+  'hr_interviews',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    applicantId: uuid('applicant_id')
+      .notNull()
+      .references(() => jobApplicants.id, { onDelete: 'cascade' }),
+    round: smallint().notNull(),
+    scheduledAt: timestamp('scheduled_at', { withTimezone: true }).notNull(),
+    /** Users on the panel. Only they may give feedback on this round. */
+    panel: text().array().notNull(),
+    status: interviewStatusEnum().notNull().default('scheduled'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hr_interviews_round').on(t.applicantId, t.round),
+    check('hr_interviews_round_range', sql`round between 1 and 10`),
+    check('hr_interviews_panel', sql`cardinality(panel) between 1 and 12`),
+    tenantPolicy('hr_interviews'),
+  ],
+)
+
+export const interviewFeedback = pgTable(
+  'hr_interview_feedback',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    interviewId: uuid('interview_id')
+      .notNull()
+      .references(() => interviews.id, { onDelete: 'cascade' }),
+    interviewerId: text('interviewer_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    rating: smallint().notNull(),
+    recommendation: recommendationEnum().notNull(),
+    notes: text().notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hr_interview_feedback_once').on(t.interviewId, t.interviewerId),
+    check('hr_interview_feedback_rating', sql`rating between 1 and 5`),
+    check('hr_interview_feedback_notes', sql`length(trim(notes)) >= 5`),
+    tenantPolicy('hr_interview_feedback'),
+  ],
+)
+
+/**
+ * An offer, and what became of it. The staff record it produced is linked, so
+ * "who hired this person, on what terms" is one join rather than an archive.
+ */
+export const jobOffers = pgTable(
+  'hr_job_offers',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    applicantId: uuid('applicant_id')
+      .notNull()
+      .references(() => jobApplicants.id, { onDelete: 'restrict' }),
+    designation: text().notNull(),
+    department: text(),
+    employment: employmentEnum().notNull().default('permanent'),
+    /** Monthly gross offered. A term of the offer, not a pay component yet. */
+    monthlyPaise: paise('monthly_paise').notNull(),
+    joiningOn: date('joining_on').notNull(),
+    expiresOn: date('expires_on').notNull(),
+    status: offerStatusEnum().notNull().default('issued'),
+    respondedAt: timestamp('responded_at', { withTimezone: true }),
+    staffId: uuid('staff_id').references(() => staff.id, { onDelete: 'set null' }),
+    issuedBy: text('issued_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // One offer standing per applicant at a time.
+    uniqueIndex('hr_job_offers_live')
+      .on(t.applicantId)
+      .where(sql`status in ('issued', 'accepted')`),
+    uniqueIndex('hr_job_offers_staff').on(t.staffId).where(sql`staff_id is not null`),
+    check('hr_job_offers_pay', sql`monthly_paise > 0`),
+    check('hr_job_offers_hired', sql`staff_id is null or status = 'accepted'`),
+    tenantPolicy('hr_job_offers'),
+  ],
+)
+
+export type JobRequisition = typeof jobRequisitions.$inferSelect
+export type JobOpening = typeof jobOpenings.$inferSelect
+export type JobApplicant = typeof jobApplicants.$inferSelect
+export type Interview = typeof interviews.$inferSelect
+export type InterviewFeedback = typeof interviewFeedback.$inferSelect
+export type JobOffer = typeof jobOffers.$inferSelect

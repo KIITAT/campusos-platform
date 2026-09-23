@@ -1,3 +1,4 @@
+import { recruitmentRoutes } from './routes-recruitment'
 import { shiftsRoutes } from './routes-shifts'
 import { leaveRoutes } from './routes-leave'
 import { lifecycleRoutes } from './routes-lifecycle'
@@ -110,4 +111,4 @@ const coreRoutes: PluginRoute[] = [
 ]
 
 /** Everything the module answers, in one table for the host to validate. */
-export const routes: PluginRoute[] = [...coreRoutes, ...lifecycleRoutes, ...leaveRoutes, ...shiftsRoutes]
+export const routes: PluginRoute[] = [...coreRoutes, ...lifecycleRoutes, ...leaveRoutes, ...shiftsRoutes, ...recruitmentRoutes]
