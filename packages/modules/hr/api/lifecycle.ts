@@ -314,6 +314,15 @@ export async function recordChange(actor: Actor, input: unknown) {
         `that employment ended on ${person.leftOn}`,
       )
     }
+    // The trigger refuses this too; asking first means the caller is told in a
+    // sentence rather than handed the insert statement (decision 110).
+    if (d.effectiveOn < person.joinedOn) {
+      throw new HrError(
+        400,
+        'before_joining',
+        `nothing about an employment changes before it began on ${person.joinedOn}`,
+      )
+    }
 
     const fromGrade = person.gradeId
       ? ((await tx

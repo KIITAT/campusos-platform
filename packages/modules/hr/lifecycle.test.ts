@@ -390,6 +390,21 @@ test('nothing changes about an employment before it began', async () => {
         toDepartment: 'Electronics',
         reason: 'a transfer before they arrived',
       }),
+    (e: unknown) => code(e) === 'before_joining',
+  )
+  // ...and the table refuses it whoever writes to it.
+  await assert.rejects(
+    () =>
+      withTenant(inst, (tx) =>
+        tx.insert(employmentChanges).values({
+          institutionId: inst,
+          staffId: person.id,
+          kind: 'transfer',
+          effectiveOn: '2025-12-31',
+          toDepartment: 'Electronics',
+          reason: 'written straight into the table',
+        }),
+      ),
     saysDb(/before it began/),
   )
 })
