@@ -62,6 +62,10 @@ test('a dependency on an unregistered module is rejected', () => {
   )
 })
 
+test('a soft dependency that is not installed is fine: that is what soft means', () => {
+  validateRegistry([manifest({ id: 'library', softDependsOn: ['finance'] })])
+})
+
 test('a dependsOn cycle is rejected', () => {
   assert.throws(
     () =>

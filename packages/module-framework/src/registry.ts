@@ -26,8 +26,12 @@ export function validateRegistry(manifests: ModuleManifest[]): void {
     ids.add(m.id)
   }
 
+  // Only hard dependencies must be present. A soft one is exactly a module
+  // that may not be installed -- library posts fines to finance when finance
+  // is there and keeps its own ledger when it is not -- so demanding it here
+  // made every server without finance fail to list its modules at all.
   for (const m of manifests) {
-    for (const dep of [...m.dependsOn, ...(m.softDependsOn ?? [])]) {
+    for (const dep of m.dependsOn) {
       if (!ids.has(dep)) throw new Error(`${m.id} depends on unknown module: ${dep}`)
     }
   }
