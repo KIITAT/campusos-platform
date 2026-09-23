@@ -1,3 +1,4 @@
+import { lifecycleRoutes } from './routes-lifecycle'
 import { flag, jsonBody, param, requiredParam, type PluginRoute } from '@campusos/module-framework'
 import {
   cancelLeave,
@@ -20,7 +21,7 @@ import {
   type Actor,
 } from './api'
 
-export const routes: PluginRoute[] = [
+const coreRoutes: PluginRoute[] = [
   {
     method: 'GET',
     path: '/staff',
@@ -105,3 +106,6 @@ export const routes: PluginRoute[] = [
 
   { method: 'GET', path: '/me', handler: (actor) => myEmployment(actor as Actor) },
 ]
+
+/** Everything the module answers, in one table for the host to validate. */
+export const routes: PluginRoute[] = [...coreRoutes, ...lifecycleRoutes]

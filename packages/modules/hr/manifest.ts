@@ -22,6 +22,8 @@ export const manifest: ModuleManifest = {
     { label: 'Staff', href: '/m/hr', roles: ['institution_admin', 'accounts_staff'] },
     { label: 'Leave', href: '/m/hr/leave', roles: ['institution_admin', 'accounts_staff'] },
     { label: 'Payroll', href: '/m/hr/payroll', roles: ['institution_admin', 'accounts_staff'] },
+    { label: 'Onboarding', href: '/m/hr/onboarding', roles: ['institution_admin', 'accounts_staff'] },
+    { label: 'Employment history', href: '/m/hr/lifecycle', roles: ['institution_admin', 'accounts_staff'] },
     { label: 'My employment', href: '/m/hr/me', roles: ['faculty'] },
   ],
 

@@ -1,3 +1,4 @@
+import { lifecyclePages } from './pages-lifecycle'
 import { formatPaise } from '@campusos/money'
 import { param, type PluginPage } from '@campusos/module-framework'
 import {
@@ -17,7 +18,7 @@ const ADMIN = ['institution_admin', 'super_admin'] as const
 
 const thisMonth = () => new Date().toISOString().slice(0, 7)
 
-export const pages: PluginPage[] = [
+const corePages: PluginPage[] = [
   {
     path: '/',
     title: 'Staff',
@@ -502,3 +503,5 @@ export const pages: PluginPage[] = [
           ],
   },
 ]
+
+export const pages: PluginPage[] = [...corePages, ...lifecyclePages]

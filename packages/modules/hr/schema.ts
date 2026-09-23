@@ -70,6 +70,8 @@ export const staff = pgTable(
     designation: text().notNull(),
     /** Free text, not a foreign key: HR depends on no other module. */
     department: text(),
+    /** Optional: plenty of colleges run one flat scale and never name a grade. */
+    gradeId: uuid('grade_id').references(() => employeeGrades.id, { onDelete: 'set null' }),
     employment: employmentEnum().notNull().default('permanent'),
     joinedOn: date('joined_on').notNull(),
     leftOn: date('left_on'),
@@ -275,3 +277,278 @@ export type LeaveRequest = typeof leaveRequests.$inferSelect
 export type PayComponent = typeof payComponents.$inferSelect
 export type Payslip = typeof payslips.$inferSelect
 export type SalaryPayment = typeof salaryPayments.$inferSelect
+
+// --- employment lifecycle --------------------------------------------------
+
+/**
+ * How an employment ended.
+ *
+ * An enum rather than free text, because the answer drives real questions
+ * later -- who may be rehired, what notice was owed, which separations an
+ * audit wants to see -- and a column holding "resgined", "Resignation" and
+ * "left" answers none of them.
+ */
+export const separationKindEnum = pgEnum('hr_separation_kind', [
+  'resignation',
+  'retirement',
+  'termination',
+  'end_of_contract',
+  'death',
+  'other',
+])
+
+/** What changed about somebody's employment, on the day it changed. */
+export const employmentChangeEnum = pgEnum('hr_employment_change', [
+  'transfer',
+  'promotion',
+  'confirmation',
+  'grade_change',
+  'separation',
+])
+
+/**
+ * A pay grade.
+ *
+ * Its band is advisory, not enforced: a college that hires one person outside
+ * its own scale has made a decision, and a database that refuses to record what
+ * it did only means the real figure lives in a spreadsheet instead. The screen
+ * says the band was exceeded; the row stands.
+ */
+export const employeeGrades = pgTable(
+  'hr_employee_grades',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    code: text().notNull(),
+    name: text().notNull(),
+    /** Lower is junior. What makes "is this a promotion" answerable. */
+    rank: smallint().notNull().default(0),
+    minPaise: paise('min_paise'),
+    maxPaise: paise('max_paise'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hr_employee_grades_code').on(t.institutionId, t.code),
+    index('hr_employee_grades_rank').on(t.institutionId, t.rank),
+    check('hr_employee_grades_code_shape', sql`length(trim(code)) > 0`),
+    check('hr_employee_grades_rank', sql`rank between 0 and 999`),
+    check(
+      'hr_employee_grades_band',
+      sql`min_paise is null or max_paise is null or max_paise >= min_paise`,
+    ),
+    tenantPolicy('hr_employee_grades'),
+  ],
+)
+
+/**
+ * The checklist a new joiner is put through, as a reusable template.
+ *
+ * The template and the activities it produces are separate tables on purpose:
+ * editing the template must not rewrite what somebody who joined in March was
+ * actually asked to do.
+ */
+export const onboardingTemplates = pgTable(
+  'hr_onboarding_templates',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    code: text().notNull(),
+    name: text().notNull(),
+    note: text(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hr_onboarding_templates_code').on(t.institutionId, t.code),
+    check('hr_onboarding_templates_code_shape', sql`length(trim(code)) > 0`),
+    tenantPolicy('hr_onboarding_templates'),
+  ],
+)
+
+export const onboardingTemplateActivities = pgTable(
+  'hr_onboarding_template_activities',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    templateId: uuid('template_id')
+      .notNull()
+      .references(() => onboardingTemplates.id, { onDelete: 'cascade' }),
+    seq: smallint().notNull(),
+    title: text().notNull(),
+    /** The desk that owns the step: "IT", "Accounts", "Head of department". */
+    owner: text().notNull(),
+    /** Days from the joining date. Negative is ordinary: a laptop is ordered first. */
+    dueDayOffset: smallint('due_day_offset').notNull().default(0),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hr_onboarding_template_activities_seq').on(t.templateId, t.seq),
+    check('hr_onboarding_template_activities_range', sql`seq between 1 and 200`),
+    check('hr_onboarding_template_activities_offset', sql`due_day_offset between -365 and 365`),
+    check('hr_onboarding_template_activities_title', sql`length(trim(title)) > 0`),
+    tenantPolicy('hr_onboarding_template_activities'),
+  ],
+)
+
+/**
+ * One person's run through a checklist.
+ *
+ * The template's code and name are copied rather than joined, so a template
+ * renamed or deleted next year does not change what this says happened.
+ */
+export const onboardings = pgTable(
+  'hr_onboardings',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    staffId: uuid('staff_id')
+      .notNull()
+      .references(() => staff.id, { onDelete: 'cascade' }),
+    templateCode: text('template_code').notNull(),
+    templateName: text('template_name').notNull(),
+    startedOn: date('started_on').notNull(),
+    /** Set by a trigger when the last activity is done. Never written by hand. */
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hr_onboardings_once').on(t.staffId),
+    index('hr_onboardings_open').on(t.institutionId, t.completedAt),
+    tenantPolicy('hr_onboardings'),
+  ],
+)
+
+export const onboardingActivities = pgTable(
+  'hr_onboarding_activities',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    onboardingId: uuid('onboarding_id')
+      .notNull()
+      .references(() => onboardings.id, { onDelete: 'cascade' }),
+    seq: smallint().notNull(),
+    title: text().notNull(),
+    owner: text().notNull(),
+    dueOn: date('due_on').notNull(),
+    doneAt: timestamp('done_at', { withTimezone: true }),
+    doneBy: text('done_by').references(() => users.id, { onDelete: 'set null' }),
+    note: text(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hr_onboarding_activities_seq').on(t.onboardingId, t.seq),
+    index('hr_onboarding_activities_open').on(t.institutionId, t.doneAt),
+    tenantPolicy('hr_onboarding_activities'),
+  ],
+)
+
+/**
+ * Everything that ever changed about somebody's post, as dated rows.
+ *
+ * `hr_staff` carries where they are now; this carries how they got there. A
+ * promotion is not an UPDATE that loses the previous designation -- "what were
+ * they when they signed that" is a question with legal weight, and answering it
+ * out of an audit log is answering it from the wrong place.
+ *
+ * The from-columns are a snapshot taken at the moment of the change, so the
+ * history still reads correctly after a grade is renamed or removed.
+ */
+export const employmentChanges = pgTable(
+  'hr_employment_changes',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    staffId: uuid('staff_id')
+      .notNull()
+      .references(() => staff.id, { onDelete: 'cascade' }),
+    kind: employmentChangeEnum().notNull(),
+    effectiveOn: date('effective_on').notNull(),
+    fromDesignation: text('from_designation'),
+    toDesignation: text('to_designation'),
+    fromDepartment: text('from_department'),
+    toDepartment: text('to_department'),
+    fromGrade: text('from_grade'),
+    toGradeId: uuid('to_grade_id').references(() => employeeGrades.id, {
+      onDelete: 'set null',
+    }),
+    toGrade: text('to_grade'),
+    fromEmployment: employmentEnum('from_employment'),
+    toEmployment: employmentEnum('to_employment'),
+    reason: text().notNull(),
+    decidedBy: text('decided_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('hr_employment_changes_staff').on(t.staffId, t.effectiveOn),
+    index('hr_employment_changes_when').on(t.institutionId, t.effectiveOn),
+    check('hr_employment_changes_reason', sql`length(trim(reason)) >= 5`),
+    check(
+      'hr_employment_changes_something',
+      sql`kind = 'separation'
+          or to_designation is not null
+          or to_department is not null
+          or to_grade_id is not null
+          or to_employment is not null`,
+    ),
+    tenantPolicy('hr_employment_changes'),
+  ],
+)
+
+/**
+ * The end of an employment, and the conversation that follows it.
+ *
+ * One per staff record: somebody rehired is a new employment and a new record,
+ * because their leave balance, their grade and their notice period all start
+ * again.
+ *
+ * The exit interview is nullable because it happens after the decision and
+ * sometimes never happens at all. The row it attaches to exists from the day
+ * the separation is recorded, so an interview nobody held is visible rather
+ * than absent.
+ */
+export const separations = pgTable(
+  'hr_separations',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    staffId: uuid('staff_id')
+      .notNull()
+      .references(() => staff.id, { onDelete: 'cascade' }),
+    changeId: uuid('change_id').references(() => employmentChanges.id, {
+      onDelete: 'set null',
+    }),
+    kind: separationKindEnum().notNull(),
+    noticeGivenOn: date('notice_given_on'),
+    lastDayOn: date('last_day_on').notNull(),
+    reason: text().notNull(),
+    exitInterviewOn: date('exit_interview_on'),
+    exitInterviewBy: text('exit_interview_by').references(() => users.id, {
+      onDelete: 'set null',
+    }),
+    exitInterviewNotes: text('exit_interview_notes'),
+    /** Unknown until somebody has actually asked. Null is a real answer here. */
+    rehireEligible: boolean('rehire_eligible'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hr_separations_once').on(t.staffId),
+    index('hr_separations_when').on(t.institutionId, t.lastDayOn),
+    check('hr_separations_reason', sql`length(trim(reason)) >= 5`),
+    check(
+      'hr_separations_notice',
+      sql`notice_given_on is null or notice_given_on <= last_day_on`,
+    ),
+    check(
+      'hr_separations_interview',
+      sql`(exit_interview_on is null) = (exit_interview_notes is null)`,
+    ),
+    tenantPolicy('hr_separations'),
+  ],
+)
+
+export type EmployeeGrade = typeof employeeGrades.$inferSelect
+export type OnboardingTemplate = typeof onboardingTemplates.$inferSelect
+export type OnboardingTemplateActivity = typeof onboardingTemplateActivities.$inferSelect
+export type Onboarding = typeof onboardings.$inferSelect
+export type OnboardingActivity = typeof onboardingActivities.$inferSelect
+export type EmploymentChange = typeof employmentChanges.$inferSelect
+export type Separation = typeof separations.$inferSelect

@@ -1,6 +1,17 @@
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm'
 import { audit, withTenant } from '@campusos/db'
-import type { Role } from '@campusos/module-framework'
+import {
+  HrError,
+  MODULE,
+  isHr,
+  requireAdmin,
+  requireHr,
+  spanDays,
+  tenantOf,
+  today,
+  type Actor,
+  type Tx,
+} from './guards'
 import {
   leaveRequests,
   leaveTypes,
@@ -35,55 +46,6 @@ import {
   type StaffRow,
 } from './schemas'
 import { postPayslip, postSalaryPayment } from './posting'
-
-const MODULE = 'hr'
-
-export interface Actor {
-  id: string
-  email?: string | null
-  role: Role
-  institutionId: string | null
-}
-
-export class HrError extends Error {
-  constructor(
-    readonly status: 400 | 403 | 404 | 409,
-    readonly code: string,
-    message: string,
-  ) {
-    super(message)
-  }
-}
-
-type Tx = Parameters<Parameters<typeof withTenant>[1]>[0]
-
-const tenantOf = (actor: Actor): string => {
-  if (!actor.institutionId) {
-    throw new HrError(400, 'no_institution', 'no institution for this session')
-  }
-  return actor.institutionId
-}
-
-/** The HR desk: administration and the finance office that pays people. */
-const isHr = (r: Role) =>
-  r === 'accounts_staff' || r === 'institution_admin' || r === 'super_admin'
-
-/** Hiring, ending employment and setting pay are administrative decisions. */
-const isAdmin = (r: Role) => r === 'institution_admin' || r === 'super_admin'
-
-const requireHr = (actor: Actor) => {
-  const tenant = tenantOf(actor)
-  if (!isHr(actor.role)) throw new HrError(403, 'forbidden', 'not permitted')
-  return tenant
-}
-
-const requireAdmin = (actor: Actor) => {
-  const tenant = tenantOf(actor)
-  if (!isAdmin(actor.role)) throw new HrError(403, 'forbidden', 'not permitted')
-  return tenant
-}
-
-const today = () => new Date().toISOString().slice(0, 10)
 
 // --- staff -----------------------------------------------------------------
 
@@ -344,12 +306,6 @@ const leaveColumns = {
   status: leaveRequests.status,
   decisionNote: leaveRequests.decisionNote,
 }
-
-const spanDays = (from: string, to: string) =>
-  Math.round(
-    (new Date(`${to}T00:00:00Z`).getTime() - new Date(`${from}T00:00:00Z`).getTime()) /
-      86_400_000,
-  ) + 1
 
 const toLeaveRow = (r: Omit<LeaveRow, 'days'>): LeaveRow => ({
   ...r,

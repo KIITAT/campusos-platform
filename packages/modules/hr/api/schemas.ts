@@ -1,6 +1,12 @@
 import * as z from 'zod'
 import { parseRupeesToPaise } from '@campusos/money'
-import { componentKindEnum, employmentEnum, leaveStatusEnum } from '../schema'
+import {
+  componentKindEnum,
+  employmentChangeEnum,
+  employmentEnum,
+  leaveStatusEnum,
+  separationKindEnum,
+} from '../schema'
 
 const uuid = z.uuid()
 const day = z.iso.date()
@@ -211,3 +217,186 @@ export type LeaveBalance = z.infer<typeof leaveBalanceSchema>
 export type PayslipRow = z.infer<typeof payslipRowSchema>
 export type PayrollRun = z.infer<typeof payrollRunSchema>
 export type MyEmployment = z.infer<typeof myEmploymentSchema>
+
+// --- the employment lifecycle ----------------------------------------------
+
+const optionalRupees = z
+  .union([z.string(), z.number(), z.null()])
+  .optional()
+  .transform((v, ctx) => {
+    if (v === null || v === undefined || v === '') return null
+    const paise = parseRupeesToPaise(v)
+    if (paise === null) {
+      ctx.addIssue({ code: 'custom', message: 'not a valid rupee amount' })
+      return z.NEVER
+    }
+    return paise
+  })
+
+export const createGradeSchema = z
+  .object({
+    code: z.string().trim().min(1).max(30),
+    name: z.string().trim().min(1).max(120),
+    /** Lower is junior. What makes "is this a promotion" answerable. */
+    rank: z.coerce.number().int().min(0).max(999).default(0),
+    minPaise: optionalRupees,
+    maxPaise: optionalRupees,
+  })
+  .meta({ id: 'HrGradeCreate' })
+
+export const createOnboardingTemplateSchema = z
+  .object({
+    code: z.string().trim().min(1).max(30),
+    name: z.string().trim().min(1).max(120),
+    note: z.string().trim().max(500).nullish(),
+    activities: z
+      .array(
+        z.object({
+          title: z.string().trim().min(1).max(200),
+          /** The desk that owns the step: "IT", "Accounts", "Head of department". */
+          owner: z.string().trim().min(1).max(120),
+          /** Days from the joining date. Negative is ordinary. */
+          dueDayOffset: z.coerce.number().int().min(-365).max(365).default(0),
+        }),
+      )
+      .min(1)
+      .max(200),
+  })
+  .meta({ id: 'HrOnboardingTemplateCreate' })
+
+export const startOnboardingSchema = z
+  .object({
+    staffId: uuid,
+    templateId: uuid,
+    startedOn: day.nullish(),
+  })
+  .meta({ id: 'HrOnboardingStart' })
+
+export const completeActivitySchema = z
+  .object({
+    activityId: uuid,
+    note: z.string().trim().max(500).nullish(),
+  })
+  .meta({ id: 'HrOnboardingActivityComplete' })
+
+/**
+ * A transfer, a promotion, a confirmation off probation, a change of grade.
+ *
+ * Every field but the reason is optional, and what is omitted does not move: a
+ * transfer between departments leaves the designation exactly where it was.
+ */
+export const recordChangeSchema = z
+  .object({
+    staffId: uuid,
+    kind: z.enum(['transfer', 'promotion', 'confirmation', 'grade_change']),
+    effectiveOn: day,
+    toDesignation: z.string().trim().min(1).max(120).nullish(),
+    toDepartment: z.string().trim().min(1).max(120).nullish(),
+    toGradeId: uuid.nullish(),
+    toEmployment: z.enum(employmentEnum.enumValues).nullish(),
+    reason: z.string().trim().min(5).max(500),
+  })
+  .meta({ id: 'HrEmploymentChange' })
+
+export const separateSchema = z
+  .object({
+    staffId: uuid,
+    kind: z.enum(separationKindEnum.enumValues),
+    lastDayOn: day,
+    noticeGivenOn: day.nullish(),
+    reason: z.string().trim().min(5).max(500),
+  })
+  .meta({ id: 'HrSeparate' })
+
+export const recordExitInterviewSchema = z
+  .object({
+    staffId: uuid,
+    on: day,
+    notes: z.string().trim().min(5).max(4000),
+    /** Null is a real answer: asked, and not decided. */
+    rehireEligible: z.coerce.boolean().nullish().default(null),
+  })
+  .meta({ id: 'HrExitInterview' })
+
+// --- reads -----------------------------------------------------------------
+
+export const gradeRowSchema = z
+  .object({
+    id: uuid,
+    code: z.string(),
+    name: z.string(),
+    rank: z.number().int(),
+    minPaise: z.number().int().nullable(),
+    maxPaise: z.number().int().nullable(),
+    people: z.number().int(),
+  })
+  .meta({ id: 'HrGrade' })
+
+export const onboardingActivityRowSchema = z
+  .object({
+    id: uuid,
+    seq: z.number().int(),
+    title: z.string(),
+    owner: z.string(),
+    dueOn: z.string(),
+    doneAt: z.string().nullable(),
+    note: z.string().nullable(),
+    overdue: z.boolean(),
+  })
+  .meta({ id: 'HrOnboardingActivity' })
+
+export const onboardingViewSchema = z
+  .object({
+    id: uuid,
+    staffId: uuid,
+    templateCode: z.string(),
+    templateName: z.string(),
+    startedOn: z.string(),
+    completedAt: z.string().nullable(),
+    outstanding: z.number().int(),
+    activities: z.array(onboardingActivityRowSchema),
+  })
+  .meta({ id: 'HrOnboarding' })
+
+export const changeRowSchema = z
+  .object({
+    id: uuid,
+    staffId: uuid,
+    staffName: z.string(),
+    employeeCode: z.string(),
+    kind: z.enum(employmentChangeEnum.enumValues),
+    effectiveOn: z.string(),
+    fromDesignation: z.string().nullable(),
+    toDesignation: z.string().nullable(),
+    fromDepartment: z.string().nullable(),
+    toDepartment: z.string().nullable(),
+    fromGrade: z.string().nullable(),
+    toGrade: z.string().nullable(),
+    fromEmployment: z.enum(employmentEnum.enumValues).nullable(),
+    toEmployment: z.enum(employmentEnum.enumValues).nullable(),
+    reason: z.string(),
+  })
+  .meta({ id: 'HrEmploymentChangeRow' })
+
+export const separationRowSchema = z
+  .object({
+    id: uuid,
+    staffId: uuid,
+    staffName: z.string(),
+    employeeCode: z.string(),
+    kind: z.enum(separationKindEnum.enumValues),
+    noticeGivenOn: z.string().nullable(),
+    lastDayOn: z.string(),
+    reason: z.string(),
+    exitInterviewOn: z.string().nullable(),
+    exitInterviewNotes: z.string().nullable(),
+    rehireEligible: z.boolean().nullable(),
+    interviewPending: z.boolean(),
+  })
+  .meta({ id: 'HrSeparation' })
+
+export type GradeRow = z.infer<typeof gradeRowSchema>
+export type OnboardingActivityRow = z.infer<typeof onboardingActivityRowSchema>
+export type OnboardingView = z.infer<typeof onboardingViewSchema>
+export type ChangeRow = z.infer<typeof changeRowSchema>
+export type SeparationRow = z.infer<typeof separationRowSchema>

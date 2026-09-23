@@ -1,3 +1,4 @@
+import { lifecyclePaths } from './openapi-lifecycle'
 import * as z from 'zod'
 import { manifest } from '../manifest'
 import {
@@ -25,7 +26,7 @@ const gated = {
   '403': { description: 'Forbidden, or the module is not enabled', content: json(err) },
 }
 
-export const paths = {
+const corePaths = {
   [`${base}/staff`]: {
     get: {
       summary: 'Staff on record, with their current monthly gross',
@@ -204,3 +205,5 @@ export const paths = {
     },
   },
 }
+
+export const paths = { ...corePaths, ...lifecyclePaths }
