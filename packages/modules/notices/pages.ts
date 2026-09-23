@@ -57,7 +57,7 @@ export const pages: PluginPage[] = [
         empty: 'Nothing on the board.',
         columns: [
           { key: 'title', label: 'Notice' },
-          { key: 'state', label: 'Kind', alertWhen: 'draft' },
+          { key: 'state', label: 'Kind', kind: 'status', alertWhen: 'draft' },
           { key: 'audience', label: 'Audience' },
           { key: 'when', label: 'Published', kind: 'date' },
           { key: 'authorName', label: 'By' },
@@ -172,7 +172,7 @@ export const pages: PluginPage[] = [
           { key: 'body', label: 'Detail' },
           { key: 'moduleId', label: 'From', kind: 'code' },
           { key: 'createdAt', label: 'When', kind: 'date' },
-          { key: 'state', label: '', alertWhen: 'isNew' },
+          { key: 'state', label: '', kind: 'status', alertWhen: 'isNew' },
         ],
       },
       {

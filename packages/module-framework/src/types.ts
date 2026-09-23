@@ -33,6 +33,14 @@ export interface ModuleManifest {
   rolesWithAccess: Role[]
   navEntries: { label: string; href: string; roles: Role[] }[]
   apiBasePath: string
+  /**
+   * A module that keeps a reader's unread items says where. `route` is one of
+   * its own GET routes answering `{ unread: number }` for the caller; `href`
+   * is the page that lists them. The host's bell adds up every module that
+   * declares one and links to the first with something waiting -- and shows
+   * nothing at all when none is installed, rather than a bell that never rings.
+   */
+  notifications?: { route: string; href: string }
 }
 
 /** 403 body when a module is gated off. The UI turns this into an upsell. */

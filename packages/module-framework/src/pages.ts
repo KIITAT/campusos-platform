@@ -32,6 +32,7 @@ export type CellKind =
   | 'when'   // an ISO string, shown as a date and time
   | 'days'   // a whole number of days
   | 'bool'
+  | 'status' // a lifecycle word -- draft, open, paid, cancelled -- shown as a coloured badge
 
 export interface PluginColumn {
   key: string
@@ -54,6 +55,31 @@ export interface PluginTable {
   rows: string
   columns: PluginColumn[]
   empty?: string
+  /**
+   * Rows shown before "more". The host pages, searches and sorts a table
+   * itself, over the rows the page loaded -- every list view gets a filter bar
+   * and a sort for nothing -- so this is only the first screenful. Default 20.
+   */
+  pageSize?: number
+  /**
+   * Row checkboxes, and what to do with the ticked ones. Posts `{ [field]:
+   * [ids...] }` plus any extra fields to a route of the module, like a form.
+   * Absent means no checkboxes: a box that does nothing is clutter.
+   */
+  bulk?: PluginBulkAction[]
+}
+
+export interface PluginBulkAction {
+  label: string
+  path: string
+  /** The row key holding each row's id. */
+  idKey: string
+  /** The body field the ids are sent as. Default `ids`. */
+  field?: string
+  /** Asked for alongside, e.g. a reason. Rendered inline beside the button. */
+  fields?: PluginField[]
+  roles?: Role[]
+  tone?: 'danger'
 }
 
 export type FieldKind =
@@ -93,6 +119,27 @@ export interface PluginForm {
   fields: PluginField[]
   /** Hidden from a reader who lacks all of these. */
   roles?: Role[]
+  /**
+   * Where it goes. `action` puts a button in the page head that opens the
+   * form in a sheet -- the "+ New" of a list view -- and `inline` renders it
+   * in the flow of the page. Default: `action` on a page that has a table,
+   * `inline` on one that does not, which is usually right: a list with a
+   * create form is a list first, and a page that is only a form is the form.
+   */
+  placement?: 'action' | 'inline'
+}
+
+/**
+ * What an operation behind a form may say back.
+ *
+ * Any JSON answer carrying `notice` has it shown to the person who submitted
+ * the form, once, on the page they return to; `link` (a path on the
+ * institution's own host) is shown beside it as a full address to copy. The
+ * API is unchanged for every other caller -- these are ordinary fields.
+ */
+export interface FormOutcome {
+  notice?: string
+  link?: string | null
 }
 
 export interface PluginNote {
@@ -104,7 +151,7 @@ export interface PluginNote {
 export interface PluginFigures {
   kind: 'figures'
   title?: string
-  figures: { label: string; value: string; tone?: 'due' | 'clear' }[]
+  figures: { label: string; value: string; tone?: 'due' | 'clear'; hint?: string; href?: string }[]
 }
 
 export interface PluginLinks {
@@ -113,12 +160,105 @@ export interface PluginLinks {
   links: { label: string; href: string; active?: boolean }[]
 }
 
+/**
+ * Records as cards in columns by status: an applicant pipeline, an admissions
+ * funnel, a queue of requests. The columns are declared, in order, so an empty
+ * stage still shows as a place things can be.
+ */
+export interface PluginKanban {
+  kind: 'kanban'
+  title?: string
+  note?: string
+  rows: string
+  /** The row key whose value picks the column. */
+  groupBy: string
+  lanes: { value: string; label: string; tone?: Tone }[]
+  card: {
+    title: string
+    subtitle?: string
+    /** Small facts along the bottom of the card. */
+    meta?: PluginColumn[]
+    href?: string
+  }
+  empty?: string
+}
+
+/** A workspace's way in: a card per place worth going, optionally with a count. */
+export interface PluginShortcuts {
+  kind: 'shortcuts'
+  title?: string
+  items: { label: string; href: string; description?: string; count?: string; tone?: Tone }[]
+}
+
+/**
+ * A chart over rows the page loaded, drawn by the host as SVG -- no script, so
+ * it renders wherever the rest of the page does.
+ */
+export interface PluginChart {
+  kind: 'chart'
+  title?: string
+  note?: string
+  type: 'bar' | 'line'
+  rows: string
+  /** The row key along the bottom. */
+  x: string
+  series: { key: string; label: string }[]
+  /** How values read: integer paise, or plain numbers. */
+  unit?: 'money' | 'number'
+  empty?: string
+}
+
+export type Tone = 'gray' | 'blue' | 'green' | 'orange' | 'red' | 'violet'
+
 export type PluginSection =
   | PluginTable
   | PluginForm
   | PluginNote
   | PluginFigures
   | PluginLinks
+  | PluginKanban
+  | PluginShortcuts
+  | PluginChart
+
+/**
+ * The lifecycle a record can opt into: draft, then submitted, then possibly
+ * cancelled -- and a cancelled record amended into a new draft rather than
+ * edited. The database enforces it (see docstatus in @campusos/db); this is
+ * how a page shows it and offers the next step.
+ */
+export type DocStatus = 'draft' | 'submitted' | 'cancelled'
+
+/**
+ * One record, shown as a form view: its facts in the main column, and a
+ * sidebar with who made it, when it last changed, and its history.
+ *
+ * `audit` names the record in the shared audit log; the host reads that
+ * record's trail itself and shows it as the timeline, so no module writes a
+ * history screen of its own.
+ */
+export interface PluginRecord {
+  title: string
+  subtitle?: string
+  status?: { label: string; tone?: Tone }
+  fields?: { label: string; value: unknown; kind?: CellKind }[]
+  createdAt?: string | null
+  createdBy?: string | null
+  modifiedAt?: string | null
+  modifiedBy?: string | null
+  audit?: { entity: string; entityId: string }
+  /** Anything else worth a line in the timeline, merged with the audit trail. */
+  timeline?: { at: string; who?: string | null; text: string }[]
+  docStatus?: {
+    value: DocStatus
+    /** Posted with `{ [idField]: id }`. Each is offered only in the state it applies to. */
+    id: string
+    idField?: string
+    submit?: string
+    cancel?: string
+    amend?: string
+    roles?: Role[]
+  }
+}
 
 export interface PluginPage {
   /** Relative to `/m/<moduleId>`; `/` is the module's own landing screen. */
@@ -130,6 +270,12 @@ export interface PluginPage {
   menu?: string
   load: (actor: PluginActor, req: Request) => Promise<Record<string, unknown>>
   sections: (data: Record<string, unknown>) => PluginSection[]
+  /**
+   * Present, and returning a record, makes this a form view: the sections
+   * render in the main column beside the record's sidebar. Returning null
+   * (nothing chosen yet) renders the page as usual.
+   */
+  record?: (data: Record<string, unknown>) => PluginRecord | null
 }
 
 /** Substitute `{key}` placeholders in a template from a row. */
