@@ -209,10 +209,10 @@ export async function listLinks(actor: Actor, pendingOnly = false): Promise<Link
     const rows = await tx
       .select({
         ...linkColumns,
-        parentName: sql<string | null>`(select name from users where id = ${links.parentId})`,
-        parentEmail: sql<string | null>`(select email from users where id = ${links.parentId})`,
-        studentName: sql<string | null>`(select name from users where id = ${links.studentId})`,
-        studentEmail: sql<string | null>`(select email from users where id = ${links.studentId})`,
+        parentName: sql<string | null>`(select name from users where users.id = parent_links.parent_id)`,
+        parentEmail: sql<string | null>`(select email from users where users.id = parent_links.parent_id)`,
+        studentName: sql<string | null>`(select name from users where users.id = parent_links.student_id)`,
+        studentEmail: sql<string | null>`(select email from users where users.id = parent_links.student_id)`,
       })
       .from(links)
       .where(pendingOnly ? isNull(links.verifiedAt) : undefined)
@@ -246,8 +246,8 @@ export async function myChildren(actor: Actor) {
     const rows = await tx
       .select({
         ...linkColumns,
-        studentName: sql<string | null>`(select name from users where id = ${links.studentId})`,
-        studentEmail: sql<string | null>`(select email from users where id = ${links.studentId})`,
+        studentName: sql<string | null>`(select name from users where users.id = parent_links.student_id)`,
+        studentEmail: sql<string | null>`(select email from users where users.id = parent_links.student_id)`,
       })
       .from(links)
       .where(eq(links.parentId, actor.id))

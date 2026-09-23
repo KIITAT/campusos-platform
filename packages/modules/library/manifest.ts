@@ -5,7 +5,7 @@ export const manifest: ModuleManifest = {
   name: 'Library',
   description:
     'Catalogue of titles and physical copies, issue and return at the desk, overdue fines with configurable rules, and a borrowing status view for students.',
-  version: '0.2.0',
+  version: '0.2.1',
   alwaysEnabled: false,
   dependsOn: ['academic'],
   /**

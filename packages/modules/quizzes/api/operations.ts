@@ -321,7 +321,7 @@ export async function listQuestions(actor: Actor, courseId: string) {
     const rows = await tx
       .select({
         q: questions,
-        used: sql<number>`(select count(distinct i.quiz_id)::int from quiz_items i where i.question_id = ${questions.id})`,
+        used: sql<number>`(select count(distinct i.quiz_id)::int from quiz_items i where i.question_id = quiz_questions.id)`,
       })
       .from(questions)
       .where(eq(questions.courseId, courseId))
@@ -663,9 +663,9 @@ export async function listQuizzes(actor: Actor) {
         closesAt: quizzes.closesAt,
         timeZone: quizzes.timeZone,
         docstatus: quizzes.docstatus,
-        questions: sql<number>`(select count(*)::int from quiz_items i where i.quiz_id = ${quizzes.id})`,
-        takers: sql<number>`(select count(distinct a.student_id)::int from quiz_attempts a where a.quiz_id = ${quizzes.id} and a.submitted_at is not null)`,
-        classSize: sql<number>`(select count(*)::int from academic_section_members m where m.section_id = ${offerings.sectionId})`,
+        questions: sql<number>`(select count(*)::int from quiz_items i where i.quiz_id = quiz_quizzes.id)`,
+        takers: sql<number>`(select count(distinct a.student_id)::int from quiz_attempts a where a.quiz_id = quiz_quizzes.id and a.submitted_at is not null)`,
+        classSize: sql<number>`(select count(*)::int from academic_section_members m where m.section_id = academic_offerings.section_id)`,
       })
       .from(quizzes)
       .innerJoin(offerings, eq(offerings.id, quizzes.offeringId))
@@ -839,7 +839,7 @@ const median = (xs: number[]) => {
 export async function bankChoices(actor: Actor, quizId: string) {
   const tenant = requireStaff(actor)
   return withTenant(tenant, async (tx) => {
-    const { quiz, offering } = await quizIn(tx, actor, quizId)
+    const { offering } = await quizIn(tx, actor, quizId)
     return tx
       .select({ id: questions.id, prompt: questions.prompt, kind: questions.kind, points: questions.points, topic: questions.topic })
       .from(questions)
@@ -847,7 +847,7 @@ export async function bankChoices(actor: Actor, quizId: string) {
         and(
           eq(questions.courseId, offering.courseId),
           isNull(questions.retiredAt),
-          sql`not exists (select 1 from quiz_items i where i.quiz_id = ${quiz.id} and i.question_id = ${questions.id})`,
+          sql`not exists (select 1 from quiz_items i where i.quiz_id = ${quizId} and i.question_id = quiz_questions.id)`,
         ),
       )
       .orderBy(asc(questions.topic), asc(questions.createdAt))

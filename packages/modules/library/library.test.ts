@@ -19,6 +19,7 @@ import {
   setCopyStatus,
   setSettings,
   settleFine,
+  unavailableTitles,
   waiveFine,
   type Actor,
 } from './api'
@@ -668,3 +669,13 @@ async function overdueBy(loanId: string, days: number) {
     )
   })
 }
+
+test('the chase list is the titles with no copy on the shelf, and only those', async () => {
+  const shelved = await stocked(2)
+  const gone = await stocked(1, { isbn: '978-0-13-110362-7', title: 'The C Programming Language', author: 'Kernighan' })
+  await issue(desk(), { copyId: gone.copies[0]!.id, borrowerId: ids.s1 })
+  const none = await mkTitle({ isbn: '978-0-201-63361-0', title: 'Design Patterns', author: 'Gamma' })
+  const chase = (await unavailableTitles(desk())).map((t) => t.titleId).sort()
+  assert.deepEqual(chase, [gone.title.id, none.id].sort())
+  assert.ok(!chase.includes(shelved.title.id))
+})

@@ -10,7 +10,10 @@ import {
   coverage,
   createFramework,
   createSkill,
+  frameworkView,
   levelChoices,
+  listFrameworks,
+  listStudents,
   profile,
   retireSkill,
   selfAssess,
@@ -124,6 +127,15 @@ test('a skill level is recorded by a teacher with evidence, and by the student, 
   const q = await profile(c.teacher, c.asha.id)
   assert.equal(q.skills.find((s) => s.skillId === c.sql)!.teacher, 'Proficient')
   assert.equal(q.history.length, 3)
+
+  // The lists count this framework's own levels, skills and students.
+  const f = (await listFrameworks(c.admin)).find((x) => x.id === c.frameworkId)!
+  assert.deepEqual([f.levels, f.skills, f.students], [4, 2, 1])
+  const sql = (await frameworkView(c.admin, c.frameworkId)).skills.find((s) => s.id === c.sql)!
+  assert.deepEqual([sql.judged, sql.selfJudged], [1, 1])
+  const asha = (await listStudents(c.teacher)).find((s) => s.id === c.asha.id)!
+  assert.deepEqual([asha.judgements, asha.selfJudgements], [2, 1])
+  assert.ok(asha.lastOn)
 })
 
 test('who may judge whom', async () => {

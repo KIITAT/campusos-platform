@@ -752,7 +752,7 @@ export async function unavailableTitles(actor: Actor) {
       .from(titles)
       .where(
         sql`not exists (select 1 from ${copies} c
-                        where c.title_id = ${titles.id} and c.status = 'available')`,
+                        where c.title_id = library_titles.id and c.status = 'available')`,
       )
       .orderBy(asc(titles.title))
       .limit(200),

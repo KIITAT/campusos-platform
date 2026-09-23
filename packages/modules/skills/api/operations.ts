@@ -168,9 +168,9 @@ export async function listFrameworks(actor: Actor) {
         id: frameworks.id,
         name: frameworks.name,
         description: frameworks.description,
-        levels: sql<number>`(select count(*)::int from skill_levels l where l.framework_id = ${frameworks.id})`,
-        skills: sql<number>`(select count(*)::int from skill_skills s where s.framework_id = ${frameworks.id} and s.retired_at is null)`,
-        students: sql<number>`(select count(distinct a.student_id)::int from skill_assessments a join skill_skills s on s.id = a.skill_id where s.framework_id = ${frameworks.id})`,
+        levels: sql<number>`(select count(*)::int from skill_levels l where l.framework_id = skill_frameworks.id)`,
+        skills: sql<number>`(select count(*)::int from skill_skills s where s.framework_id = skill_frameworks.id and s.retired_at is null)`,
+        students: sql<number>`(select count(distinct a.student_id)::int from skill_assessments a join skill_skills s on s.id = a.skill_id where s.framework_id = skill_frameworks.id)`,
       })
       .from(frameworks)
       .orderBy(asc(frameworks.name)),
@@ -191,8 +191,8 @@ export async function frameworkView(actor: Actor, frameworkId: string) {
         category: skills.category,
         description: skills.description,
         retiredAt: skills.retiredAt,
-        judged: sql<number>`(select count(distinct a.student_id)::int from skill_assessments a where a.skill_id = ${skills.id} and a.source = 'faculty')`,
-        selfJudged: sql<number>`(select count(distinct a.student_id)::int from skill_assessments a where a.skill_id = ${skills.id} and a.source = 'self')`,
+        judged: sql<number>`(select count(distinct a.student_id)::int from skill_assessments a where a.skill_id = skill_skills.id and a.source = 'faculty')`,
+        selfJudged: sql<number>`(select count(distinct a.student_id)::int from skill_assessments a where a.skill_id = skill_skills.id and a.source = 'self')`,
       })
       .from(skills)
       .where(eq(skills.frameworkId, f.id))
@@ -359,9 +359,9 @@ export async function listStudents(actor: Actor) {
         id: users.id,
         name: users.name,
         email: users.email,
-        judgements: sql<number>`(select count(*)::int from skill_assessments a where a.student_id = ${users.id} and a.source = 'faculty')`,
-        selfJudgements: sql<number>`(select count(*)::int from skill_assessments a where a.student_id = ${users.id} and a.source = 'self')`,
-        lastOn: sql<string | null>`(select max(a.assessed_on)::text from skill_assessments a where a.student_id = ${users.id})`,
+        judgements: sql<number>`(select count(*)::int from skill_assessments a where a.student_id = users.id and a.source = 'faculty')`,
+        selfJudgements: sql<number>`(select count(*)::int from skill_assessments a where a.student_id = users.id and a.source = 'self')`,
+        lastOn: sql<string | null>`(select max(a.assessed_on)::text from skill_assessments a where a.student_id = users.id)`,
       })
       .from(users)
       .where(eq(users.role, 'student'))

@@ -131,9 +131,9 @@ export async function listCeremonies(actor: Actor) {
         heldOn: ceremonies.heldOn,
         venue: ceremonies.venue,
         status: ceremonies.status,
-        candidates: sql<number>`(select count(*)::int from ceremony_candidates c where c.ceremony_id = ${ceremonies.id})`,
-        eligible: sql<number>`(select count(*)::int from ceremony_candidates c where c.ceremony_id = ${ceremonies.id} and c.eligible)`,
-        issued: sql<number>`(select count(*)::int from ceremony_certificates x where x.ceremony_id = ${ceremonies.id} and x.docstatus = 'submitted')`,
+        candidates: sql<number>`(select count(*)::int from ceremony_candidates c where c.ceremony_id = ceremony_events.id)`,
+        eligible: sql<number>`(select count(*)::int from ceremony_candidates c where c.ceremony_id = ceremony_events.id and c.eligible)`,
+        issued: sql<number>`(select count(*)::int from ceremony_certificates x where x.ceremony_id = ceremony_events.id and x.docstatus = 'submitted')`,
       })
       .from(ceremonies)
       .orderBy(desc(ceremonies.heldOn)),
@@ -258,9 +258,9 @@ export async function listCandidates(actor: Actor, ceremonyId: string) {
         attendance: candidates.attendance,
         guests: candidates.guests,
         checkedInAt: candidates.checkedInAt,
-        holds: sql<number>`(select count(*)::int from ceremony_holds h where h.candidate_id = ${candidates.id} and h.cleared_at is null)`,
-        certificateId: sql<string | null>`(select x.id from ceremony_certificates x where x.candidate_id = ${candidates.id} and x.docstatus <> 'cancelled' limit 1)`,
-        serial: sql<string | null>`(select x.serial from ceremony_certificates x where x.candidate_id = ${candidates.id} and x.docstatus <> 'cancelled' limit 1)`,
+        holds: sql<number>`(select count(*)::int from ceremony_holds h where h.candidate_id = ceremony_candidates.id and h.cleared_at is null)`,
+        certificateId: sql<string | null>`(select x.id from ceremony_certificates x where x.candidate_id = ceremony_candidates.id and x.docstatus <> 'cancelled' limit 1)`,
+        serial: sql<string | null>`(select x.serial from ceremony_certificates x where x.candidate_id = ceremony_candidates.id and x.docstatus <> 'cancelled' limit 1)`,
       })
       .from(candidates)
       .innerJoin(users, eq(users.id, candidates.studentId))
@@ -402,7 +402,7 @@ export async function myGraduation(actor: Actor) {
         attendance: candidates.attendance,
         guests: candidates.guests,
         checkedInAt: candidates.checkedInAt,
-        holds: sql<number>`(select count(*)::int from ceremony_holds h where h.candidate_id = ${candidates.id} and h.cleared_at is null)`,
+        holds: sql<number>`(select count(*)::int from ceremony_holds h where h.candidate_id = ceremony_candidates.id and h.cleared_at is null)`,
       })
       .from(candidates)
       .innerJoin(ceremonies, eq(ceremonies.id, candidates.ceremonyId))

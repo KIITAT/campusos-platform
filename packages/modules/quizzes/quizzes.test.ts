@@ -20,6 +20,7 @@ import {
   createQuiz,
   grantExtension,
   listQuestions,
+  listQuizzes,
   myQuizzes,
   overrideResponse,
   publishQuiz,
@@ -331,6 +332,12 @@ test('a student sits a quiz without ever seeing the key, and the machine scores 
     saveAnswers(c.asha, { attemptId: a.id, [`q_${item.number}`]: '7' }),
     (e) => code(e) === 'quiz_response_locked',
   )
+
+  // The lists count this quiz's own items and takers, and each question's quizzes.
+  const row = (await listQuizzes(c.teacher)).find((q) => q.id === quizId)!
+  assert.equal(row.questions, 4)
+  assert.equal(row.takers, 1)
+  assert.ok((await listQuestions(c.teacher, c.courseId)).every((q) => q.used === 1))
 })
 
 test('who may sit it, and how often, is the database’s call', async () => {

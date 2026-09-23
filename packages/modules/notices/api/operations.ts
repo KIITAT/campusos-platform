@@ -244,11 +244,11 @@ export async function board(actor: Actor, includeDrafts = false): Promise<Notice
         publishedAt: notices.publishedAt,
         expiresAt: notices.expiresAt,
         authorName: users.name,
-        reach: sql<number>`(select count(*) from ${notifications} n where n.notice_id = ${notices.id})`.mapWith(
+        reach: sql<number>`(select count(*) from ${notifications} n where n.notice_id = notices.id)`.mapWith(
           Number,
         ),
         readCount: sql<number>`(select count(*) from ${notifications} n
-                                 where n.notice_id = ${notices.id} and n.read_at is not null)`.mapWith(
+                                 where n.notice_id = notices.id and n.read_at is not null)`.mapWith(
           Number,
         ),
       })

@@ -5,7 +5,7 @@ export const manifest: ModuleManifest = {
   name: 'Communication & Notices',
   description:
     'Notice board and circulars scoped by role and department, plus the in-app notification centre every other module writes into. Email delivery when a provider is configured; SMS and WhatsApp are a separately priced channel module later.',
-  version: '0.1.1',
+  version: '0.1.2',
   // An institution with no way to tell its students anything is not a working
   // install, so this is part of the base product rather than an upsell.
   alwaysEnabled: true,

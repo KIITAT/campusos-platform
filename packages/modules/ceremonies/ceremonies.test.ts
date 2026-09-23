@@ -24,6 +24,7 @@ import {
   createCeremony,
   issueCertificates,
   listCandidates,
+  listCeremonies,
   myGraduation,
   placeHold,
   reissueCertificate,
@@ -153,6 +154,11 @@ test('the list is whoever reads a graduating programme, and cleared means the de
   assert.equal(bilal.eligible, false)
   assert.equal(bilal.stage, 'not_eligible')
   assert.match(bilal.shortOf!, /4 credits short|CORE/)
+
+  // The list of ceremonies counts each one's own candidates.
+  const row = (await listCeremonies(c.admin)).find((x) => x.id === e.id)!
+  assert.equal(row.candidates, 2)
+  assert.equal(row.eligible, 1)
 })
 
 test('certificates go to the cleared and are refused, by name, to the rest', async () => {
