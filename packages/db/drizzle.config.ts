@@ -7,7 +7,7 @@ export default defineConfig({
   // history covers the tables that exist before any plugin does -- institutions,
   // users, the Auth.js tables, the shared audit log and device tokens -- which
   // is exactly the set a module's foreign keys point at.
-  schema: ['./src/schema.ts', './src/audit.ts', './src/device-tokens.ts'],
+  schema: ['./src/schema.ts', './src/audit.ts', './src/device-tokens.ts', './src/invitations.ts'],
   out: './migrations',
   dialect: 'postgresql',
   // owner role: only migrations get DDL rights, the app never does

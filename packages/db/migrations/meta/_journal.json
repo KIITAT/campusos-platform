@@ -8,6 +8,20 @@
       "when": 1789568969582,
       "tag": "0000_swift_human_fly",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790153473007,
+      "tag": "0001_invitations",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790154169754,
+      "tag": "0002_docstatus",
+      "breakpoints": true
     }
   ]
 }

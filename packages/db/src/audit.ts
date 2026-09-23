@@ -1,7 +1,8 @@
-import { sql } from 'drizzle-orm'
+import { and, desc, eq, sql } from 'drizzle-orm'
 import { jsonb, pgTable, text, timestamp, uuid, index } from 'drizzle-orm/pg-core'
 import { institutions, users } from './schema'
 import { tenantPolicy } from './rls'
+import { withTenant } from './client'
 
 /**
  * The audit log, built once here rather than per module.
@@ -88,4 +89,34 @@ export async function audit<T extends Executor>(tx: T, entry: AuditEntry): Promi
     reason: entry.reason,
     detail: entry.detail ?? null,
   })
+}
+
+export interface TrailEntry {
+  at: string
+  who: string | null
+  action: string
+  reason: string
+}
+
+/**
+ * One record's history, newest first, for the timeline beside a form view.
+ *
+ * The verb, who and why -- never `detail`, which holds before-and-after values
+ * that were written for an investigator, not for whoever can open the record.
+ */
+export async function recordTrail(
+  institutionId: string,
+  entity: string,
+  entityId: string,
+  limit = 50,
+): Promise<TrailEntry[]> {
+  const rows = await withTenant(institutionId, (tx) =>
+    tx
+      .select({ at: auditLog.at, who: auditLog.actorEmail, action: auditLog.action, reason: auditLog.reason })
+      .from(auditLog)
+      .where(and(eq(auditLog.entity, entity), eq(auditLog.entityId, entityId)))
+      .orderBy(desc(auditLog.at))
+      .limit(limit),
+  )
+  return rows.map((r) => ({ ...r, at: r.at.toISOString() }))
 }
