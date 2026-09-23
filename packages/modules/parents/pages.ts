@@ -1,6 +1,13 @@
 import { formatPaise } from '@campusos/money'
 import { flag, param, type PluginPage } from '@campusos/module-framework'
-import { childOverview, listLinks, myChildren, type Actor } from './api'
+import {
+  childOverview,
+  listGuardianInvites,
+  listLinks,
+  myChildren,
+  studentChoices,
+  type Actor,
+} from './api'
 
 const ADMIN = ['institution_admin', 'super_admin'] as const
 
@@ -219,7 +226,7 @@ export const pages: PluginPage[] = [
           { key: 'parent', label: 'Parent' },
           { key: 'student', label: 'Student' },
           { key: 'relation', label: 'Relation' },
-          { key: 'state', label: 'Status', alertWhen: 'waiting' },
+          { key: 'state', label: 'Status', kind: 'status', alertWhen: 'waiting' },
         ],
       },
       {
@@ -263,7 +270,7 @@ export const pages: PluginPage[] = [
         columns: [
           { key: 'parent', label: 'Parent' },
           { key: 'student', label: 'Student' },
-          { key: 'state', label: 'Status' },
+          { key: 'state', label: 'Status', kind: 'status' },
           { key: 'refusedReason', label: 'Reason' },
         ],
       },
@@ -278,6 +285,79 @@ export const pages: PluginPage[] = [
         fields: [
           { name: 'linkId', label: 'Link', kind: 'select', options: 'verifiedOptions' },
           { name: 'reason', label: 'Reason' },
+        ],
+      },
+    ],
+  },
+
+  {
+    path: '/guardians',
+    title: 'Guardians',
+    menu: 'Guardians',
+    roles: [...ADMIN],
+    async load(actor) {
+      const a = actor as Actor
+      const [invites, students] = await Promise.all([listGuardianInvites(a), studentChoices(a)])
+      return {
+        invites: invites.map((i) => ({ ...i, open: i.state === 'open' })),
+        studentOptions: students.map((s) => ({
+          value: s.id,
+          label: `${s.name ?? s.email} (${s.email})`,
+        })),
+        liveOptions: invites
+          .filter((i) => i.state === 'open' || i.state === 'accepted')
+          .map((i) => ({ value: i.id, label: `${i.email} (${i.state}): ${i.children}` })),
+      }
+    },
+    sections: () => [
+      {
+        kind: 'note',
+        text:
+          'A guardian signs in at their own address, which the institution’s email domain ' +
+          'would never admit. So the office names the address and the child, and sends the link ' +
+          'it is given. Accepting it lets that address -- and only that address -- sign in, with ' +
+          'Google or an emailed sign-in link; a forwarded link admits nobody else. The child is ' +
+          'linked, already verified, the first time the guardian arrives.',
+      },
+      {
+        kind: 'form',
+        title: 'Invite a guardian',
+        note: 'The link is shown once, after you submit. Inviting the same address again for another child sends one link covering both.',
+        submit: 'Create invitation',
+        path: '/guardians/invite',
+        fields: [
+          { name: 'email', label: 'Guardian’s email address' },
+          { name: 'studentId', label: 'Child', kind: 'select', options: 'studentOptions' },
+          { name: 'relation', label: 'Relation', hint: 'mother, father, guardian...' },
+          { name: 'days', label: 'Days to accept', kind: 'number', value: '7', hint: '1 to 30' },
+        ],
+      },
+      {
+        kind: 'table',
+        title: 'Invitations',
+        rows: 'invites',
+        empty: 'No guardians invited yet.',
+        columns: [
+          { key: 'email', label: 'Address' },
+          { key: 'children', label: 'For' },
+          { key: 'state', label: 'Status', kind: 'status' },
+          { key: 'expiresAt', label: 'Accept by', kind: 'date', alertWhen: 'open' },
+          { key: 'acceptedAt', label: 'Accepted', kind: 'when' },
+          { key: 'signedIn', label: 'Signed in', kind: 'bool' },
+          { key: 'revokeReason', label: 'Withdrawn because' },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Withdraw a guardian',
+        note:
+          'Before acceptance the link simply stops working. After, access ends now: the ' +
+          'children are unlinked, the account is suspended and signed out. Audited.',
+        submit: 'Withdraw',
+        path: '/guardians/withdraw',
+        fields: [
+          { name: 'invitationId', label: 'Invitation', kind: 'select', options: 'liveOptions' },
+          { name: 'reason', label: 'Reason', hint: 'At least five characters' },
         ],
       },
     ],

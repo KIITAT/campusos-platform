@@ -4,7 +4,9 @@ import {
   childOverviewSchema,
   claimLinkSchema,
   decideLinkSchema,
+  inviteGuardianSchema,
   linkRowSchema,
+  withdrawGuardianSchema,
 } from './schemas'
 
 const base = manifest.apiBasePath
@@ -60,6 +62,46 @@ export const paths = {
       tags: ['parents'],
       requestBody: { content: json(decideLinkSchema) },
       responses: { '204': { description: 'Revoked' }, ...gated },
+    },
+  },
+  [`${base}/guardians`]: {
+    get: {
+      summary: 'Guardian invitations: open, accepted, expired or withdrawn, and for which children',
+      tags: ['parents'],
+      responses: { '200': { description: 'OK' }, ...gated },
+    },
+  },
+  [`${base}/guardians/invite`]: {
+    post: {
+      summary: 'Invite a guardian, at their own address, for a child',
+      description:
+        'Returns a link, once, which the office sends to the guardian. The link is good for ' +
+        'accepting for up to 30 days; signing in afterwards still proves the address, by Google ' +
+        'or an emailed sign-in link, so a forwarded link admits nobody else. An address already ' +
+        'belonging to an account elsewhere, or inside the institution’s own email domain, is ' +
+        'refused. Inviting again for a second child replaces the link and carries the first child over.',
+      tags: ['parents'],
+      requestBody: { content: json(inviteGuardianSchema) },
+      responses: {
+        '200': { description: 'Invited, or linked straight away for an existing guardian' },
+        ...gated,
+        '409': { description: 'That address cannot be invited here', content: json(err) },
+      },
+    },
+  },
+  [`${base}/guardians/withdraw`]: {
+    post: {
+      summary: 'Withdraw a guardian invitation, and the access it gave',
+      description:
+        'After acceptance this removes the links it made, returns the account to pending and ends ' +
+        'its sessions: access stops now, not when a cookie expires. Audited with the reason.',
+      tags: ['parents'],
+      requestBody: { content: json(withdrawGuardianSchema) },
+      responses: {
+        '204': { description: 'Withdrawn' },
+        ...gated,
+        '409': { description: 'Already withdrawn', content: json(err) },
+      },
     },
   },
   [`${base}/children`]: {

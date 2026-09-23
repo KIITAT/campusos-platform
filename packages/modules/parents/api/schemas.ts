@@ -105,3 +105,22 @@ export const childOverviewSchema = z
 
 export type LinkRow = z.infer<typeof linkRowSchema>
 export type ChildOverview = z.infer<typeof childOverviewSchema>
+
+// --- guardians by invitation ------------------------------------------------
+
+export const inviteGuardianSchema = z
+  .object({
+    email: z.email().trim().toLowerCase(),
+    studentId: z.string().min(1),
+    relation: z.string().trim().min(2).max(40),
+    /** How long the link may be accepted for. The access it grants does not expire. */
+    days: z.coerce.number().int().min(1).max(30).default(7),
+  })
+  .meta({ id: 'ParentGuardianInvite' })
+
+export const withdrawGuardianSchema = z
+  .object({
+    invitationId: uuid,
+    reason: z.string().trim().min(5).max(500),
+  })
+  .meta({ id: 'ParentGuardianWithdraw' })

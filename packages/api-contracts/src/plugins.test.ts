@@ -98,7 +98,7 @@ test('the whole product still answers the same number of endpoints', () => {
   // and advances, salary structures, tax and gratuity -- and went from 17 to
   // 110. A regression guard on the conversion, not a target.
   const total = PLUGINS.reduce((n, p) => n + p.routes.length, 0)
-  assert.equal(total, 251, `expected 251 endpoints across all modules, found ${total}`)
+  assert.equal(total, 254, `expected 254 endpoints across all modules, found ${total}`)
 })
 
 test('a longer path is never swallowed by a shorter one', () => {
@@ -194,11 +194,29 @@ test('every form on a page posts to a route the module answers', () => {
       ) as Record<string, unknown>
 
       for (const section of page.sections(blank)) {
+        // A list view's bulk actions are forms too.
+        if (section.kind === 'table') {
+          for (const b of section.bulk ?? []) {
+            assert.ok(
+              p.routes.some((r) => r.method === 'POST' && r.path === b.path),
+              `${p.manifest.id}: ${page.path} bulk-posts to ${b.path}, which is not a route`,
+            )
+          }
+        }
         if (section.kind !== 'form') continue
         const method = section.method ?? 'POST'
         assert.ok(
           p.routes.some((r) => r.method === method && r.path === section.path),
           `${p.manifest.id}: ${page.path} posts to ${method} ${section.path}, which is not a route`,
+        )
+      }
+
+      // And a record's lifecycle buttons, when it offers them.
+      const doc = page.record?.(blank)?.docStatus
+      for (const path of [doc?.submit, doc?.cancel, doc?.amend].filter(Boolean) as string[]) {
+        assert.ok(
+          p.routes.some((r) => r.method === 'POST' && r.path === path),
+          `${p.manifest.id}: ${page.path} offers ${path}, which is not a route`,
         )
       }
     }

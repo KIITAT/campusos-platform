@@ -3,9 +3,12 @@ import {
   childOverview,
   claimLink,
   decideLink,
+  inviteGuardian,
+  listGuardianInvites,
   listLinks,
   myChildren,
   revokeLink,
+  withdrawGuardian,
   type Actor,
 } from './api'
 
@@ -30,6 +33,20 @@ export const routes: PluginRoute[] = [
     path: '/links/revoke',
     handler: async (actor, req) => {
       await revokeLink(actor as Actor, await jsonBody(req))
+    },
+  },
+
+  { method: 'GET', path: '/guardians', handler: (actor) => listGuardianInvites(actor as Actor) },
+  {
+    method: 'POST',
+    path: '/guardians/invite',
+    handler: async (actor, req) => inviteGuardian(actor as Actor, await jsonBody(req)),
+  },
+  {
+    method: 'POST',
+    path: '/guardians/withdraw',
+    handler: async (actor, req) => {
+      await withdrawGuardian(actor as Actor, await jsonBody(req))
     },
   },
 
