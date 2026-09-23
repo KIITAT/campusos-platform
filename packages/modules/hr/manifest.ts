@@ -27,8 +27,10 @@ export const manifest: ModuleManifest = {
     { label: 'Leave policy', href: '/m/hr/leave/policy', roles: ['institution_admin', 'accounts_staff'] },
     { label: 'Shifts', href: '/m/hr/shifts', roles: ['institution_admin', 'accounts_staff'] },
     { label: 'Recruitment', href: '/m/hr/recruitment', roles: ['institution_admin', 'accounts_staff'] },
+    { label: 'Performance', href: '/m/hr/performance', roles: ['institution_admin', 'accounts_staff'] },
     { label: 'My employment', href: '/m/hr/me', roles: ['faculty'] },
     { label: 'My interviews', href: '/m/hr/interviews', roles: ['faculty', 'hod'] },
+    { label: 'My appraisals', href: '/m/hr/appraisal', roles: ['faculty', 'hod'] },
   ],
 
   apiBasePath: '/api/v1/modules/hr',

@@ -1,4 +1,5 @@
 export * from './guards'
+export * from './performance'
 export * from './recruitment'
 export * from './shifts'
 export * from './leave'

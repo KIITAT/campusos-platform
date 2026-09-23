@@ -1108,3 +1108,196 @@ export type JobApplicant = typeof jobApplicants.$inferSelect
 export type Interview = typeof interviews.$inferSelect
 export type InterviewFeedback = typeof interviewFeedback.$inferSelect
 export type JobOffer = typeof jobOffers.$inferSelect
+
+// --- performance -----------------------------------------------------------
+
+export const cycleStatusEnum = pgEnum('hr_cycle_status', ['draft', 'open', 'closed'])
+
+/**
+ * Where one person's appraisal stands. Self review, then the reviewer, then
+ * done -- in that order, because a reviewer who rates before reading the
+ * self-assessment is rating a stranger.
+ */
+export const appraisalStatusEnum = pgEnum('hr_appraisal_status', [
+  'self_review',
+  'manager_review',
+  'completed',
+])
+
+export const goalStatusEnum = pgEnum('hr_goal_status', ['open', 'achieved', 'missed', 'dropped'])
+
+export const feedbackRelationEnum = pgEnum('hr_feedback_relation', ['peer', 'report', 'other'])
+
+/** A review period: "Academic year 2026-27". */
+export const appraisalCycles = pgTable(
+  'hr_appraisal_cycles',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    name: text().notNull(),
+    startsOn: date('starts_on').notNull(),
+    endsOn: date('ends_on').notNull(),
+    status: cycleStatusEnum().notNull().default('draft'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hr_appraisal_cycles_name').on(t.institutionId, t.name),
+    check('hr_appraisal_cycles_dates', sql`ends_on > starts_on`),
+    tenantPolicy('hr_appraisal_cycles'),
+  ],
+)
+
+/** A key result area: "Teaching", "Research", "Administration", "Outreach". */
+export const kras = pgTable(
+  'hr_kras',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    code: text().notNull(),
+    name: text().notNull(),
+    description: text(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hr_kras_code').on(t.institutionId, t.code),
+    check('hr_kras_code_shape', sql`length(trim(code)) > 0`),
+    tenantPolicy('hr_kras'),
+  ],
+)
+
+export const appraisals = pgTable(
+  'hr_appraisals',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    cycleId: uuid('cycle_id')
+      .notNull()
+      .references(() => appraisalCycles.id, { onDelete: 'cascade' }),
+    staffId: uuid('staff_id')
+      .notNull()
+      .references(() => staff.id, { onDelete: 'cascade' }),
+    reviewerId: text('reviewer_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'restrict' }),
+    status: appraisalStatusEnum().notNull().default('self_review'),
+    selfSummary: text('self_summary'),
+    reviewerSummary: text('reviewer_summary'),
+    /** Weighted rating in hundredths: 375 is 3.75 out of 5. Set on completion. */
+    scoreCenti: smallint('score_centi'),
+    selfSubmittedAt: timestamp('self_submitted_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hr_appraisals_once').on(t.cycleId, t.staffId),
+    index('hr_appraisals_reviewer').on(t.reviewerId, t.status),
+    check('hr_appraisals_score', sql`score_centi is null or score_centi between 100 and 500`),
+    check(
+      'hr_appraisals_completed',
+      sql`(status = 'completed') = (completed_at is not null and score_centi is not null)`,
+    ),
+    tenantPolicy('hr_appraisals'),
+  ],
+)
+
+/** One KRA on one appraisal, with its weight and both ratings. */
+export const appraisalKras = pgTable(
+  'hr_appraisal_kras',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    appraisalId: uuid('appraisal_id')
+      .notNull()
+      .references(() => appraisals.id, { onDelete: 'cascade' }),
+    kraId: uuid('kra_id')
+      .notNull()
+      .references(() => kras.id, { onDelete: 'restrict' }),
+    weight: smallint().notNull(),
+    selfRating: smallint('self_rating'),
+    selfComment: text('self_comment'),
+    reviewerRating: smallint('reviewer_rating'),
+    reviewerComment: text('reviewer_comment'),
+  },
+  (t) => [
+    uniqueIndex('hr_appraisal_kras_once').on(t.appraisalId, t.kraId),
+    check('hr_appraisal_kras_weight', sql`weight between 1 and 100`),
+    check('hr_appraisal_kras_self', sql`self_rating is null or self_rating between 1 and 5`),
+    check(
+      'hr_appraisal_kras_reviewer',
+      sql`reviewer_rating is null or reviewer_rating between 1 and 5`,
+    ),
+    tenantPolicy('hr_appraisal_kras'),
+  ],
+)
+
+/**
+ * A goal somebody is working toward, optionally inside a cycle and under a
+ * KRA. Goals outlive cycles: "publish two papers" set in June is still a goal
+ * in the next review.
+ */
+export const goals = pgTable(
+  'hr_goals',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    staffId: uuid('staff_id')
+      .notNull()
+      .references(() => staff.id, { onDelete: 'cascade' }),
+    cycleId: uuid('cycle_id').references(() => appraisalCycles.id, { onDelete: 'set null' }),
+    kraId: uuid('kra_id').references(() => kras.id, { onDelete: 'set null' }),
+    title: text().notNull(),
+    description: text(),
+    targetOn: date('target_on'),
+    progress: smallint().notNull().default(0),
+    status: goalStatusEnum().notNull().default('open'),
+    createdBy: text('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('hr_goals_staff').on(t.staffId, t.status),
+    check('hr_goals_progress', sql`progress between 0 and 100`),
+    check('hr_goals_title', sql`length(trim(title)) > 0`),
+    check('hr_goals_achieved', sql`status <> 'achieved' or progress = 100`),
+    tenantPolicy('hr_goals'),
+  ],
+)
+
+/**
+ * Structured feedback from colleagues: what they do well, what they could do
+ * better, and a rating. Never from the person being appraised, and once per
+ * colleague per appraisal.
+ */
+export const appraisalFeedback = pgTable(
+  'hr_appraisal_feedback',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    appraisalId: uuid('appraisal_id')
+      .notNull()
+      .references(() => appraisals.id, { onDelete: 'cascade' }),
+    fromUserId: text('from_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    relation: feedbackRelationEnum().notNull(),
+    strengths: text().notNull(),
+    improvements: text().notNull(),
+    rating: smallint().notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hr_appraisal_feedback_once').on(t.appraisalId, t.fromUserId),
+    check('hr_appraisal_feedback_rating', sql`rating between 1 and 5`),
+    check(
+      'hr_appraisal_feedback_text',
+      sql`length(trim(strengths)) >= 5 and length(trim(improvements)) >= 5`,
+    ),
+    tenantPolicy('hr_appraisal_feedback'),
+  ],
+)
+
+export type AppraisalCycle = typeof appraisalCycles.$inferSelect
+export type Kra = typeof kras.$inferSelect
+export type Appraisal = typeof appraisals.$inferSelect
+export type AppraisalKra = typeof appraisalKras.$inferSelect
+export type Goal = typeof goals.$inferSelect
+export type AppraisalFeedback = typeof appraisalFeedback.$inferSelect

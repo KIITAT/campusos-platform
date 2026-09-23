@@ -1,3 +1,4 @@
+import { performancePaths } from './openapi-performance'
 import { recruitmentPaths } from './openapi-recruitment'
 import { shiftsPaths } from './openapi-shifts'
 import { leavePaths } from './openapi-leave'
@@ -209,4 +210,4 @@ const corePaths = {
   },
 }
 
-export const paths = { ...corePaths, ...lifecyclePaths, ...leavePaths, ...shiftsPaths, ...recruitmentPaths }
+export const paths = { ...corePaths, ...lifecyclePaths, ...leavePaths, ...shiftsPaths, ...recruitmentPaths, ...performancePaths }

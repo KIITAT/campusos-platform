@@ -656,3 +656,117 @@ export const hireSchema = z
     onboardingTemplateId: uuid.nullish(),
   })
   .meta({ id: 'HrHire' })
+
+// --- performance -----------------------------------------------------------
+
+export const createCycleSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120),
+    startsOn: day,
+    endsOn: day,
+  })
+  .meta({ id: 'HrCycleCreate' })
+
+export const setCycleStatusSchema = z
+  .object({ cycleId: uuid, status: z.enum(['open', 'closed']) })
+  .meta({ id: 'HrCycleStatus' })
+
+export const createKraSchema = z
+  .object({
+    code: z.string().trim().min(1).max(30),
+    name: z.string().trim().min(1).max(120),
+    description: z.string().trim().max(1000).nullish(),
+  })
+  .meta({ id: 'HrKraCreate' })
+
+/** Put people into a cycle, each with a reviewer and the weighted KRAs they are judged on. */
+export const enrolSchema = z
+  .object({
+    cycleId: uuid,
+    staffIds: z.array(uuid).min(1).max(500),
+    reviewerId: z.string().min(1),
+    kras: z
+      .array(z.object({ kraId: uuid, weight: z.coerce.number().int().min(1).max(100) }))
+      .min(1)
+      .max(12),
+  })
+  .refine((d) => d.kras.reduce((n, k) => n + k.weight, 0) === 100, {
+    message: 'KRA weights have to add up to 100',
+    path: ['kras'],
+  })
+  .meta({ id: 'HrAppraisalEnrol' })
+
+const ratings = z
+  .array(
+    z.object({
+      kraId: uuid,
+      rating: z.coerce.number().int().min(1).max(5),
+      comment: z.string().trim().max(2000).nullish(),
+    }),
+  )
+  .min(1)
+
+/**
+ * A form cannot post an array, so a screen sends one field per KRA --
+ * `rating:<kraId>` and `comment:<kraId>` -- and this folds them into the list
+ * the API takes. An API caller sends `ratings` directly and is untouched.
+ */
+const foldRatings = (v: unknown) => {
+  if (!v || typeof v !== 'object' || 'ratings' in v) return v
+  const o = v as Record<string, unknown>
+  const ratings = Object.keys(o)
+    .filter((k) => k.startsWith('rating:'))
+    .map((k) => {
+      const kraId = k.slice('rating:'.length)
+      const comment = o[`comment:${kraId}`]
+      return { kraId, rating: o[k], comment: comment === '' ? null : comment }
+    })
+  return { ...o, ratings }
+}
+
+export const selfReviewSchema = z
+  .object({
+    appraisalId: uuid,
+    ratings,
+    summary: z.string().trim().min(5).max(4000),
+  })
+  .meta({ id: 'HrSelfReview' })
+export const selfReviewInput = z.preprocess(foldRatings, selfReviewSchema)
+
+export const reviewSchema = z
+  .object({
+    appraisalId: uuid,
+    ratings,
+    summary: z.string().trim().min(5).max(4000),
+  })
+  .meta({ id: 'HrReview' })
+export const reviewInput = z.preprocess(foldRatings, reviewSchema)
+
+export const setGoalSchema = z
+  .object({
+    staffId: uuid,
+    title: z.string().trim().min(1).max(200),
+    description: z.string().trim().max(2000).nullish(),
+    cycleId: uuid.nullish(),
+    kraId: uuid.nullish(),
+    targetOn: day.nullish(),
+  })
+  .meta({ id: 'HrGoalSet' })
+
+export const updateGoalSchema = z
+  .object({
+    goalId: uuid,
+    progress: z.coerce.number().int().min(0).max(100).optional(),
+    status: z.enum(['open', 'achieved', 'missed', 'dropped']).optional(),
+  })
+  .meta({ id: 'HrGoalUpdate' })
+
+export const giveAppraisalFeedbackSchema = z
+  .object({
+    appraisalId: uuid,
+    relation: z.enum(['peer', 'report', 'other']),
+    strengths: z.string().trim().min(5).max(2000),
+    improvements: z.string().trim().min(5).max(2000),
+    rating: z.coerce.number().int().min(1).max(5),
+  })
+  .meta({ id: 'HrAppraisalFeedback' })
