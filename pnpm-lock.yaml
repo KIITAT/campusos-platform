@@ -81,6 +81,12 @@ importers:
       '@campusos/module-parents':
         specifier: workspace:*
         version: link:../modules/parents
+      '@campusos/module-quizzes':
+        specifier: workspace:*
+        version: link:../modules/quizzes
+      '@campusos/module-skills':
+        specifier: workspace:*
+        version: link:../modules/skills
       '@types/node':
         specifier: ^24.10.1
         version: 24.13.4
@@ -521,6 +527,53 @@ importers:
       '@types/react':
         specifier: ^19.2.18
         version: 19.3.0
+      tsx:
+        specifier: ^4.23.12
+        version: 4.23.13
+
+  packages/modules/quizzes:
+    dependencies:
+      '@campusos/db':
+        specifier: workspace:*
+        version: link:../../db
+      '@campusos/module-academic':
+        specifier: workspace:*
+        version: link:../academic
+      '@campusos/module-framework':
+        specifier: workspace:*
+        version: link:../../module-framework
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@types/pg@8.23.1)(pg@8.23.0)
+      zod:
+        specifier: ^4.4.3
+        version: 4.6.5
+    devDependencies:
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.13.4
+      tsx:
+        specifier: ^4.23.12
+        version: 4.23.13
+
+  packages/modules/skills:
+    dependencies:
+      '@campusos/db':
+        specifier: workspace:*
+        version: link:../../db
+      '@campusos/module-framework':
+        specifier: workspace:*
+        version: link:../../module-framework
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@types/pg@8.23.1)(pg@8.23.0)
+      zod:
+        specifier: ^4.4.3
+        version: 4.6.5
+    devDependencies:
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.13.4
       tsx:
         specifier: ^4.23.12
         version: 4.23.13

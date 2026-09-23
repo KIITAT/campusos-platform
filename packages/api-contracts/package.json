@@ -30,6 +30,8 @@
     "@campusos/module-library": "workspace:*",
     "@campusos/module-notices": "workspace:*",
     "@campusos/module-parents": "workspace:*",
+    "@campusos/module-quizzes": "workspace:*",
+    "@campusos/module-skills": "workspace:*",
     "@types/node": "^24.10.1",
     "tsx": "^4.23.12"
   }
