@@ -55,6 +55,17 @@ export const createLeaveTypeSchema = z
     name: z.string().trim().min(1).max(120),
     annualDays: z.coerce.number().int().min(0).max(365).default(0),
     paid: z.coerce.boolean().default(true),
+    allowNegative: z.coerce.boolean().default(false),
+    encashable: z.coerce.boolean().default(false),
+    /** Pay component codes a day of this leave is worth, when paid out. */
+    encashmentComponents: z.array(z.string().trim().min(1).max(30)).max(20).default([]),
+    maxCarryForward: z.coerce.number().int().min(0).max(365).default(0),
+    compensatory: z.coerce.boolean().default(false),
+    compOffValidityDays: z.coerce.number().int().min(1).max(365).nullish(),
+  })
+  .refine((d) => !d.encashable || d.encashmentComponents.length > 0, {
+    message: 'an encashable leave type has to say which pay components a day is worth',
+    path: ['encashmentComponents'],
   })
   .meta({ id: 'HrLeaveTypeCreate' })
 
@@ -158,8 +169,11 @@ export const leaveBalanceSchema = z
     typeName: z.string(),
     annualDays: z.number().int(),
     takenDays: z.number().int(),
+    encashedDays: z.number().int(),
     /** Null when the type is unlimited but still recorded. */
     remainingDays: z.number().int().nullable(),
+    /** True once allocations exist: the balance is theirs, not the type default. */
+    managed: z.boolean(),
   })
   .meta({ id: 'HrLeaveBalance' })
 
@@ -400,3 +414,85 @@ export type OnboardingActivityRow = z.infer<typeof onboardingActivityRowSchema>
 export type OnboardingView = z.infer<typeof onboardingViewSchema>
 export type ChangeRow = z.infer<typeof changeRowSchema>
 export type SeparationRow = z.infer<typeof separationRowSchema>
+
+// --- leave, as policy ------------------------------------------------------
+
+const year = z.coerce.number().int().min(2000).max(2100)
+
+export const createLeavePolicySchema = z
+  .object({
+    code: z.string().trim().min(1).max(30),
+    name: z.string().trim().min(1).max(120),
+    prorateJoiners: z.coerce.boolean().default(false),
+    lines: z
+      .array(
+        z.object({
+          leaveTypeId: uuid,
+          annualDays: z.coerce.number().int().min(1).max(365),
+        }),
+      )
+      .min(1)
+      .max(50),
+  })
+  .meta({ id: 'HrLeavePolicyCreate' })
+
+export const assignPolicySchema = z
+  .object({
+    staffId: uuid,
+    policyId: uuid,
+    effectiveFrom: day,
+  })
+  .meta({ id: 'HrLeavePolicyAssign' })
+
+/** Materialise a year's allocations from the policies in force, idempotently. */
+export const allocateYearSchema = z
+  .object({ year, staffId: uuid.nullish() })
+  .meta({ id: 'HrLeaveAllocateYear' })
+
+export const manualAllocationSchema = z
+  .object({
+    staffId: uuid,
+    leaveTypeId: uuid,
+    year,
+    days: z.coerce.number().int().min(1).max(365),
+    expiresOn: day.nullish(),
+    reason: z.string().trim().min(5).max(500),
+  })
+  .meta({ id: 'HrLeaveAllocateManual' })
+
+export const requestCompOffSchema = z
+  .object({
+    staffId: uuid,
+    leaveTypeId: uuid,
+    workedOn: day,
+    days: z.coerce.number().int().min(1).max(2).default(1),
+    reason: z.string().trim().min(5).max(500),
+  })
+  .meta({ id: 'HrCompOffRequest' })
+
+export const decideCompOffSchema = z
+  .object({
+    requestId: uuid,
+    approve: z.coerce.boolean(),
+    note: z.string().trim().max(500).nullish(),
+  })
+  .meta({ id: 'HrCompOffDecide' })
+
+export const requestEncashmentSchema = z
+  .object({
+    staffId: uuid,
+    leaveTypeId: uuid,
+    year,
+    days: z.coerce.number().int().min(1).max(365),
+    /** The payroll month it should be paid in. */
+    period,
+    reason: z.string().trim().min(5).max(500),
+  })
+  .meta({ id: 'HrEncashmentRequest' })
+
+export const decideEncashmentSchema = z
+  .object({
+    requestId: uuid,
+    approve: z.coerce.boolean(),
+  })
+  .meta({ id: 'HrEncashmentDecide' })

@@ -10,7 +10,6 @@ import {
   tenantOf,
   today,
   type Actor,
-  type Tx,
 } from './guards'
 import {
   leaveRequests,
@@ -24,7 +23,6 @@ import {
   daysInMonth,
   daysInPeriod,
   inForce,
-  leaveRemaining,
   payslipFor,
   type Component,
 } from './payroll'
@@ -38,7 +36,6 @@ import {
   paySalariesSchema,
   requestLeaveSchema,
   setComponentSchema,
-  type LeaveBalance,
   type LeaveRow,
   type MyEmployment,
   type PayrollRun,
@@ -46,6 +43,9 @@ import {
   type StaffRow,
 } from './schemas'
 import { postPayslip, postSalaryPayment } from './posting'
+import { balancesFor } from './balances'
+import { assertBalance, encashmentsDue } from './leave'
+import { leaveEncashments } from '../schema'
 
 // --- staff -----------------------------------------------------------------
 
@@ -168,6 +168,12 @@ export async function createLeaveType(actor: Actor, input: unknown) {
         name: d.name,
         annualDays: d.annualDays,
         paid: d.paid,
+        allowNegative: d.allowNegative,
+        encashable: d.encashable,
+        encashmentComponents: d.encashmentComponents,
+        maxCarryForward: d.maxCarryForward,
+        compensatory: d.compensatory,
+        compOffValidityDays: d.compOffValidityDays ?? null,
       })
       .onConflictDoNothing()
       .returning()
@@ -236,6 +242,19 @@ export async function decideLeave(actor: Actor, input: unknown) {
     const [person] = await tx.select().from(staff).where(eq(staff.id, row.staffId))
     if (person?.userId && person.userId === actor.id) {
       throw new HrError(403, 'self_approval', 'leave is not approved by the person taking it')
+    }
+
+    // Leave nobody has is not granted by approving it. Checked at the decision,
+    // not the request: a balance can change between the two, and the approval
+    // is the act that spends it.
+    if (d.approve) {
+      await assertBalance(
+        tx,
+        row.staffId,
+        row.leaveTypeId,
+        row.fromOn.slice(0, 4),
+        spanDays(row.fromOn, row.toOn),
+      )
     }
 
     const [updated] = await tx
@@ -324,37 +343,6 @@ export async function listLeave(actor: Actor, pendingOnly = false): Promise<Leav
       .orderBy(desc(leaveRequests.fromOn))
       .limit(300)
     return rows.map(toLeaveRow)
-  })
-}
-
-async function balancesFor(tx: Tx, staffId: string, year: string): Promise<LeaveBalance[]> {
-  const types = await tx.select().from(leaveTypes).orderBy(asc(leaveTypes.code))
-  const taken = await tx
-    .select({
-      leaveTypeId: leaveRequests.leaveTypeId,
-      fromOn: leaveRequests.fromOn,
-      toOn: leaveRequests.toOn,
-    })
-    .from(leaveRequests)
-    .where(
-      and(
-        eq(leaveRequests.staffId, staffId),
-        eq(leaveRequests.status, 'approved'),
-        sql`extract(year from ${leaveRequests.fromOn}) = ${Number(year)}`,
-      ),
-    )
-
-  return types.map((t) => {
-    const days = taken
-      .filter((l) => l.leaveTypeId === t.id)
-      .reduce((n, l) => n + spanDays(l.fromOn, l.toOn), 0)
-    return {
-      typeCode: t.code,
-      typeName: t.name,
-      annualDays: t.annualDays,
-      takenDays: days,
-      remainingDays: leaveRemaining(t.annualDays, days),
-    }
   })
 }
 
@@ -511,7 +499,15 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
           amountPaise: c.amountPaise,
         }))
 
-      const slip = payslipFor(inForceComponents, { workingDays, unpaidLeaveDays })
+      const encashments = await encashmentsDue(tx, person.id, period)
+      const extras: Component[] = encashments.map((e) => ({
+        code: `leave_encashment:${e.id.slice(0, 8)}`,
+        label: `Leave encashment, ${e.days} days`,
+        kind: 'earning',
+        amountPaise: e.amountPaise,
+      }))
+
+      const slip = payslipFor(inForceComponents, { workingDays, unpaidLeaveDays, extras })
 
       const [row] = await tx
         .insert(payslips)
@@ -528,6 +524,13 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
           generatedBy: actor.id,
         })
         .returning()
+
+      if (encashments.length > 0) {
+        await tx
+          .update(leaveEncashments)
+          .set({ payslipId: row!.id })
+          .where(inArray(leaveEncashments.id, encashments.map((e) => e.id)))
+      }
 
       // Same transaction: a payslip the books never heard about is a salary
       // that does not appear in the month it was earned.

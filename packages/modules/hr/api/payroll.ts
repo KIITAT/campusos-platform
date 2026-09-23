@@ -82,7 +82,16 @@ export function lossOfPay(
  */
 export function payslipFor(
   components: Component[],
-  opts: { workingDays: number; unpaidLeaveDays?: number },
+  opts: {
+    workingDays: number
+    unpaidLeaveDays?: number
+    /**
+     * One-off earnings for this month -- leave encashment, an expense
+     * reimbursement -- that unpaid leave does not reduce. A day off in March
+     * does not make the leave somebody sold back any smaller.
+     */
+    extras?: Component[]
+  },
 ): Payslip {
   const unpaidLeaveDays = Math.max(0, opts.unpaidLeaveDays ?? 0)
   const earnings = components.filter((c) => c.kind === 'earning')
@@ -108,8 +117,11 @@ export function payslipFor(
     applied.set(biggest.code, (applied.get(biggest.code) ?? 0) - remainder)
   }
 
+  const extras = (opts.extras ?? []).filter((c) => c.kind === 'earning' && c.amountPaise > 0)
+
   const lines: PayslipLine[] = [
     ...earnings.map((c) => ({ ...c, appliedPaise: applied.get(c.code) ?? c.amountPaise })),
+    ...extras.map((c) => ({ ...c, appliedPaise: c.amountPaise })),
     ...deductions.map((c) => ({ ...c, appliedPaise: c.amountPaise })),
   ]
 

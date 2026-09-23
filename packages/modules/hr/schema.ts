@@ -105,11 +105,31 @@ export const leaveTypes = pgTable(
     annualDays: smallint('annual_days').notNull().default(0),
     /** Unpaid leave still needs approval; it just stops the salary. */
     paid: boolean().notNull().default(true),
+    /** Whether a request past the balance may be approved anyway. Off by default. */
+    allowNegative: boolean('allow_negative').notNull().default(false),
+    /** Unused days may be paid out, at a day's worth of the named components. */
+    encashable: boolean().notNull().default(false),
+    encashmentComponents: text('encashment_components').array().notNull().default(sql`'{}'::text[]`),
+    /** Unused days carried into next year, at most. Zero: nothing carries. */
+    maxCarryForward: smallint('max_carry_forward').notNull().default(0),
+    /** Earned by working a day off, rather than granted by a policy. */
+    compensatory: boolean().notNull().default(false),
+    /** How long an earned day stays usable. Null: until the year ends. */
+    compOffValidityDays: smallint('comp_off_validity_days'),
     createdAt: createdAt(),
   },
   (t) => [
     uniqueIndex('hr_leave_types_code').on(t.institutionId, t.code),
     check('hr_leave_types_days', sql`annual_days between 0 and 365`),
+    check('hr_leave_types_carry', sql`max_carry_forward between 0 and 365`),
+    check(
+      'hr_leave_types_validity',
+      sql`comp_off_validity_days is null or comp_off_validity_days between 1 and 365`,
+    ),
+    check(
+      'hr_leave_types_encash_basis',
+      sql`not encashable or cardinality(encashment_components) > 0`,
+    ),
     tenantPolicy('hr_leave_types'),
   ],
 )
@@ -552,3 +572,221 @@ export type Onboarding = typeof onboardings.$inferSelect
 export type OnboardingActivity = typeof onboardingActivities.$inferSelect
 export type EmploymentChange = typeof employmentChanges.$inferSelect
 export type Separation = typeof separations.$inferSelect
+
+// --- leave, as policy ------------------------------------------------------
+
+/**
+ * Where a block of leave came from.
+ *
+ * A balance is the sum of its allocations less what was taken and paid out, and
+ * "why do I have fourteen days" has to be answerable line by line: twelve from
+ * the policy, two carried from last year.
+ */
+export const allocationSourceEnum = pgEnum('hr_allocation_source', [
+  'policy',
+  'carry_forward',
+  'compensatory',
+  'manual',
+])
+
+/**
+ * A named bundle of entitlements -- "Teaching staff", "Contract staff" -- so an
+ * institution sets leave once per kind of employee rather than once per person.
+ */
+export const leavePolicies = pgTable(
+  'hr_leave_policies',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    code: text().notNull(),
+    name: text().notNull(),
+    /**
+     * Whether somebody joining mid-year gets the months left rather than the
+     * whole year. A rule the institution states, not one this guesses at.
+     */
+    prorateJoiners: boolean('prorate_joiners').notNull().default(false),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hr_leave_policies_code').on(t.institutionId, t.code),
+    check('hr_leave_policies_code_shape', sql`length(trim(code)) > 0`),
+    tenantPolicy('hr_leave_policies'),
+  ],
+)
+
+export const leavePolicyLines = pgTable(
+  'hr_leave_policy_lines',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    policyId: uuid('policy_id')
+      .notNull()
+      .references(() => leavePolicies.id, { onDelete: 'cascade' }),
+    leaveTypeId: uuid('leave_type_id')
+      .notNull()
+      .references(() => leaveTypes.id, { onDelete: 'restrict' }),
+    annualDays: smallint('annual_days').notNull(),
+  },
+  (t) => [
+    uniqueIndex('hr_leave_policy_lines_once').on(t.policyId, t.leaveTypeId),
+    check('hr_leave_policy_lines_days', sql`annual_days between 1 and 365`),
+    tenantPolicy('hr_leave_policy_lines'),
+  ],
+)
+
+/** Which policy somebody is on, over which dates. Never two at once. */
+export const leavePolicyAssignments = pgTable(
+  'hr_leave_policy_assignments',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    staffId: uuid('staff_id')
+      .notNull()
+      .references(() => staff.id, { onDelete: 'cascade' }),
+    policyId: uuid('policy_id')
+      .notNull()
+      .references(() => leavePolicies.id, { onDelete: 'restrict' }),
+    effectiveFrom: date('effective_from').notNull(),
+    effectiveTo: date('effective_to'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('hr_leave_policy_assignments_staff').on(t.staffId, t.effectiveFrom),
+    check(
+      'hr_leave_policy_assignments_dates',
+      sql`effective_to is null or effective_to >= effective_from`,
+    ),
+    tenantPolicy('hr_leave_policy_assignments'),
+  ],
+)
+
+/**
+ * A block of leave somebody has, for a year.
+ *
+ * Once any allocation exists for a person, type and year, the balance is the
+ * allocations -- the leave type's own annual figure stops applying. Before that
+ * it is the default everybody gets, which is how an institution that never
+ * touches policies keeps working exactly as it did.
+ */
+export const leaveAllocations = pgTable(
+  'hr_leave_allocations',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    staffId: uuid('staff_id')
+      .notNull()
+      .references(() => staff.id, { onDelete: 'cascade' }),
+    leaveTypeId: uuid('leave_type_id')
+      .notNull()
+      .references(() => leaveTypes.id, { onDelete: 'restrict' }),
+    year: smallint().notNull(),
+    days: smallint().notNull(),
+    source: allocationSourceEnum().notNull(),
+    /** Earned days lapse. Null: usable until the year ends. */
+    expiresOn: date('expires_on'),
+    reason: text(),
+    createdBy: text('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('hr_leave_allocations_staff').on(t.staffId, t.year),
+    // Running the year's allocation twice must not double anybody's leave.
+    uniqueIndex('hr_leave_allocations_once')
+      .on(t.staffId, t.leaveTypeId, t.year, t.source)
+      .where(sql`source in ('policy', 'carry_forward')`),
+    check('hr_leave_allocations_days', sql`days between 1 and 365`),
+    check('hr_leave_allocations_year', sql`year between 2000 and 2100`),
+    check(
+      'hr_leave_allocations_manual_reason',
+      sql`source <> 'manual' or length(trim(coalesce(reason, ''))) >= 5`,
+    ),
+    tenantPolicy('hr_leave_allocations'),
+  ],
+)
+
+/**
+ * A day worked that was not a working day, asked to be given back as leave.
+ *
+ * A request and an approval, like leave itself: somebody claiming they worked
+ * a Sunday is a claim, and the approval is what turns it into a day off.
+ */
+export const compOffRequests = pgTable(
+  'hr_comp_off_requests',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    staffId: uuid('staff_id')
+      .notNull()
+      .references(() => staff.id, { onDelete: 'cascade' }),
+    leaveTypeId: uuid('leave_type_id')
+      .notNull()
+      .references(() => leaveTypes.id, { onDelete: 'restrict' }),
+    workedOn: date('worked_on').notNull(),
+    days: smallint().notNull().default(1),
+    reason: text().notNull(),
+    status: leaveStatusEnum().notNull().default('pending'),
+    decidedBy: text('decided_by').references(() => users.id, { onDelete: 'set null' }),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    decisionNote: text('decision_note'),
+    allocationId: uuid('allocation_id').references(() => leaveAllocations.id, {
+      onDelete: 'set null',
+    }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hr_comp_off_requests_once').on(t.staffId, t.workedOn),
+    index('hr_comp_off_requests_pending').on(t.institutionId, t.status),
+    check('hr_comp_off_requests_days', sql`days between 1 and 2`),
+    check('hr_comp_off_requests_reason', sql`length(trim(reason)) >= 5`),
+    tenantPolicy('hr_comp_off_requests'),
+  ],
+)
+
+/**
+ * Unused leave, paid out.
+ *
+ * The amount is fixed when the encashment is approved, from the pay in force
+ * that month, and it reaches the employee on the next payslip generated for
+ * that period -- which is where the link to the payslip is filled in, and why
+ * an encashment already on a payslip is not undone quietly.
+ */
+export const leaveEncashments = pgTable(
+  'hr_leave_encashments',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    staffId: uuid('staff_id')
+      .notNull()
+      .references(() => staff.id, { onDelete: 'cascade' }),
+    leaveTypeId: uuid('leave_type_id')
+      .notNull()
+      .references(() => leaveTypes.id, { onDelete: 'restrict' }),
+    year: smallint().notNull(),
+    days: smallint().notNull(),
+    /** The payroll month it is paid in. */
+    period: date().notNull(),
+    amountPaise: paise('amount_paise').notNull().default(0),
+    reason: text().notNull(),
+    status: leaveStatusEnum().notNull().default('pending'),
+    decidedBy: text('decided_by').references(() => users.id, { onDelete: 'set null' }),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    payslipId: uuid('payslip_id').references(() => payslips.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('hr_leave_encashments_staff').on(t.staffId, t.year),
+    index('hr_leave_encashments_period').on(t.institutionId, t.period, t.status),
+    check('hr_leave_encashments_days', sql`days between 1 and 365`),
+    check('hr_leave_encashments_amount', sql`amount_paise >= 0`),
+    check('hr_leave_encashments_period_start', sql`extract(day from period) = 1`),
+    check('hr_leave_encashments_reason', sql`length(trim(reason)) >= 5`),
+    tenantPolicy('hr_leave_encashments'),
+  ],
+)
+
+export type LeavePolicy = typeof leavePolicies.$inferSelect
+export type LeavePolicyLine = typeof leavePolicyLines.$inferSelect
+export type LeavePolicyAssignment = typeof leavePolicyAssignments.$inferSelect
+export type LeaveAllocation = typeof leaveAllocations.$inferSelect
+export type CompOffRequest = typeof compOffRequests.$inferSelect
+export type LeaveEncashment = typeof leaveEncashments.$inferSelect

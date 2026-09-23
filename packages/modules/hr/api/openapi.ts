@@ -1,3 +1,4 @@
+import { leavePaths } from './openapi-leave'
 import { lifecyclePaths } from './openapi-lifecycle'
 import * as z from 'zod'
 import { manifest } from '../manifest'
@@ -206,4 +207,4 @@ const corePaths = {
   },
 }
 
-export const paths = { ...corePaths, ...lifecyclePaths }
+export const paths = { ...corePaths, ...lifecyclePaths, ...leavePaths }

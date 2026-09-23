@@ -1,3 +1,4 @@
+import { leavePages } from './pages-leave'
 import { lifecyclePages } from './pages-lifecycle'
 import { formatPaise } from '@campusos/money'
 import { param, type PluginPage } from '@campusos/module-framework'
@@ -504,4 +505,4 @@ const corePages: PluginPage[] = [
   },
 ]
 
-export const pages: PluginPage[] = [...corePages, ...lifecyclePages]
+export const pages: PluginPage[] = [...corePages, ...lifecyclePages, ...leavePages]
