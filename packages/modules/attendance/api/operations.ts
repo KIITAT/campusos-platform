@@ -674,3 +674,60 @@ export async function myAttendance(actor: Actor, studentId?: string) {
       .orderBy(records.markedAt),
   )
 }
+
+export interface AttendanceLine {
+  offeringId: string
+  courseCode: string
+  courseTitle: string
+  teacher: string | null
+  term: string
+  held: number
+  present: number
+  absent: number
+  percent: number | null
+}
+
+/**
+ * A student's attendance class by class, as KIIT's portal shows it: the
+ * teacher, sessions held, present, absent and the percentage. Held is every
+ * session opened for the class; present is a mark in it. For a term, or every
+ * term.
+ *
+ * The student reads their own; staff read anybody's; a verified guardian reads
+ * the students they were cleared for.
+ */
+export async function attendanceSummary(actor: Actor, studentId: string, termId?: string | null): Promise<AttendanceLine[]> {
+  const tenant = tenantOf(actor)
+  const staff = isAdmin(actor.role) || actor.role === 'hod' || actor.role === 'faculty'
+  if (studentId !== actor.id && !staff && !viewsOnBehalf(actor, studentId)) {
+    throw new AttendanceError(403, 'forbidden', 'not permitted')
+  }
+  return withTenant(tenant, async (tx) => {
+    const rows = await tx.execute(sql`
+      select o.id as offering_id, c.code, c.title, coalesce(f.name, f.email) as teacher, t.code as term,
+             (select count(*)::int from attendance_sessions s where s.offering_id = o.id) as held,
+             (select count(*)::int from attendance_records r
+                join attendance_sessions s on s.id = r.session_id
+               where s.offering_id = o.id and r.student_id = ${studentId}) as present
+        from academic_offerings o
+        join academic_section_members m on m.section_id = o.section_id and m.user_id = ${studentId}
+        join academic_courses c on c.id = o.course_id
+        join academic_terms t on t.id = o.term_id
+        left join users f on f.id = o.faculty_user_id
+       where (${termId ?? null}::uuid is null or o.term_id = ${termId ?? null}::uuid)
+       order by t.starts_on desc, c.code`)
+    return (rows.rows as { offering_id: string; code: string; title: string; teacher: string | null; term: string; held: number; present: number }[]).map(
+      (r) => ({
+        offeringId: r.offering_id,
+        courseCode: r.code,
+        courseTitle: r.title,
+        teacher: r.teacher,
+        term: r.term,
+        held: r.held,
+        present: r.present,
+        absent: Math.max(0, r.held - r.present),
+        percent: r.held ? Math.round((r.present / r.held) * 1000) / 10 : null,
+      }),
+    )
+  })
+}

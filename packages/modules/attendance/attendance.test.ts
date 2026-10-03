@@ -10,6 +10,7 @@ import {
   currentQrFor,
   encodeQr,
   listPendingDevices,
+  attendanceSummary,
   myAttendance,
   openSession,
   openSessions,
@@ -543,6 +544,20 @@ test('a student sees only their own history', async () => {
   await scanAs(ids.s1, await liveQr(s.id))
   assert.equal((await myAttendance(student(ids.s1))).length, 1)
   assert.equal((await myAttendance(student(ids.s2))).length, 0)
+})
+
+test('the summary counts classes held against classes attended, class by class', async () => {
+  // Three sessions: s1 scans into two, s2 into none.
+  for (let i = 0; i < 3; i++) {
+    const s = await openSession(A({}), { slotId: ids.slot })
+    if (i < 2) await scanAs(ids.s1, await liveQr(s.id))
+    await closeSession(A({}), { sessionId: s.id })
+  }
+  const [mine] = await attendanceSummary(student(ids.s1), ids.s1)
+  assert.deepEqual([mine!.held, mine!.present, mine!.absent, mine!.percent], [3, 2, 1, 66.7])
+  const [theirs] = await attendanceSummary(admin(), ids.s2)
+  assert.deepEqual([theirs!.present, theirs!.percent], [0, 0])
+  await assert.rejects(attendanceSummary(student(ids.s2), ids.s1), (e) => (e as { code?: string }).code === 'forbidden')
 })
 
 // --- tenant isolation ------------------------------------------------------
