@@ -638,3 +638,37 @@ export const courseCompletions = pgTable(
     tenantPolicy('academic_course_completions'),
   ],
 )
+
+/**
+ * Who a student is on paper, beyond their sign-in: the roll and registration
+ * numbers a hall ticket prints, and the phone and address an examination
+ * enrolment asks them to confirm. One row per student, kept by the office;
+ * every change is audited, because a wrong roll number on an admit card
+ * stops somebody at the door of the exam hall.
+ */
+export const studentProfiles = pgTable(
+  'academic_student_profiles',
+  {
+    studentId: text('student_id')
+      .primaryKey()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    institutionId: tenantId(),
+    rollNo: text('roll_no'),
+    registrationNo: text('registration_no'),
+    phone: text(),
+    addressLine: text('address_line'),
+    city: text(),
+    state: text(),
+    postalCode: text('postal_code'),
+    /** Somebody to call: a name and a number, as written. */
+    emergencyContact: text('emergency_contact'),
+    updatedBy: text('updated_by').references(() => users.id, { onDelete: 'set null' }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('academic_student_profiles_roll').on(t.institutionId, t.rollNo),
+    uniqueIndex('academic_student_profiles_registration').on(t.institutionId, t.registrationNo),
+    check('academic_student_profiles_phone', sql`phone is null or phone ~ '^[0-9+() -]{7,20}$'`),
+    tenantPolicy('academic_student_profiles'),
+  ],
+)

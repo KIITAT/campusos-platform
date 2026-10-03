@@ -1,5 +1,6 @@
 import type { PluginPage } from '@campusos/module-framework'
 import {
+  studentProfile,
   degreeAudit,
   getTimetable,
   listCompletions,
@@ -636,9 +637,21 @@ export const pages: PluginPage[] = [
         : null
 
       const passed = completions.filter((c) => c.passed)
+      const profile = await studentProfile(a, studentId).catch(() => null)
       return {
         studentId,
         mine: studentId === a.id,
+        registrar,
+        profile,
+        profileRows: profile
+          ? [
+              { what: 'Roll number', value: profile.rollNo ?? 'not recorded' },
+              { what: 'Registration number', value: profile.registrationNo ?? 'not recorded' },
+              { what: 'Phone', value: profile.phone ?? 'not recorded' },
+              { what: 'Address', value: profile.address ?? 'not recorded' },
+              { what: 'Emergency contact', value: profile.emergencyContact ?? 'not recorded' },
+            ]
+          : [],
         cgpa: outstanding?.cgpa === null || outstanding === null ? '--' : String(outstanding.cgpa),
         creditsRemaining:
           outstanding?.creditsRemaining === null || outstanding === null
@@ -709,6 +722,53 @@ export const pages: PluginPage[] = [
       },
       ...(data.degreeNote
         ? [{ kind: 'note' as const, text: String(data.degreeNote) }]
+        : []),
+      ...(data.profile
+        ? [
+            {
+              kind: 'table' as const,
+              title: 'Contact and address',
+              note: data.mine
+                ? 'Printed on your admit card and confirmed when you enrol for examinations. If anything is wrong, tell the office: it is kept there.'
+                : 'Kept by the office. The student confirms it when enrolling for examinations.',
+              rows: 'profileRows',
+              columns: [
+                { key: 'what', label: '' },
+                { key: 'value', label: '' },
+              ],
+            },
+          ]
+        : []),
+      ...(data.registrar && data.profile
+        ? [
+            {
+              kind: 'form' as const,
+              title: 'Change contact and address',
+              submit: 'Save',
+              path: '/profile',
+              fields: [
+                { name: 'studentId', label: '', kind: 'hidden' as const, value: String(data.studentId) },
+                { name: 'rollNo', label: 'Roll number', optional: true, value: (data.profile as { rollNo: string | null }).rollNo ?? '' },
+                {
+                  name: 'registrationNo',
+                  label: 'Registration number',
+                  optional: true,
+                  value: (data.profile as { registrationNo: string | null }).registrationNo ?? '',
+                },
+                { name: 'phone', label: 'Phone', optional: true, value: (data.profile as { phone: string | null }).phone ?? '' },
+                { name: 'addressLine', label: 'Address', optional: true, value: (data.profile as { addressLine: string | null }).addressLine ?? '' },
+                { name: 'city', label: 'City', optional: true, value: (data.profile as { city: string | null }).city ?? '' },
+                { name: 'state', label: 'State', optional: true, value: (data.profile as { state: string | null }).state ?? '' },
+                { name: 'postalCode', label: 'PIN code', optional: true, value: (data.profile as { postalCode: string | null }).postalCode ?? '' },
+                {
+                  name: 'emergencyContact',
+                  label: 'Emergency contact',
+                  optional: true,
+                  value: (data.profile as { emergencyContact: string | null }).emergencyContact ?? '',
+                },
+              ],
+            },
+          ]
         : []),
       {
         kind: 'table',

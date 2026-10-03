@@ -1,5 +1,7 @@
 import { jsonBody, param, type PluginRoute } from '@campusos/module-framework'
 import {
+  setStudentProfile,
+  studentProfile,
   addEquivalence,
   addPrerequisite,
   addSectionMember,
@@ -65,6 +67,12 @@ export const routes: PluginRoute[] = [
   post('/eligibility', checkEligibility),
   post('/completions/correct', correctCompletion),
   post('/degree-audit', degreeAudit),
+  post('/profile', setStudentProfile),
+  {
+    method: 'GET',
+    path: '/profile',
+    handler: (actor, req) => studentProfile(actor as Actor, param(req, 'studentId') || (actor as Actor).id),
+  },
 
   { method: 'GET', path: '/curricula', handler: (actor) => listCurricula(actor as Actor) },
   {

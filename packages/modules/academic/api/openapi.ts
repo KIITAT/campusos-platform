@@ -27,6 +27,7 @@ import {
   timetableSchema,
   waivePrerequisiteSchema,
 } from './schemas'
+import { studentProfileSchema } from './profiles'
 
 /**
  * The module contributes its own paths to the single OpenAPI document.
@@ -72,6 +73,10 @@ const list = (summary: string) => ({
 })
 
 export const paths = {
+  [`${base}/profile`]: {
+    ...list("A student's roll and registration numbers, phone and address: their own, or any for staff (studentId)"),
+    ...post("Set a student's roll and registration numbers, phone and address (the office)", studentProfileSchema),
+  },
   [`${base}/timetable`]: {
     get: {
       summary:
