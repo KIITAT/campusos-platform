@@ -733,8 +733,8 @@ export const pages: PluginPage[] = [
                 : 'Kept by the office. The student confirms it when enrolling for examinations.',
               rows: 'profileRows',
               columns: [
-                { key: 'what', label: '' },
-                { key: 'value', label: '' },
+                { key: 'what', label: 'Detail' },
+                { key: 'value', label: 'On record' },
               ],
             },
           ]

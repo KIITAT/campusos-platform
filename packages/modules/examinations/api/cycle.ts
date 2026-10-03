@@ -126,8 +126,8 @@ const showWindow = (w: ExamWindow | undefined) =>
         phase: phaseOf(w),
         opens: wallClock(w.opensAt, w.timeZone),
         closes: wallClock(w.closesAt, w.timeZone),
-        internalFee: formatPaise(w.internalFeePaise),
-        examFee: formatPaise(w.examFeePaise),
+        internalFee: w.kind === 'backlog' ? formatPaise(w.internalFeePaise) : '',
+        examFee: w.kind === 'backlog' ? formatPaise(w.examFeePaise) : '',
       }
     : null
 

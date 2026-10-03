@@ -117,7 +117,9 @@ export async function admitCardPdf(a: AdmitCard): Promise<Uint8Array> {
     for (const para of a.instructions.split(/\r?\n/).filter(Boolean)) s.para(para)
     s.down(8)
   }
-  s.para('Bring this card and your identity card to every paper. A paper without a date is announced on the notice board and here when it is set.')
+  if (a.papers.some((p) => !p.when)) {
+    s.para('A paper without a date is announced on the notice board, and printed here once it is set: download the card again then.')
+  }
   s.down(40)
   s.text('Signature of the student', M, 8, s.font, faint)
   s.text('Controller of examinations', A4.w - M - 120, 8, s.font, faint)

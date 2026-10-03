@@ -23,6 +23,8 @@ const ZONES = ['Asia/Kolkata', 'UTC', 'Asia/Dubai', 'Asia/Singapore', 'Asia/Dhak
 
 type Cycle = NonNullable<Awaited<ReturnType<typeof myExamCycle>>>
 
+const SITTING = { internal: 'internal assessment', university: 'university exam', both: 'both' } as const
+
 const PHASE_WORDS = { none: 'not set', upcoming: 'upcoming', open: 'open', closed: 'closed' } as const
 
 export const cyclePages: PluginPage[] = [
@@ -39,7 +41,7 @@ export const cyclePages: PluginPage[] = [
         papers: c.papers,
         classes: c.classes,
         backlogs: c.backlogs,
-        bookings: c.bookings.map((b) => ({ ...b, bookedOn: wallClock(b.bookedAt, ZONE) })),
+        bookings: c.bookings.map((b) => ({ ...b, bookedOn: wallClock(b.bookedAt, ZONE), sitting: SITTING[b.bookingType] })),
         reports: c.reports.map((r) => ({ ...r, state: r.held ? 'held' : 'ready', link: r.held ? '' : 'Download' })),
         owed: c.feedback?.owed ?? [],
         backlogOptions: c.backlogs.filter((b) => !b.booked).map((b) => ({ value: b.courseId, label: `${b.code} ${b.title} (failed ${b.failedIn ?? ''})` })),
@@ -171,7 +173,7 @@ export const cyclePages: PluginPage[] = [
           columns: [
             { key: 'code', label: 'Paper', kind: 'code' },
             { key: 'title', label: 'Title' },
-            { key: 'bookingType', label: 'Sitting' },
+            { key: 'sitting', label: 'Sitting' },
             { key: 'fee', label: 'Fee' },
             { key: 'bookedOn', label: 'Booked' },
             { key: 'state', label: 'State', kind: 'status' },
@@ -443,7 +445,8 @@ export const cyclePages: PluginPage[] = [
       const id = param(req, 'examId')
       if (!id) return { v: null }
       const v = await examStats(actor as Actor, id)
-      return { v, bands: v.bands }
+      // Whole students up the side: the top of the scale is the fullest band.
+      return { v, bands: v.bands, bandTop: Math.max(1, ...v.bands.map((b) => b.students)) }
     },
     record: (data) => {
       const v = data.v as Awaited<ReturnType<typeof examStats>> | null
@@ -478,6 +481,7 @@ export const cyclePages: PluginPage[] = [
           rows: 'bands',
           x: 'band',
           series: [{ key: 'students', label: 'Students' }],
+          max: 'bandTop',
         },
       ]
     },
