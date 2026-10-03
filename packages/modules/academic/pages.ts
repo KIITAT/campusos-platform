@@ -1,5 +1,8 @@
-import type { PluginPage } from '@campusos/module-framework'
+import type { PluginPage, PluginSection } from '@campusos/module-framework'
 import {
+  changeableSlots,
+  teacherChoices,
+  weekView,
   studentProfile,
   degreeAudit,
   getTimetable,
@@ -65,6 +68,111 @@ export const pages: PluginPage[] = [
     ],
   },
 
+  {
+    path: '/week',
+    title: 'This week',
+    menu: 'This week',
+    roles: [...EVERYONE],
+    async load(actor, req) {
+      const a = actor as Actor
+      const w = await weekView(a, new URL(req.url).searchParams.get('date'))
+      const staff = a.role !== 'student' && a.role !== 'parent'
+      const [mine, teachers, structure] = staff
+        ? await Promise.all([changeableSlots(a), teacherChoices(a), listStructure(a)])
+        : [[], [], null]
+      const shift = (days: number) => new Date(Date.parse(`${w.weekOf}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10)
+      const DAY = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+      return {
+        weekOf: w.weekOf,
+        staff,
+        rows: w.occurrences.map((o) => ({
+          ...o,
+          day: `${DAY[w.days.indexOf(o.date)]} ${o.date.slice(5)}`,
+          time: `${o.starts}-${o.ends}`,
+          class: `${o.courseCode} ${o.section}`,
+          state: o.status.replace(/_/g, ' '),
+          changed: o.status !== 'as_timetabled',
+        })),
+        nav: [
+          { label: 'Previous week', href: `/m/academic/week?date=${shift(-7)}` },
+          { label: 'This week', href: '/m/academic/week' },
+          { label: 'Next week', href: `/m/academic/week?date=${shift(7)}` },
+        ],
+        slotOptions: mine,
+        teacherOptions: teachers,
+        roomOptions: (structure?.rooms ?? []).map((r: { id: string; code: string }) => ({ value: r.id, label: r.code })),
+        changeOptions: w.occurrences
+          .filter((o) => o.changeId && o.status !== 'moved_here')
+          .map((o) => ({ value: o.changeId!, label: `${o.courseCode} ${o.section}, ${o.date}: ${o.status.replace(/_/g, ' ')}` })),
+      }
+    },
+    sections: (data) => {
+      const out: PluginSection[] = [
+        { kind: 'links', title: `Week of ${String(data.weekOf)}`, links: data.nav as never },
+        {
+          kind: 'table',
+          title: 'Classes',
+          note: 'As timetabled, with any class cancelled, moved or taken by a substitute marked.',
+          rows: 'rows',
+          empty: 'No classes this week.',
+          pageSize: 80,
+          columns: [
+            { key: 'day', label: 'Day' },
+            { key: 'time', label: 'Time' },
+            { key: 'class', label: 'Class', kind: 'code' },
+            { key: 'courseTitle', label: 'Title' },
+            { key: 'room', label: 'Room', kind: 'code' },
+            { key: 'teacher', label: 'Teacher' },
+            { key: 'state', label: 'State', kind: 'status', alertWhen: 'changed' },
+            { key: 'note', label: 'What changed' },
+          ],
+        },
+      ]
+      if (data.staff) {
+        out.push(
+          {
+            kind: 'form',
+            title: 'Change one class',
+            note: 'For one date only; the weekly timetable stays. A move needs the new date, times and room; a substitute needs a teacher. Clashes are refused.',
+            submit: 'Make the change',
+            path: '/classes/change',
+            fields: [
+              { name: 'slotId', label: 'Class', kind: 'select', options: 'slotOptions' },
+              { name: 'onDate', label: 'On', kind: 'date' },
+              {
+                name: 'kind',
+                label: 'Change',
+                kind: 'radio',
+                value: 'cancelled',
+                options: [
+                  { value: 'cancelled', label: 'Cancel it' },
+                  { value: 'rescheduled', label: 'Move it' },
+                  { value: 'substitute', label: 'A substitute takes it' },
+                ],
+              },
+              { name: 'movedOn', label: 'Moved to (date)', kind: 'date', optional: true },
+              { name: 'movedStarts', label: 'From', optional: true, hint: 'HH:MM' },
+              { name: 'movedEnds', label: 'To', optional: true, hint: 'HH:MM' },
+              { name: 'movedRoomId', label: 'Room', kind: 'select', options: 'roomOptions', optional: true },
+              { name: 'substituteId', label: 'Substitute', kind: 'select', options: 'teacherOptions', optional: true },
+              { name: 'reason', label: 'Why', hint: 'Students read this.' },
+            ],
+          },
+          {
+            kind: 'form',
+            title: 'Withdraw a change',
+            submit: 'Withdraw',
+            path: '/classes/change/withdraw',
+            fields: [
+              { name: 'changeId', label: 'Change', kind: 'select', options: 'changeOptions' },
+              { name: 'reason', label: 'Why' },
+            ],
+          },
+        )
+      }
+      return out
+    },
+  },
   {
     path: '/structure',
     title: 'Structure',

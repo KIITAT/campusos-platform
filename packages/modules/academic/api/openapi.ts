@@ -28,6 +28,7 @@ import {
   waivePrerequisiteSchema,
 } from './schemas'
 import { studentProfileSchema } from './profiles'
+import { changeClassSchema, withdrawChangeSchema } from './changes'
 
 /**
  * The module contributes its own paths to the single OpenAPI document.
@@ -73,6 +74,9 @@ const list = (summary: string) => ({
 })
 
 export const paths = {
+  [`${base}/classes/change`]: post('Cancel, move or hand to a substitute one meeting of a class', changeClassSchema),
+  [`${base}/classes/change/withdraw`]: post('Withdraw a change: the class meets as usual', withdrawChangeSchema),
+  [`${base}/week`]: list('The week containing a date (date=YYYY-MM-DD), with changes applied, for the caller'),
   [`${base}/profile`]: {
     ...list("A student's roll and registration numbers, phone and address: their own, or any for staff (studentId)"),
     ...post("Set a student's roll and registration numbers, phone and address (the office)", studentProfileSchema),

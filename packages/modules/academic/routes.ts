@@ -1,5 +1,8 @@
 import { jsonBody, param, type PluginRoute } from '@campusos/module-framework'
 import {
+  changeClass,
+  weekView,
+  withdrawChange,
   setStudentProfile,
   studentProfile,
   addEquivalence,
@@ -68,6 +71,9 @@ export const routes: PluginRoute[] = [
   post('/completions/correct', correctCompletion),
   post('/degree-audit', degreeAudit),
   post('/profile', setStudentProfile),
+  post('/classes/change', changeClass),
+  post('/classes/change/withdraw', withdrawChange),
+  { method: 'GET', path: '/week', handler: (actor, req) => weekView(actor as Actor, param(req, 'date')) },
   {
     method: 'GET',
     path: '/profile',

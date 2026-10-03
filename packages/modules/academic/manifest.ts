@@ -11,7 +11,7 @@ export const manifest: ModuleManifest = {
   name: 'Academic Core',
   description:
     'Departments, programmes, courses, terms, cohorts, rooms and the weekly timetable.',
-  version: '0.4.1',
+  version: '0.5.0',
   alwaysEnabled: true,
   dependsOn: [],
   pricing: { model: 'included_in_base', priceINR: null },
@@ -28,6 +28,11 @@ export const manifest: ModuleManifest = {
     {
       label: 'Timetable',
       href: '/m/academic',
+      roles: ['institution_admin', 'hod', 'faculty', 'student'],
+    },
+    {
+      label: 'This week',
+      href: '/m/academic/week',
       roles: ['institution_admin', 'hod', 'faculty', 'student'],
     },
     {

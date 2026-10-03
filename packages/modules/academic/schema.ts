@@ -672,3 +672,49 @@ export const studentProfiles = pgTable(
     tenantPolicy('academic_student_profiles'),
   ],
 )
+
+export const classChangeKindEnum = pgEnum('academic_class_change_kind', ['cancelled', 'rescheduled', 'substitute'])
+
+/**
+ * One meeting of a weekly class, changed: cancelled, moved to another day,
+ * time or room, or taken by a substitute. The weekly slot stays as it is;
+ * this says what happens on one date. Withdrawn, with a reason, rather than
+ * deleted, so what students were told stays on record.
+ */
+export const classChanges = pgTable(
+  'academic_class_changes',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    slotId: uuid('slot_id')
+      .notNull()
+      .references(() => slots.id, { onDelete: 'cascade' }),
+    /** The date the class would have met. */
+    onDate: date('on_date').notNull(),
+    kind: classChangeKindEnum().notNull(),
+    movedOn: date('moved_on'),
+    movedStarts: time('moved_starts'),
+    movedEnds: time('moved_ends'),
+    movedRoomId: uuid('moved_room_id').references(() => rooms.id, { onDelete: 'restrict' }),
+    substituteId: text('substitute_id').references(() => users.id, { onDelete: 'restrict' }),
+    reason: text().notNull(),
+    createdBy: text('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+    withdrawnAt: timestamp('withdrawn_at', { withTimezone: true }),
+    withdrawnBy: text('withdrawn_by').references(() => users.id, { onDelete: 'set null' }),
+    withdrawReason: text('withdraw_reason'),
+  },
+  (t) => [
+    uniqueIndex('academic_class_changes_once').on(t.slotId, t.onDate).where(sql`withdrawn_at is null`),
+    index('academic_class_changes_moved').on(t.movedOn).where(sql`withdrawn_at is null`),
+    check('academic_class_changes_reason', sql`length(trim(reason)) >= 5`),
+    check(
+      'academic_class_changes_shape',
+      sql`(kind = 'cancelled' and moved_on is null and moved_starts is null and moved_ends is null and moved_room_id is null and substitute_id is null)
+       or (kind = 'rescheduled' and moved_on is not null and moved_starts is not null and moved_ends > moved_starts and moved_room_id is not null and substitute_id is null)
+       or (kind = 'substitute' and substitute_id is not null and moved_on is null and moved_starts is null and moved_ends is null and moved_room_id is null)`,
+    ),
+    check('academic_class_changes_withdrawn', sql`(withdrawn_at is null) = (withdraw_reason is null)`),
+    tenantPolicy('academic_class_changes'),
+  ],
+)
