@@ -6,6 +6,7 @@ import {
   date,
   index,
   integer,
+  jsonb,
   numeric,
   pgEnum,
   pgTable,
@@ -504,4 +505,160 @@ export const studentCharges = pgTable(
     ),
     tenantPolicy('fee_student_charges'),
   ],
+)
+
+// --- money sent by bank transfer, reported by the student ---------------------
+
+/**
+ * An account of the institution's that fees may be paid into, shown to a
+ * student before they transfer: whose it is, which bank and branch, the
+ * number and IFSC. Retired rather than deleted, because claims name it.
+ */
+export const bankAccounts = pgTable(
+  'fee_bank_accounts',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    /** Who the account is for, as students know it: "School of Computer Engineering". */
+    label: text().notNull(),
+    accountName: text('account_name').notNull(),
+    bankName: text('bank_name').notNull(),
+    branch: text().notNull(),
+    accountNumber: text('account_number').notNull(),
+    ifsc: text().notNull(),
+    retiredAt: timestamp('retired_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('fee_bank_accounts_number').on(t.institutionId, t.accountNumber),
+    check('fee_bank_accounts_ifsc', sql`ifsc ~ '^[A-Z]{4}0[A-Z0-9]{6}$'`),
+    check('fee_bank_accounts_number_digits', sql`account_number ~ '^[0-9]{6,20}$'`),
+    tenantPolicy('fee_bank_accounts'),
+  ],
+)
+
+export const transferModeEnum = pgEnum('fee_transfer_mode', ['rtgs', 'neft', 'imps'])
+export const claimStatusEnum = pgEnum('fee_claim_status', ['pending', 'verified', 'rejected'])
+
+/**
+ * "I paid by bank transfer": what a student reports, for the accounts office
+ * to find on the bank statement. Verified, it becomes a payment -- receipted,
+ * reconciled and in the books in the same act. Rejected, it says why. Either
+ * way it is decided once, and a reference already claimed cannot be claimed
+ * twice.
+ */
+export const transferClaims = pgTable(
+  'fee_transfer_claims',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    termId: uuid('term_id')
+      .notNull()
+      .references(() => terms.id, { onDelete: 'restrict' }),
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => bankAccounts.id, { onDelete: 'restrict' }),
+    mode: transferModeEnum().notNull(),
+    remitterBank: text('remitter_bank').notNull(),
+    remitterBranch: text('remitter_branch'),
+    remitterIfsc: text('remitter_ifsc'),
+    accountHolder: text('account_holder').notNull(),
+    contactPhone: text('contact_phone').notNull(),
+    transferredOn: date('transferred_on').notNull(),
+    amountPaise: paise('amount_paise').notNull(),
+    /** The UTR the bank gave for the transfer: what the statement shows. */
+    utr: text().notNull(),
+    bankReference: text('bank_reference'),
+    status: claimStatusEnum().notNull().default('pending'),
+    submittedAt: timestamp('submitted_at', { withTimezone: true }).notNull().defaultNow(),
+    decidedBy: text('decided_by').references(() => users.id, { onDelete: 'set null' }),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    decisionNote: text('decision_note'),
+    paymentId: uuid('payment_id').references(() => feePayments.id, { onDelete: 'restrict' }),
+  },
+  (t) => [
+    index('fee_transfer_claims_student').on(t.studentId, t.termId),
+    index('fee_transfer_claims_pending').on(t.institutionId, t.status),
+    uniqueIndex('fee_transfer_claims_utr')
+      .on(t.institutionId, sql`upper(${t.utr})`)
+      .where(sql`status <> 'rejected'`),
+    check('fee_transfer_claims_amount', sql`amount_paise > 0`),
+    check('fee_transfer_claims_utr_shape', sql`utr ~ '^[A-Za-z0-9]{6,30}$'`),
+    check('fee_transfer_claims_ifsc', sql`remitter_ifsc is null or remitter_ifsc ~ '^[A-Z]{4}0[A-Z0-9]{6}$'`),
+    check('fee_transfer_claims_phone', sql`contact_phone ~ '^[0-9+() -]{7,20}$'`),
+    check(
+      'fee_transfer_claims_decided',
+      sql`(status = 'pending') = (decided_at is null) and (status = 'verified') = (payment_id is not null)`,
+    ),
+    tenantPolicy('fee_transfer_claims'),
+  ],
+)
+
+// --- demand letters ----------------------------------------------------------
+
+/**
+ * A letter stating what a student owes for a term, for a bank lending against
+ * it or a body paying a scholarship. Numbered and kept, with what it said, so
+ * the institution can confirm a letter it is shown.
+ */
+export const demandLetters = pgTable(
+  'fee_demand_letters',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    number: text().notNull(),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    termId: uuid('term_id')
+      .notNull()
+      .references(() => terms.id, { onDelete: 'restrict' }),
+    /** Who it is for: "The Branch Manager, State Bank of India, Patia". */
+    addressee: text().notNull(),
+    purpose: text().notNull(),
+    /** What it said: the lines, deductions and totals, as printed. */
+    content: jsonb().$type<DemandLetterContent>().notNull(),
+    payablePaise: paise('payable_paise').notNull(),
+    issuedBy: text('issued_by').references(() => users.id, { onDelete: 'set null' }),
+    issuedAt: timestamp('issued_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('fee_demand_letters_number').on(t.institutionId, t.number),
+    index('fee_demand_letters_student').on(t.studentId),
+    check('fee_demand_letters_addressee', sql`length(trim(addressee)) >= 3`),
+    tenantPolicy('fee_demand_letters'),
+  ],
+)
+
+export interface DemandLetterContent {
+  lines: { label: string; amountPaise: number }[]
+  deductions: { label: string; amountPaise: number }[]
+  chargedPaise: number
+  deductedPaise: number
+  payablePaise: number
+  paidPaise: number
+  balancePaise: number
+  student: { name: string; rollNo: string | null; registrationNo: string | null; programme: string | null }
+  term: { code: string; name: string; startsOn: string; endsOn: string }
+  account: { accountName: string; bankName: string; branch: string; accountNumber: string; ifsc: string } | null
+}
+
+/** Who signs a demand letter, and what it says around the figures. One row; absent is the default. */
+export const letterSettings = pgTable(
+  'fee_letter_settings',
+  {
+    institutionId: uuid('institution_id')
+      .primaryKey()
+      .references(() => institutions.id, { onDelete: 'cascade' }),
+    signatoryName: text('signatory_name').notNull(),
+    signatoryTitle: text('signatory_title').notNull(),
+    opening: text(),
+    closing: text(),
+    nextNumber: bigint('next_number', { mode: 'number' }).notNull().default(1),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  () => [tenantPolicy('fee_letter_settings')],
 )

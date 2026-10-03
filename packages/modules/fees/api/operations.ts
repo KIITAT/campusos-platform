@@ -326,68 +326,93 @@ async function nextReceiptNo(tx: Tx, tenant: string): Promise<string> {
 export async function recordPayment(actor: Actor, input: unknown) {
   const tenant = requireFinance(actor)
   const data = recordPaymentSchema.parse(input)
+  return withTenant(tenant, (tx) =>
+    recordPaymentWithin(tx, tenant, actor, {
+      studentId: data.studentId,
+      termId: data.termId,
+      amountPaise: data.amount,
+      method: data.method,
+      reference: data.reference ?? null,
+      receivedAt: data.receivedAt ? new Date(data.receivedAt) : new Date(),
+      notes: data.notes ?? null,
+    }),
+  )
+}
 
-  return withTenant(tenant, async (tx) => {
-    // The student must be visible in this tenant, which RLS decides, and must
-    // actually be a student.
-    const [student] = await tx
-      .select({ role: users.role })
-      .from(users)
-      .where(eq(users.id, data.studentId))
-    if (!student) throw new FeeError(404, 'no_such_student', 'no such student')
-    if (student.role !== 'student') {
-      throw new FeeError(400, 'not_a_student', 'fees are recorded against students')
-    }
+export interface PaymentInput {
+  studentId: string
+  termId: string
+  amountPaise: number
+  method: (typeof feePayments.$inferInsert)['method']
+  reference: string | null
+  receivedAt: Date
+  notes: string | null
+}
 
-    const receiptNo = await nextReceiptNo(tx, tenant)
+/**
+ * Record money received, in the caller's transaction: the receipt number, the
+ * audit row and the journal entry land together or not at all.
+ */
+export async function recordPaymentWithin(tx: Tx, tenant: string, actor: Actor, data: PaymentInput) {
+  // The student must be visible in this tenant, which RLS decides, and must
+  // actually be a student.
+  const [student] = await tx
+    .select({ role: users.role })
+    .from(users)
+    .where(eq(users.id, data.studentId))
+  if (!student) throw new FeeError(404, 'no_such_student', 'no such student')
+  if (student.role !== 'student') {
+    throw new FeeError(400, 'not_a_student', 'fees are recorded against students')
+  }
 
-    const [row] = await tx
-      .insert(feePayments)
-      .values({
-        institutionId: tenant,
-        studentId: data.studentId,
-        termId: data.termId,
-        amountPaise: data.amount,
-        method: data.method,
-        reference: data.reference ?? null,
-        receivedAt: data.receivedAt ? new Date(data.receivedAt) : new Date(),
-        recordedBy: actor.id,
-        receiptNo,
-        notes: data.notes ?? null,
-      })
-      .returning()
+  const receiptNo = await nextReceiptNo(tx, tenant)
 
-    // Recording is not itself a discretionary act, but it moves money, so it
-    // is on the trail without needing a typed reason.
-    await audit(tx, {
+  const [row] = await tx
+    .insert(feePayments)
+    .values({
       institutionId: tenant,
-      actorId: actor.id,
-      actorEmail: actor.email ?? null,
-      moduleId: MODULE,
-      action: 'fee.payment_recorded',
-      entity: 'fee_payments',
-      entityId: row!.id,
-      reason: `receipt ${receiptNo} for ${data.method}`,
-      detail: {
-        studentId: data.studentId,
-        amountPaise: data.amount,
-        method: data.method,
-        reference: data.reference ?? null,
-      },
+      studentId: data.studentId,
+      termId: data.termId,
+      amountPaise: data.amountPaise,
+      method: data.method,
+      reference: data.reference,
+      receivedAt: data.receivedAt,
+      recordedBy: actor.id,
+      receiptNo,
+      notes: data.notes,
     })
+    .returning()
 
-    // Same transaction, deliberately: money recorded and books that never
-    // heard about it is the one failure this module cannot have.
-    //
-    // Posted at recording rather than at reconciliation. Reconciling is the
-    // accounts office matching a claim against the bank statement -- useful,
-    // and not an accounting event: the entry the student's receipt describes
-    // happened when the money changed hands. A cheque that bounces is a
-    // reversing entry, which is what the journal is for.
-    await postPayment(tx, tenant, actor.id, row!)
-
-    return row!
+  // Recording is not itself a discretionary act, but it moves money, so it
+  // is on the trail without needing a typed reason.
+  await audit(tx, {
+    institutionId: tenant,
+    actorId: actor.id,
+    actorEmail: actor.email ?? null,
+    moduleId: MODULE,
+    action: 'fee.payment_recorded',
+    entity: 'fee_payments',
+    entityId: row!.id,
+    reason: `receipt ${receiptNo} for ${data.method}`,
+    detail: {
+      studentId: data.studentId,
+      amountPaise: data.amountPaise,
+      method: data.method,
+      reference: data.reference,
+    },
   })
+
+  // Same transaction, deliberately: money recorded and books that never
+  // heard about it is the one failure this module cannot have.
+  //
+  // Posted at recording rather than at reconciliation. Reconciling is the
+  // accounts office matching a claim against the bank statement -- useful,
+  // and not an accounting event: the entry the student's receipt describes
+  // happened when the money changed hands. A cheque that bounces is a
+  // reversing entry, which is what the journal is for.
+  await postPayment(tx, tenant, actor.id, row!)
+
+  return row!
 }
 
 /**

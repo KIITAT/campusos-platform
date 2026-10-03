@@ -2,6 +2,15 @@ import * as z from 'zod'
 import { manifest } from '../manifest'
 import { cancelStudentChargeSchema, chargeStudentSchema } from './charges'
 import {
+  addBankAccountSchema,
+  claimTransferSchema,
+  issueLetterSchema,
+  letterSettingsSchema,
+  rejectClaimSchema,
+  retireBankAccountSchema,
+  verifyClaimSchema,
+} from './transfers'
+import {
   aidAssessmentSchema,
   awardScholarshipSchema,
   createFeeItemSchema,
@@ -109,6 +118,7 @@ export const paths = {
       },
     },
   },
+  ...transfersAndLetters(),
   [`${base}/charges`]: {
     get: {
       summary: 'Charges on single students -- a backlog paper, a duplicate admit card -- optionally for one term',
@@ -264,4 +274,59 @@ export const paths = {
       },
     },
   },
+}
+
+/** Paying by bank transfer, and demand letters. */
+function transfersAndLetters() {
+  const post = (summary: string, schema: z.ZodType, description?: string) => ({
+    post: {
+      summary,
+      ...(description ? { description } : {}),
+      tags: ['fees'],
+      requestBody: { content: json(schema) },
+      responses: { '200': { description: 'OK' }, ...gated, '409': { description: 'Refused', content: json(err) } },
+    },
+  })
+  const get = (summary: string, query: string[] = [], description?: string) => ({
+    get: {
+      summary,
+      ...(description ? { description } : {}),
+      tags: ['fees'],
+      parameters: query.map((name) => ({ name: name.replace('?', ''), in: 'query', required: !name.endsWith('?'), schema: { type: 'string' } })),
+      responses: { '200': { description: 'OK' }, ...gated },
+    },
+  })
+  return {
+    [`${base}/bank-accounts`]: {
+      ...get("The institution's accounts fees are paid into"),
+      ...post('Add an account', addBankAccountSchema),
+    },
+    [`${base}/bank-accounts/retire`]: post('Retire an account', retireBankAccountSchema, 'Claims already made into it stand.'),
+    [`${base}/transfers`]: {
+      ...get('Reported transfers, pending first', ['status?']),
+      ...post('Report an RTGS, NEFT or IMPS transfer (the student who made it)', claimTransferSchema, 'A UTR already claimed is refused.'),
+    },
+    [`${base}/transfers/mine`]: get("The signed-in student's reported transfers"),
+    [`${base}/transfers/verify`]: post(
+      'Verify a transfer against the bank statement',
+      verifyClaimSchema,
+      'Records the payment, receipted and reconciled, in the same act.',
+    ),
+    [`${base}/transfers/reject`]: post('Reject a reported transfer, with a reason', rejectClaimSchema),
+    [`${base}/letters/settings`]: {
+      ...get('Who signs demand letters, and what they say'),
+      ...post('Set them', letterSettingsSchema),
+    },
+    [`${base}/letters`]: {
+      ...get("Demand letters: a student's own, or the office's register"),
+      ...post('Issue a numbered demand letter for a term', issueLetterSchema),
+    },
+    [`${base}/letters/verify`]: get('Confirm a letter by its number', ['number']),
+    [`${base}/demand-letter.pdf`]: {
+      get: {
+        ...get('A demand letter as a PDF', ['letterId']).get,
+        responses: { '200': { description: 'OK', content: { 'application/pdf': {} } }, ...gated },
+      },
+    },
+  }
 }

@@ -7,6 +7,21 @@ import {
 import { eq } from 'drizzle-orm'
 import { db, institutions } from '@campusos/db'
 import {
+  addBankAccount,
+  claimQueue,
+  claimTransfer,
+  demandLetter,
+  demandLetterPdf,
+  issueDemandLetter,
+  letterSettingsOf,
+  listBankAccounts,
+  listDemandLetters,
+  myClaims,
+  rejectClaim,
+  retireBankAccount,
+  setLetterSettings,
+  verifyClaim,
+  verifyDemandLetter,
   cancelStudentCharge,
   chargeStudent,
   listStudentCharges,
@@ -37,6 +52,36 @@ import {
 } from './api'
 
 export const routes: PluginRoute[] = [
+  { method: 'GET', path: '/bank-accounts', handler: (actor) => listBankAccounts(actor as Actor) },
+  { method: 'POST', path: '/bank-accounts', handler: async (actor, req) => addBankAccount(actor as Actor, await jsonBody(req)) },
+  { method: 'POST', path: '/bank-accounts/retire', handler: async (actor, req) => retireBankAccount(actor as Actor, await jsonBody(req)) },
+  { method: 'POST', path: '/transfers', handler: async (actor, req) => claimTransfer(actor as Actor, await jsonBody(req)) },
+  { method: 'GET', path: '/transfers/mine', handler: (actor) => myClaims(actor as Actor) },
+  { method: 'GET', path: '/transfers', handler: (actor, req) => claimQueue(actor as Actor, param(req, 'status')) },
+  { method: 'POST', path: '/transfers/verify', handler: async (actor, req) => verifyClaim(actor as Actor, await jsonBody(req)) },
+  { method: 'POST', path: '/transfers/reject', handler: async (actor, req) => rejectClaim(actor as Actor, await jsonBody(req)) },
+  { method: 'GET', path: '/letters/settings', handler: (actor) => letterSettingsOf(actor as Actor) },
+  { method: 'POST', path: '/letters/settings', handler: async (actor, req) => setLetterSettings(actor as Actor, await jsonBody(req)) },
+  { method: 'POST', path: '/letters', handler: async (actor, req) => issueDemandLetter(actor as Actor, await jsonBody(req)) },
+  { method: 'GET', path: '/letters', handler: (actor) => listDemandLetters(actor as Actor) },
+  { method: 'GET', path: '/letters/verify', handler: (actor, req) => verifyDemandLetter(actor as Actor, requiredParam(req, 'number')) },
+  {
+    // Bytes, not JSON.
+    method: 'GET',
+    path: '/demand-letter.pdf',
+    raw: true,
+    handler: async (actor, req) => {
+      const v = await demandLetter(actor as Actor, requiredParam(req, 'letterId'))
+      const bytes = await demandLetterPdf(v)
+      return new Response(bytes as unknown as BodyInit, {
+        headers: {
+          'content-type': 'application/pdf',
+          'content-disposition': `inline; filename="demand-letter-${v.number.replace(/[^a-zA-Z0-9._-]/g, '_')}.pdf"`,
+          'cache-control': 'no-store',
+        },
+      })
+    },
+  },
   {
     method: 'GET',
     path: '/charges',

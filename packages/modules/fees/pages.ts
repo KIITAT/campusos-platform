@@ -14,6 +14,7 @@ import {
   studentLedger,
   type Actor,
 } from './api'
+import { transferPages } from './transfer-pages'
 
 /**
  * The finance desk, declared rather than drawn.
@@ -797,4 +798,5 @@ export const pages: PluginPage[] = [
       },
     ],
   },
+  ...transferPages,
 ]
