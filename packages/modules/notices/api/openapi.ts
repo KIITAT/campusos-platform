@@ -1,11 +1,13 @@
 import * as z from 'zod'
 import { manifest } from '../manifest'
 import {
+  attachSchema,
   createNoticeSchema,
   inboxSchema,
   markReadSchema,
   noticeRowSchema,
   publishNoticeSchema,
+  removeAttachmentSchema,
   withdrawNoticeSchema,
 } from './schemas'
 
@@ -71,6 +73,45 @@ export const paths = {
         'reports that it sent nothing and changes nothing.',
       tags: ['notices'],
       responses: { '200': { description: 'OK' }, ...gated },
+    },
+  },
+  [`${base}/board/notice`]: {
+    get: {
+      summary: 'One notice, whole: its text and the documents that go with it',
+      tags: ['notices'],
+      parameters: [{ name: 'id', in: 'query', required: true, schema: { type: 'string' } }],
+      responses: { '200': { description: 'OK' }, ...gated, '404': { description: 'No such notice, or not addressed to this reader', content: json(err) } },
+    },
+  },
+  [`${base}/board/attachments`]: {
+    post: {
+      summary: 'Attach a document to a draft: PDF, PNG or JPEG, five at most',
+      description:
+        'Checked to be what it says it is. Once the notice is published its documents are fixed, ' +
+        'so what everybody was sent is what stays.',
+      tags: ['notices'],
+      requestBody: { content: json(attachSchema) },
+      responses: { '200': { description: 'Attached' }, ...gated, '409': { description: 'Published already, or five attached', content: json(err) } },
+    },
+  },
+  [`${base}/board/attachments/remove`]: {
+    post: {
+      summary: 'Take a document off a draft',
+      tags: ['notices'],
+      requestBody: { content: json(removeAttachmentSchema) },
+      responses: { '200': { description: 'Taken off' }, ...gated, '409': { description: 'The notice is published', content: json(err) } },
+    },
+  },
+  [`${base}/board/attachment`]: {
+    get: {
+      summary: 'A document on a notice, for whoever may read the notice',
+      tags: ['notices'],
+      parameters: [{ name: 'id', in: 'query', required: true, schema: { type: 'string' } }],
+      responses: {
+        '200': { description: 'The document as it was attached', content: { 'application/pdf': {}, 'image/png': {}, 'image/jpeg': {} } },
+        ...gated,
+        '404': { description: 'No such document, or not this readerâ€™s to see', content: json(err) },
+      },
     },
   },
 

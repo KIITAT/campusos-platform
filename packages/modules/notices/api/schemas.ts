@@ -23,8 +23,20 @@ export const createNoticeSchema = z
     pinned: z.coerce.boolean().default(false),
     /** Publish straight away, or leave it as a draft that notifies nobody. */
     publish: z.coerce.boolean().default(true),
+    /** A document to go with it -- PDF, PNG or JPEG -- as `{ name, type, size, base64 }`. */
+    attachment: z.unknown().optional(),
   })
   .meta({ id: 'NoticeCreate' })
+
+export const attachSchema = z
+  .object({
+    noticeId: uuid,
+    /** PDF, PNG or JPEG, as `{ name, type, size, base64 }`. */
+    file: z.unknown(),
+  })
+  .meta({ id: 'NoticeAttach' })
+
+export const removeAttachmentSchema = z.object({ attachmentId: uuid }).meta({ id: 'NoticeAttachmentRemove' })
 
 export const publishNoticeSchema = z
   .object({ noticeId: uuid })
@@ -61,6 +73,8 @@ export const noticeRowSchema = z
     /** How many people it was delivered to. Zero while it is a draft. */
     reach: z.number().int(),
     readCount: z.number().int(),
+    /** How many documents go with it. */
+    files: z.number().int(),
   })
   .meta({ id: 'Notice' })
 

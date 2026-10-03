@@ -1,7 +1,9 @@
 import { sql } from 'drizzle-orm'
 import {
   check,
+  customType,
   index,
+  integer,
   pgEnum,
   pgTable,
   text,
@@ -103,6 +105,42 @@ export const notifications = pgTable(
     check('notifications_title', sql`length(trim(title)) > 0`),
     check('notifications_link', sql`link is null or link like '/%'`),
     tenantPolicy('notifications'),
+  ],
+)
+
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => 'bytea' })
+
+/**
+ * A document that goes with a notice: a circular as issued, a manual, a
+ * timetable. Added while the notice is a draft and fixed once it is
+ * published, so what everybody was sent is what stays on the board. Kept in
+ * the database with the notice, and checked to be what it says it is when
+ * it arrives.
+ */
+export const noticeAttachments = pgTable(
+  'notice_attachments',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    institutionId: uuid('institution_id')
+      .notNull()
+      .references(() => institutions.id, { onDelete: 'cascade' }),
+    noticeId: uuid('notice_id')
+      .notNull()
+      .references(() => notices.id, { onDelete: 'cascade' }),
+    name: text().notNull(),
+    type: text().notNull(),
+    size: integer().notNull(),
+    sha256: text().notNull(),
+    content: bytea().notNull(),
+    addedBy: text('added_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('notice_attachments_notice').on(t.noticeId),
+    check('notice_attachments_type', sql`type in ('application/pdf', 'image/png', 'image/jpeg')`),
+    check('notice_attachments_size', sql`size = octet_length(content) and size between 1 and 10485760`),
+    check('notice_attachments_name', sql`length(trim(name)) between 1 and 200`),
+    tenantPolicy('notice_attachments'),
   ],
 )
 

@@ -5,18 +5,22 @@ import { auditLog, authDb, db, institutions, users, withTenant } from '@campusos
 import * as academic from '@campusos/module-academic/api'
 import {
   NoticeError,
+  addAttachment,
+  attachmentFile,
   board,
   createNotice,
   emailNotice,
   inbox,
   markRead,
+  noticeView,
   notify,
   publishNotice,
   readNotice,
+  removeAttachment,
   withdrawNotice,
   type Actor,
 } from './api'
-import { notices, notifications } from './schema'
+import { noticeAttachments, notices, notifications } from './schema'
 
 const SLUG = 'notice-test'
 const OTHER = 'notice-other'
@@ -353,4 +357,64 @@ test('a department-scoped notice records its department', async () => {
   const row = await readNotice(admin(), n.id)
   // academic normalises codes to upper case on the way in.
   assert.equal(row.departmentCode, 'CSE')
+})
+
+// --- documents -------------------------------------------------------------
+
+const pdf = (name = 'circular.pdf', text = 'a circular') => ({
+  name,
+  type: 'application/pdf',
+  size: 0,
+  base64: Buffer.from(`%PDF-1.4\n% ${text}\n%%EOF\n`).toString('base64'),
+})
+
+test('a notice is read on its own page, which is where the inbox now sends its reader', async () => {
+  const n = await post({ body: 'Paragraph one.\n\nParagraph two.' })
+  const v = await noticeView(student(ids.s1), n.id)
+  assert.equal(v.notice.body, 'Paragraph one.\n\nParagraph two.')
+  const box = await inbox(student(ids.s1))
+  assert.equal(box.items[0]!.link, `/m/notices/notice?id=${n.id}`)
+})
+
+test('a document goes out with the notice and is fixed once it is published', async () => {
+  const n = await post({ attachment: pdf() })
+  const v = await noticeView(student(ids.s2), n.id)
+  assert.equal(v.documents.length, 1)
+  assert.equal(v.documents[0]!.name, 'circular.pdf')
+  assert.equal(v.notice.files, 1)
+
+  const file = await attachmentFile(student(ids.s2), v.documents[0]!.id)
+  assert.ok(file.content.subarray(0, 5).equals(Buffer.from('%PDF-')))
+
+  await assert.rejects(addAttachment(admin(), { noticeId: n.id, file: pdf('late.pdf') }), (e) => code(e) === 'notice_attachment_published')
+  await assert.rejects(removeAttachment(admin(), { attachmentId: v.documents[0]!.id }), (e) => code(e) === 'notice_attachment_published')
+  await assert.rejects(
+    withTenant(inst, (tx) => tx.update(noticeAttachments).set({ name: 'other.pdf' }).where(eq(noticeAttachments.id, v.documents[0]!.id))),
+    saysDb(/notice_attachment_fixed|kept as it was sent/),
+  )
+})
+
+test('a draft takes up to five documents, and they can come off again before it goes out', async () => {
+  const n = await post({ publish: false })
+  const added = []
+  for (let i = 1; i <= 5; i++) added.push((await addAttachment(admin(), { noticeId: n.id, file: pdf(`part-${i}.pdf`) })).id)
+  await assert.rejects(addAttachment(admin(), { noticeId: n.id, file: pdf('six.pdf') }), (e) => code(e) === 'notices_attachments_count' || code(e) === 'notice_attachments_count')
+  await removeAttachment(admin(), { attachmentId: added[0]! })
+  await publishNotice(admin(), { noticeId: n.id })
+  assert.equal((await noticeView(student(ids.s1), n.id)).documents.length, 4)
+})
+
+test('a file that is not what it says it is, or not a document, is refused before anything is posted', async () => {
+  const exe = { name: 'timetable.pdf', type: 'application/pdf', size: 0, base64: Buffer.from('MZ\x90\x00 not a pdf').toString('base64') }
+  await assert.rejects(post({ attachment: exe }), (e) => code(e) === 'wrong_type')
+  const html = { name: 'page.html', type: 'text/html', size: 0, base64: Buffer.from('<script>').toString('base64') }
+  await assert.rejects(post({ attachment: html }), (e) => code(e) === 'wrong_type')
+  assert.equal((await board(admin(), true)).length, 0, 'no notice was left behind without its document')
+})
+
+test('a document is for whoever may read its notice, and nobody else', async () => {
+  const n = await post({ audienceRoles: ['faculty'], attachment: pdf('staff-only.pdf') })
+  const [doc] = (await noticeView(teacher(), n.id)).documents
+  await assert.rejects(attachmentFile(student(ids.s1), doc!.id), (e) => status(e) === 404)
+  await assert.rejects(attachmentFile(A({ institutionId: other }), doc!.id), (e) => status(e) === 404)
 })

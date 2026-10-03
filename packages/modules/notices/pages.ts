@@ -1,5 +1,5 @@
-import { flag, type PluginPage } from '@campusos/module-framework'
-import { board, inbox, mailConfigured, type Actor } from './api'
+import { flag, param, type PluginPage, type PluginSection } from '@campusos/module-framework'
+import { board, inbox, mailConfigured, noticeView, type Actor } from './api'
 
 const POSTERS = [
   'super_admin',
@@ -33,6 +33,7 @@ export const pages: PluginPage[] = [
           draft: !n.publishedAt,
           audience: n.audienceRoles.length === 0 ? 'everybody' : n.audienceRoles.join(', '),
           seen: `${n.readCount} of ${n.reach}`,
+          filesText: n.files ? String(n.files) : '',
         })),
         drafts: notices
           .filter((n) => !n.publishedAt)
@@ -56,8 +57,9 @@ export const pages: PluginPage[] = [
         rows: 'notices',
         empty: 'Nothing on the board.',
         columns: [
-          { key: 'title', label: 'Notice' },
+          { key: 'title', label: 'Notice', href: '/m/notices/notice?id={id}' },
           { key: 'state', label: 'Kind', kind: 'status', alertWhen: 'draft' },
+          { key: 'filesText', label: 'Documents' },
           { key: 'audience', label: 'Audience' },
           { key: 'when', label: 'Published', kind: 'date' },
           { key: 'authorName', label: 'By' },
@@ -101,9 +103,28 @@ export const pages: PluginPage[] = [
                     { value: 'parent', label: 'parents' },
                   ],
                 },
+                {
+                  name: 'attachment',
+                  label: 'A document to go with it',
+                  kind: 'file' as const,
+                  accept: 'application/pdf,image/png,image/jpeg',
+                  hint: 'PDF, PNG or JPEG, up to 10 MB. More can be attached while it is a draft.',
+                  optional: true,
+                },
                 { name: 'expiresAt', label: 'Show until', kind: 'date' as const, optional: true },
                 { name: 'pinned', label: 'Pin to the top', kind: 'checkbox' as const, optional: true },
                 { name: 'publish', label: 'Publish now', kind: 'checkbox' as const, optional: true },
+              ],
+            },
+            {
+              kind: 'form' as const,
+              title: 'Attach a document to a draft',
+              note: 'Fixed once the notice is published: what everybody was sent is what stays.',
+              submit: 'Attach',
+              path: '/board/attachments',
+              fields: [
+                { name: 'noticeId', label: 'Draft', kind: 'select' as const, options: 'drafts' },
+                { name: 'file', label: 'Document', kind: 'file' as const, accept: 'application/pdf,image/png,image/jpeg', hint: 'PDF, PNG or JPEG, up to 10 MB' },
               ],
             },
             {
@@ -131,6 +152,94 @@ export const pages: PluginPage[] = [
           ]
         : []),
     ],
+  },
+
+  {
+    path: '/notice',
+    title: 'Notice',
+    roles: [...READERS],
+    async load(actor, req) {
+      const v = await noticeView(actor as Actor, param(req, 'id') ?? '')
+      const kb = (n: number) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`)
+      return {
+        v,
+        documents: v.documents.map((d) => ({
+          ...d,
+          kind: d.type === 'application/pdf' ? 'PDF' : d.type === 'image/png' ? 'PNG' : 'JPEG',
+          sizeText: kb(d.size),
+          sha: d.sha256.slice(0, 12),
+          href: `/api/v1/modules/notices/board/attachment?id=${d.id}`,
+        })),
+        removable: v.notice.publishedAt ? [] : v.documents.map((d) => ({ value: d.id, label: d.name })),
+      }
+    },
+    record: (data) => {
+      const v = data.v as Awaited<ReturnType<typeof noticeView>> | undefined
+      if (typeof v?.notice?.id !== 'string') return null
+      const n = v.notice
+      return {
+        title: n.title,
+        subtitle: n.departmentCode ? `For ${n.departmentCode}` : undefined,
+        status: { label: n.publishedAt ? n.kind : 'draft' },
+        fields: [
+          { label: 'Published', value: n.publishedAt, kind: 'when' },
+          { label: 'By', value: n.authorName },
+          { label: 'For', value: n.audienceRoles.length ? n.audienceRoles.join(', ') : 'everybody' },
+          { label: 'Shown until', value: n.expiresAt, kind: 'date' },
+          ...(v.canPost ? [{ label: 'Read', value: `${n.readCount} of ${n.reach}` }] : []),
+        ],
+      }
+    },
+    sections: (data) => {
+      const v = data.v as Awaited<ReturnType<typeof noticeView>> | undefined
+      if (typeof v?.notice?.id !== 'string') return [{ kind: 'note', text: 'No such notice.' }]
+      const draft = !v.notice.publishedAt
+      const out: PluginSection[] = [
+        { kind: 'prose', text: v.notice.body },
+        {
+          kind: 'table',
+          title: 'Documents',
+          rows: 'documents',
+          empty: 'None.',
+          columns: [
+            { key: 'name', label: 'Document', href: '{href}' },
+            { key: 'kind', label: 'Kind', kind: 'code' },
+            { key: 'sizeText', label: 'Size' },
+            { key: 'sha', label: 'SHA-256', kind: 'code' },
+          ],
+        },
+      ]
+      if (v.canPost && draft) {
+        out.push(
+          {
+            kind: 'form',
+            title: 'Attach a document',
+            submit: 'Attach',
+            path: '/board/attachments',
+            fields: [
+              { name: 'noticeId', label: 'Notice', kind: 'hidden', value: v.notice.id },
+              { name: 'file', label: 'Document', kind: 'file', accept: 'application/pdf,image/png,image/jpeg', hint: 'PDF, PNG or JPEG, up to 10 MB' },
+            ],
+          },
+          {
+            kind: 'form',
+            title: 'Take a document off',
+            submit: 'Take it off',
+            path: '/board/attachments/remove',
+            fields: [{ name: 'attachmentId', label: 'Document', kind: 'select', options: 'removable' }],
+          },
+          {
+            kind: 'form',
+            title: 'Publish',
+            note: 'Everybody it is for gets it in their inbox, with its documents.',
+            submit: 'Publish',
+            path: '/board/publish',
+            fields: [{ name: 'noticeId', label: 'Notice', kind: 'hidden', value: v.notice.id }],
+          },
+        )
+      }
+      return out
+    },
   },
 
   {

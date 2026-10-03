@@ -1,12 +1,14 @@
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm'
 import { audit, users, withTenant } from '@campusos/db'
-import type { Role } from '@campusos/module-framework'
+import { readUpload, UploadError, type Role } from '@campusos/module-framework'
 import { departments } from '@campusos/module-academic/schema'
-import { notices, notifications } from '../schema'
+import { noticeAttachments, notices, notifications } from '../schema'
 import { mailConfigured, sendMail } from './channels'
 import {
+  attachSchema,
   createNoticeSchema,
   markReadSchema,
+  removeAttachmentSchema,
   publishNoticeSchema,
   withdrawNoticeSchema,
   type Inbox,
@@ -116,27 +118,163 @@ export async function createNotice(actor: Actor, input: unknown) {
     )
   }
 
-  return withTenant(tenant, async (tx) => {
-    const now = new Date()
-    const [row] = await tx
-      .insert(notices)
-      .values({
-        institutionId: tenant,
-        title: d.title,
-        body: d.body,
-        kind: d.kind,
-        audienceRoles: d.audienceRoles,
-        departmentId: d.departmentId ?? null,
-        pinned: d.pinned ? now : null,
-        publishedAt: d.publish ? now : null,
-        expiresAt: d.expiresAt ? new Date(d.expiresAt) : null,
-        authorId: actor.id,
-      })
-      .returning()
+  // Read before anything is written: a file that is not what it says it is
+  // refuses the notice, rather than leaving one posted without its document.
+  const file = d.attachment ? readUploadOr(d.attachment) : null
 
-    if (d.publish) await fanOut(tx, tenant, row!.id)
-    return row!
+  return attached(async () =>
+    withTenant(tenant, async (tx) => {
+      const now = new Date()
+      // Written as a draft, given its document, then published: a document
+      // goes on a notice only while nobody has been sent it.
+      const [row] = await tx
+        .insert(notices)
+        .values({
+          institutionId: tenant,
+          title: d.title,
+          body: d.body,
+          kind: d.kind,
+          audienceRoles: d.audienceRoles,
+          departmentId: d.departmentId ?? null,
+          pinned: d.pinned ? now : null,
+          publishedAt: null,
+          expiresAt: d.expiresAt ? new Date(d.expiresAt) : null,
+          authorId: actor.id,
+        })
+        .returning()
+
+      if (file) await attach(tx, tenant, actor, row!.id, file)
+      if (!d.publish) return row!
+      await tx.update(notices).set({ publishedAt: now }).where(eq(notices.id, row!.id))
+      await fanOut(tx, tenant, row!.id)
+      return { ...row!, publishedAt: now }
+    }),
+  )
+}
+
+// --- documents attached to a notice ----------------------------------------------
+
+export const DOCUMENT_TYPES = ['application/pdf', 'image/png', 'image/jpeg']
+
+const ATTACHMENT_REFUSALS: Record<string, [400 | 409, string]> = {
+  notice_attachment_published: [409, 'that notice is published; its documents stay as they were sent'],
+  notice_attachments_count: [409, 'a notice carries five documents at most'],
+  notice_attachment_fixed: [409, 'an attached document is kept as it was sent'],
+  notice_attachments_name: [400, 'the document needs a name'],
+}
+
+async function attached<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (e) {
+    if (e instanceof UploadError) throw new NoticeError(400, e.code, e.message)
+    const c = (e as { cause?: { constraint?: string } }).cause?.constraint
+    const known = c ? ATTACHMENT_REFUSALS[c] : undefined
+    if (known) throw new NoticeError(known[0], c!, known[1])
+    throw e
+  }
+}
+
+async function attach(tx: Tx, tenant: string, actor: Actor, noticeId: string, file: ReturnType<typeof readUpload>) {
+  const [row] = await tx
+    .insert(noticeAttachments)
+    .values({
+      institutionId: tenant,
+      noticeId,
+      name: file.name,
+      type: file.type,
+      size: file.size,
+      sha256: file.sha256,
+      content: file.bytes,
+      addedBy: actor.id,
+    })
+    .returning({ id: noticeAttachments.id })
+  return row!.id
+}
+
+/** Attach a document to a draft. A lecturer, to their own. */
+export async function addAttachment(actor: Actor, input: unknown) {
+  const tenant = requirePoster(actor)
+  const d = attachSchema.parse(input)
+  const file = readUploadOr(d.file)
+  return attached(() =>
+    withTenant(tenant, async (tx) => {
+      const [n] = await tx.select().from(notices).where(eq(notices.id, d.noticeId))
+      if (!n) throw new NoticeError(404, 'no_such_notice', 'no such notice')
+      if (actor.role === 'faculty' && n.authorId !== actor.id) {
+        throw new NoticeError(403, 'not_yours', 'that notice is not yours')
+      }
+      const id = await attach(tx, tenant, actor, n.id, file)
+      return { id, notice: `${file.name} is attached. It goes out with the notice when it is published.` }
+    }),
+  )
+}
+
+const readUploadOr = (value: unknown) => {
+  try {
+    return readUpload(value, { types: DOCUMENT_TYPES, what: 'the document' })
+  } catch (e) {
+    if (e instanceof UploadError) throw new NoticeError(400, e.code, e.message)
+    throw e
+  }
+}
+
+/** Take a document off a draft. */
+export async function removeAttachment(actor: Actor, input: unknown) {
+  const tenant = requirePoster(actor)
+  const d = removeAttachmentSchema.parse(input)
+  return attached(() =>
+    withTenant(tenant, async (tx) => {
+      const [a] = await tx
+        .select({ id: noticeAttachments.id, name: noticeAttachments.name, authorId: notices.authorId })
+        .from(noticeAttachments)
+        .innerJoin(notices, eq(notices.id, noticeAttachments.noticeId))
+        .where(eq(noticeAttachments.id, d.attachmentId))
+      if (!a) throw new NoticeError(404, 'no_such_document', 'no such document')
+      if (actor.role === 'faculty' && a.authorId !== actor.id) {
+        throw new NoticeError(403, 'not_yours', 'that notice is not yours')
+      }
+      await tx.delete(noticeAttachments).where(eq(noticeAttachments.id, a.id))
+      return { notice: `${a.name} is taken off.` }
+    }),
+  )
+}
+
+/** The documents of a notice, without their bytes. */
+async function documentsOf(tx: Tx, noticeId: string) {
+  return tx
+    .select({
+      id: noticeAttachments.id,
+      name: noticeAttachments.name,
+      type: noticeAttachments.type,
+      size: noticeAttachments.size,
+      sha256: noticeAttachments.sha256,
+    })
+    .from(noticeAttachments)
+    .where(eq(noticeAttachments.noticeId, noticeId))
+    .orderBy(asc(noticeAttachments.createdAt))
+}
+
+/** One notice, whole: its text and its documents, for whoever may read it. */
+export async function noticeView(actor: Actor, noticeId: string) {
+  const tenant = tenantOf(actor)
+  const notice = await readNotice(actor, noticeId)
+  const documents = await withTenant(tenant, (tx) => documentsOf(tx, noticeId))
+  return { notice, documents, canPost: canPost(actor.role) }
+}
+
+/** A document's bytes, for whoever may read the notice it is on. */
+export async function attachmentFile(actor: Actor, attachmentId: string) {
+  const tenant = tenantOf(actor)
+  const [a] = await withTenant(tenant, (tx) =>
+    tx.select().from(noticeAttachments).where(eq(noticeAttachments.id, attachmentId)),
+  )
+  if (!a) throw new NoticeError(404, 'no_such_document', 'no such document')
+  // The same answer as for a notice this reader may not see: not found.
+  await readNotice(actor, a.noticeId).catch(() => {
+    throw new NoticeError(404, 'no_such_document', 'no such document')
   })
+  return a
 }
 
 /**
@@ -150,7 +288,7 @@ async function fanOut(tx: Tx, tenant: string, noticeId: string): Promise<number>
   const [notice] = await tx.select().from(notices).where(eq(notices.id, noticeId))
   if (!notice?.publishedAt) return 0
 
-  const link = `/notices/${notice.id}`
+  const link = `/m/notices/notice?id=${notice.id}`
   // One array literal, not one parameter per element: a JS array interpolated
   // into a tagged template is flattened into separate placeholders, and
   // Postgres then reads the first of them as a malformed array.
@@ -251,6 +389,7 @@ export async function board(actor: Actor, includeDrafts = false): Promise<Notice
                                  where n.notice_id = notices.id and n.read_at is not null)`.mapWith(
           Number,
         ),
+        files: sql<number>`(select count(*) from notice_attachments a where a.notice_id = notices.id)`.mapWith(Number),
       })
       .from(notices)
       .leftJoin(departments, eq(departments.id, notices.departmentId))
