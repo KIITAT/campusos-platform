@@ -3,7 +3,7 @@ import { audit, users, withTenant } from '@campusos/db'
 import { moduleEnabled, readUpload, UploadError, type Role } from '@campusos/module-framework'
 import { sectionMembers, sections, programs, terms } from '@campusos/module-academic/schema'
 import { studentProfile } from '@campusos/module-academic/api'
-import { attendanceSummary } from '@campusos/module-attendance/api'
+import { attendanceSummary, excuseWithin, revokeExcuseForSourceWithin } from '@campusos/module-attendance/api'
 import { manifest as attendanceManifest } from '@campusos/module-attendance/manifest'
 import { officialTranscript } from '@campusos/module-examinations/api'
 import { manifest as examinationsManifest } from '@campusos/module-examinations/manifest'
@@ -581,6 +581,7 @@ export async function decideLeave(actor: Actor, input: unknown) {
   if (!isStaff(actor.role)) throw new MentorError(403, 'forbidden', 'not permitted')
   const d = decideLeaveSchema.parse(input)
   const hostelOn = await moduleEnabled(KNOWN, 'hostel', tenant)
+  const attendanceOn = await moduleEnabled(KNOWN, 'attendance', tenant)
   return named(() =>
     withTenant(tenant, async (tx) => {
       const [l] = await tx.select().from(leaveApplications).where(eq(leaveApplications.id, d.applicationId)).for('update')
@@ -594,6 +595,19 @@ export async function decideLeave(actor: Actor, input: unknown) {
           fromOn: l.startsOn,
           toOn: l.endsOn,
           reason: `Leave approved by mentor: ${l.purpose}`.slice(0, 300),
+        })
+      }
+      // Approved leave excuses the classes missed on those days, where
+      // attendance is kept here.
+      if (d.decision === 'approve' && attendanceOn) {
+        await excuseWithin(tx, tenant, actor.id, {
+          studentId: l.studentId,
+          fromOn: l.startsOn,
+          toOn: l.endsOn,
+          kind: 'leave',
+          reason: `Leave approved by mentor: ${l.purpose}`.slice(0, 500),
+          sourceModule: MODULE,
+          sourceId: l.id,
         })
       }
       await tx
@@ -616,7 +630,7 @@ export async function decideLeave(actor: Actor, input: unknown) {
         id: l.id,
         notice:
           d.decision === 'approve'
-            ? `Approved.${hostelLeaveId ? ' The hostel roll call now expects the empty bed.' : ''}`
+            ? `Approved.${hostelLeaveId ? ' The hostel roll call now expects the empty bed.' : ''}${attendanceOn ? ' Classes missed those days are excused.' : ''}`
             : 'Refused. The student sees why.',
       }
     }),
@@ -635,6 +649,7 @@ export async function cancelLeave(actor: Actor, input: unknown) {
         throw new MentorError(409, 'already_gone', 'that leave has begun; tell your mentor you are back early instead')
       }
       if (l.hostelLeaveId) await withdrawLeaveWithin(tx, l.hostelLeaveId)
+      if (l.status === 'approved') await revokeExcuseForSourceWithin(tx, MODULE, l.id, actor.id, 'the leave was cancelled')
       await tx
         .update(leaveApplications)
         .set({ status: 'cancelled', decisionNote: d.reason ?? l.decisionNote })

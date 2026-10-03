@@ -2,11 +2,11 @@ import { param, type PluginPage } from '@campusos/module-framework'
 import { listOfferings, listStructure } from '@campusos/module-academic/api'
 import {
   listPendingDevices,
-  myAttendance,
   openSessions,
   roster,
   type Actor,
 } from './api'
+import { myAttendancePage, summaryPages } from './summary-pages'
 
 const STAFF = ['institution_admin', 'super_admin', 'faculty', 'hod'] as const
 const ADMIN = ['institution_admin', 'super_admin'] as const
@@ -203,37 +203,7 @@ export const pages: PluginPage[] = [
     ],
   },
 
-  {
-    path: '/me',
-    title: 'My attendance',
-    menu: 'My attendance',
-    roles: ['student'],
-    async load(actor) {
-      const rows = await myAttendance(actor as Actor)
-      return {
-        marked: rows.length,
-        rows: rows.map((r) => ({
-          courseCode: r.courseCode,
-          markedAt: r.markedAt.toISOString(),
-          method: r.method.replace(/_/g, ' '),
-        })),
-      }
-    },
-    sections: (data) => [
-      {
-        kind: 'figures',
-        figures: [{ label: 'Classes marked present', value: String(data.marked ?? 0) }],
-      },
-      {
-        kind: 'table',
-        rows: 'rows',
-        empty: 'Nothing marked yet.',
-        columns: [
-          { key: 'courseCode', label: 'Course', kind: 'code' },
-          { key: 'markedAt', label: 'When', kind: 'when' },
-          { key: 'method', label: 'How' },
-        ],
-      },
-    ],
-  },
+  myAttendancePage,
+
+  ...summaryPages,
 ]

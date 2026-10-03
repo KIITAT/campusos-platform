@@ -1,5 +1,7 @@
 import { sql } from 'drizzle-orm'
 import {
+  date,
+  boolean,
   check,
   doublePrecision,
   index,
@@ -64,6 +66,15 @@ export const settings = pgTable(
     tokenWindowSeconds: smallint('token_window_seconds').notNull().default(7),
     /** Reject a fix whose own accuracy is worse than this; spoofers report huge radii. */
     maxAccuracyM: integer('max_accuracy_m').notNull().default(200),
+    /**
+     * The attendance a student must keep, per class: 75 is common, and it is
+     * the university's to set, not ours.
+     */
+    minimumPercent: smallint('minimum_percent').notNull().default(75),
+    /** Whether an excused absence counts towards that, as present does. */
+    excusedCounts: boolean('excused_counts').notNull().default(true),
+    /** The zone a class's date is read in. */
+    timeZone: text('time_zone').notNull().default('Asia/Kolkata'),
   },
   () => [tenantPolicy('attendance_settings')],
 )
@@ -211,5 +222,50 @@ export const records = pgTable(
       sql`method <> 'manual_override' or (override_reason is not null and length(trim(override_reason)) > 0)`,
     ),
     tenantPolicy('attendance_records'),
+  ],
+)
+
+export const excuseKindEnum = pgEnum('attendance_excuse_kind', ['medical', 'on_duty', 'leave', 'other'])
+
+/**
+ * Absence that is excused -- illness, college duty, approved leave -- for one
+ * class or all of a student's classes, over days. A class missed inside it is
+ * counted as excused rather than absent. Revoked with a reason, never
+ * deleted; raised by another module (mentoring, for approved leave) when it
+ * owns the reason.
+ */
+export const excuses = pgTable(
+  'attendance_excuses',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    institutionId: uuid('institution_id')
+      .notNull()
+      .references(() => institutions.id, { onDelete: 'cascade' }),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** One class; absent means every class the student has. */
+    offeringId: uuid('offering_id').references(() => offerings.id, { onDelete: 'cascade' }),
+    fromOn: date('from_on').notNull(),
+    toOn: date('to_on').notNull(),
+    kind: excuseKindEnum().notNull(),
+    reason: text().notNull(),
+    grantedBy: text('granted_by').references(() => users.id, { onDelete: 'set null' }),
+    grantedAt: timestamp('granted_at', { withTimezone: true }).notNull().defaultNow(),
+    sourceModule: text('source_module'),
+    sourceId: text('source_id'),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    revokedBy: text('revoked_by').references(() => users.id, { onDelete: 'set null' }),
+    revokeReason: text('revoke_reason'),
+  },
+  (t) => [
+    index('attendance_excuses_student').on(t.studentId, t.fromOn),
+    uniqueIndex('attendance_excuses_source')
+      .on(t.sourceModule, t.sourceId)
+      .where(sql`source_id is not null and revoked_at is null`),
+    check('attendance_excuses_dates', sql`to_on >= from_on`),
+    check('attendance_excuses_reason', sql`length(trim(reason)) >= 5`),
+    check('attendance_excuses_revoked', sql`(revoked_at is null) = (revoke_reason is null)`),
+    tenantPolicy('attendance_excuses'),
   ],
 )

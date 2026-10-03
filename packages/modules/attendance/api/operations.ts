@@ -100,9 +100,27 @@ export async function openSession(actor: Actor, input: unknown) {
       .where(eq(slots.id, slotId))
     if (!slot) throw new AttendanceError(404, 'no_such_slot', 'no such timetable slot')
 
-    // A lecturer may only open their own class. An admin may open any, because
-    // someone has to when the lecturer's laptop dies mid-lecture.
-    if (actor.role === 'faculty' && slot.facultyUserId !== actor.id) {
+    // Today's meeting may have been changed on the timetable: cancelled, moved
+    // to another day, or handed to a substitute -- who may then open it.
+    const rules = await rulesOf(tx, tenant)
+    const changed = await tx.execute(sql`
+      select kind::text as kind, substitute_id, moved_on = (now() at time zone ${rules.timeZone})::date as moved_here
+        from academic_class_changes
+       where slot_id = ${slotId} and withdrawn_at is null
+         and (on_date = (now() at time zone ${rules.timeZone})::date
+              or (kind = 'rescheduled' and moved_on = (now() at time zone ${rules.timeZone})::date))
+       order by moved_here desc limit 1`)
+    const change = changed.rows[0] as { kind: string; substitute_id: string | null; moved_here: boolean | null } | undefined
+    if (change?.kind === 'cancelled') throw new AttendanceError(409, 'class_cancelled', 'today’s class was cancelled')
+    if (change?.kind === 'rescheduled' && !change.moved_here) {
+      throw new AttendanceError(409, 'class_moved', 'today’s class was moved to another day')
+    }
+    const substitute = change?.kind === 'substitute' ? change.substitute_id : null
+
+    // A lecturer may only open their own class -- or one they are substituting
+    // in today. An admin may open any, because someone has to when the
+    // lecturer's laptop dies mid-lecture.
+    if (actor.role === 'faculty' && slot.facultyUserId !== actor.id && substitute !== actor.id) {
       throw new AttendanceError(403, 'not_your_class', 'that is not your class')
     }
 
@@ -675,6 +693,18 @@ export async function myAttendance(actor: Actor, studentId?: string) {
   )
 }
 
+export interface AttendanceRules {
+  minimumPercent: number
+  excusedCounts: boolean
+  timeZone: string
+}
+
+/** The institution's attendance rules, or the defaults where it has set none. */
+export async function rulesOf(tx: Tx, tenant: string): Promise<AttendanceRules> {
+  const [r] = await tx.select().from(settings).where(eq(settings.institutionId, tenant))
+  return { minimumPercent: r?.minimumPercent ?? 75, excusedCounts: r?.excusedCounts ?? true, timeZone: r?.timeZone ?? 'Asia/Kolkata' }
+}
+
 export interface AttendanceLine {
   offeringId: string
   courseCode: string
@@ -683,15 +713,32 @@ export interface AttendanceLine {
   term: string
   held: number
   present: number
+  /** Missed inside an excuse: illness, college duty, approved leave. */
+  excused: number
   absent: number
   percent: number | null
+  /** Below the institution's minimum. */
+  short: boolean
+  /** Classes in a row to attend to reach the minimum again; 0 when there. */
+  needed: number
+}
+
+/**
+ * Classes in a row a student must attend to reach the minimum: the smallest k
+ * with (counted + k) / (held + k) >= minimum.
+ */
+export function classesNeeded(counted: number, held: number, minimumPercent: number): number {
+  if (held === 0 || counted * 100 >= minimumPercent * held) return 0
+  if (minimumPercent >= 100) return Number.POSITIVE_INFINITY
+  return Math.ceil((minimumPercent * held - 100 * counted) / (100 - minimumPercent))
 }
 
 /**
  * A student's attendance class by class, as KIIT's portal shows it: the
- * teacher, sessions held, present, absent and the percentage. Held is every
- * session opened for the class; present is a mark in it. For a term, or every
- * term.
+ * teacher, sessions held, present, excused, absent and the percentage, by the
+ * institution's own rule for whether excused absence counts. Held is every
+ * session opened for the class; present is a mark in it; excused is a session
+ * missed on a day an excuse covers. For a term, or every term.
  *
  * The student reads their own; staff read anybody's; a verified guardian reads
  * the students they were cleared for.
@@ -703,12 +750,20 @@ export async function attendanceSummary(actor: Actor, studentId: string, termId?
     throw new AttendanceError(403, 'forbidden', 'not permitted')
   }
   return withTenant(tenant, async (tx) => {
+    const rules = await rulesOf(tx, tenant)
     const rows = await tx.execute(sql`
       select o.id as offering_id, c.code, c.title, coalesce(f.name, f.email) as teacher, t.code as term,
              (select count(*)::int from attendance_sessions s where s.offering_id = o.id) as held,
              (select count(*)::int from attendance_records r
                 join attendance_sessions s on s.id = r.session_id
-               where s.offering_id = o.id and r.student_id = ${studentId}) as present
+               where s.offering_id = o.id and r.student_id = ${studentId}) as present,
+             (select count(*)::int from attendance_sessions s
+               where s.offering_id = o.id
+                 and not exists (select 1 from attendance_records r where r.session_id = s.id and r.student_id = ${studentId})
+                 and exists (select 1 from attendance_excuses e
+                              where e.student_id = ${studentId} and e.revoked_at is null
+                                and (e.offering_id is null or e.offering_id = o.id)
+                                and (s.opened_at at time zone ${rules.timeZone})::date between e.from_on and e.to_on)) as excused
         from academic_offerings o
         join academic_section_members m on m.section_id = o.section_id and m.user_id = ${studentId}
         join academic_courses c on c.id = o.course_id
@@ -716,18 +771,31 @@ export async function attendanceSummary(actor: Actor, studentId: string, termId?
         left join users f on f.id = o.faculty_user_id
        where (${termId ?? null}::uuid is null or o.term_id = ${termId ?? null}::uuid)
        order by t.starts_on desc, c.code`)
-    return (rows.rows as { offering_id: string; code: string; title: string; teacher: string | null; term: string; held: number; present: number }[]).map(
-      (r) => ({
-        offeringId: r.offering_id,
-        courseCode: r.code,
-        courseTitle: r.title,
-        teacher: r.teacher,
-        term: r.term,
-        held: r.held,
-        present: r.present,
-        absent: Math.max(0, r.held - r.present),
-        percent: r.held ? Math.round((r.present / r.held) * 1000) / 10 : null,
-      }),
+    return (rows.rows as { offering_id: string; code: string; title: string; teacher: string | null; term: string; held: number; present: number; excused: number }[]).map(
+      (r) => line(r, rules),
     )
   })
+}
+
+/** One class's figures by the institution's rule. */
+export function line(
+  r: { offering_id: string; code: string; title: string; teacher: string | null; term: string; held: number; present: number; excused: number },
+  rules: AttendanceRules,
+): AttendanceLine {
+  const counted = r.present + (rules.excusedCounts ? r.excused : 0)
+  const percent = r.held ? Math.round((counted / r.held) * 1000) / 10 : null
+  return {
+    offeringId: r.offering_id,
+    courseCode: r.code,
+    courseTitle: r.title,
+    teacher: r.teacher,
+    term: r.term,
+    held: r.held,
+    present: r.present,
+    excused: r.excused,
+    absent: Math.max(0, r.held - r.present - r.excused),
+    percent,
+    short: percent !== null && percent < rules.minimumPercent,
+    needed: classesNeeded(counted, r.held, rules.minimumPercent),
+  }
 }

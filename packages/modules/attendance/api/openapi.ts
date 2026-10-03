@@ -1,5 +1,6 @@
 import * as z from 'zod'
 import { manifest } from '../manifest'
+import { grantExcuseSchema, revokeExcuseSchema, rulesSchema } from './excuses'
 import {
   approveDeviceSchema,
   closeSessionSchema,
@@ -26,6 +27,7 @@ const gated = {
 }
 
 export const paths = {
+  ...excusesAndRules(),
   [`${base}/sessions`]: {
     get: {
       summary: 'Open sessions the caller may act on',
@@ -140,4 +142,45 @@ export const paths = {
       responses: { '200': { description: 'OK' }, ...gated },
     },
   },
+}
+
+/** Excused absence, the institution's rules, the summary and the absentees. */
+function excusesAndRules() {
+  const post = (summary: string, schema: z.ZodType, description?: string) => ({
+    post: {
+      summary,
+      ...(description ? { description } : {}),
+      tags: ['attendance'],
+      requestBody: { content: json(schema) },
+      responses: { '200': { description: 'OK' }, ...gated, '409': { description: 'Refused', content: json(err) } },
+    },
+  })
+  const get = (summary: string, query: string[] = [], description?: string) => ({
+    get: {
+      summary,
+      ...(description ? { description } : {}),
+      tags: ['attendance'],
+      parameters: query.map((name) => ({ name: name.replace('?', ''), in: 'query', required: !name.endsWith('?'), schema: { type: 'string' } })),
+      responses: { '200': { description: 'OK' }, ...gated },
+    },
+  })
+  return {
+    [`${base}/rules`]: {
+      ...get('The minimum attendance, whether excused absence counts, and the zone a class date is read in'),
+      ...post('Set them', rulesSchema),
+    },
+    [`${base}/excuses`]: {
+      ...get('Excused absences: a student’s own, a teacher’s classes’, or all for the office'),
+      ...post('Excuse absence over days, for one class or all of a student’s classes', grantExcuseSchema),
+    },
+    [`${base}/excuses/revoke`]: post('Revoke an excuse, with a reason', revokeExcuseSchema),
+    [`${base}/absentees`]: get(
+      'Everybody in a class with their attendance, those short of the minimum first, and who missed the last session',
+      ['offeringId'],
+    ),
+    [`${base}/summary`]: get(
+      'A student’s attendance class by class: held, present, excused, absent, percentage, and classes needed to reach the minimum',
+      ['studentId?', 'termId?'],
+    ),
+  }
 }

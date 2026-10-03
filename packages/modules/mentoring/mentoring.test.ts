@@ -5,6 +5,7 @@ import { authDb, institutionModules, institutions, users, withTenant } from '@ca
 import * as academic from '@campusos/module-academic/api'
 import * as hostel from '@campusos/module-hostel/api'
 import { leaves as hostelLeaves } from '@campusos/module-hostel/schema'
+import { excuses as attendanceExcuses } from '@campusos/module-attendance/schema'
 import {
   MentorError,
   addLeaveType,
@@ -170,7 +171,7 @@ test('notes are private unless shared; the conversation is the student’s and t
 
 test('leave: asked for as KIIT’s form asks, decided by the mentor, and handed to the hostel', async () => {
   const c = await campus()
-  await enable(c.id, 'hostel')
+  await enable(c.id, 'hostel', 'attendance')
   await assignMentor(c.admin, { studentIds: [c.asha.id], mentorId: c.rout.id })
   const h = c.admin as unknown as hostel.Actor
   const block = await hostel.createBlock(h, { code: 'KP14', name: 'King’s Palace 14' })
@@ -207,6 +208,8 @@ test('leave: asked for as KIIT’s form asks, decided by the mentor, and handed 
   assert.match(ok.notice, /hostel roll call/)
   const housed = await withTenant(c.id, (tx) => tx.select().from(hostelLeaves).where(eq(hostelLeaves.studentId, c.asha.id)))
   assert.deepEqual(housed.map((x) => [x.fromOn, x.toOn]), [[day(3), day(5)]])
+  const excused = await withTenant(c.id, (tx) => tx.select().from(attendanceExcuses).where(eq(attendanceExcuses.studentId, c.asha.id)))
+  assert.deepEqual(excused.map((x) => [x.fromOn, x.toOn, x.kind, x.revokedAt]), [[day(3), day(5), 'leave', null]], 'her classes those days are excused')
   await assert.rejects(decideLeave(c.rout, { applicationId: home.id, decision: 'reject', note: 'changed my mind' }), (e) => code(e) === 'leave_decided')
   await assert.rejects(
     withTenant(c.id, (tx) => tx.update(leaveApplications).set({ placeOfVisit: 'Goa' }).where(eq(leaveApplications.id, home.id))),
@@ -216,6 +219,8 @@ test('leave: asked for as KIIT’s form asks, decided by the mentor, and handed 
   // Plans change before she goes: cancelled, and the hostel no longer expects her away.
   await cancelLeave(c.asha, { applicationId: home.id, reason: 'the wedding was postponed' })
   assert.equal((await withTenant(c.id, (tx) => tx.select().from(hostelLeaves).where(eq(hostelLeaves.studentId, c.asha.id)))).length, 0)
+  const [revoked] = await withTenant(c.id, (tx) => tx.select().from(attendanceExcuses).where(eq(attendanceExcuses.studentId, c.asha.id)))
+  assert.ok(revoked!.revokedAt, 'and the excuse goes with it')
   assert.deepEqual((await myMentoring(c.asha)).leave.map((l) => l.status).sort(), ['cancelled', 'rejected'])
   await assert.rejects(cancelLeave(c.bilal, { applicationId: med.id }), (e) => code(e) === 'no_such_leave')
 })

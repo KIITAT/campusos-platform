@@ -1,5 +1,12 @@
-import { jsonBody, requiredParam, type PluginRoute } from '@campusos/module-framework'
+import { jsonBody, param, requiredParam, type PluginRoute } from '@campusos/module-framework'
 import {
+  attendanceRules,
+  attendanceSummary,
+  classAbsentees,
+  grantExcuse,
+  listExcuses,
+  revokeExcuse,
+  setAttendanceRules,
   approveDevice,
   closeSession,
   currentQrFor,
@@ -16,6 +23,17 @@ import {
 } from './api'
 
 export const routes: PluginRoute[] = [
+  { method: 'GET', path: '/rules', handler: (actor) => attendanceRules(actor as Actor) },
+  { method: 'POST', path: '/rules', handler: async (actor, req) => setAttendanceRules(actor as Actor, await jsonBody(req)) },
+  { method: 'GET', path: '/excuses', handler: (actor) => listExcuses(actor as Actor) },
+  { method: 'POST', path: '/excuses', handler: async (actor, req) => grantExcuse(actor as Actor, await jsonBody(req)) },
+  { method: 'POST', path: '/excuses/revoke', handler: async (actor, req) => revokeExcuse(actor as Actor, await jsonBody(req)) },
+  { method: 'GET', path: '/absentees', handler: (actor, req) => classAbsentees(actor as Actor, requiredParam(req, 'offeringId')) },
+  {
+    method: 'GET',
+    path: '/summary',
+    handler: (actor, req) => attendanceSummary(actor as Actor, param(req, 'studentId') || (actor as Actor).id, param(req, 'termId')),
+  },
   { method: 'GET', path: '/sessions', handler: (actor) => openSessions(actor as Actor) },
   {
     method: 'POST',
