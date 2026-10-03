@@ -20,6 +20,7 @@ import quizzes from '@campusos/module-quizzes/plugin'
 import skills from '@campusos/module-skills/plugin'
 import feedback from '@campusos/module-feedback/plugin'
 import mentoring from '@campusos/module-mentoring/plugin'
+import care from '@campusos/module-care/plugin'
 
 /**
  * Every module, as the host will see it after installing the package.
@@ -45,6 +46,7 @@ const PLUGINS: Plugin[] = [
   skills,
   feedback,
   mentoring,
+  care,
 ]
 
 const MODULES_DIR = join(process.cwd(), '..', 'modules')
@@ -111,10 +113,11 @@ test('the whole product still answers the same number of endpoints', () => {
   // three for charges on one student, academic two for the student profile;
   // fees 14 more for bank transfers and demand letters; mentoring arrived
   // with 16; class changes added 3 to academic and excused absence 7 to
-  // attendance.
+  // attendance; student care arrived with 24, and notices 4 more for a
+  // notice's own page and the documents that go with it.
   // A regression guard on the conversion, not a target.
   const total = PLUGINS.reduce((n, p) => n + p.routes.length, 0)
-  assert.equal(total, 388, `expected 388 endpoints across all modules, found ${total}`)
+  assert.equal(total, 416, `expected 416 endpoints across all modules, found ${total}`)
 })
 
 test('a longer path is never swallowed by a shorter one', () => {
@@ -145,6 +148,7 @@ test('only the document routes return bytes instead of JSON', () => {
     'fees/demand-letter.pdf',
     'fees/receipt.pdf',
     'mentoring/leave/document.pdf',
+    'notices/board/attachment',
   ])
 })
 
