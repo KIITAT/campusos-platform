@@ -205,6 +205,8 @@ test('one request at a time: asking again adds to it, and it can only grow more 
   const first = await takeCheck(c.asha, { code: 'GAD-7', answers: [1, 1, 1, 1, 0, 0, 0, null] })
   const req = await ask(c.asha, { topic: 'anxiety', urgency: 'routine', resultIds: [first.id] })
   const later = await takeCheck(c.asha, { code: 'GAD-7', answers: [3, 3, 3, 2, 2, 2, 2, null] })
+  assert.equal((await resultView(c.asha, first.id)).openRequest?.hasThis, true, 'the shared one says so')
+  assert.equal((await resultView(c.asha, later.id)).openRequest?.hasThis, false)
   const again = await ask(c.asha, { urgency: 'soon', resultIds: [later.id] })
   assert.equal(again.id, req.id)
   const [row] = await withTenant(c.id, (tx) => tx.select().from(requests).where(eq(requests.id, req.id)))

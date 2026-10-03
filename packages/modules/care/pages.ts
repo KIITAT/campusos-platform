@@ -270,7 +270,21 @@ export const pages: PluginPage[] = [
       )
       if (!v.mine) return out
       const urgency = suggested(v)
-      if (v.openRequest) {
+      const order = { routine: 0, soon: 1, today: 2 } as const
+      if (v.openRequest?.hasThis) {
+        const with_ = v.openRequest.status === 'waiting' ? 'waiting for a counsellor' : `with ${v.openRequest.counsellor ?? 'a counsellor'}`
+        out.push({ kind: 'note', text: `This result is with your request, which is ${with_}.` })
+        if (order[urgency] > order[v.openRequest.urgency]) {
+          out.push({
+            kind: 'form',
+            title: 'Say it has become more urgent',
+            submit: 'Tell them',
+            path: '/requests',
+            placement: 'inline',
+            fields: [{ name: 'urgency', label: 'How soon do you need to talk?', kind: 'radio', options: URGENCY, value: urgency }],
+          })
+        }
+      } else if (v.openRequest) {
         out.push({
           kind: 'form',
           title: 'Share this with your request',
@@ -285,7 +299,7 @@ export const pages: PluginPage[] = [
               label: 'How soon do you need to talk?',
               kind: 'radio',
               options: URGENCY,
-              value: { routine: 0, soon: 1, today: 2 }[urgency] > { routine: 0, soon: 1, today: 2 }[v.openRequest.urgency] ? urgency : v.openRequest.urgency,
+              value: order[urgency] > order[v.openRequest.urgency] ? urgency : v.openRequest.urgency,
             },
           ],
         })

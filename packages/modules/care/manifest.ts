@@ -5,7 +5,7 @@ export const manifest: ModuleManifest = {
   name: 'Student Care',
   description:
     'Confidential self-checks a student takes for themselves (PHQ-9, GAD-7, and the institution’s own), counselling they ask for, the counsellors’ cases and appointments, and statistics the office sees only as counts.',
-  version: '0.1.1',
+  version: '0.1.2',
   alwaysEnabled: false,
   dependsOn: ['academic', 'notices'],
   pricing: { model: 'not_priced_yet', priceINR: null },

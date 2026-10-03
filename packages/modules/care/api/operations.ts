@@ -309,6 +309,9 @@ export async function resultView(actor: Actor, resultId: string) {
     const sharedWith = mine
       ? (await tx.select({ n: sql<number>`count(*)`.mapWith(Number) }).from(shared).where(eq(shared.resultId, resultId)))[0]!.n
       : 0
+    const withOpen = open
+      ? (await tx.select({ n: sql<number>`count(*)`.mapWith(Number) }).from(shared).where(and(eq(shared.resultId, resultId), eq(shared.requestId, open.id))))[0]!.n > 0
+      : false
     return {
       id: r.id,
       mine,
@@ -338,7 +341,7 @@ export async function resultView(actor: Actor, resultId: string) {
       }),
       crisisLine: s.crisisLine,
       contact: s.contact,
-      openRequest: open ?? null,
+      openRequest: open ? { ...open, hasThis: withOpen } : null,
       sharedWith,
     }
   })
