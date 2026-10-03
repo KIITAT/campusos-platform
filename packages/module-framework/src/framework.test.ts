@@ -151,3 +151,23 @@ test('nav is filtered by role, not just by entitlement', () => {
   assert.deepEqual(buildNav(ms, ['finance'], 'institution_admin').length, 0)
   assert.deepEqual(buildNav(ms, ['finance'], 'student').length, 0)
 })
+
+test('an upload is checked against its bytes, not only its name and claim', async () => {
+  const { readUpload, UploadError } = await import('./uploads')
+  const pdf = Buffer.from('%PDF-1.7\n% a tiny one\n')
+  const ok = readUpload({ name: 'paper.pdf', type: 'application/pdf', size: pdf.length, base64: pdf.toString('base64') }, { types: ['application/pdf'] })
+  assert.equal(ok.size, pdf.length)
+  assert.equal(ok.sha256.length, 64)
+  const fake = Buffer.from('MZ this is an executable')
+  assert.throws(
+    () => readUpload({ name: 'paper.pdf', type: 'application/pdf', size: fake.length, base64: fake.toString('base64') }, { types: ['application/pdf'] }),
+    (e) => e instanceof UploadError && e.code === 'wrong_type',
+  )
+  assert.throws(() => readUpload({ name: 'a.png', type: 'image/png', size: 1, base64: 'AA==' }, { types: ['application/pdf'] }), /must be application\/pdf/)
+  assert.throws(() => readUpload(undefined, { what: 'the question paper' }), /attach the question paper/)
+  const big = Buffer.alloc(2048, 1)
+  assert.throws(() => readUpload({ name: 'b', type: 'text/plain', size: big.length, base64: big.toString('base64') }, { maxBytes: 1024 }), (e) => (e as InstanceType<typeof UploadError>).code === 'too_large')
+  assert.equal(readUpload({ name: '../../etc/passwd', type: 'text/plain', size: 1, base64: 'QQ==' }).name, '.._.._etc_passwd')
+  const windowsPath = ['..', '..', 'boot.ini'].join(String.fromCharCode(92))
+  assert.equal(readUpload({ name: windowsPath, type: 'text/plain', size: 1, base64: 'QQ==' }).name, '.._.._boot.ini')
+})

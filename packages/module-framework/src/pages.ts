@@ -94,6 +94,7 @@ export type FieldKind =
   | 'hidden'
   | 'radio'      // one of the options, all shown: a question with one answer
   | 'checkboxes' // any of the options, posted as a list: a question with several
+  | 'file'       // one file, posted as `{ name, type, size, base64 }`: read it with readUpload
 
 export interface PluginField {
   name: string
@@ -111,6 +112,8 @@ export interface PluginField {
   rows?: number
   /** For a number: the smallest step. Default a whole number; `any` for a decimal answer. */
   step?: string
+  /** For a file: what the picker offers, as an input's `accept` -- `application/pdf`. */
+  accept?: string
 }
 
 export interface PluginForm {
