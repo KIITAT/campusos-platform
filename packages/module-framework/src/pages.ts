@@ -148,11 +148,29 @@ export interface PluginForm {
 export interface FormOutcome {
   notice?: string
   link?: string | null
+  /**
+   * A page to go to rather than back to the form: what was just made, when
+   * it has a page of its own -- a self-check's result, a new record. A path
+   * on the institution's own host under `/m/`; anything else is ignored and
+   * the reader returns to the form as usual.
+   */
+  next?: string
 }
 
 export interface PluginNote {
   kind: 'note'
   tone?: 'info' | 'warn' | 'danger'
+  text: string
+}
+
+/**
+ * A passage of text the reader came to read -- a notice's body, what a result
+ * means -- shown as written: blank lines part paragraphs and line breaks are
+ * kept. Plain text, never markup.
+ */
+export interface PluginProse {
+  kind: 'prose'
+  title?: string
   text: string
 }
 
@@ -228,6 +246,7 @@ export type PluginSection =
   | PluginTable
   | PluginForm
   | PluginNote
+  | PluginProse
   | PluginFigures
   | PluginLinks
   | PluginKanban
