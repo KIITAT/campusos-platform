@@ -110,7 +110,7 @@ export const paths = {
       responses: {
         '200': { description: 'The document as it was attached', content: { 'application/pdf': {}, 'image/png': {}, 'image/jpeg': {} } },
         ...gated,
-        '404': { description: 'No such document, or not this readerâ€™s to see', content: json(err) },
+        '404': { description: 'No such document, or not this reader’s to see', content: json(err) },
       },
     },
   },

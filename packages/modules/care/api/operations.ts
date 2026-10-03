@@ -750,6 +750,25 @@ export async function caseView(actor: Actor, requestId: string) {
       notes: written.map(({ n, by }) => ({ id: n.id, at: at(n.createdAt), by: by ?? '', body: n.body })),
       counsellors: others.map((o) => ({ value: o.value, label: `${o.label ?? o.value} (${o.title})` })),
       timeZone: s.timeZone,
+      // The case's own history, for the record's sidebar: case events are
+      // kept out of the audit log the office reads.
+      timeline: [
+        { at: r.createdAt.toISOString(), who: student?.name ?? null, text: `Asked: ${URGENCY[r.urgency].toLowerCase()}` },
+        ...(r.acceptedAt ? [{ at: r.acceptedAt.toISOString(), who: null, text: 'Taken by a counsellor' }] : []),
+        ...booked.map((a) => ({
+          at: a.createdAt.toISOString(),
+          who: null,
+          text: `Appointment for ${at(a.startsAt)}: ${a.status === 'held' ? 'attended' : a.status}`,
+        })),
+        ...written.map(({ n, by }) => ({
+          at: n.createdAt.toISOString(),
+          who: by,
+          text: n.body.startsWith('Handed to ') ? n.body.split(':')[0]! : 'Note',
+        })),
+        ...(r.closedAt
+          ? [{ at: r.closedAt.toISOString(), who: null, text: r.status === 'closed' ? `Closed: ${r.outcome ? OUTCOMES[r.outcome].toLowerCase() : ''}` : 'Withdrawn by the student' }]
+          : []),
+      ],
     }
   })
 }

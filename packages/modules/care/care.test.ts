@@ -269,6 +269,11 @@ test('a case is its counsellor’s: taken once, handed over with the reason in i
   assert.equal(v.request.counsellor, 'Mr Arjun Rao')
   assert.ok(v.notes.some((x) => x.body.startsWith('Handed to Mr Arjun Rao: Arjun runs')))
   assert.equal(v.appointments[0]!.status, 'cancelled', 'the first counsellor’s time is cancelled')
+  assert.deepEqual(
+    v.timeline.map((t) => t.text).filter((t) => !t.startsWith('Appointment')).sort(),
+    ['Asked: in the next few days', 'Handed to Mr Arjun Rao', 'Note', 'Taken by a counsellor'],
+    'the case keeps its own history',
+  )
   await assert.rejects(caseView(c.meena, req.id), (e) => status(e) === 404)
 
   await closeCase(c.arjun, { requestId: req.id, outcome: 'supported', note: 'Two sessions; coping well.' })
@@ -325,6 +330,15 @@ test('the office sees counts and counsellors, never a person', async () => {
   assert.ok(phqRows.every((r) => r.count === 'fewer than 5'))
   assert.ok(!JSON.stringify(stats).includes('Asha'), 'no student is named anywhere in the statistics')
   await assert.rejects(statistics(c.teacher), (e) => status(e) === 403)
+
+  // A session written up after the fact starts before the request was made:
+  // no wait, rather than a negative one.
+  const [first] = await withTenant(c.id, (tx) => tx.select().from(requests).where(eq(requests.studentId, c.asha.id)))
+  await accept(c.meena, { requestId: first!.id })
+  await book(c.meena, { requestId: first!.id, startsAt: new Date(Date.now() - 3 * 86_400_000).toISOString(), mode: 'in_person', place: 'Room 4' })
+  const later = await statistics(c.office, '30d')
+  assert.equal(later.figures.medianToFirst, 'under an hour')
+  assert.equal(later.figures.medianToTaken, 'under an hour')
   assert.equal((await statistics(c.meena)).figures.requests, 2, 'counsellors see the counts too')
 
   const s = await careSettings(c.office)

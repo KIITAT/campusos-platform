@@ -24,12 +24,12 @@ const MODE = choices(words.modes)
 const OUTCOME = choices(words.outcomes)
 
 const PRIVATE =
-  'What you do here is yours. Your answers are seen by nobody -- not your teachers, your mentor, your parents or the office -- unless you share them with a counsellor when you ask for help. The office sees only counts.'
+  'What you do here is yours. Your answers are seen by nobody — not your teachers, your mentor, your parents or the office — unless you share them with a counsellor when you ask for help. The office sees only counts.'
 const NOT_A_DIAGNOSIS = 'This is a screening questionnaire, not a diagnosis: only a conversation with a professional can tell you more.'
 
-const crisisNote = (crisisLine: string | undefined, contact?: string): PluginSection => ({
+const crisisNote = (crisisLine: string | undefined): PluginSection => ({
   kind: 'note',
-  text: `In danger, or thinking of harming yourself? Call ${crisisText(crisisLine)} now, at any hour.${typeof contact === 'string' && contact ? ` ${contact}` : ''}`,
+  text: `In danger, or thinking of harming yourself? Call ${crisisText(crisisLine)} now.`,
 })
 
 /** What a result suggests asking for: today after a safety answer, soon in the upper bands. */
@@ -60,7 +60,7 @@ export const pages: PluginPage[] = [
       const checks = (data.checks as { code: string; name: string; about: string; last: string | null }[] | undefined) ?? []
       const open = data.open as { id: string; status: string; counsellor: string; urgency: string } | null | undefined
       const out: PluginSection[] = [
-        crisisNote(s.crisisLine, s.contact),
+        crisisNote(s.crisisLine),
         { kind: 'note', text: PRIVATE },
         {
           kind: 'shortcuts',
@@ -116,6 +116,7 @@ export const pages: PluginPage[] = [
         {
           kind: 'table',
           title: 'Counsellors',
+          ...(typeof s.contact === 'string' && s.contact ? { note: s.contact } : {}),
           rows: 'counsellors',
           empty: 'The institution has not named its counsellors yet.',
           columns: [
@@ -225,7 +226,8 @@ export const pages: PluginPage[] = [
     title: 'Self-check result',
     roles: ['student', ...STAFF],
     async load(actor, req) {
-      return { v: await resultView(actor as Actor, param(req, 'id') ?? '') }
+      const v = await resultView(actor as Actor, param(req, 'id') ?? '')
+      return { v, answers: v.answers }
     },
     sections: (data) => {
       const v = data.v as Awaited<ReturnType<typeof resultView>> | undefined
@@ -240,7 +242,7 @@ export const pages: PluginPage[] = [
             : 'The student answered the safety question above “not at all”. Make contact today.',
         })
       } else if (v.mine) {
-        out.push(crisisNote(v.crisisLine, v.contact))
+        out.push(crisisNote(v.crisisLine))
       }
       out.push(
         {
@@ -324,7 +326,12 @@ export const pages: PluginPage[] = [
     menu: 'Requests',
     roles: [...STAFF],
     async load(actor) {
-      return { v: await queue(actor as Actor), admin: (ADMIN as readonly string[]).includes((actor as Actor).role) }
+      const v = await queue(actor as Actor)
+      return {
+        v,
+        admin: (ADMIN as readonly string[]).includes((actor as Actor).role),
+        ...(v.counsellor ? { waiting: v.waiting, cases: v.cases, appointments: v.appointments } : {}),
+      }
     },
     sections: (data) => {
       const v = data.v as Awaited<ReturnType<typeof queue>> | undefined
@@ -434,6 +441,7 @@ export const pages: PluginPage[] = [
           { label: 'Outcome', value: r.outcome },
           { label: 'Email', value: v.student.email },
         ],
+        timeline: v.timeline,
       }
     },
     sections: (data) => {
@@ -639,7 +647,7 @@ export const pages: PluginPage[] = [
         { kind: 'links', title: 'Period', links: data.periods as never },
         {
           kind: 'note',
-          text: `Counts for ${v.periodText}. Nobody is named. Where a count describes students -- what they asked about, how their checks came out -- 1 to 4 is shown as “fewer than 5”, and where that could be worked out from the total, the next smallest is hidden too.`,
+          text: `Counts for ${v.periodText}. Nobody is named. Where a count describes students — what they asked about, how their checks came out — 1 to 4 is shown as “fewer than 5”, and where that could be worked out from the total, the next smallest is hidden too.`,
         },
         {
           kind: 'figures',
@@ -820,7 +828,7 @@ export const pages: PluginPage[] = [
         {
           kind: 'form',
           title: 'Write a check',
-          note: 'Fixed once written: to change one, retire it and write another. Say where the questions come from -- a published scale and its licence, or that your counsellors wrote it.',
+          note: 'Fixed once written: to change one, retire it and write another. Say where the questions come from — a published scale and its licence, or that your counsellors wrote it.',
           submit: 'Offer it',
           path: '/instruments',
           fields: [

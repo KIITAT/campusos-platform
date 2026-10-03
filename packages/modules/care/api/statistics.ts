@@ -79,9 +79,12 @@ export async function statistics(actor: Actor, periodInput?: string | null) {
       .groupBy(appointments.requestId)
     const firstOf = new Map(firstAppointment.map((f) => [f.requestId, new Date(f.first)]))
     const days = (a: Date, b: Date) => (b.getTime() - a.getTime()) / 86_400_000
-    const toTaken = all.filter((r) => r.acceptedAt).map((r) => days(r.createdAt, r.acceptedAt!))
-    const toFirst = all.filter((r) => firstOf.has(r.id)).map((r) => days(r.createdAt, firstOf.get(r.id)!))
-    const round = (n: number | null) => (n === null ? '—' : n < 1 ? `${Math.round(n * 24)} hours` : `${Math.round(n * 10) / 10} days`)
+    // A session recorded after the fact -- a walk-in written up later -- can
+    // start before the request was made: that is no wait, not a negative one.
+    const toTaken = all.filter((r) => r.acceptedAt).map((r) => Math.max(0, days(r.createdAt, r.acceptedAt!)))
+    const toFirst = all.filter((r) => firstOf.has(r.id)).map((r) => Math.max(0, days(r.createdAt, firstOf.get(r.id)!)))
+    const round = (n: number | null) =>
+      n === null ? '—' : n < 1 / 24 ? 'under an hour' : n < 1 ? `${Math.round(n * 24)} hours` : `${Math.round(n * 10) / 10} days`
 
     const appts = await tx
       .select({ status: appointments.status, n: sql<number>`count(*)`.mapWith(Number) })
@@ -126,7 +129,7 @@ export async function statistics(actor: Actor, periodInput?: string | null) {
       const hidden = suppress(counts)
       return [
         { check: c.name, band: 'All', count: alone(total), total: true },
-        ...c.bands.map((b, i) => ({ check: '', band: b.label, count: shown(hidden[i]!), total: false })),
+        ...c.bands.map((b, i) => ({ check: c.name, band: b.label, count: shown(hidden[i]!), total: false })),
       ]
     })
     const [people] = await tx
