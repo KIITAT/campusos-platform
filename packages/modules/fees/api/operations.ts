@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { audit, auditLog, users, withTenant } from '@campusos/db'
 import { viewsOnBehalf, type Role, type ViewerScope } from '@campusos/module-framework'
 import {
@@ -16,6 +16,7 @@ import {
   feeRefunds,
   feeWaivers,
   receiptCounters,
+  studentCharges,
 } from '../schema'
 import {
   createFeeItemSchema,
@@ -495,6 +496,16 @@ export async function issueInvoices(actor: Actor, input: unknown) {
           )
       }
 
+      // The student's own charges are in the books now: from here they are
+      // waived or refunded, not cancelled.
+      const own = charges.map((c) => c.studentChargeId).filter((id): id is string => id !== null)
+      if (own.length > 0) {
+        await tx
+          .update(studentCharges)
+          .set({ invoicedAt: new Date() })
+          .where(and(inArray(studentCharges.id, own), isNull(studentCharges.invoicedAt)))
+      }
+
       issued.push({
         studentId: s.studentId,
         studentName: s.studentName,
@@ -677,9 +688,34 @@ async function chargesFor(tx: Tx, studentId: string, termId: string) {
     .innerJoin(sections, eq(sections.id, sectionMembers.sectionId))
     .where(eq(sectionMembers.userId, studentId))
 
-  if (progs.length === 0) return []
+  // Charges on this student alone -- a backlog paper -- whatever programme
+  // they read, billed beside the programme's own lines.
+  const own = (
+    await tx
+      .select({ id: studentCharges.id, label: studentCharges.label, chargedPaise: studentCharges.amountPaise })
+      .from(studentCharges)
+      .where(
+        and(
+          eq(studentCharges.studentId, studentId),
+          eq(studentCharges.termId, termId),
+          isNull(studentCharges.cancelledAt),
+        ),
+      )
+      .orderBy(asc(studentCharges.createdAt))
+  ).map((c) => ({
+    feeItemId: null as string | null,
+    studentChargeId: c.id as string | null,
+    label: c.label,
+    chargedPaise: c.chargedPaise,
+    waiverId: null as string | null,
+    waivedPaise: null as number | null,
+    waiverReason: null as string | null,
+    postedPaise: null as number | null,
+  }))
 
-  return tx
+  if (progs.length === 0) return own
+
+  const items = await tx
     .select({
       feeItemId: feeItems.id,
       label: feeItems.label,
@@ -701,6 +737,7 @@ async function chargesFor(tx: Tx, studentId: string, termId: string) {
       ),
     )
     .orderBy(asc(feeItems.label))
+  return [...items.map((i) => ({ ...i, feeItemId: i.feeItemId as string | null, studentChargeId: null as string | null })), ...own]
 }
 
 /**

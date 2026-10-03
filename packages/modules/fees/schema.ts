@@ -457,3 +457,51 @@ export const dropCredits = pgTable(
     tenantPolicy('fee_drop_credits'),
   ],
 )
+
+// --- charges for one student -------------------------------------------------
+
+/**
+ * A charge on one student rather than a programme: the fee for re-sitting a
+ * failed paper, a duplicate admit card. Raised by the office or by another
+ * module that owns the reason for it -- examinations books the backlog paper
+ * and charges for it here -- and billed with everything else on the next
+ * invoice. Cancelled only before it is invoiced: once it is in the books, the
+ * way back is a waiver or a refund, which leave their own trail.
+ */
+export const studentCharges = pgTable(
+  'fee_student_charges',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    termId: uuid('term_id')
+      .notNull()
+      .references(() => terms.id, { onDelete: 'restrict' }),
+    label: text().notNull(),
+    amountPaise: paise('amount_paise').notNull(),
+    /** Which module raised it, and its own id for the reason: `examinations`, a booking. */
+    sourceModule: text('source_module').notNull().default('fees'),
+    sourceId: text('source_id'),
+    createdBy: text('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+    /** Set when an invoice first carries it. */
+    invoicedAt: timestamp('invoiced_at', { withTimezone: true }),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    cancelReason: text('cancel_reason'),
+  },
+  (t) => [
+    index('fee_student_charges_student').on(t.studentId, t.termId),
+    uniqueIndex('fee_student_charges_source')
+      .on(t.sourceModule, t.sourceId)
+      .where(sql`source_id is not null and cancelled_at is null`),
+    check('fee_student_charges_amount', sql`amount_paise > 0`),
+    check('fee_student_charges_label', sql`length(trim(label)) > 0`),
+    check(
+      'fee_student_charges_cancel',
+      sql`(cancelled_at is null) = (cancel_reason is null) and (cancel_reason is null or length(trim(cancel_reason)) >= 5)`,
+    ),
+    tenantPolicy('fee_student_charges'),
+  ],
+)

@@ -7,6 +7,9 @@ import {
 import { eq } from 'drizzle-orm'
 import { db, institutions } from '@campusos/db'
 import {
+  cancelStudentCharge,
+  chargeStudent,
+  listStudentCharges,
   assessAid,
   awardScholarship,
   createFeeItem,
@@ -34,6 +37,21 @@ import {
 } from './api'
 
 export const routes: PluginRoute[] = [
+  {
+    method: 'GET',
+    path: '/charges',
+    handler: (actor, req) => listStudentCharges(actor as Actor, param(req, 'termId') ?? undefined),
+  },
+  {
+    method: 'POST',
+    path: '/charges',
+    handler: async (actor, req) => chargeStudent(actor as Actor, await jsonBody(req)),
+  },
+  {
+    method: 'POST',
+    path: '/charges/cancel',
+    handler: async (actor, req) => cancelStudentCharge(actor as Actor, await jsonBody(req)),
+  },
   {
     method: 'GET',
     path: '/scholarships',

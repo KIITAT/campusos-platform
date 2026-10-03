@@ -102,7 +102,8 @@ export const reconcilePaymentSchema = z
 
 export const ledgerLineSchema = z
   .object({
-    feeItemId: uuid,
+    /** Null for a charge on the student alone rather than their programme. */
+    feeItemId: uuid.nullable(),
     label: z.string(),
     chargedPaise: z.number().int(),
     waivedPaise: z.number().int(),

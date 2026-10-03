@@ -1,5 +1,6 @@
 import * as z from 'zod'
 import { manifest } from '../manifest'
+import { cancelStudentChargeSchema, chargeStudentSchema } from './charges'
 import {
   aidAssessmentSchema,
   awardScholarshipSchema,
@@ -106,6 +107,28 @@ export const paths = {
           content: json(err),
         },
       },
+    },
+  },
+  [`${base}/charges`]: {
+    get: {
+      summary: 'Charges on single students -- a backlog paper, a duplicate admit card -- optionally for one term',
+      tags: ['fees'],
+      responses: { '200': { description: 'OK' }, ...gated },
+    },
+    post: {
+      summary: 'Charge one student, billed on their next invoice',
+      tags: ['fees'],
+      requestBody: { content: json(chargeStudentSchema) },
+      responses: { '200': { description: 'Created' }, ...gated },
+    },
+  },
+  [`${base}/charges/cancel`]: {
+    post: {
+      summary: 'Cancel a charge not yet invoiced',
+      description: 'Once an invoice carries it, the way back is a waiver or a refund.',
+      tags: ['fees'],
+      requestBody: { content: json(cancelStudentChargeSchema) },
+      responses: { '200': { description: 'Cancelled' }, ...gated, '409': { description: 'Already invoiced', content: json(err) } },
     },
   },
   [`${base}/items`]: {

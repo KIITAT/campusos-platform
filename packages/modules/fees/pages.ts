@@ -9,6 +9,8 @@ import {
   listInvoices,
   listRefundRules,
   listScholarships,
+  listStudentCharges,
+  studentChoices,
   studentLedger,
   type Actor,
 } from './api'
@@ -102,6 +104,71 @@ export const pages: PluginPage[] = [
             hint: 'Rupees. 45000 or 1,234.56 both work; it is stored in paise.',
           },
           { name: 'dueOn', label: 'Due on', kind: 'date', optional: true },
+        ],
+      },
+    ],
+  },
+
+  {
+    path: '/student-charges',
+    title: 'Charges on one student',
+    menu: 'Student charges',
+    roles: [...OFFICE],
+    async load(actor) {
+      const a = actor as Actor
+      const [rows, structure, students] = await Promise.all([listStudentCharges(a), listStructure(a), studentChoices(a)])
+      return {
+        rows: rows.map((r) => ({ ...r, cancellable: r.state === 'pending' && r.sourceModule === 'fees' })),
+        students,
+        terms: structure.terms.map((t) => ({ value: t.id, label: `${t.code} - ${t.name}${t.isCurrent ? ' (current)' : ''}` })),
+        cancellable: rows
+          .filter((r) => r.state === 'pending' && r.sourceModule === 'fees')
+          .map((r) => ({ value: r.id, label: `${r.student}: ${r.label}` })),
+      }
+    },
+    sections: () => [
+      {
+        kind: 'note',
+        text:
+          'A charge on one student rather than a programme -- a backlog paper, a duplicate admit card. ' +
+          'Billed on the next invoice with everything else. Until then it can be cancelled; after, the way back is a waiver or a refund. ' +
+          'Charges raised by another module (examinations books backlog papers) are cancelled there.',
+      },
+      {
+        kind: 'table',
+        title: 'Charges on one student',
+        rows: 'rows',
+        empty: 'None.',
+        columns: [
+          { key: 'student', label: 'Student' },
+          { key: 'term', label: 'Term', kind: 'code' },
+          { key: 'label', label: 'For' },
+          { key: 'amountPaise', label: 'Amount', kind: 'money' },
+          { key: 'sourceModule', label: 'Raised by' },
+          { key: 'state', label: 'State', kind: 'status' },
+          { key: 'cancelReason', label: 'Cancelled because' },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Charge a student',
+        submit: 'Charge',
+        path: '/charges',
+        fields: [
+          { name: 'studentId', label: 'Student', kind: 'select', options: 'students' },
+          { name: 'termId', label: 'Term', kind: 'select', options: 'terms' },
+          { name: 'label', label: 'For', hint: 'e.g. Duplicate admit card' },
+          { name: 'amount', label: 'Amount', kind: 'money', hint: 'Rupees.' },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Cancel a charge',
+        submit: 'Cancel it',
+        path: '/charges/cancel',
+        fields: [
+          { name: 'chargeId', label: 'Charge', kind: 'select', options: 'cancellable' },
+          { name: 'reason', label: 'Why', kind: 'textarea', rows: 2 },
         ],
       },
     ],
