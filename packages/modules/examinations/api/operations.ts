@@ -22,6 +22,7 @@ import {
   type Transcript,
 } from './schemas'
 import { DEFAULT_GPA_BANDS, gradeCourse, gpa, type Band } from './grading'
+import { assertZone, instant } from './time'
 
 const MODULE = 'examinations'
 
@@ -258,7 +259,7 @@ export async function createExam(actor: Actor, input: unknown) {
         kind: data.kind,
         maxMarks: data.maxMarks.toString(),
         weightPercent: data.weightPercent.toString(),
-        scheduledAt: data.scheduledAt ? new Date(data.scheduledAt) : null,
+        scheduledAt: data.scheduledAt ? instant(data.scheduledAt, assertZone(data.timeZone)) : null,
         roomId: data.roomId ?? null,
       })
       .onConflictDoNothing()

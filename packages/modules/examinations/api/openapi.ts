@@ -1,6 +1,15 @@
 import * as z from 'zod'
 import { manifest } from '../manifest'
 import {
+  bookBacklogSchema,
+  cancelBacklogSchema,
+  cancelEnrolmentSchema,
+  enrolSchema,
+  setSettingsSchema,
+  setWindowSchema,
+  uploadPaperSchema,
+} from './cycle-schemas'
+import {
   createExamSchema,
   createSchemeSchema,
   enterMarksSchema,
@@ -155,4 +164,68 @@ export const paths = {
       },
     },
   },
+  ...cycle(),
+}
+
+/** The examination cycle: windows, enrolment, admit cards, backlogs, grade reports, sealed papers. */
+function cycle() {
+  const post = (summary: string, schema: z.ZodType, description?: string) => ({
+    post: {
+      summary,
+      ...(description ? { description } : {}),
+      tags: ['examinations'],
+      requestBody: { content: json(schema) },
+      responses: { '200': { description: 'OK' }, ...gated, '409': { description: 'Refused', content: json(err) } },
+    },
+  })
+  const get = (summary: string, query: string[] = [], description?: string) => ({
+    get: {
+      summary,
+      ...(description ? { description } : {}),
+      tags: ['examinations'],
+      parameters: query.map((name) => ({ name: name.replace('?', ''), in: 'query', required: !name.endsWith('?'), schema: { type: 'string' } })),
+      responses: { '200': { description: 'OK' }, ...gated },
+    },
+  })
+  const pdf = (summary: string, query: string[], description?: string) => ({
+    get: {
+      ...get(summary, query, description).get,
+      responses: { '200': { description: 'OK', content: { 'application/pdf': {} } }, ...gated, '409': { description: 'Refused', content: json(err) } },
+    },
+  })
+  return {
+    [`${base}/cycle/settings`]: {
+      ...get('How long before an exam its paper opens, and whether a grade report waits for feedback'),
+      ...post('Set them', setSettingsSchema),
+    },
+    [`${base}/windows`]: {
+      ...get("Every term's enrolment and backlog windows"),
+      ...post('Open or move a term’s enrolment or backlog window', setWindowSchema, 'Outside it the database refuses the enrolment or booking.'),
+    },
+    [`${base}/booking`]: get(
+      "The signed-in student's term: feedback, enrolment, admit card, backlogs and grade reports",
+      ['termId?'],
+    ),
+    [`${base}/enrol`]: post('Enrol for the term’s examinations, confirming one’s details', enrolSchema),
+    [`${base}/enrolments`]: get('Who is enrolled for a term, and who has classes but is not', ['termId']),
+    [`${base}/enrolments/cancel`]: post('Cancel an enrolment, with a reason', cancelEnrolmentSchema),
+    [`${base}/admit-card.pdf`]: pdf('The admit card for an enrolment', ['termId', 'studentId?']),
+    [`${base}/backlogs`]: {
+      ...get('Backlog papers booked for a term', ['termId']),
+      ...post('Book a failed paper to sit again', bookBacklogSchema, 'The fee is the window’s, worked out by the database, and charged through fees where it is on.'),
+    },
+    [`${base}/backlogs/cancel`]: post('Cancel a backlog booking and its fee', cancelBacklogSchema),
+    [`${base}/grade-report.pdf`]: pdf(
+      'A term’s grade report from the official record, with SGPA and CGPA',
+      ['termId', 'studentId?'],
+      'Held for a student whose required feedback is outstanding, where the institution says so.',
+    ),
+    [`${base}/papers`]: {
+      ...get('The sealed question papers for an exam, without their contents', ['examId']),
+      ...post('Upload a question paper (PDF), sealed until shortly before the exam', uploadPaperSchema),
+    },
+    [`${base}/paper.pdf`]: pdf('A question paper, for the examination cell, from its release time', ['paperId']),
+    [`${base}/stats`]: get('How an exam went: spread, middle, pass rate', ['examId']),
+    [`${base}/performance`]: get('One student across every published exam, beside their class', ['studentId?']),
+  }
 }

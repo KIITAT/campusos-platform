@@ -14,8 +14,17 @@ export const createExamSchema = z
     kind: z.enum(examKindEnum.enumValues),
     maxMarks: marks.refine((n) => n > 0, 'must be greater than zero'),
     weightPercent: z.coerce.number().min(0.01).max(100),
-    scheduledAt: z.iso.datetime().nullish(),
-    roomId: uuid.nullish(),
+    /** An ISO instant, or a wall-clock time as a form sends it, read in `timeZone`. */
+    scheduledAt: z.preprocess(
+      (v) => (v === '' ? null : v),
+      z
+        .string()
+        .trim()
+        .regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/, 'a date and time')
+        .nullish(),
+    ),
+    timeZone: z.string().trim().min(1).max(64).default('Asia/Kolkata'),
+    roomId: z.preprocess((v) => (v === '' ? null : v), uuid.nullish()),
   })
   .meta({ id: 'ExamCreate' })
 

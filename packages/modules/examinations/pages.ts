@@ -13,6 +13,8 @@ import {
   transcript,
   type Actor,
 } from './api'
+import { wallClock } from './api/time'
+import { cyclePages } from './cycle-pages'
 
 const MARKERS = ['institution_admin', 'super_admin', 'faculty', 'hod'] as const
 const ADMIN = ['institution_admin', 'super_admin'] as const
@@ -25,7 +27,7 @@ export const pages: PluginPage[] = [
     roles: [...MARKERS],
     async load(actor, req) {
       const a = actor as Actor
-      const offerings = await listOfferings(a)
+      const [offerings, structure] = await Promise.all([listOfferings(a), listStructure(a as unknown as AcademicActor)])
       const offeringId = param(req, 'offeringId') ?? offerings[0]?.id
       const examId = param(req, 'examId')
 
@@ -39,8 +41,12 @@ export const pages: PluginPage[] = [
           active: o.id === offeringId,
         })),
         offeringId: offeringId ?? '',
+        roomOptions: structure.rooms.map((r) => ({ value: r.id, label: r.code })),
         exams: exams.map((e) => ({
           ...e,
+          when: e.scheduledAt ? wallClock(e.scheduledAt, 'Asia/Kolkata') : '',
+          paper: 'Paper',
+          stats: e.publishedAt ? 'Statistics' : '',
           state: e.publishedAt ? 'published' : 'open',
           open: !e.publishedAt,
         })),
@@ -69,7 +75,10 @@ export const pages: PluginPage[] = [
           { key: 'kind', label: 'Kind' },
           { key: 'maxMarks', label: 'Out of' },
           { key: 'weightPercent', label: 'Weight' },
+          { key: 'when', label: 'When' },
           { key: 'state', label: 'Status', kind: 'status', alertWhen: 'open' },
+          { key: 'paper', label: '', href: '/m/examinations/paper?examId={id}' },
+          { key: 'stats', label: '', href: '/m/examinations/stats?examId={id}' },
         ],
       },
       {
@@ -95,6 +104,8 @@ export const pages: PluginPage[] = [
           },
           { name: 'maxMarks', label: 'Out of', kind: 'number' },
           { name: 'weightPercent', label: 'Weight %', kind: 'number' },
+          { name: 'scheduledAt', label: 'When', kind: 'datetime', optional: true, hint: 'India time. Printed on the admit card for a final.' },
+          { name: 'roomId', label: 'Room', kind: 'select', options: 'roomOptions', optional: true },
         ],
       },
       ...(data.examName
@@ -329,4 +340,5 @@ export const pages: PluginPage[] = [
       },
     ],
   },
+  ...cyclePages,
 ]

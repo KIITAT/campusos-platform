@@ -1,7 +1,11 @@
 import { sql } from 'drizzle-orm'
 import {
+  bigint,
   boolean,
   check,
+  customType,
+  integer,
+  jsonb,
   index,
   primaryKey,
   numeric,
@@ -14,7 +18,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core'
 import { institutions, tenantPolicy, users } from '@campusos/db'
-import { offerings, programs, rooms } from '@campusos/module-academic/schema'
+import { courses, offerings, programs, rooms, terms } from '@campusos/module-academic/schema'
 
 /**
  * Examinations and grading.
@@ -209,3 +213,177 @@ export const examMarks = pgTable(
     tenantPolicy('exam_marks'),
   ],
 )
+
+// --- the examination cycle: windows, enrolment, backlogs, papers ----------------
+
+/** Bytes, kept in the row: a question paper is small and must not leave the database's guard. */
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => 'bytea' })
+
+export const windowKindEnum = pgEnum('exam_window_kind', ['enrolment', 'backlog'])
+export const backlogTypeEnum = pgEnum('exam_backlog_type', ['internal', 'university', 'both'])
+
+/**
+ * When students may enrol for a term's examinations, or book a backlog paper.
+ * One of each per term. Outside it the database refuses the enrolment or the
+ * booking, as KIIT's portal says "the activity window is closed".
+ */
+export const examWindows = pgTable(
+  'exam_windows',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    termId: uuid('term_id')
+      .notNull()
+      .references(() => terms.id, { onDelete: 'restrict' }),
+    kind: windowKindEnum().notNull(),
+    opensAt: timestamp('opens_at', { withTimezone: true }).notNull(),
+    closesAt: timestamp('closes_at', { withTimezone: true }).notNull(),
+    /** Times are set and printed in it, the admit card's included. */
+    timeZone: text('time_zone').notNull().default('Asia/Kolkata'),
+    /** Printed on the admit card. */
+    instructions: text(),
+    /** Backlog only: what re-sitting the internal assessment, and the university exam, costs per paper. */
+    internalFeePaise: bigint('internal_fee_paise', { mode: 'number' }).notNull().default(0),
+    examFeePaise: bigint('exam_fee_paise', { mode: 'number' }).notNull().default(0),
+    createdBy: text('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('exam_windows_once').on(t.termId, t.kind),
+    check('exam_windows_span', sql`closes_at > opens_at`),
+    check('exam_windows_fees', sql`internal_fee_paise >= 0 and exam_fee_paise >= 0`),
+    tenantPolicy('exam_windows'),
+  ],
+)
+
+/**
+ * A student enrolled for a term's examinations, with the personal details
+ * they confirmed as they did it -- kept as they were, because that is what
+ * they agreed to and what the admit card was printed from.
+ */
+export const enrolments = pgTable(
+  'exam_enrolments',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    termId: uuid('term_id')
+      .notNull()
+      .references(() => terms.id, { onDelete: 'restrict' }),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    confirmed: jsonb().$type<Record<string, string | null>>().notNull(),
+    enrolledAt: timestamp('enrolled_at', { withTimezone: true }).notNull().defaultNow(),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    cancelledBy: text('cancelled_by').references(() => users.id, { onDelete: 'set null' }),
+    cancelReason: text('cancel_reason'),
+  },
+  (t) => [
+    uniqueIndex('exam_enrolments_once').on(t.termId, t.studentId).where(sql`cancelled_at is null`),
+    check('exam_enrolments_cancel', sql`(cancelled_at is null) = (cancel_reason is null)`),
+    tenantPolicy('exam_enrolments'),
+  ],
+)
+
+/** The papers an enrolment is for: the student's classes that term. */
+export const enrolmentPapers = pgTable(
+  'exam_enrolment_papers',
+  {
+    institutionId: tenantId(),
+    enrolmentId: uuid('enrolment_id')
+      .notNull()
+      .references(() => enrolments.id, { onDelete: 'cascade' }),
+    offeringId: uuid('offering_id')
+      .notNull()
+      .references(() => offerings.id, { onDelete: 'restrict' }),
+  },
+  (t) => [primaryKey({ columns: [t.enrolmentId, t.offeringId] }), tenantPolicy('exam_enrolment_papers')],
+)
+
+/**
+ * A failed paper booked to sit again: its internal assessment, its university
+ * exam, or both, at the fee the window set when it was booked.
+ */
+export const backlogBookings = pgTable(
+  'exam_backlog_bookings',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    termId: uuid('term_id')
+      .notNull()
+      .references(() => terms.id, { onDelete: 'restrict' }),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    courseId: uuid('course_id')
+      .notNull()
+      .references(() => courses.id, { onDelete: 'restrict' }),
+    bookingType: backlogTypeEnum('booking_type').notNull(),
+    feePaise: bigint('fee_paise', { mode: 'number' }).notNull().default(0),
+    bookedAt: timestamp('booked_at', { withTimezone: true }).notNull().defaultNow(),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    cancelledBy: text('cancelled_by').references(() => users.id, { onDelete: 'set null' }),
+    cancelReason: text('cancel_reason'),
+  },
+  (t) => [
+    uniqueIndex('exam_backlog_bookings_once')
+      .on(t.termId, t.studentId, t.courseId)
+      .where(sql`cancelled_at is null`),
+    check('exam_backlog_bookings_cancel', sql`(cancelled_at is null) = (cancel_reason is null)`),
+    check('exam_backlog_bookings_fee', sql`fee_paise >= 0`),
+    tenantPolicy('exam_backlog_bookings'),
+  ],
+)
+
+/**
+ * A question paper, uploaded by the examiner and sealed: nobody downloads it
+ * until shortly before the exam, and then only the examination cell, every
+ * time on the record. A new upload supersedes the last while it is still
+ * open to change.
+ */
+export const questionPapers = pgTable(
+  'exam_question_papers',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    examId: uuid('exam_id')
+      .notNull()
+      .references(() => exams.id, { onDelete: 'cascade' }),
+    version: smallint().notNull(),
+    fileName: text('file_name').notNull(),
+    contentType: text('content_type').notNull(),
+    sizeBytes: integer('size_bytes').notNull(),
+    sha256: text().notNull(),
+    content: bytea().notNull(),
+    uploadedBy: text('uploaded_by').references(() => users.id, { onDelete: 'set null' }),
+    uploadedAt: timestamp('uploaded_at', { withTimezone: true }).notNull().defaultNow(),
+    supersededAt: timestamp('superseded_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('exam_question_papers_version').on(t.examId, t.version),
+    uniqueIndex('exam_question_papers_current').on(t.examId).where(sql`superseded_at is null`),
+    check('exam_question_papers_size', sql`size_bytes > 0 and size_bytes = octet_length(content)`),
+    tenantPolicy('exam_question_papers'),
+  ],
+)
+
+/** The institution's rules for the cycle. One row; absent means the defaults. */
+export const examSettings = pgTable(
+  'exam_settings',
+  {
+    institutionId: uuid('institution_id')
+      .primaryKey()
+      .references(() => institutions.id, { onDelete: 'cascade' }),
+    /** How long before an exam its paper may be downloaded. */
+    paperReleaseMinutes: integer('paper_release_minutes').notNull().default(60),
+    /** A student's semester grade report waits for their required feedback, where the feedback module is on. */
+    gradeReportNeedsFeedback: boolean('grade_report_needs_feedback').notNull().default(false),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  () => [
+    check('exam_settings_release', sql`paper_release_minutes between 5 and 1440`),
+    tenantPolicy('exam_settings'),
+  ],
+)
+
+export type ExamWindow = typeof examWindows.$inferSelect

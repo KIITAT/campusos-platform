@@ -261,9 +261,18 @@ importers:
       '@campusos/module-academic':
         specifier: workspace:*
         version: link:../academic
+      '@campusos/module-feedback':
+        specifier: workspace:*
+        version: link:../feedback
+      '@campusos/module-fees':
+        specifier: workspace:*
+        version: link:../fees
       '@campusos/module-framework':
         specifier: workspace:*
         version: link:../../module-framework
+      '@campusos/money':
+        specifier: workspace:*
+        version: link:../../money
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@types/pg@8.23.1)(pg@8.23.0)

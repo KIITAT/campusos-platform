@@ -1,9 +1,30 @@
 import {
   jsonBody,
+  param,
   requiredParam,
   type PluginRoute,
 } from '@campusos/module-framework'
 import {
+  admitCard,
+  admitCardPdf,
+  backlogList,
+  bookBacklog,
+  cancelBacklog,
+  cancelEnrolment,
+  downloadPaper,
+  enrol,
+  enrolmentList,
+  examCycleSettings,
+  examStats,
+  gradeReport,
+  gradeReportPdf,
+  listWindows,
+  myExamCycle,
+  papersFor,
+  setExamCycleSettings,
+  setWindow,
+  studentPerformance,
+  uploadPaper,
   createExam,
   createScheme,
   enterMarks,
@@ -133,4 +154,76 @@ export const routes: PluginRoute[] = [
       })
     },
   },
+
+  // --- the examination cycle ---------------------------------------------------
+  { method: 'GET', path: '/cycle/settings', handler: (actor) => examCycleSettings(actor as Actor) },
+  post('/cycle/settings', setExamCycleSettings),
+  { method: 'GET', path: '/windows', handler: (actor) => listWindows(actor as Actor) },
+  post('/windows', setWindow),
+  { method: 'GET', path: '/booking', handler: (actor, req) => myExamCycle(actor as Actor, param(req, 'termId')) },
+  post('/enrol', enrol),
+  { method: 'GET', path: '/enrolments', handler: (actor, req) => enrolmentList(actor as Actor, requiredParam(req, 'termId')) },
+  post('/enrolments/cancel', cancelEnrolment),
+  pdf('/admit-card.pdf', async (actor, req) => {
+    const termId = requiredParam(req, 'termId')
+    const studentId = param(req, 'studentId') || actor.id
+    const a = await admitCard(actor, studentId, termId)
+    return { bytes: await admitCardPdf(a), name: `admit-card-${a.ticketNo}` }
+  }),
+  post('/backlogs', bookBacklog),
+  post('/backlogs/cancel', cancelBacklog),
+  { method: 'GET', path: '/backlogs', handler: (actor, req) => backlogList(actor as Actor, requiredParam(req, 'termId')) },
+  pdf('/grade-report.pdf', async (actor, req) => {
+    const termId = requiredParam(req, 'termId')
+    const studentId = param(req, 'studentId') || actor.id
+    const g = await gradeReport(actor, studentId, termId)
+    return { bytes: await gradeReportPdf(g), name: `grade-report-${g.term.code}-${g.student.rollNo ?? g.student.name}` }
+  }),
+  post('/papers', uploadPaper),
+  { method: 'GET', path: '/papers', handler: (actor, req) => papersFor(actor as Actor, requiredParam(req, 'examId')) },
+  {
+    // The sealed paper itself, for the examination cell, on the record.
+    method: 'GET',
+    path: '/paper.pdf',
+    raw: true,
+    handler: async (actor, req) => {
+      const p = await downloadPaper(actor as Actor, requiredParam(req, 'paperId'))
+      return new Response(new Uint8Array(p.content) as unknown as BodyInit, {
+        headers: {
+          'content-type': p.contentType,
+          'content-disposition': `attachment; filename="${p.fileName.replace(/[^a-zA-Z0-9._-]/g, '_')}"`,
+          'cache-control': 'no-store',
+        },
+      })
+    },
+  },
+  { method: 'GET', path: '/stats', handler: (actor, req) => examStats(actor as Actor, requiredParam(req, 'examId')) },
+  {
+    method: 'GET',
+    path: '/performance',
+    handler: (actor, req) => studentPerformance(actor as Actor, param(req, 'studentId') || (actor as Actor).id),
+  },
 ]
+
+function post(path: string, fn: (a: Actor, body: unknown) => Promise<unknown>): PluginRoute {
+  return { method: 'POST', path, handler: async (actor, req) => fn(actor as Actor, await jsonBody(req)) }
+}
+
+/** A generated document: bytes, not JSON, never cached. */
+function pdf(path: string, make: (actor: Actor, req: Request) => Promise<{ bytes: Uint8Array; name: string }>): PluginRoute {
+  return {
+    method: 'GET',
+    path,
+    raw: true,
+    handler: async (actor, req) => {
+      const { bytes, name } = await make(actor as Actor, req)
+      return new Response(bytes as unknown as BodyInit, {
+        headers: {
+          'content-type': 'application/pdf',
+          'content-disposition': `inline; filename="${name.replace(/[^a-zA-Z0-9._-]/g, '_')}.pdf"`,
+          'cache-control': 'no-store',
+        },
+      })
+    },
+  }
+}

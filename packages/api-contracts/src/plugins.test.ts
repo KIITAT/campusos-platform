@@ -105,9 +105,11 @@ test('the whole product still answers the same number of endpoints', () => {
   // employment history, leave policy, shifts, recruitment, appraisals, claims
   // and advances, salary structures, tax and gratuity -- and went from 17 to
   // 110. Ceremonies arrived with 18, quizzes with 22, skills with 12 and
-  // feedback with 19. A regression guard on the conversion, not a target.
+  // feedback with 19; the examination cycle added 18 to examinations, fees
+  // three for charges on one student, academic two for the student profile.
+  // A regression guard on the conversion, not a target.
   const total = PLUGINS.reduce((n, p) => n + p.routes.length, 0)
-  assert.equal(total, 325, `expected 325 endpoints across all modules, found ${total}`)
+  assert.equal(total, 348, `expected 348 endpoints across all modules, found ${total}`)
 })
 
 test('a longer path is never swallowed by a shorter one', () => {
@@ -129,7 +131,14 @@ test('only the document routes return bytes instead of JSON', () => {
   const raw = PLUGINS.flatMap((p) =>
     p.routes.filter((r) => r.raw).map((r) => `${p.manifest.id}${r.path}`),
   )
-  assert.deepEqual(raw.sort(), ['ceremonies/certificate.pdf', 'examinations/transcript.pdf', 'fees/receipt.pdf'])
+  assert.deepEqual(raw.sort(), [
+    'ceremonies/certificate.pdf',
+    'examinations/admit-card.pdf',
+    'examinations/grade-report.pdf',
+    'examinations/paper.pdf',
+    'examinations/transcript.pdf',
+    'fees/receipt.pdf',
+  ])
 })
 
 test('a plugin declares nothing outside its own base path', () => {
