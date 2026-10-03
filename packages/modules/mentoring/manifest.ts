@@ -5,7 +5,7 @@ export const manifest: ModuleManifest = {
   name: 'Mentoring',
   description:
     'A mentor and co-mentor for every student, who see the whole of them -- record, attendance, results, fees, where they live -- keep notes, talk with them, and decide their leave. Approved leave reaches the hostel roll call.',
-  version: '0.1.0',
+  version: '0.1.1',
   alwaysEnabled: false,
   dependsOn: ['academic'],
   softDependsOn: ['attendance', 'examinations', 'fees', 'hostel'],

@@ -245,7 +245,8 @@ export const pages: PluginPage[] = [
           { label: 'Lives in', value: v.housing ? `${v.housing.blockName} (${v.housing.block}), room ${v.housing.room}` : v.modules.hostel ? 'not in the hostel' : null },
           { label: 'Attendance', value: v.attendanceOverall === null ? null : `${v.attendanceOverall}% overall` },
           { label: 'Cumulative average', value: v.results?.cgpa ?? null },
-          { label: `Fees, ${v.fees?.term ?? ''}`, value: v.fees ? `${v.fees.outstanding} outstanding of ${v.fees.payable}` : null },
+          // Fees decides who reads a ledger; a mentor who may not, sees no line rather than a blank one.
+          ...(v.fees ? [{ label: `Fees, ${v.fees.term}`, value: `${v.fees.outstanding} outstanding of ${v.fees.payable}` }] : []),
         ],
       }
     },
