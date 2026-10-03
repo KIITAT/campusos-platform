@@ -29,6 +29,7 @@
     "@campusos/module-hostel": "workspace:*",
     "@campusos/module-hr": "workspace:*",
     "@campusos/module-library": "workspace:*",
+    "@campusos/module-mentoring": "workspace:*",
     "@campusos/module-notices": "workspace:*",
     "@campusos/module-parents": "workspace:*",
     "@campusos/module-quizzes": "workspace:*",
