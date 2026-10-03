@@ -1,4 +1,5 @@
 import { and, desc, eq, isNull, sql } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
 import * as z from 'zod'
 import { audit, users, withTenant } from '@campusos/db'
 import { courses, offerings, sections } from '@campusos/module-academic/schema'
@@ -214,21 +215,26 @@ export async function listExcuses(actor: Actor) {
           : actor.role === 'faculty'
             ? sql`${excuses.offeringId} in (select id from academic_offerings where faculty_user_id = ${actor.id})`
             : sql`false`
+    const granter = alias(users, 'granter')
     const rows = await tx
-      .select({ x: excuses, student: users.name, email: users.email, course: courses.code })
+      .select({ x: excuses, student: users.name, email: users.email, course: courses.code, by: granter.name, byEmail: granter.email })
       .from(excuses)
       .innerJoin(users, eq(users.id, excuses.studentId))
+      .leftJoin(granter, eq(granter.id, excuses.grantedBy))
       .leftJoin(offerings, eq(offerings.id, excuses.offeringId))
       .leftJoin(courses, eq(courses.id, offerings.courseId))
       .where(scope)
       .orderBy(desc(excuses.fromOn))
-    return rows.map((r) => ({
-      ...r.x,
-      student: r.student ?? r.email ?? r.x.studentId,
-      course: r.course ?? 'every class',
-      state: r.x.revokedAt ? 'revoked' : 'excused',
-      by: r.x.sourceModule ? `${r.x.sourceModule} (approved leave)` : 'office',
-    }))
+    return rows.map((r) => {
+      const who = r.by ?? r.byEmail ?? 'the office'
+      return {
+        ...r.x,
+        student: r.student ?? r.email ?? r.x.studentId,
+        course: r.course ?? 'every class',
+        state: r.x.revokedAt ? 'revoked' : 'excused',
+        by: r.x.sourceModule ? `${who}, approving leave in ${r.x.sourceModule}` : who,
+      }
+    })
   })
 }
 

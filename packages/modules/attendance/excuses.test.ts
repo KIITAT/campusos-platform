@@ -124,6 +124,7 @@ test('present, excused and absent, by the institution’s rule for what counts',
   await grantExcuse(c.rao, { studentId: c.asha.id, offeringId: c.offeringId, fromOn: today(), toOn: today(), kind: 'medical', reason: 'fever, doctor’s note seen' })
   ;[asha] = await attendanceSummary(c.asha, c.asha.id)
   assert.deepEqual([asha!.present, asha!.excused, asha!.absent, asha!.percent, asha!.short], [2, 2, 0, 100, false])
+  assert.equal((await listExcuses(c.asha))[0]!.by, 'Dr Rao', 'who excused it, by name')
 
   // An institution where only attendance counts.
   await setAttendanceRules(c.admin, { minimumPercent: 75, excusedCounts: 'false' })

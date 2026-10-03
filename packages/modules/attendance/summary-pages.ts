@@ -154,12 +154,19 @@ export const summaryPages: PluginPage[] = [
       const [rows, rules, classes, students] = await Promise.all([listExcuses(a), attendanceRules(a), classChoices(a), excusableStudents(a)])
       const runs = a.role !== 'faculty'
       return {
-        rows: rows.map((r) => ({ ...r, days: `${r.fromOn} to ${r.toOn}` })),
+        rows: rows.map((r) => ({
+          ...r,
+          days: r.fromOn === r.toOn ? r.fromOn : `${r.fromOn} to ${r.toOn}`,
+          kindText: KINDS.find((k) => k.value === r.kind)?.label ?? r.kind,
+          why: r.revokeReason ? `${r.reason} (revoked: ${r.revokeReason})` : r.reason,
+        })),
         rules,
         runs,
         classes,
         students,
-        revocable: rows.filter((r) => r.state === 'excused' && !r.sourceModule).map((r) => ({ value: r.id, label: `${r.student}: ${r.course}, ${r.fromOn} to ${r.toOn}` })),
+        revocable: rows
+          .filter((r) => r.state === 'excused' && !r.sourceModule)
+          .map((r) => ({ value: r.id, label: `${r.student}: ${r.course}, ${r.fromOn === r.toOn ? r.fromOn : `${r.fromOn} to ${r.toOn}`}` })),
       }
     },
     sections: (data) => {
@@ -176,8 +183,8 @@ export const summaryPages: PluginPage[] = [
             { key: 'student', label: 'Student' },
             { key: 'course', label: 'Class' },
             { key: 'days', label: 'Days' },
-            { key: 'kind', label: 'Kind' },
-            { key: 'reason', label: 'Why' },
+            { key: 'kindText', label: 'Kind' },
+            { key: 'why', label: 'Why' },
             { key: 'by', label: 'By' },
             { key: 'state', label: 'State', kind: 'status' },
           ],
