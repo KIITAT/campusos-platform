@@ -23,6 +23,7 @@
     "@campusos/module-ceremonies": "workspace:*",
     "@campusos/module-enrollment": "workspace:*",
     "@campusos/module-examinations": "workspace:*",
+    "@campusos/module-feedback": "workspace:*",
     "@campusos/module-fees": "workspace:*",
     "@campusos/module-finance": "workspace:*",
     "@campusos/module-hostel": "workspace:*",

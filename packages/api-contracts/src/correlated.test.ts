@@ -26,18 +26,36 @@ const sources = (dir: string): string[] =>
     return /\.ts$/.test(f) && !f.endsWith('.test.ts') ? [p] : []
   })
 
+/** Names that are tables here: imported from a schema or the core, or declared with pgTable. */
+function tablesIn(text: string): Set<string> {
+  const names = new Set<string>()
+  for (const m of text.matchAll(/import\s*(?:type\s*)?\{([^}]*)\}\s*from\s*'([^']+)'/g)) {
+    if (!/schema$|^@campusos\/db$/.test(m[2]!)) continue
+    for (const part of m[1]!.split(',')) {
+      const name = part.trim().replace(/^type\s+/, '').split(/\s+as\s+/).pop()!.trim()
+      if (name) names.add(name)
+    }
+  }
+  for (const m of text.matchAll(/(?:const|let)\s+(\w+)\s*=\s*pgTable\(/g)) names.add(m[1]!)
+  return names
+}
+
 test('no correlated subquery refers to the outer row through a Drizzle column', () => {
   const found: string[] = []
   for (const file of sources(MODULES)) {
     const text = readFileSync(file, 'utf8')
-    // Every sql`...` template, then any `(select` in it that interpolates a column.
+    const tables = tablesIn(text)
+    // Every sql`...` template, then any `(select` in it that interpolates a
+    // table's column. `${row.id}` is a bound value and fine; `${titles.id}` is
+    // the trap.
     for (const m of text.matchAll(/sql(?:<[^>]*>)?`([^`]*)`/g)) {
       const body = m[1]!
       const sub = body.indexOf('(select')
       if (sub === -1) continue
-      for (const col of body.slice(sub).matchAll(/\$\{(\w+\.\w+)\}/g)) {
+      for (const col of body.slice(sub).matchAll(/\$\{(\w+)\.\w+\}/g)) {
+        if (!tables.has(col[1]!)) continue
         const line = text.slice(0, m.index).split('\n').length
-        found.push(`${relative(MODULES, file)}:${line} \${${col[1]}}`)
+        found.push(`${relative(MODULES, file)}:${line} \${${col[0].slice(2, -1)}}`)
       }
     }
   }

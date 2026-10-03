@@ -18,6 +18,7 @@ import notices from '@campusos/module-notices/plugin'
 import parents from '@campusos/module-parents/plugin'
 import quizzes from '@campusos/module-quizzes/plugin'
 import skills from '@campusos/module-skills/plugin'
+import feedback from '@campusos/module-feedback/plugin'
 
 /**
  * Every module, as the host will see it after installing the package.
@@ -41,6 +42,7 @@ const PLUGINS: Plugin[] = [
   parents,
   quizzes,
   skills,
+  feedback,
 ]
 
 const MODULES_DIR = join(process.cwd(), '..', 'modules')
@@ -102,10 +104,10 @@ test('the whole product still answers the same number of endpoints', () => {
   // and the scale a programme grades on. HR then became the whole of HR --
   // employment history, leave policy, shifts, recruitment, appraisals, claims
   // and advances, salary structures, tax and gratuity -- and went from 17 to
-  // 110. Ceremonies arrived with 18, quizzes with 22 and skills with 12. A
-  // regression guard on the conversion, not a target.
+  // 110. Ceremonies arrived with 18, quizzes with 22, skills with 12 and
+  // feedback with 19. A regression guard on the conversion, not a target.
   const total = PLUGINS.reduce((n, p) => n + p.routes.length, 0)
-  assert.equal(total, 306, `expected 306 endpoints across all modules, found ${total}`)
+  assert.equal(total, 325, `expected 325 endpoints across all modules, found ${total}`)
 })
 
 test('a longer path is never swallowed by a shorter one', () => {
