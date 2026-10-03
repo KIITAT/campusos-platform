@@ -1,5 +1,4 @@
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib'
-import { plainPaise } from '@campusos/money'
 import type { DemandLetterView } from './transfers'
 
 /**
@@ -15,7 +14,19 @@ const ink = rgb(0.1, 0.1, 0.12)
 const faint = rgb(0.45, 0.45, 0.5)
 const rule = rgb(0.8, 0.8, 0.83)
 const safe = (s: string) => s.replace(/[‘’]/g, "'").replace(/[–—]/g, '-').replace(/[^\x20-\x7E]/g, '?')
-const rs = (p: number) => `Rs ${plainPaise(p)}`
+/**
+ * Indian grouping (2,97,345.00), as a bank reads it -- written out here rather
+ * than taken from the locale, so a document of record does not change shape
+ * with the server. The rupee sign is not in the standard fonts.
+ */
+export const rs = (paise: number) => {
+  const a = Math.abs(paise)
+  const whole = String(Math.floor(a / 100))
+  const last3 = whole.slice(-3)
+  const rest = whole.slice(0, -3)
+  const grouped = rest ? `${rest.replace(/\B(?=(\d{2})+(?!\d))/g, ',')},${last3}` : last3
+  return `${paise < 0 ? '-' : ''}Rs ${grouped}.${String(a % 100).padStart(2, '0')}`
+}
 
 export async function demandLetterPdf(v: DemandLetterView): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
@@ -31,6 +42,13 @@ export async function demandLetterPdf(v: DemandLetterView): Promise<Uint8Array> 
     page.drawText(safe(s), { x, y, size, font: f, color })
   const right = (s: string, xRight: number, size = 10, f: PDFFont = font) =>
     page.drawText(safe(s), { x: xRight - f.widthOfTextAtSize(safe(s), size), y, size, font: f, color: ink })
+  /** As much of a label as fits before the amount column, ending in an ellipsis if cut. */
+  const fit = (s: string, width: number, size = 10) => {
+    let out = safe(s)
+    if (font.widthOfTextAtSize(out, size) <= width) return out
+    while (out.length > 1 && font.widthOfTextAtSize(`${out}...`, size) > width) out = out.slice(0, -1)
+    return `${out.trimEnd()}...`
+  }
   const line = () => page.drawLine({ start: { x: M, y: y + 4 }, end: { x: A4.w - M, y: y + 4 }, thickness: 0.5, color: rule })
   const para = (s: string, size = 10, color = ink) => {
     const width = A4.w - 2 * M
@@ -91,12 +109,12 @@ export async function demandLetterPdf(v: DemandLetterView): Promise<Uint8Array> 
   line()
   y -= 12
   for (const l of c.lines) {
-    text(l.label.slice(0, 70), M, 10)
+    text(fit(l.label, A4.w - 2 * M - 110), M, 10)
     right(rs(l.amountPaise), A4.w - M)
     y -= 15
   }
   for (const dd of c.deductions) {
-    text(`Less: ${dd.label}`.slice(0, 70), M, 10, font, faint)
+    text(fit(`Less: ${dd.label}`, A4.w - 2 * M - 110), M, 10, font, faint)
     right(`- ${rs(dd.amountPaise)}`, A4.w - M)
     y -= 15
   }

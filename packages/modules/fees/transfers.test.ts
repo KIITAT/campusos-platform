@@ -19,6 +19,7 @@ import {
   rejectClaim,
   retireBankAccount,
   rupeesInWords,
+  rs,
   studentLedger,
   verifyClaim,
   verifyDemandLetter,
@@ -107,6 +108,7 @@ test('an amount in words is written the Indian way', () => {
   assert.equal(rupeesInWords(1_000_000_000), 'Rupees One Crore Only')
   assert.equal(rupeesInWords(12_345_678_900), 'Rupees Twelve Crore Thirty Four Lakh Fifty Six Thousand Seven Hundred Eighty Nine Only')
   assert.equal(rupeesInWords(0), 'Rupees Zero Only')
+  assert.deepEqual([rs(29_734_500), rs(100), rs(1_000_000_000), rs(-250_050)], ['Rs 2,97,345.00', 'Rs 1.00', 'Rs 1,00,00,000.00', '-Rs 2,500.50'])
 })
 
 test('a reported transfer is verified into a receipted, reconciled payment, once', async () => {

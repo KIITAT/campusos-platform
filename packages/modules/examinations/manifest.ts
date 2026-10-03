@@ -5,7 +5,7 @@ export const manifest: ModuleManifest = {
   name: 'Examinations & Grading',
   description:
     'Exam scheduling, marks entry with publish-locking, configurable grade scales and transcripts; the examination cycle -- enrolment, admit cards, backlog booking, semester grade reports, sealed question papers -- and statistics.',
-  version: '0.3.1',
+  version: '0.3.2',
   alwaysEnabled: false,
   dependsOn: ['academic'],
   softDependsOn: ['feedback', 'fees'],

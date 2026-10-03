@@ -524,6 +524,8 @@ export async function admitCard(actor: Actor, studentId: string, termId: string)
 
 // --- backlogs ---------------------------------------------------------------------
 
+/** Shorter, for a fee line on an invoice or a letter. */
+const CHARGE_WORDS = { internal: 'internal', university: 'exam', both: 'internal and exam' } as const
 const TYPE_WORDS = { internal: 'internal assessment', university: 'university exam', both: 'internal assessment and university exam' } as const
 
 export async function bookBacklog(actor: Actor, input: unknown) {
@@ -543,7 +545,7 @@ export async function bookBacklog(actor: Actor, input: unknown) {
         await chargeStudentWithin(tx, tenant, actor.id, {
           studentId: actor.id,
           termId: d.termId,
-          label: `Backlog: ${c!.code} ${c!.title} (${TYPE_WORDS[d.bookingType]})`,
+          label: `Backlog: ${c!.code} ${c!.title} (${CHARGE_WORDS[d.bookingType]})`,
           amountPaise: b!.feePaise,
           sourceModule: MODULE,
           sourceId: b!.id,
