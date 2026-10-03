@@ -1,4 +1,5 @@
 import type { PluginPage, PluginSection } from '@campusos/module-framework'
+import { formatPaise } from '@campusos/money'
 import { listStructure } from '@campusos/module-academic/api'
 import {
   claimQueue,
@@ -183,7 +184,7 @@ export const transferPages: PluginPage[] = [
           kind: 'figures',
           figures: [
             { label: 'Waiting to be checked', value: String(n.pending), tone: n.pending ? 'due' : 'clear' },
-            { label: 'Claimed, waiting', value: `Rs ${(n.pendingAmount / 100).toLocaleString('en-IN')}` },
+            { label: 'Claimed, waiting', value: formatPaise(n.pendingAmount) },
             { label: 'Verified', value: String(n.verified) },
           ],
         },
