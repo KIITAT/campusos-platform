@@ -1,7 +1,6 @@
 import type { PluginPage } from '@campusos/module-framework'
+import { classesPage } from './screens/classes'
+import { setupPages } from './screens/setup'
+import { timetablePages } from './screens/timetables'
 
-/**
- * No screens yet: they are specified in SCREENS.md, page by page, for whoever
- * builds them. Every operation is already an HTTP route (routes.ts).
- */
-export const pages: PluginPage[] = []
+export const pages: PluginPage[] = [timetablePages[0]!, ...setupPages, classesPage, ...timetablePages.slice(1)]

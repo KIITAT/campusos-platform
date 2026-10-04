@@ -29,6 +29,8 @@ const pool =
   shared ??
   new Pool({
     connectionString: process.env.DATABASE_URL,
+    connectionTimeoutMillis: 5000,
+    statement_timeout: 120000,
     max: 5, // ponytail: fine for serverless + local; tune if pool waits show up in traces
   })
 
@@ -55,7 +57,7 @@ let ownerDb: ReturnType<typeof drizzle> | null = null
 
 const owner = () =>
   (ownerDb ??= drizzle(
-    new Pool({ connectionString: process.env.MIGRATION_DATABASE_URL, max: 2 }),
+    new Pool({ connectionString: process.env.AUTH_DATABASE_URL ?? process.env.MIGRATION_DATABASE_URL, connectionTimeoutMillis: 5000, statement_timeout: process.env.AUTH_DATABASE_URL ? 30000 : 0, max: 2 }),
     { schema },
   ))
 

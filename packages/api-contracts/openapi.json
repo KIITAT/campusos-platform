@@ -6,6 +6,55 @@
     "description": "Multi-tenant college ERP. Tenant is resolved from the request host; every tenant-scoped read is additionally enforced by Postgres RLS."
   },
   "paths": {
+    "/api/v1/mobile/pages": {
+      "get": {
+        "summary": "Authorized module-page catalog, mobile schema version and safe offline operations",
+        "responses": {
+          "200": {
+            "description": "Role- and entitlement-filtered page catalog"
+          },
+          "401": {
+            "description": "Sign in required"
+          },
+          "403": {
+            "description": "No institution"
+          }
+        }
+      }
+    },
+    "/api/v1/mobile/page": {
+      "get": {
+        "summary": "Render an authorized plugin page as serializable data, sections and record actions",
+        "parameters": [
+          {
+            "name": "href",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^/m/"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Schema version 1 rendered page"
+          },
+          "400": {
+            "description": "Invalid page address"
+          },
+          "401": {
+            "description": "Sign in required"
+          },
+          "403": {
+            "description": "Role or entitlement denied"
+          },
+          "404": {
+            "description": "Unknown page or module"
+          }
+        }
+      }
+    },
     "/api/v1/me": {
       "get": {
         "summary": "The signed-in user, their role, and the modules their institution has enabled",

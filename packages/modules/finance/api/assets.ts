@@ -426,7 +426,7 @@ async function currentCostCenter(tx: Tx, a: typeof assets.$inferSelect) {
   return last?.c ?? a.costCenter
 }
 
-async function postDue(tx: Tx, actor: Actor, upTo: string, assetIds?: string[]) {
+export async function postDue(tx: Tx, actor: Actor, upTo: string, assetIds?: string[]) {
   const tenant = actor.institutionId!
   const due = await tx
     .select({ row: depreciationSchedule, asset: assets, cat: assetCategories })
@@ -443,6 +443,7 @@ async function postDue(tx: Tx, actor: Actor, upTo: string, assetIds?: string[]) 
       ),
     )
     .orderBy(asc(depreciationSchedule.periodEnd))
+    .for('update', { of: depreciationSchedule })
   const byPeriod = new Map<string, typeof due>()
   for (const d of due) {
     if (d.row.amountPaise === 0) continue
@@ -702,4 +703,3 @@ export async function depreciationReport(actor: Actor, input: { from: string; to
     }))
   })
 }
-

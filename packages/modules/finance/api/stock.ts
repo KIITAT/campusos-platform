@@ -889,6 +889,7 @@ const lineSchema = z.object({
 
 export const stockEntrySchema = z
   .object({
+    stockEntryId: optionalId,
     kind: z.enum(['receipt', 'issue', 'transfer', 'reconciliation']),
     postingDate: z.iso.date().optional().or(z.literal('').transform(() => undefined)),
     memo: optional(500),
@@ -923,6 +924,14 @@ export async function createStockEntry(actor: Actor, input: unknown) {
 
   return withTenant(tenant, (tx) =>
     named(async () => {
+      let stockEntryId = data.stockEntryId
+      if (stockEntryId) {
+        const [entry] = await tx.select().from(stockEntries).where(eq(stockEntries.id, stockEntryId)).for('update')
+        if (!entry) throw new FinanceError(404, 'no_such_stock_entry', 'no such stock entry')
+        if (entry.docstatus !== 'draft') throw new FinanceError(409, 'not_a_draft', 'only a draft is edited')
+        const existingLines = await tx.select().from(stockEntryLines).where(eq(stockEntryLines.stockEntryId, stockEntryId))
+        await requireStores(tx, actor, existingLines.flatMap(line => [line.fromWarehouseId, line.toWarehouseId]))
+      }
       const today = await localToday(tx, tenant)
       const fallback = await defaultWarehouse(tx, tenant)
       const prepared = []
@@ -975,23 +984,28 @@ export async function createStockEntry(actor: Actor, input: unknown) {
         prepared.flatMap((p) => [p.fromWarehouseId, p.toWarehouseId]),
       )
 
-      const [entry] = await tx
-        .insert(stockEntries)
-        .values({
-          institutionId: tenant,
-          kind: data.kind,
-          postingDate: data.postingDate ?? today,
-          memo: data.memo ?? null,
-          costCenter: data.costCenter ?? null,
-          fundId: data.fundId ?? null,
-          accountId: data.accountId ?? null,
-          materialRequestId: data.materialRequestId ?? null,
-          createdBy: actor.id,
-        })
-        .returning({ id: stockEntries.id })
-      await tx.insert(stockEntryLines).values(prepared.map((p) => ({ ...p, stockEntryId: entry!.id })))
-      if (data.submit) return submitStockWithin(tx, actor, entry!.id)
-      return { id: entry!.id, notice: 'Saved as a draft.', next: `/m/finance/stock-entry?id=${entry!.id}` }
+      const header = {
+        kind: data.kind,
+        postingDate: data.postingDate ?? today,
+        memo: data.memo ?? null,
+        costCenter: data.costCenter ?? null,
+        fundId: data.fundId ?? null,
+        accountId: data.accountId ?? null,
+        materialRequestId: data.materialRequestId ?? null,
+      }
+      if (stockEntryId) {
+        await tx.update(stockEntries).set(header).where(eq(stockEntries.id, stockEntryId))
+        await tx.delete(stockEntryLines).where(eq(stockEntryLines.stockEntryId, stockEntryId))
+      } else {
+        const [entry] = await tx
+          .insert(stockEntries)
+          .values({ ...header, institutionId: tenant, createdBy: actor.id })
+          .returning({ id: stockEntries.id })
+        stockEntryId = entry!.id
+      }
+      await tx.insert(stockEntryLines).values(prepared.map(line => ({ ...line, stockEntryId })))
+      if (data.submit) return submitStockWithin(tx, actor, stockEntryId)
+      return { id: stockEntryId, notice: 'Saved as a draft.', next: `/m/finance/stock-entry?id=${stockEntryId}` }
     }),
   )
 }
@@ -1479,4 +1493,3 @@ export async function stockAgainstBooks(actor: Actor) {
     }))
   })
 }
-

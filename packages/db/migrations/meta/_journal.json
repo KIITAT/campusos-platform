@@ -29,6 +29,13 @@
       "when": 1790156396546,
       "tag": "0003_address_taken",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791158400000,
+      "tag": "0004_job_queue",
+      "breakpoints": true
     }
   ]
 }

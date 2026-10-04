@@ -19,6 +19,8 @@
   },
   "devDependencies": {
     "@campusos/module-academic": "workspace:*",
+    "@campusos/module-admissions": "workspace:*",
+    "@campusos/module-alumni": "workspace:*",
     "@campusos/module-attendance": "workspace:*",
     "@campusos/module-care": "workspace:*",
     "@campusos/module-ceremonies": "workspace:*",
@@ -28,14 +30,17 @@
     "@campusos/module-fees": "workspace:*",
     "@campusos/module-finance": "workspace:*",
     "@campusos/module-hostel": "workspace:*",
+    "@campusos/module-helpdesk": "workspace:*",
     "@campusos/module-hr": "workspace:*",
     "@campusos/module-library": "workspace:*",
     "@campusos/module-mentoring": "workspace:*",
     "@campusos/module-notices": "workspace:*",
     "@campusos/module-parents": "workspace:*",
+    "@campusos/module-placement": "workspace:*",
     "@campusos/module-quizzes": "workspace:*",
     "@campusos/module-skills": "workspace:*",
     "@campusos/module-timetable": "workspace:*",
+    "@campusos/module-transport": "workspace:*",
     "@types/node": "^24.10.1",
     "tsx": "^4.23.12"
   }

@@ -90,7 +90,7 @@ export const updateAccountSchema = z
   .meta({ id: 'FinanceUpdateAccount' })
 
 export const archiveAccountSchema = z
-  .object({ accountId: uuid, archived: z.boolean() })
+  .object({ accountId: uuid, archived: z.preprocess(ticked, z.boolean()) })
   .meta({ id: 'FinanceArchiveAccount' })
 
 /**

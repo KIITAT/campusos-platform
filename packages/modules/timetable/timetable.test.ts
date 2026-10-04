@@ -48,6 +48,7 @@ import {
   type Actor,
 } from './api'
 import { runEntries, runs } from './schema'
+import { pages } from './pages'
 
 /**
  * The timetable end to end, against the database: a college set up, its week
@@ -299,4 +300,49 @@ test('eligibility comes in from a spreadsheet, all of it or none', async () => {
   // Importing the same file again changes nothing but the preferences.
   const again = await importEligibility(k.admin, csv(good.replace(',5\n', ',4\n')))
   assert.equal(again.imported, 3)
+})
+
+test('declared pages load real timetable data and keep faculty views personal', async () => {
+  const collegeData = await college()
+  const { admin, term } = collegeData
+  await generatePeriods(admin, { days: ['1', '7'], startsAt: '09:00', minutes: '60', count: '3' })
+  await addEligibility(admin, { userId: collegeData.u.rao, courseId: collegeData.C.ds })
+  await setNeed(admin, { offeringId: collegeData.O.aDs, periodsPerWeek: '2' })
+  const unavailable = await addUnavailable(collegeData.faculty('rao'), { dayOfWeek: '5', reason: 'Research' })
+  await addUnavailable(collegeData.faculty('sen'), { dayOfWeek: '6', reason: 'Other teacher' })
+  const draft = await generateRun(admin, { termId: term.id, seed: '42', iterations: '50' })
+  const loadPage = async (path: string, actor: Actor = admin, query = '') => {
+    const page = pages.find(candidate => candidate.path === path)!
+    const data = await page.load(actor, new Request(`https://college.test/m/timetable${path}?${query}`))
+    const sections = page.sections(data)
+    for (const section of sections) {
+      if (section.kind === 'table') assert.ok(Array.isArray(data[section.rows]), `${path}: ${section.rows} must be loaded`)
+      if (section.kind === 'form') {
+        for (const field of section.fields) {
+          if (typeof field.options === 'string') assert.ok(Array.isArray(data[field.options]), `${path}: ${field.options} must be loaded`)
+        }
+      }
+    }
+    return { data, sections, record: page.record?.(data) }
+  }
+  for (const page of pages.filter(candidate => candidate.roles.includes('institution_admin'))) {
+    const result = await loadPage(page.path, admin, `id=${draft.id}&sectionId=${collegeData.S.a}`)
+    if (page.path === '/run') {
+      assert.match(result.record!.title, /Autumn/)
+      assert.ok((result.data.meetingOptions as unknown[]).length > 0)
+      assert.deepEqual((result.data.grid as { days: { day: number }[] }).days.map(day => day.day), [1, 7])
+    }
+  }
+  await applyRun(admin, { runId: draft.id })
+  const own = collegeData.faculty('rao')
+  const facultyLive = await loadPage('/live', own, `teacherId=${collegeData.u.sen}`)
+  assert.deepEqual(facultyLive.data.index, { sections: [], teachers: [], rooms: [] })
+  assert.deepEqual(facultyLive.data.workload, [])
+  const personal = await loadPage('/my', own)
+  assert.ok((personal.data.grid as { meetings: unknown[] }).meetings.length > 0)
+  const availability = await loadPage('/unavailable', own, `userId=${collegeData.u.sen}`)
+  assert.deepEqual((availability.data.unavailable as { id: string }[]).map(row => row.id), [unavailable.id])
+  const eligibility = await loadPage('/eligibility', own, `userId=${collegeData.u.sen}`)
+  assert.ok((eligibility.data.eligibility as { userId: string }[]).every(row => row.userId === own.id))
+  assert.ok(!eligibility.sections.some(section => section.kind === 'form' && section.method !== 'GET'))
 })

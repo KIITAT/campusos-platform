@@ -1,6 +1,7 @@
 import * as z from 'zod'
 import { manifest } from '../manifest'
 import { grantExcuseSchema, revokeExcuseSchema, rulesSchema } from './excuses'
+import { heldSessionSchema, offlinePolicySchema, prepareSessionSchema, registerKeySchema, revokeCredentialSchema, revokeDeviceSchema, signedScanSchema } from './offline'
 import {
   approveDeviceSchema,
   closeSessionSchema,
@@ -28,6 +29,7 @@ const gated = {
 
 export const paths = {
   ...excusesAndRules(),
+  ...offlinePaths(),
   [`${base}/sessions`]: {
     get: {
       summary: 'Open sessions the caller may act on',
@@ -80,10 +82,7 @@ export const paths = {
     post: {
       summary: 'Mark the calling student present by scanning a rotating code',
       description:
-        'Validated in order, rejecting on first failure: token, enrolment, location, device. ' +
-        'A rejection is a 409 carrying a closed-set code. There is deliberately no retry ' +
-        'queue: the short token window is the anti-proxy mechanism, and queueing a scan for ' +
-        'later would undo it, so a failure is reported immediately and honestly.',
+        'Legacy online-only flow, disabled by default. Institutions may temporarily enable it for devices without signing keys. Once an account enrolls a key it cannot use this endpoint. Use /scan/signed for offline capture and idempotent sync.',
       tags: ['attendance'],
       requestBody: { content: json(scanSchema) },
       responses: {
@@ -142,6 +141,21 @@ export const paths = {
       responses: { '200': { description: 'OK' }, ...gated },
     },
   },
+}
+
+function offlinePaths() {
+  const post = (summary: string, schema: z.ZodType) => ({ post: { summary, tags: ['attendance'], requestBody: { content: json(schema) }, responses: { '200': { description: 'OK' }, ...gated, '409': { description: 'Signature, device, replay, class window, or sync policy refused the request', content: json(err) } } } })
+  const get = (summary: string) => ({ get: { summary, tags: ['attendance'], responses: { '200': { description: 'OK' }, ...gated } } })
+  return {
+    [`${base}/scan/signed`]: post('Verify a P-256 device signature over exact base64url JSON bytes; idempotently sync a captured scan', signedScanSchema),
+    [`${base}/devices/key`]: post('Enroll a P-256 public key with proof of possession; administrator approval required', registerKeySchema),
+    [`${base}/devices/mine`]: get('The caller’s device status and signing-key availability'),
+    [`${base}/devices/revoke`]: post('Revoke the caller’s device, or any device as administrator', revokeDeviceSchema),
+    [`${base}/offline/policy`]: { ...get('Signed attendance requirements, late-sync limit, and clock tolerance'), ...post('Set signed attendance and late-sync policy', offlinePolicySchema) },
+    [`${base}/sessions/prepare`]: post('Prefetch a secret scoped to one timetable occurrence within seven days; opens no session', prepareSessionSchema),
+    [`${base}/sessions/held`]: post('Idempotently confirm that a prepared class was started, including an all-absent class', heldSessionSchema),
+    [`${base}/sessions/prepare/revoke`]: post('Revoke an offline occurrence credential', revokeCredentialSchema),
+  }
 }
 
 /** Excused absence, the institution's rules, the summary and the absentees. */

@@ -1,5 +1,13 @@
 import type { ModuleManifest, Role, ViewerScope } from './types'
 import type { PluginPage } from './pages'
+import type { JobTransaction } from '@campusos/db/jobs'
+
+export interface PluginJob {
+  kind: string
+  roles: Role[]
+  daily?: boolean
+  run: (actor: PluginActor, tx: JobTransaction, payload: Record<string, unknown>) => Promise<unknown>
+}
 
 /**
  * What a module hands the host when it is installed as a plugin.
@@ -55,6 +63,7 @@ export interface Plugin {
    * surface -- its mobile and integration surface is unaffected.
    */
   pages?: PluginPage[]
+  jobs?: PluginJob[]
 }
 
 /**
@@ -98,6 +107,11 @@ export function validatePlugin(plugin: Plugin): void {
   }
 
   const seen = new Set<string>()
+  const jobKinds = new Set<string>()
+  for (const job of plugin.jobs ?? []) {
+    if (!job.kind.startsWith(`${manifest.id}.`) || jobKinds.has(job.kind) || !job.roles.length || typeof job.run !== 'function') throw new Error(`${manifest.id}: invalid or duplicate job ${job.kind}`)
+    jobKinds.add(job.kind)
+  }
   for (const r of routes) {
     if (!r.path.startsWith('/')) {
       throw new Error(`${manifest.id}: route ${r.path} must start with a slash`)

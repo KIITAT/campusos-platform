@@ -20,10 +20,8 @@ import { currenciesWithin, formatMoney, formatQty, settingsWithin, tenantOf, typ
  * is shown.
  */
 
-export const OFFICE: Role[] = ['institution_admin', 'super_admin', 'accounts_staff']
-export const ADMIN: Role[] = ['institution_admin', 'super_admin']
-/** Everybody who works here: may ask the stores for something, and keepers and purchasers among them. */
-export const STAFF: Role[] = ['institution_admin', 'super_admin', 'accounts_staff', 'hod', 'faculty', 'library_staff', 'hostel_staff']
+import { OFFICE } from './roles'
+export { OFFICE, ADMIN, STAFF } from './roles'
 
 export const as = (actor: PluginActor) => actor as Actor
 export const q = (req: Request) => Object.fromEntries(new URL(req.url).searchParams) as Record<string, string | undefined>

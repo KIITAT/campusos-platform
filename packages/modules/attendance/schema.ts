@@ -75,6 +75,10 @@ export const settings = pgTable(
     excusedCounts: boolean('excused_counts').notNull().default(true),
     /** The zone a class's date is read in. */
     timeZone: text('time_zone').notNull().default('Asia/Kolkata'),
+    requireSignedScans: boolean('require_signed_scans').notNull().default(true),
+    acceptLateSync: boolean('accept_late_sync').notNull().default(true),
+    maxLateSyncHours: smallint('max_late_sync_hours').notNull().default(24),
+    clockSkewSeconds: smallint('clock_skew_seconds').notNull().default(60),
   },
   () => [tenantPolicy('attendance_settings')],
 )
@@ -120,6 +124,7 @@ export const devices = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     /** Hash of a device identifier. The raw identifier is never stored. */
     deviceHash: text('device_hash').notNull(),
+    publicKey: text('public_key'),
     label: text(),
     status: deviceStatusEnum().notNull().default('pending_approval'),
     approvedBy: text('approved_by').references(() => users.id, { onDelete: 'set null' }),
@@ -160,6 +165,7 @@ export const sessions = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'restrict' }),
     tokenSecret: text('token_secret').notNull(),
+    tokenWindowSeconds: smallint('token_window_seconds').notNull().default(7),
     openedAt: timestamp('opened_at', { withTimezone: true }).notNull().defaultNow(),
     closedAt: timestamp('closed_at', { withTimezone: true }),
   },
@@ -202,6 +208,9 @@ export const records = pgTable(
     longitude: doublePrecision(),
     accuracyM: doublePrecision('accuracy_m'),
     deviceId: uuid('device_id').references(() => devices.id, { onDelete: 'set null' }),
+    capturedAt: timestamp('captured_at', { withTimezone: true }),
+    scanNonce: uuid('scan_nonce'),
+    payloadHash: text('payload_hash'),
 
     /** Required for a manual override; feeds the phase 10 audit log. */
     overrideReason: text('override_reason'),
@@ -216,12 +225,37 @@ export const records = pgTable(
   },
   (t) => [
     uniqueIndex('attendance_records_once').on(t.sessionId, t.studentId),
+    uniqueIndex('attendance_records_nonce').on(t.institutionId, t.studentId, t.scanNonce),
     index('attendance_records_student').on(t.studentId),
     check(
       'attendance_records_override_reason',
       sql`method <> 'manual_override' or (override_reason is not null and length(trim(override_reason)) > 0)`,
     ),
     tenantPolicy('attendance_records'),
+  ],
+)
+
+export const offlineCredentials = pgTable(
+  'attendance_offline_credentials',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    slotId: uuid('slot_id').notNull().references(() => slots.id, { onDelete: 'cascade' }),
+    offeringId: uuid('offering_id').notNull().references(() => offerings.id, { onDelete: 'cascade' }),
+    teacherId: text('teacher_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    onDate: date('on_date').notNull(),
+    startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
+    endsAt: timestamp('ends_at', { withTimezone: true }).notNull(),
+    tokenSecret: text('token_secret').notNull(),
+    windowSeconds: smallint('window_seconds').notNull(),
+    roomId: uuid('room_id').notNull().references(() => rooms.id, { onDelete: 'restrict' }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    uniqueIndex('attendance_offline_occurrence').on(table.slotId, table.onDate),
+    check('attendance_offline_dates', sql`ends_at > starts_at`),
+    tenantPolicy('attendance_offline_credentials'),
   ],
 )
 

@@ -58,6 +58,8 @@ test('the core platform routes are all declared', () => {
     '/api/v1/me',
     '/api/v1/modules/toggle',
     '/api/v1/users/role',
+    '/api/v1/mobile/pages',
+    '/api/v1/mobile/page',
   ]) {
     assert.ok(paths.includes(core), core)
   }

@@ -22,6 +22,11 @@ import feedback from '@campusos/module-feedback/plugin'
 import mentoring from '@campusos/module-mentoring/plugin'
 import care from '@campusos/module-care/plugin'
 import timetable from '@campusos/module-timetable/plugin'
+import admissions from '@campusos/module-admissions/plugin'
+import alumni from '@campusos/module-alumni/plugin'
+import helpdesk from '@campusos/module-helpdesk/plugin'
+import placement from '@campusos/module-placement/plugin'
+import transport from '@campusos/module-transport/plugin'
 
 /**
  * Every module, as the host will see it after installing the package.
@@ -49,6 +54,11 @@ const PLUGINS: Plugin[] = [
   mentoring,
   care,
   timetable,
+  admissions,
+  alumni,
+  helpdesk,
+  placement,
+  transport,
 ]
 
 const MODULES_DIR = join(process.cwd(), '..', 'modules')
@@ -122,7 +132,7 @@ test('the whole product still answers the same number of endpoints', () => {
   // went from 13 to 183; the timetable solver arrived with 41.
   // A regression guard on the conversion, not a target.
   const total = PLUGINS.reduce((n, p) => n + p.routes.length, 0)
-  assert.equal(total, 627, `expected 627 endpoints across all modules, found ${total}`)
+  assert.equal(total, 679, `expected 679 endpoints across all modules, found ${total}`)
 })
 
 test('a longer path is never swallowed by a shorter one', () => {
@@ -197,7 +207,8 @@ test('every nav entry points at a page the module actually declares', () => {
         entry.href === prefix || entry.href.startsWith(`${prefix}/`),
         `${p.manifest.id}: ${entry.href} is outside its own page space`,
       )
-      const path = entry.href === prefix ? '/' : entry.href.slice(prefix.length)
+      const pathname = new URL(entry.href, 'https://campus.invalid').pathname
+      const path = pathname === prefix ? '/' : pathname.slice(prefix.length)
       assert.ok(
         declared.has(path),
         `${p.manifest.id}: nav points at ${path}, which is not a declared page`,
@@ -233,8 +244,18 @@ test('every form on a page posts to a route the module answers', () => {
         {},
         { get: () => [] },
       ) as Record<string, unknown>
+      const data = p.manifest.id === 'timetable' ? new Proxy({
+        office: true, faculty: false, termId: 'term', query: {}, check: null, settings: {},
+        run: { id: 'run', termId: 'term', status: 'draft', createdAt: new Date('2026-10-05T09:00:00Z'), stats: {}, cost: {} }, term: { name: 'Term' },
+        index: { sections: [], teachers: [], rooms: [] }, grid: null, noCurrentTerm: true,
+      }, { get: (target, key) => Reflect.has(target, key) ? Reflect.get(target, key) : [] }) : p.manifest.id === 'finance' ? new Proxy({
+        admin: true, query: {}, settings: {}, totals: {}, report: null,
+        from: '2026-10-01', to: '2026-10-05', on: '2026-10-05', compare: false,
+      }, { get: (target, key) => Reflect.has(target, key) ? Reflect.get(target, key) : [] }) : p.manifest.id === 'attendance' ? new Proxy({
+        policy: { requireSignedScans: true, acceptLateSync: true, maxLateSyncHours: 24, clockSkewSeconds: 60 },
+      }, { get: (target, key) => Reflect.has(target, key) ? Reflect.get(target, key) : [] }) : blank
 
-      for (const section of page.sections(blank)) {
+      for (const section of page.sections(data)) {
         // A list view's bulk actions are forms too.
         if (section.kind === 'table') {
           for (const b of section.bulk ?? []) {
@@ -246,6 +267,10 @@ test('every form on a page posts to a route the module answers', () => {
         }
         if (section.kind !== 'form') continue
         const method = section.method ?? 'POST'
+        if (method === 'GET') {
+          assert.ok(p.pages?.some(target => target.path === section.path), `${p.manifest.id}: filter opens an undeclared page ${section.path}`)
+          continue
+        }
         assert.ok(
           p.routes.some((r) => r.method === method && r.path === section.path),
           `${p.manifest.id}: ${page.path} posts to ${method} ${section.path}, which is not a route`,
@@ -253,7 +278,7 @@ test('every form on a page posts to a route the module answers', () => {
       }
 
       // And a record's lifecycle buttons, when it offers them.
-      const doc = page.record?.(blank)?.docStatus
+      const doc = page.record?.(data)?.docStatus
       for (const path of [doc?.submit, doc?.cancel, doc?.amend].filter(Boolean) as string[]) {
         assert.ok(
           p.routes.some((r) => r.method === 'POST' && r.path === path),

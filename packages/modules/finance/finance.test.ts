@@ -19,6 +19,7 @@ import {
   type Actor,
 } from './api'
 import { accounts, entries, lines } from './schema'
+import { pages } from './pages'
 
 /**
  * A fresh institution per test rather than a shared one wiped between them:
@@ -100,6 +101,34 @@ const says = (e: unknown, what: RegExp): boolean => {
 }
 const row = <T extends { code: string }>(tb: { rows: T[] }, c: string) =>
   tb.rows.find((r) => r.code === c)!
+
+test('accounting screens load real postings with report filters and complete form choices', async () => {
+  const institution = await books()
+  await postEntry(institution.admin, { ...invoice('screen-report', 25000), postingDate: '2026-10-02' })
+  const chart = await listAccounts(institution.admin)
+  const receivable = chart.find(account => account.purpose === 'fees_receivable')!
+  for (const page of pages.filter(candidate => ['/', '/accounts', '/journal', '/periods', '/budgets', '/settings', '/reports', '/reports/trial-balance', '/reports/income-expenditure', '/reports/balance-sheet', '/reports/cash', '/reports/general-ledger', '/reports/day-book'].includes(candidate.path))) {
+    const query = new URLSearchParams({ from: '2026-10-01', to: '2026-10-05', on: '2026-10-05', accountId: receivable.id, compare: 'true' })
+    const data = await page.load(institution.admin, new Request(`https://college.test/m/finance${page.path}?${query}`))
+    for (const section of page.sections(data)) {
+      if (section.kind === 'table') assert.ok(Array.isArray(data[section.rows]), `${page.path}: ${section.rows} must be loaded`)
+      if (section.kind === 'form') for (const field of section.fields) {
+        if (typeof field.options === 'string') assert.ok(Array.isArray(data[field.options]), `${page.path}: ${field.options} must be loaded`)
+      }
+    }
+    if (page.path === '/reports/trial-balance') assert.equal((data.totals as { debitPaise: number }).debitPaise, 25000)
+    if (page.path === '/reports/general-ledger') assert.equal((data.report as { closingPaise: number }).closingPaise, 25000)
+    if (page.path === '/reports/income-expenditure') assert.equal(data.incomePaise, 25000)
+    if (page.path === '/reports/balance-sheet') assert.equal(data.differencePaise, 0)
+    if (page.path === '/reports/day-book') assert.equal((data.rows as unknown[]).length, 2)
+  }
+  const ledger = pages.find(page => page.path === '/reports/general-ledger')!
+  const empty = await ledger.load(institution.staff, new Request('https://college.test/m/finance/reports/general-ledger'))
+  assert.equal(empty.report, null)
+  const cash = pages.find(page => page.path === '/reports/cash')!
+  const cashFlow = await cash.load(institution.staff, new Request('https://college.test/m/finance/reports/cash?view=cf&from=2026-10-01&to=2026-10-05'))
+  assert.deepEqual(cash.sections(cashFlow).filter(section => section.kind === 'table').map(section => section.rows), ['operatingRows', 'investingRows', 'financingRows'])
+})
 
 // --- the chart -------------------------------------------------------------
 

@@ -5,19 +5,25 @@ is done: **41 routes**, a local solver, and tests:
 - `solver.test.ts`: 7 tests, pure;
 - `timetable.test.ts`: 4 tests, against the database.
 
-The screens are not built. `pages.ts` exports an empty list, and
-`manifest.navEntries` is empty.
+All twelve screens are implemented in `screens/` and exported by `pages.ts`.
+The manifest links office readers to Timetable and faculty to My timetable.
+The page contract tests cover roles, form routes, scalar removal payloads,
+draft lifecycle actions, and teacher views. Database tests also load every
+screen using real timetable data.
 
 The page vocabulary, the host's form posting, GET filter forms and the table
 options are the same as finance. Read §0 of
 `packages/modules/finance/SCREENS.md`, and `kit.ts` there for helpers, before
 building.
 
-**How to pick it up**
+**Implementation**
 
-1. Write `screens/*.ts` and export `pages` from `pages.ts`.
-2. Add `navEntries`: Timetable (office) and My timetable (faculty).
-3. Typecheck, then run `pnpm test` in this package.
+1. `screens/setup.ts`: periods, rooms, cohorts, teachers, eligibility and unavailability.
+2. `screens/classes.ts`: weekly needs and pins.
+3. `screens/timetables.ts`: overview, drafts, draft detail, live and personal weeks.
+4. `screens/kit.ts`: shared filters, choices, grids and workload presentation.
+5. Typecheck, then run `pnpm test` in this package. In the web host, run
+   `pnpm test:ui` to check ordered grid rendering and form permission gates.
 
 ## 0. Rules for this module
 
