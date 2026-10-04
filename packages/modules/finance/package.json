@@ -1,11 +1,11 @@
 {
   "name": "@campusos/module-finance",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./index.ts",
-    "./schema": "./schema.ts",
+    "./schema": "./schema/index.ts",
     "./manifest": "./manifest.ts",
     "./api": "./api/index.ts",
     "./api/openapi": "./api/openapi.ts",
@@ -23,6 +23,7 @@
     "@campusos/module-framework": "workspace:*",
     "@campusos/money": "workspace:*",
     "drizzle-orm": "^0.45.2",
+    "pdf-lib": "^1.17.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {

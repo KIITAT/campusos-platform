@@ -45,6 +45,12 @@ export interface PluginColumn {
   href?: string
   /** Rendered in a warning colour when this row's named field is truthy. */
   alertWhen?: string
+  /**
+   * A row key holding a depth -- 0, 1, 2 -- by which this cell is indented:
+   * the account under its group in a chart, a line under its heading in a
+   * balance sheet. A tree read as a table, without becoming a new section kind.
+   */
+  indent?: string
 }
 
 export interface PluginTable {
@@ -67,6 +73,18 @@ export interface PluginTable {
    * Absent means no checkboxes: a box that does nothing is clutter.
    */
   bulk?: PluginBulkAction[]
+  /** A row key that, when truthy, sets that row in bold: a group, a subtotal. */
+  emphasis?: string
+  /**
+   * A data key holding one row shown beneath the table, outside the filter and
+   * the paging: the totals of a trial balance, the sum of an invoice.
+   */
+  footer?: string
+  /**
+   * The rows' order is the meaning -- a statement, a tree, a ledger with its
+   * running balance -- so the table offers no sort and no filter.
+   */
+  fixedOrder?: boolean
 }
 
 export interface PluginBulkAction {
@@ -95,6 +113,7 @@ export type FieldKind =
   | 'radio'      // one of the options, all shown: a question with one answer
   | 'checkboxes' // any of the options, posted as a list: a question with several
   | 'file'       // one file, posted as `{ name, type, size, base64 }`: read it with readUpload
+  | 'lines'      // a grid of rows, each the `columns` fields: an invoice's items, a voucher's lines
 
 export interface PluginField {
   name: string
@@ -114,6 +133,19 @@ export interface PluginField {
   step?: string
   /** For a file: what the picker offers, as an input's `accept` -- `application/pdf`. */
   accept?: string
+  /**
+   * For lines: the fields of one row. Simple kinds only -- text, number, date,
+   * money, select, checkbox. Posted as `name.0.field`, `name.1.field`; the host
+   * sends `{ [name]: [{ field: ... }, ...] }`, leaving out rows left blank.
+   */
+  columns?: PluginField[]
+  /**
+   * For lines: how many rows to offer. Default 6. The page can offer more by
+   * linking to itself with a larger number -- the grid needs no script. For
+   * lines, `value` names a data key holding rows already entered -- a draft
+   * being edited -- each an object of the columns' values as strings.
+   */
+  lineCount?: number
 }
 
 export interface PluginForm {
@@ -121,9 +153,17 @@ export interface PluginForm {
   title?: string
   note?: string
   submit: string
-  /** Relative to the module's apiBasePath, exactly as a route declares it. */
+  /**
+   * Relative to the module's apiBasePath, exactly as a route declares it --
+   * or, for a GET form, the module page it opens (`/reports/aging`).
+   */
   path: string
-  method?: 'POST' | 'PUT'
+  /**
+   * GET is a filter, not an operation: the fields become the query string of
+   * the page named by `path`, which reads them in its load -- a report's
+   * period, a list's party. It changes nothing, so it is always inline.
+   */
+  method?: 'POST' | 'PUT' | 'GET'
   fields: PluginField[]
   /** Hidden from a reader who lacks all of these. */
   roles?: Role[]

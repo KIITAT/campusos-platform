@@ -4,6 +4,7 @@ import { and, eq, like } from 'drizzle-orm'
 import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
 import type { Role } from '@campusos/module-framework'
 import {
+  DEFAULT_CHART,
   FinanceError,
   archiveAccount,
   createAccount,
@@ -106,10 +107,12 @@ test('an institution that has never opened the screen still has a chart', async 
   const b = await books()
   const chart = await listAccounts(b.admin)
 
-  assert.equal(chart.length, 14)
+  // The whole default tree: its groups and every account a document posts to.
+  assert.equal(chart.length, DEFAULT_CHART.length)
   assert.equal(chart.find((a) => a.code === '4000')!.purpose, 'fee_income')
+  assert.equal(chart.find((a) => a.code === '4000')!.parentId, chart.find((a) => a.code === '4')!.id)
   // Reading twice does not write it twice.
-  assert.equal((await listAccounts(b.admin)).length, 14)
+  assert.equal((await listAccounts(b.admin)).length, DEFAULT_CHART.length)
 })
 
 test('a chart made before a purpose existed picks its account up on first use', async () => {

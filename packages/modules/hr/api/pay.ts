@@ -426,7 +426,7 @@ export async function payGratuity(actor: Actor, input: unknown) {
       .returning()
     if (!row) throw new HrError(409, 'already_paid', 'gratuity for that employment has already been paid')
     await postWithin(tx, tenant, actor.id, {
-      occurredAt: new Date(`${d.paidOn}T00:00:00Z`),
+      postingDate: d.paidOn,
       memo: `Gratuity, ${q.person.name} (${q.person.employeeCode})`,
       sourceModule: 'hr',
       sourceRef: `gratuity:${row.id}`,
@@ -536,7 +536,7 @@ export async function releasePayslip(actor: Actor, input: unknown) {
       .returning()
     if (slip.netPaise > 0) {
       await postWithin(tx, tenant, actor.id, {
-        occurredAt: new Date(`${d.paidOn}T00:00:00Z`),
+        postingDate: d.paidOn,
         memo: `${slip.period.slice(0, 7)} salary released, ${person!.name}`,
         sourceModule: 'hr',
         sourceRef: `salary-release:${slip.id}`,

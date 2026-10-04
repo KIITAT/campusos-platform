@@ -103,3 +103,53 @@ export function axisTicks(max: number, count = 4): number[] {
   for (let v = 0; v < max + step; v += step) ticks.push(Math.round(v * 1e6) / 1e6)
   return ticks
 }
+
+/**
+ * A form's `lines` grid, as posted, folded back into rows.
+ *
+ * The grid's inputs are named `items.0.qty`, `items.0.rate`, `items.1.qty`:
+ * plain HTML, no script. This turns those into `{ items: [{ qty, rate }, ...] }`
+ * in row order, leaving out a row whose every cell was left blank -- the spare
+ * rows a grid offers are not lines somebody meant. Keys that are not of that
+ * shape pass through untouched. A host calls it on the decoded form before
+ * the body becomes JSON, so a module only ever sees the list.
+ */
+export function foldLines<T>(body: Record<string, T>): Record<string, T | Record<string, T>[]> {
+  const out: Record<string, T | Record<string, T>[]> = {}
+  const grids = new Map<string, Map<number, Record<string, T>>>()
+  for (const [key, value] of Object.entries(body)) {
+    const m = /^([A-Za-z_][\w]*)\.(\d{1,4})\.([A-Za-z_][\w]*)$/.exec(key)
+    if (!m) {
+      out[key] = value
+      continue
+    }
+    const [, name, index, field] = m
+    const rows = grids.get(name!) ?? new Map<number, Record<string, T>>()
+    grids.set(name!, rows)
+    const row = rows.get(Number(index)) ?? {}
+    rows.set(Number(index), row)
+    row[field!] = value
+  }
+  for (const [name, rows] of grids) {
+    out[name] = [...rows.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([, row]) => row)
+      .filter((row) => Object.values(row).some((v) => v !== '' && v !== null && v !== undefined && v !== 'false'))
+  }
+  return out
+}
+
+/**
+ * A checkbox's answer, as a boolean.
+ *
+ * A form's checkbox posts the string "false" when it is left unticked (a
+ * hidden input says so, because an unticked box sends nothing), and "true"
+ * when ticked. `Boolean("false")` is true, so coercing the string is wrong in
+ * exactly the case that matters; read it with this instead:
+ * `z.preprocess(ticked, z.boolean())`. JSON callers' real booleans pass through.
+ */
+export function ticked(value: unknown): unknown {
+  if (value === true || value === 'true' || value === 'on' || value === '1' || value === 1) return true
+  if (value === false || value === 'false' || value === 'off' || value === '0' || value === 0 || value === '') return false
+  return value
+}
