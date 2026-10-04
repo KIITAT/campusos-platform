@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { ticked } from '@campusos/module-framework'
 import { parseRupeesToPaise } from '@campusos/money'
 import {
   componentKindEnum,
@@ -54,13 +55,13 @@ export const createLeaveTypeSchema = z
     code: z.string().trim().min(1).max(20),
     name: z.string().trim().min(1).max(120),
     annualDays: z.coerce.number().int().min(0).max(365).default(0),
-    paid: z.coerce.boolean().default(true),
-    allowNegative: z.coerce.boolean().default(false),
-    encashable: z.coerce.boolean().default(false),
+    paid: z.preprocess(ticked, z.boolean()).default(true),
+    allowNegative: z.preprocess(ticked, z.boolean()).default(false),
+    encashable: z.preprocess(ticked, z.boolean()).default(false),
     /** Pay component codes a day of this leave is worth, when paid out. */
     encashmentComponents: z.array(z.string().trim().min(1).max(30)).max(20).default([]),
     maxCarryForward: z.coerce.number().int().min(0).max(365).default(0),
-    compensatory: z.coerce.boolean().default(false),
+    compensatory: z.preprocess(ticked, z.boolean()).default(false),
     compOffValidityDays: z.coerce.number().int().min(1).max(365).nullish(),
   })
   .refine((d) => !d.encashable || d.encashmentComponents.length > 0, {
@@ -82,7 +83,7 @@ export const requestLeaveSchema = z
 export const decideLeaveSchema = z
   .object({
     requestId: uuid,
-    approve: z.coerce.boolean(),
+    approve: z.preprocess(ticked, z.boolean()),
     note: z.string().trim().max(500).nullish(),
   })
   .meta({ id: 'HrLeaveDecide' })
@@ -328,7 +329,7 @@ export const recordExitInterviewSchema = z
     on: day,
     notes: z.string().trim().min(5).max(4000),
     /** Null is a real answer: asked, and not decided. */
-    rehireEligible: z.coerce.boolean().nullish().default(null),
+    rehireEligible: z.preprocess(ticked, z.boolean()).nullish().default(null),
   })
   .meta({ id: 'HrExitInterview' })
 
@@ -423,7 +424,7 @@ export const createLeavePolicySchema = z
   .object({
     code: z.string().trim().min(1).max(30),
     name: z.string().trim().min(1).max(120),
-    prorateJoiners: z.coerce.boolean().default(false),
+    prorateJoiners: z.preprocess(ticked, z.boolean()).default(false),
     lines: z
       .array(
         z.object({
@@ -473,7 +474,7 @@ export const requestCompOffSchema = z
 export const decideCompOffSchema = z
   .object({
     requestId: uuid,
-    approve: z.coerce.boolean(),
+    approve: z.preprocess(ticked, z.boolean()),
     note: z.string().trim().max(500).nullish(),
   })
   .meta({ id: 'HrCompOffDecide' })
@@ -493,7 +494,7 @@ export const requestEncashmentSchema = z
 export const decideEncashmentSchema = z
   .object({
     requestId: uuid,
-    approve: z.coerce.boolean(),
+    approve: z.preprocess(ticked, z.boolean()),
   })
   .meta({ id: 'HrEncashmentDecide' })
 
@@ -552,7 +553,7 @@ export const requestShiftSchema = z
 export const decideShiftSchema = z
   .object({
     requestId: uuid,
-    approve: z.coerce.boolean(),
+    approve: z.preprocess(ticked, z.boolean()),
     note: z.string().trim().max(500).nullish(),
   })
   .meta({ id: 'HrShiftDecide' })
@@ -572,7 +573,7 @@ export const raiseRequisitionSchema = z
 export const decideRequisitionSchema = z
   .object({
     requisitionId: uuid,
-    approve: z.coerce.boolean(),
+    approve: z.preprocess(ticked, z.boolean()),
     note: z.string().trim().max(500).nullish(),
   })
   .meta({ id: 'HrRequisitionDecide' })
@@ -641,7 +642,7 @@ export const makeOfferSchema = z
   .meta({ id: 'HrOfferMake' })
 
 export const respondToOfferSchema = z
-  .object({ offerId: uuid, accept: z.coerce.boolean() })
+  .object({ offerId: uuid, accept: z.preprocess(ticked, z.boolean()) })
   .meta({ id: 'HrOfferRespond' })
 
 export const withdrawOfferSchema = z
@@ -805,7 +806,7 @@ export const submitClaimInput = z.preprocess(foldClaimLine, submitClaimSchema)
 export const decideClaimSchema = z
   .object({
     claimId: uuid,
-    approve: z.coerce.boolean(),
+    approve: z.preprocess(ticked, z.boolean()),
     /** Per line, what is agreed. Omitted lines are sanctioned in full. */
     sanction: z.array(z.object({ lineId: uuid, amount: rupees })).max(100).default([]),
     note: z.string().trim().max(500).nullish(),
@@ -833,7 +834,7 @@ export const requestAdvanceSchema = z
 export const decideAdvanceSchema = z
   .object({
     advanceId: uuid,
-    approve: z.coerce.boolean(),
+    approve: z.preprocess(ticked, z.boolean()),
     /** Recover from pay at most this much a month. Omitted: recovered by claims or repayment. */
     monthlyRecovery: rupees.nullish(),
   })
@@ -863,7 +864,7 @@ export const createStructureSchema = z
           amountPaise: z.coerce.number().int().positive().nullish(),
           percentBp: z.coerce.number().int().min(1).max(10_000).nullish(),
           of: z.string().trim().min(1).max(30).nullish(),
-          taxable: z.coerce.boolean().default(true),
+          taxable: z.preprocess(ticked, z.boolean()).default(true),
         }),
       )
       .min(1)

@@ -57,8 +57,10 @@ export async function postPayslip(
 
   await postWithin(tx, institutionId, actorId, {
     // The last day of the month it covers: the cost belongs to that month, and
-    // a payroll generated late still lands where the work happened.
-    occurredAt: monthEnd(slip.period),
+    // a payroll generated late still lands where the work happened. Said as a
+    // day, not an instant: 23:59 UTC on the 31st is already the 1st in India,
+    // and in April that is the next fiscal year.
+    postingDate: monthEnd(slip.period),
     memo: `${slip.period.slice(0, 7)} salary, ${slip.staffName} (${slip.employeeCode})`,
     sourceModule: 'hr',
     sourceRef: `payslip:${slip.id}`,
@@ -103,7 +105,7 @@ export async function postSalaryPayment(
   },
 ): Promise<void> {
   await postWithin(tx, institutionId, actorId, {
-    occurredAt: new Date(`${payment.paidOn}T00:00:00Z`),
+    postingDate: payment.paidOn,
     memo: `${payment.period.slice(0, 7)} salaries paid`,
     sourceModule: 'hr',
     sourceRef: `salaries:${payment.id}`,
@@ -118,10 +120,10 @@ export async function postSalaryPayment(
 }
 
 /** The last instant of the month a period names. */
-function monthEnd(period: string): Date {
+function monthEnd(period: string): string {
   const year = Number(period.slice(0, 4))
   const month = Number(period.slice(5, 7))
-  return new Date(Date.UTC(year, month, 0, 23, 59, 59))
+  return new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10)
 }
 
 // --- staff money outside payroll --------------------------------------------
@@ -143,7 +145,7 @@ export async function postAdvancePaid(
   a: { id: string; amountPaise: number; paidOn: string; paidFrom: string; staffName: string },
 ): Promise<void> {
   await postWithin(tx, institutionId, actorId, {
-    occurredAt: new Date(`${a.paidOn}T00:00:00Z`),
+    postingDate: a.paidOn,
     memo: `Advance to ${a.staffName}`,
     sourceModule: 'hr',
     sourceRef: `advance:${a.id}`,
@@ -162,7 +164,7 @@ export async function postAdvanceRepaid(
   r: { id: string; amountPaise: number; on: string; into: string; staffName: string },
 ): Promise<void> {
   await postWithin(tx, institutionId, actorId, {
-    occurredAt: new Date(`${r.on}T00:00:00Z`),
+    postingDate: r.on,
     memo: `Advance repaid by ${r.staffName}`,
     sourceModule: 'hr',
     sourceRef: `advance-repaid:${r.id}`,
@@ -221,7 +223,7 @@ export async function postClaimSettled(
   const total = c.advancePaise + c.paidPaise
   if (total === 0) return
   await postWithin(tx, institutionId, actorId, {
-    occurredAt: new Date(`${c.paidOn}T00:00:00Z`),
+    postingDate: c.paidOn,
     memo: `Expense claim settled, ${c.staffName}`,
     sourceModule: 'hr',
     sourceRef: `claim-settled:${c.id}`,

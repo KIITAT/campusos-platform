@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { ticked } from '@campusos/module-framework'
 import { awardBasisEnum, paymentMethodEnum, scholarshipKindEnum } from '../schema'
 import { parseRupeesToPaise } from '@campusos/money'
 
@@ -30,7 +31,7 @@ export const createFeeItemSchema = z
      * Whether dropping a course reduces this line. Tuition does; a one-off
      * registration or examination fee does not.
      */
-    proratable: z.coerce.boolean().default(false),
+    proratable: z.preprocess(ticked, z.boolean()).default(false),
     dueOn: z.iso.date().nullish(),
   })
   .meta({ id: 'FeeItemCreate' })

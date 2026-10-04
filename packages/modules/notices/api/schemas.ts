@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { ticked } from '@campusos/module-framework'
 import { roleEnum } from '@campusos/db'
 import { noticeKindEnum } from '../schema'
 
@@ -20,9 +21,9 @@ export const createNoticeSchema = z
     audienceRoles: z.array(roleSchema).default([]),
     departmentId: uuid.nullish(),
     expiresAt: z.iso.datetime().nullish(),
-    pinned: z.coerce.boolean().default(false),
+    pinned: z.preprocess(ticked, z.boolean()).default(false),
     /** Publish straight away, or leave it as a draft that notifies nobody. */
-    publish: z.coerce.boolean().default(true),
+    publish: z.preprocess(ticked, z.boolean()).default(true),
     /** A document to go with it -- PDF, PNG or JPEG -- as `{ name, type, size, base64 }`. */
     attachment: z.unknown().optional(),
   })

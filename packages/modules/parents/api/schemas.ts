@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { ticked } from '@campusos/module-framework'
 
 const uuid = z.uuid()
 
@@ -14,7 +15,7 @@ export const claimLinkSchema = z
 export const decideLinkSchema = z
   .object({
     linkId: uuid,
-    approve: z.coerce.boolean(),
+    approve: z.preprocess(ticked, z.boolean()),
     reason: z.string().trim().min(5).max(500),
   })
   .meta({ id: 'ParentLinkDecide' })

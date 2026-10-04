@@ -1,8 +1,8 @@
 import { sql } from 'drizzle-orm'
 import {
-  bigint,
   boolean,
   check,
+  date,
   index,
   pgEnum,
   pgTable,
@@ -11,8 +11,10 @@ import {
   timestamp,
   uniqueIndex,
   uuid,
+  type AnyPgColumn,
 } from 'drizzle-orm/pg-core'
-import { institutions, tenantPolicy, users } from '@campusos/db'
+import { tenantPolicy, users } from '@campusos/db'
+import { createdAt, currency, paise, pk, rate, tenantId } from './common'
 
 /**
  * The books.
@@ -33,17 +35,6 @@ import { institutions, tenantPolicy, users } from '@campusos/db'
  * is fixed by posting its reverse, which is what an accountant would do on
  * paper and what an auditor expects to find.
  */
-
-const tenantId = () =>
-  uuid('institution_id')
-    .notNull()
-    .references(() => institutions.id, { onDelete: 'cascade' })
-
-const pk = () => uuid().primaryKey().defaultRandom()
-const createdAt = () =>
-  timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
-
-const paise = (name: string) => bigint(name, { mode: 'number' })
 
 export const accountTypeEnum = pgEnum('finance_account_type', [
   'asset',
@@ -77,7 +68,66 @@ export const accountPurposeEnum = pgEnum('finance_account_purpose', [
   'employee_advances',
   'staff_expenses',
   'expense_claims_payable',
+  // The books of a business, not only of a fee office (migration 0005).
+  'accounts_receivable',
+  'accounts_payable',
+  'stock_in_hand',
+  'stock_received_not_billed',
+  'stock_adjustment',
+  'cost_of_goods',
+  'fixed_assets',
+  'accumulated_depreciation',
+  'depreciation_expense',
+  'capital_wip',
+  'asset_disposal',
+  'round_off',
+  'exchange_gain_loss',
+  'retained_surplus',
+  'opening_balance',
+  'tds_payable',
+  'tds_receivable',
+  'gst_input',
+  'gst_output',
+  'sales_income',
+  'purchase_expense',
+  'bank_charges',
+  'other_income',
 ])
+
+/**
+ * What kind of account this is, finer than its type: what a report groups it
+ * under, what a screen offers it for, and which way it moves cash.
+ */
+export const accountSubtypes = [
+  'cash',
+  'bank',
+  'receivable',
+  'payable',
+  'stock',
+  'stock_received_not_billed',
+  'fixed_asset',
+  'accumulated_depreciation',
+  'capital_wip',
+  'tax',
+  'advance',
+  'investment',
+  'current_asset',
+  'current_liability',
+  'loan',
+  'provision',
+  'capital_fund',
+  'restricted_fund',
+  'retained_surplus',
+  'temporary',
+  'income',
+  'expense',
+  'cost_of_goods',
+  'depreciation',
+  'stock_adjustment',
+  'round_off',
+  'exchange_gain_loss',
+] as const
+export type AccountSubtype = (typeof accountSubtypes)[number]
 
 // --- the chart -------------------------------------------------------------
 
@@ -95,9 +145,22 @@ export const accounts = pgTable(
     /** Closed, not deleted: an account with history can never be removed. */
     archivedAt: timestamp('archived_at', { withTimezone: true }),
     createdAt: createdAt(),
+    /**
+     * The group this sits under. A group carries no postings of its own; its
+     * balance is its children's. Same type as its parent, all the way up.
+     */
+    parentId: uuid('parent_id').references((): AnyPgColumn => accounts.id, { onDelete: 'restrict' }),
+    isGroup: boolean('is_group').notNull().default(false),
+    subtype: text().$type<AccountSubtype>(),
+    /** Kept in a foreign currency: every line on it says how much of that currency. */
+    currency: currency('currency'),
+    /** Which part of a cash flow statement a movement against this account is. */
+    cashFlow: text('cash_flow').$type<'operating' | 'investing' | 'financing'>(),
+    description: text(),
   },
   (t) => [
     uniqueIndex('finance_accounts_code').on(t.institutionId, t.code),
+    index('finance_accounts_parent').on(t.parentId),
     uniqueIndex('finance_accounts_purpose')
       .on(t.institutionId, t.purpose)
       .where(sql`purpose is not null`),
@@ -120,6 +183,12 @@ export const entries = pgTable(
     institutionId: tenantId(),
     /** When it happened, which is not when it was typed in. */
     occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * The day it counts on, in the institution's own zone. Set by the database
+     * from occurredAt when a poster does not say; what periods, fiscal years
+     * and every dated report read.
+     */
+    postingDate: date('posting_date'),
     memo: text().notNull(),
     /** Which module posted it. 'manual' for something a human typed. */
     sourceModule: text('source_module').notNull(),
@@ -129,6 +198,8 @@ export const entries = pgTable(
     reversalOf: uuid('reversal_of'),
     postedBy: text('posted_by').references(() => users.id, { onDelete: 'set null' }),
     createdAt: createdAt(),
+    // tx_id (xid8, default pg_current_xact_id()) exists in the database only:
+    // the lines trigger compares it, and nothing here ever reads it.
   },
   (t) => [
     uniqueIndex('finance_entries_source').on(t.institutionId, t.sourceModule, t.sourceRef),
@@ -165,10 +236,24 @@ export const lines = pgTable(
     /** A department, a hostel block, a grant. Free text: institutions differ. */
     costCenter: text('cost_center'),
     memo: text(),
+    /** Whose balance this line moves, on a receivable or payable account. */
+    partyId: uuid('party_id'),
+    /** The fund it belongs to, for books kept by fund. */
+    fundId: uuid('fund_id'),
+    /** A line in a foreign currency: how much of it, and at what rate. */
+    currency: currency('currency'),
+    amountFc: paise('amount_fc'),
+    exchangeRate: rate('exchange_rate'),
   },
   (t) => [
     index('finance_lines_entry').on(t.entryId),
     index('finance_lines_account').on(t.accountId),
+    index('finance_lines_party').on(t.partyId),
+    index('finance_lines_fund').on(t.fundId),
+    check(
+      'finance_lines_fc',
+      sql`(currency is null) = (amount_fc is null) and (currency is null) = (exchange_rate is null)`,
+    ),
     check(
       'finance_lines_one_side',
       sql`debit_paise >= 0 and credit_paise >= 0 and (debit_paise = 0) <> (credit_paise = 0)`,

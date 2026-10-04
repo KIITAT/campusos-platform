@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { ticked } from '@campusos/module-framework'
 import {
   completionSourceEnum,
   prerequisiteKindEnum,
@@ -263,7 +264,7 @@ export const declareProgramSchema = z
     programId: uuid,
     /** Which catalogue the student is held to. */
     curriculumId: uuid.nullish(),
-    isPrimary: z.coerce.boolean().default(true),
+    isPrimary: z.preprocess(ticked, z.boolean()).default(true),
     declaredOn: z.iso.date().optional(),
   })
   .meta({ id: 'AcademicDeclareProgram' })
@@ -286,7 +287,7 @@ export const recordCompletionSchema = z
     credits: z.coerce.number().int().min(0).max(30).optional(),
     gradePoints: gradePoints.nullish(),
     gradeLabel: z.string().max(12).trim().nullish(),
-    passed: z.coerce.boolean().default(true),
+    passed: z.preprocess(ticked, z.boolean()).default(true),
     source: z.enum(completionSourceEnum.enumValues).default('internal'),
     note: z.string().max(500).trim().nullish(),
   })
@@ -330,7 +331,7 @@ export const correctCompletionSchema = z
     credits: z.coerce.number().int().min(0).max(30).optional(),
     gradePoints: gradePoints.nullish(),
     gradeLabel: z.string().max(12).trim().nullish(),
-    passed: z.coerce.boolean().optional(),
+    passed: z.preprocess(ticked, z.boolean()).optional(),
     /** On the record, next to the change. A correction with no reason is not one. */
     reason: z.string().min(5).max(500).trim(),
   })
