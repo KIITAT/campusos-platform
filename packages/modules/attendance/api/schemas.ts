@@ -67,6 +67,7 @@ export const scanRejectionSchema = z
       'wrong_device',
       'device_not_confirmed',
       'already_marked',
+      'signed_scan_required',
     ]),
     message: z.string(),
     /** Present on outside_geofence so the app can say how far off it was. */

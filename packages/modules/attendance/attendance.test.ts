@@ -21,7 +21,7 @@ import {
   setGeofence,
   type Actor,
 } from './api'
-import { devices, records, sessions } from './schema'
+import { devices, records, sessions, settings } from './schema'
 
 const SLUG = 'att-test'
 const ROOM = { latitude: 20.2961, longitude: 85.8245 }
@@ -64,6 +64,7 @@ before(async () => {
     .values({ slug: SLUG, name: 'Att', allowedEmailDomains: ['att.test'] })
     .returning({ id: institutions.id })
   inst = i!.id
+  await withTenant(inst, (tx) => tx.insert(settings).values({ institutionId: inst, requireSignedScans: false }))
 
   const people = await authDb
     .insert(users)

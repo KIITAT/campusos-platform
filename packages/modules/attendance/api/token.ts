@@ -1,4 +1,18 @@
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import { createHmac, createPublicKey, randomBytes, timingSafeEqual, verify } from 'node:crypto'
+
+export function verifyDeviceSignature(publicKey: string, payload: Uint8Array, signature: string): boolean {
+  try {
+    if (!/^[A-Za-z0-9_-]+$/.test(signature)) return false
+    const key = createPublicKey({ key: Buffer.from(publicKey, 'base64'), format: 'der', type: 'spki' })
+    if (key.asymmetricKeyType !== 'ec' || key.asymmetricKeyDetails?.namedCurve !== 'prime256v1') return false
+    return verify('sha256', payload, key, Buffer.from(signature, 'base64url'))
+  } catch {
+    return false
+  }
+}
+
+export const enrollmentMessage = (institutionId: string, userId: string, deviceHash: string, publicKey: string) =>
+  `campusos:attendance:enroll:v1\n${institutionId}\n${userId}\n${deviceHash}\n${publicKey}`
 
 /**
  * The rotating token.

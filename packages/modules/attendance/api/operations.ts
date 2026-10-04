@@ -11,6 +11,7 @@ import {
 } from '@campusos/module-academic/schema'
 import {
   devices,
+  offlineCredentials,
   records,
   roomGeofences,
   sessions,
@@ -93,6 +94,7 @@ export async function openSession(actor: Actor, input: unknown) {
   const { slotId } = openSessionSchema.parse(input)
 
   return withTenant(tenant, async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${slotId}, 0))`)
     const [slot] = await tx
       .select({ offeringId: slots.offeringId, facultyUserId: offerings.facultyUserId })
       .from(slots)
@@ -103,6 +105,12 @@ export async function openSession(actor: Actor, input: unknown) {
     // Today's meeting may have been changed on the timetable: cancelled, moved
     // to another day, or handed to a substitute -- who may then open it.
     const rules = await rulesOf(tx, tenant)
+    const [prepared] = await tx.select({ id: offlineCredentials.id, revokedAt: offlineCredentials.revokedAt }).from(offlineCredentials).where(and(eq(offlineCredentials.slotId, slotId), sql`${offlineCredentials.onDate} = (now() at time zone ${rules.timeZone})::date`))
+    if (prepared && !prepared.revokedAt) throw new AttendanceError(409, 'offline_prepared', 'use the prepared offline credential for this occurrence')
+    if (prepared) {
+      const [held] = await tx.select({ id: sessions.id }).from(sessions).where(eq(sessions.id, prepared.id))
+      if (held) throw new AttendanceError(409, 'occurrence_recorded', 'attendance already exists for this occurrence; use its roster for manual corrections')
+    }
     const changed = await tx.execute(sql`
       select kind::text as kind, substitute_id, moved_on = (now() at time zone ${rules.timeZone})::date as moved_here
         from academic_class_changes
@@ -120,11 +128,12 @@ export async function openSession(actor: Actor, input: unknown) {
     // A lecturer may only open their own class -- or one they are substituting
     // in today. An admin may open any, because someone has to when the
     // lecturer's laptop dies mid-lecture.
-    if (actor.role === 'faculty' && slot.facultyUserId !== actor.id && substitute !== actor.id) {
+    if (!isAdmin(actor.role) && slot.facultyUserId !== actor.id && substitute !== actor.id) {
       throw new AttendanceError(403, 'not_your_class', 'that is not your class')
     }
 
     try {
+      const sessionSettings = await settingsFor(tx, tenant)
       const [row] = await tx
         .insert(sessions)
         .values({
@@ -133,6 +142,7 @@ export async function openSession(actor: Actor, input: unknown) {
           offeringId: slot.offeringId,
           openedBy: actor.id,
           tokenSecret: newSessionSecret(),
+          tokenWindowSeconds: sessionSettings.tokenWindowSeconds,
         })
         .returning({ id: sessions.id, openedAt: sessions.openedAt })
       return row!
@@ -153,6 +163,8 @@ export async function closeSession(actor: Actor, input: unknown) {
   const { sessionId } = closeSessionSchema.parse(input)
 
   await withTenant(tenant, async (tx) => {
+    const [session] = await tx.select({ openedBy: sessions.openedBy }).from(sessions).where(eq(sessions.id, sessionId)).for('update')
+    if (session && !isAdmin(actor.role) && session.openedBy !== actor.id) throw new AttendanceError(403, 'not_your_class', 'that is not your session')
     const [row] = await tx
       .update(sessions)
       .set({ closedAt: new Date() })
@@ -174,20 +186,20 @@ export async function currentQrFor(actor: Actor, sessionId: string) {
   }
 
   return withTenant(tenant, async (tx) => {
-    const s = await settingsFor(tx, tenant)
     const [row] = await tx
-      .select({ secret: sessions.tokenSecret, closedAt: sessions.closedAt })
+      .select({ secret: sessions.tokenSecret, closedAt: sessions.closedAt, openedBy: sessions.openedBy, windowSeconds: sessions.tokenWindowSeconds })
       .from(sessions)
       .where(eq(sessions.id, sessionId))
     if (!row) throw new AttendanceError(404, 'no_such_session', 'no such session')
+    if (!isAdmin(actor.role) && row.openedBy !== actor.id) throw new AttendanceError(403, 'not_your_class', 'that is not your session')
     if (row.closedAt) throw new AttendanceError(409, 'session_closed', 'session is closed')
 
-    const qr = currentQr(row.secret, sessionId, s.tokenWindowSeconds)
+    const qr = currentQr(row.secret, sessionId, row.windowSeconds)
     return {
       sessionId,
       qr: encodeQr(qr),
       expiresInMs: qr.expiresInMs,
-      windowSeconds: s.tokenWindowSeconds,
+      windowSeconds: row.windowSeconds,
     }
   })
 }
@@ -330,11 +342,16 @@ export async function scan(actor: Actor, input: unknown) {
   return withTenant(tenant, async (tx) => {
     const s = await settingsFor(tx, tenant)
 
+    const [policy] = await tx.select({ required: settings.requireSignedScans }).from(settings).where(eq(settings.institutionId, tenant))
+    const [keyed] = await tx.select({ id: devices.id }).from(devices).where(and(eq(devices.userId, actor.id), sql`${devices.publicKey} is not null`)).limit(1)
+    if ((policy?.required ?? true) || keyed) throw new ScanRejected('signed_scan_required', 'update the app and submit a scan signed by your registered device')
+
     // 1. the session and the token
     const [session] = await tx
       .select({
         id: sessions.id,
         secret: sessions.tokenSecret,
+        windowSeconds: sessions.tokenWindowSeconds,
         closedAt: sessions.closedAt,
         offeringId: sessions.offeringId,
         sectionId: offerings.sectionId,
@@ -352,7 +369,7 @@ export async function scan(actor: Actor, input: unknown) {
       throw new ScanRejected('session_closed', 'attendance for that class has closed')
     }
 
-    const verdict = verifyToken(session.secret, session.id, s.tokenWindowSeconds, decoded)
+    const verdict = verifyToken(session.secret, session.id, session.windowSeconds, decoded)
     if (verdict === 'stale') {
       throw new ScanRejected('token_stale', 'that code has expired -- scan the new one')
     }
@@ -505,11 +522,12 @@ export async function override(actor: Actor, input: unknown) {
 
   await withTenant(tenant, async (tx) => {
     const [session] = await tx
-      .select({ id: sessions.id, sectionId: offerings.sectionId })
+      .select({ id: sessions.id, sectionId: offerings.sectionId, openedBy: sessions.openedBy })
       .from(sessions)
       .innerJoin(offerings, eq(offerings.id, sessions.offeringId))
       .where(eq(sessions.id, data.sessionId))
     if (!session) throw new AttendanceError(404, 'no_such_session', 'no such session')
+    if (!isAdmin(actor.role) && session.openedBy !== actor.id) throw new AttendanceError(403, 'not_your_class', 'that is not your session')
 
     const [enrolled] = await tx
       .select({ userId: sectionMembers.userId })
@@ -581,6 +599,7 @@ export async function roster(actor: Actor, sessionId: string): Promise<Roster> {
         courseCode: courses.code,
         sectionLabel: sections.label,
         roomCode: rooms.code,
+        openedBy: sessions.openedBy,
       })
       .from(sessions)
       .innerJoin(offerings, eq(offerings.id, sessions.offeringId))
@@ -590,6 +609,7 @@ export async function roster(actor: Actor, sessionId: string): Promise<Roster> {
       .innerJoin(rooms, eq(rooms.id, slots.roomId))
       .where(eq(sessions.id, sessionId))
     if (!head) throw new AttendanceError(404, 'no_such_session', 'no such session')
+    if (!isAdmin(actor.role) && head.openedBy !== actor.id) throw new AttendanceError(403, 'not_your_class', 'that is not your session')
 
     const rows = await tx
       .select({
@@ -658,7 +678,7 @@ export async function openSessions(actor: Actor) {
       .innerJoin(sections, eq(sections.id, offerings.sectionId))
       .innerJoin(slots, eq(slots.id, sessions.slotId))
       .innerJoin(rooms, eq(rooms.id, slots.roomId))
-      .where(isNull(sessions.closedAt))
+      .where(and(isNull(sessions.closedAt), isAdmin(actor.role) ? undefined : eq(sessions.openedBy, actor.id)))
       .orderBy(sessions.openedAt),
   )
 }

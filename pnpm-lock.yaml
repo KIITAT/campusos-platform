@@ -48,6 +48,12 @@ importers:
       '@campusos/module-academic':
         specifier: workspace:*
         version: link:../modules/academic
+      '@campusos/module-admissions':
+        specifier: workspace:*
+        version: link:../modules/admissions
+      '@campusos/module-alumni':
+        specifier: workspace:*
+        version: link:../modules/alumni
       '@campusos/module-attendance':
         specifier: workspace:*
         version: link:../modules/attendance
@@ -72,6 +78,9 @@ importers:
       '@campusos/module-finance':
         specifier: workspace:*
         version: link:../modules/finance
+      '@campusos/module-helpdesk':
+        specifier: workspace:*
+        version: link:../modules/helpdesk
       '@campusos/module-hostel':
         specifier: workspace:*
         version: link:../modules/hostel
@@ -90,6 +99,9 @@ importers:
       '@campusos/module-parents':
         specifier: workspace:*
         version: link:../modules/parents
+      '@campusos/module-placement':
+        specifier: workspace:*
+        version: link:../modules/placement
       '@campusos/module-quizzes':
         specifier: workspace:*
         version: link:../modules/quizzes
@@ -99,6 +111,9 @@ importers:
       '@campusos/module-timetable':
         specifier: workspace:*
         version: link:../modules/timetable
+      '@campusos/module-transport':
+        specifier: workspace:*
+        version: link:../modules/transport
       '@types/node':
         specifier: ^24.10.1
         version: 24.13.4
@@ -168,6 +183,53 @@ importers:
       '@types/react':
         specifier: ^19.2.18
         version: 19.3.0
+      tsx:
+        specifier: ^4.23.12
+        version: 4.23.13
+
+  packages/modules/admissions:
+    dependencies:
+      '@campusos/db':
+        specifier: workspace:*
+        version: link:../../db
+      '@campusos/module-academic':
+        specifier: workspace:*
+        version: link:../academic
+      '@campusos/module-framework':
+        specifier: workspace:*
+        version: link:../../module-framework
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@types/pg@8.23.1)(pg@8.23.0)
+      zod:
+        specifier: ^4.4.3
+        version: 4.6.5
+    devDependencies:
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.13.4
+      tsx:
+        specifier: ^4.23.12
+        version: 4.23.13
+
+  packages/modules/alumni:
+    dependencies:
+      '@campusos/db':
+        specifier: workspace:*
+        version: link:../../db
+      '@campusos/module-framework':
+        specifier: workspace:*
+        version: link:../../module-framework
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@types/pg@8.23.1)(pg@8.23.0)
+      zod:
+        specifier: ^4.4.3
+        version: 4.6.5
+    devDependencies:
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.13.4
       tsx:
         specifier: ^4.23.12
         version: 4.23.13
@@ -429,6 +491,28 @@ importers:
         specifier: ^4.23.12
         version: 4.23.13
 
+  packages/modules/helpdesk:
+    dependencies:
+      '@campusos/db':
+        specifier: workspace:*
+        version: link:../../db
+      '@campusos/module-framework':
+        specifier: workspace:*
+        version: link:../../module-framework
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@types/pg@8.23.1)(pg@8.23.0)
+      zod:
+        specifier: ^4.4.3
+        version: 4.6.5
+    devDependencies:
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.13.4
+      tsx:
+        specifier: ^4.23.12
+        version: 4.23.13
+
   packages/modules/hostel:
     dependencies:
       '@campusos/db':
@@ -648,6 +732,31 @@ importers:
         specifier: ^4.23.12
         version: 4.23.13
 
+  packages/modules/placement:
+    dependencies:
+      '@campusos/db':
+        specifier: workspace:*
+        version: link:../../db
+      '@campusos/module-academic':
+        specifier: workspace:*
+        version: link:../academic
+      '@campusos/module-framework':
+        specifier: workspace:*
+        version: link:../../module-framework
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@types/pg@8.23.1)(pg@8.23.0)
+      zod:
+        specifier: ^4.4.3
+        version: 4.6.5
+    devDependencies:
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.13.4
+      tsx:
+        specifier: ^4.23.12
+        version: 4.23.13
+
   packages/modules/quizzes:
     dependencies:
       '@campusos/db':
@@ -712,6 +821,28 @@ importers:
       pdf-lib:
         specifier: ^1.17.1
         version: 1.17.1
+      zod:
+        specifier: ^4.4.3
+        version: 4.6.5
+    devDependencies:
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.13.4
+      tsx:
+        specifier: ^4.23.12
+        version: 4.23.13
+
+  packages/modules/transport:
+    dependencies:
+      '@campusos/db':
+        specifier: workspace:*
+        version: link:../../db
+      '@campusos/module-framework':
+        specifier: workspace:*
+        version: link:../../module-framework
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@types/pg@8.23.1)(pg@8.23.0)
       zod:
         specifier: ^4.4.3
         version: 4.6.5

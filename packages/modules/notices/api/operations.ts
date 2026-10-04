@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm'
-import { audit, users, withTenant } from '@campusos/db'
+import { audit, enqueueJob, users, withTenant } from '@campusos/db'
 import { readUpload, UploadError, type Role } from '@campusos/module-framework'
 import { departments } from '@campusos/module-academic/schema'
 import { noticeAttachments, notices, notifications } from '../schema'
@@ -314,17 +314,31 @@ export async function publishNotice(actor: Actor, input: unknown) {
   const d = publishNoticeSchema.parse(input)
 
   return withTenant(tenant, async (tx) => {
-    const [row] = await tx.select().from(notices).where(eq(notices.id, d.noticeId))
+    if (d.queued) {
+      const [notice] = await tx.select().from(notices).where(eq(notices.id, d.noticeId)).for('update')
+      if (!notice || notice.publishedAt) throw new NoticeError(409, 'not_a_draft', 'select an unpublished draft')
+      const job = await enqueueJob(tx, { institutionId: tenant, actorId: actor.id, kind: 'notices.publish', dedupeKey: `notice:${d.noticeId}`, payload: { noticeId: d.noticeId } })
+      return { id: d.noticeId, queued: true, jobId: job.id, reach: 0 }
+    }
+    return publishWithin(tx, actor, d.noticeId)
+  })
+}
+
+export async function publishWithin(tx: Tx, actor: Actor, noticeId: string) {
+    const tenant = requirePoster(actor)
+    const [row] = await tx.select().from(notices).where(eq(notices.id, noticeId)).for('update')
     if (!row) throw new NoticeError(404, 'no_such_notice', 'no such notice')
     if (row.publishedAt) throw new NoticeError(409, 'already_published', 'already published')
+    if (row.expiresAt && row.expiresAt <= new Date()) throw new NoticeError(409, 'notice_expired', 'the notice has expired')
+    if (actor.role === 'faculty' && row.audienceRoles.some((role) => role !== 'student')) throw new NoticeError(403, 'audience_too_wide', 'a lecturer may post to students')
 
     await tx
       .update(notices)
       .set({ publishedAt: new Date() })
-      .where(eq(notices.id, d.noticeId))
-    const reach = await fanOut(tx, tenant, d.noticeId)
-    return { id: d.noticeId, reach }
-  })
+      .where(eq(notices.id, noticeId))
+    const reach = await fanOut(tx, tenant, noticeId)
+    await audit(tx, { institutionId: tenant, actorId: actor.id, moduleId: MODULE, action: 'publish', entity: 'notice', entityId: noticeId, reason: 'Publish notice', detail: { reach } })
+    return { id: noticeId, reach }
 }
 
 /**

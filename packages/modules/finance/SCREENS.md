@@ -3,20 +3,30 @@
 This is the hand-off for the screens of the `finance` module. The engine is
 done: **183 routes**, every one tested through the API functions
 (`finance.test.ts`, `close.test.ts`, `business.test.ts`, `trade.test.ts`).
-The screens are not built yet. This file says what each screen holds, which
+The accounting workspace, setup and core reports are built; other screens
+remain specified below. This file says what each screen holds, which
 route feeds it, which route each form posts to, and what to watch for, so
 that whoever builds them (a person or another AI) can work page by page
 without re-reading the engine.
 
-**Status, 2026-10-04**
+**Status, 2026-10-05**
 
 | Piece | State |
 |---|---|
 | `api/*` (engine), `routes.ts` (183 routes), `api/openapi.ts` | done, tested |
-| `pages.ts`: `/`, `/journal`, `/accounts`, `/periods`, `/budgets` | live: the old v0.3 screens, still correct |
+| `screens/workspace.ts`: `/` | live: dashboard and links to implemented screens only |
+| `screens/accounting.ts`: `/accounts`, `/settings` | live: account tree, account maintenance, settings and fiscal-year close/reopen |
+| `screens/reports.ts`: `/reports` and trial balance, income/expenditure, balance sheet, cash, general ledger, day book | live: date/fund/cost-centre filters, ordered statements, CSV where supported |
+| `pages.ts`: `/journal`, `/periods`, `/budgets` | live: existing operations preserved |
 | `screens/kit.ts`: roles, `choices()`, `docRecord()`, `fc()`, `qty()`, `pick()` | written, not wired |
 | `screens/home.ts`: the new `/` workspace and `/my` | written, not wired |
-| Everything else in this file | **to build** |
+| Parties, documents, payments, stock, purchasing, assets, bank, and remaining reports | **to build** |
+
+`pages.test.ts` covers page availability, working workspace links, administrator
+forms, report filter routes and checkbox payloads. `finance.test.ts` loads all
+implemented screens with real postings and checks statement amounts and choices.
+The full future workspace in `screens/home.ts` remains unwired until its
+destinations are implemented.
 
 **How to pick it up**
 

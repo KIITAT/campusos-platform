@@ -44,6 +44,7 @@ export const paths = {
   [`${base}/board/publish`]: {
     post: {
       summary: 'Publish a draft and deliver it',
+      description: 'Set queued=true to defer publication and inbox delivery to the PostgreSQL worker. A queued response includes jobId and reach=0; live posting authority is checked again at execution.',
       tags: ['notices'],
       requestBody: { content: json(publishNoticeSchema) },
       responses: {

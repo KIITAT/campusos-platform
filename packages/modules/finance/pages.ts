@@ -1,5 +1,16 @@
 import { formatPaise } from '@campusos/money'
 import { param, type PluginPage } from '@campusos/module-framework'
+import { accountingPages } from './screens/accounting'
+import { reportPages } from './screens/reports'
+import { homePages } from './screens/home'
+import { setupPages } from './screens/setup'
+import { sellingPages, paymentPages } from './screens/documents'
+import { partyPages } from './screens/parties'
+import { stockPages } from './screens/stock'
+import { buyingPages } from './screens/buying'
+import { assetPages } from './screens/assets'
+import { bankPages } from './screens/bank'
+import { extraReportPages } from './screens/extra-reports'
 import {
   budgetReport,
   entryLines,
@@ -10,20 +21,10 @@ import {
   type Actor,
 } from './api'
 
-/**
- * Three screens, which is all a college's books need on day one: what accounts
- * exist, what has been posted, and whether the two sides agree.
- *
- * There is no "post a journal entry" form for a human. Almost everything here
- * arrives from fees or payroll, and a free-hand entry form is the fastest way to
- * end up with books nobody can reconcile. The route exists for when an
- * accountant genuinely needs it; the screen deliberately does not.
- */
-
 const OFFICE = ['institution_admin', 'super_admin', 'accounts_staff'] as const
 const ADMIN = ['institution_admin', 'super_admin'] as const
 
-export const pages: PluginPage[] = [
+const legacyPages: PluginPage[] = [
   {
     path: '/',
     title: 'Trial balance',
@@ -373,3 +374,5 @@ export const pages: PluginPage[] = [
     ],
   },
 ]
+
+export const pages: PluginPage[] = [...homePages, ...accountingPages, ...reportPages, ...setupPages, ...partyPages, ...sellingPages, ...paymentPages, ...stockPages, ...buyingPages, ...assetPages, ...bankPages, ...extraReportPages, ...legacyPages.filter(page => page.path !== '/' && page.path !== '/accounts')]

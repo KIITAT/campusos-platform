@@ -1,7 +1,9 @@
 import { param, type PluginPage } from '@campusos/module-framework'
-import { listOfferings, listStructure } from '@campusos/module-academic/api'
+import { getTimetable, listStructure } from '@campusos/module-academic/api'
 import {
-  listPendingDevices,
+  institutionDevices,
+  myDevices,
+  offlinePolicy,
   openSessions,
   roster,
   type Actor,
@@ -19,7 +21,7 @@ export const pages: PluginPage[] = [
     roles: [...STAFF],
     async load(actor, req) {
       const a = actor as Actor
-      const [sessions, offerings] = await Promise.all([openSessions(a), listOfferings(a)])
+      const [sessions, timetable] = await Promise.all([openSessions(a), getTimetable(a)])
       const sessionId = param(req, 'sessionId')
       const marks = sessionId ? await roster(a, sessionId) : null
 
@@ -30,9 +32,9 @@ export const pages: PluginPage[] = [
           openedAt: s.openedAt.toISOString(),
           who: `${s.courseCode} ${s.sectionLabel}`,
         })),
-        offeringOptions: offerings.map((o) => ({
-          value: o.id,
-          label: `${o.courseCode} ${o.sectionLabel} (${o.termCode})`,
+        slotOptions: timetable.entries.map((entry) => ({
+          value: entry.slotId,
+          label: `${entry.courseCode} ${entry.sectionLabel} · day ${entry.dayOfWeek}, ${entry.startsAt} · ${entry.roomCode}`,
         })),
         openOptions: sessions.map((s) => ({
           value: s.sessionId,
@@ -54,9 +56,7 @@ export const pages: PluginPage[] = [
       {
         kind: 'note',
         text:
-          'The code on the projector rotates every few seconds and the previous ' +
-          'one still works, so a student who photographs it as it changes is not ' +
-          'told they are wrong. A screenshot is useless a moment later.',
+          'Students sign scans on their approved phone after biometric or PIN verification. Offline scans remain pending until synced; late submissions are flagged for review.',
       },
       {
         kind: 'table',
@@ -80,7 +80,7 @@ export const pages: PluginPage[] = [
         submit: 'Open',
         path: '/sessions',
         fields: [
-          { name: 'offeringId', label: 'Class', kind: 'select', options: 'offeringOptions' },
+          { name: 'slotId', label: 'Timetable class', kind: 'select', options: 'slotOptions' },
         ],
       },
       ...(data.qr
@@ -105,6 +105,7 @@ export const pages: PluginPage[] = [
           { key: 'state', label: 'Status', kind: 'status', alertWhen: 'missing' },
           { key: 'markedAt', label: 'When', kind: 'when' },
           { key: 'overrideReason', label: 'Reason' },
+          { key: 'anomalies', label: 'Review flags' },
         ],
       },
       {
@@ -140,19 +141,18 @@ export const pages: PluginPage[] = [
     roles: [...ADMIN],
     async load(actor) {
       const a = actor as Actor
-      const [pending, structure] = await Promise.all([
-        listPendingDevices(a),
+      const [devices, structure] = await Promise.all([
+        institutionDevices(a),
         listStructure(a),
       ])
       return {
-        pending: pending.map((d) => ({
-          ...d,
-          who: d.studentName ?? d.studentEmail,
-        })),
-        pendingOptions: pending.map((d) => ({
+        devices,
+        pending: devices.filter((device) => device.status === 'pending_approval'),
+        pendingOptions: devices.filter((device) => device.status === 'pending_approval').map((d) => ({
           value: d.id,
-          label: `${d.studentName ?? d.studentEmail} — ${d.label ?? 'unnamed'}`,
+          label: `${d.who} — ${d.label ?? 'unnamed'} (${d.signing})`,
         })),
+        activeOptions: devices.filter((device) => device.status === 'active').map((device) => ({ value: device.id, label: `${device.who} — ${device.label ?? 'unnamed'}` })),
         roomOptions: structure.rooms.map((r) => ({ value: r.id, label: r.code })),
       }
     },
@@ -172,6 +172,8 @@ export const pages: PluginPage[] = [
         columns: [
           { key: 'who', label: 'Student' },
           { key: 'label', label: 'Device' },
+          { key: 'signing', label: 'Signing' },
+          { key: 'fingerprint', label: 'Public key SHA-256', kind: 'code' },
           { key: 'createdAt', label: 'Registered', kind: 'when' },
         ],
       },
@@ -184,6 +186,19 @@ export const pages: PluginPage[] = [
         fields: [
           { name: 'deviceId', label: 'Device', kind: 'select', options: 'pendingOptions' },
         ],
+      },
+      {
+        kind: 'table',
+        title: 'Registered devices',
+        rows: 'devices',
+        columns: [{ key: 'who', label: 'Student' }, { key: 'label', label: 'Device' }, { key: 'status', label: 'Status', kind: 'status' }, { key: 'signing', label: 'Signing' }],
+      },
+      {
+        kind: 'form',
+        title: 'Revoke a lost device',
+        path: '/devices/revoke',
+        submit: 'Revoke',
+        fields: [{ name: 'deviceId', label: 'Active device', kind: 'select', options: 'activeOptions' }],
       },
       {
         kind: 'form',
@@ -200,6 +215,42 @@ export const pages: PluginPage[] = [
           { name: 'radiusM', label: 'Radius (m)', kind: 'number', value: '50' },
         ],
       },
+    ],
+  },
+
+  {
+    path: '/offline-policy',
+    title: 'Signed attendance policy',
+    menu: 'Offline policy',
+    roles: [...ADMIN],
+    async load(actor) { return { policy: await offlinePolicy(actor as Actor) } },
+    sections(data) {
+      const policy = data.policy as Awaited<ReturnType<typeof offlinePolicy>>
+      return [
+        { kind: 'note', text: 'Signed scans prove possession of an approved device key. Native apps enforce biometric or PIN unlock; the server does not remotely attest secure hardware. Late scans retain their capture and receipt times for review.' },
+        { kind: 'form', title: 'Offline acceptance', path: '/offline/policy', submit: 'Save policy', fields: [
+          { name: 'requireSignedScans', label: 'Require signed scans', kind: 'checkbox', value: String(policy.requireSignedScans), hint: 'Enabled by default. Accounts with signing keys can never use unsigned scans.' },
+          { name: 'acceptLateSync', label: 'Accept late scans and flag them', kind: 'checkbox', value: String(policy.acceptLateSync) },
+          { name: 'maxLateSyncHours', label: 'Maximum sync delay (hours)', kind: 'number', value: String(policy.maxLateSyncHours), hint: '1–168 hours; default 24.' },
+          { name: 'clockSkewSeconds', label: 'Clock tolerance (seconds)', kind: 'number', value: String(policy.clockSkewSeconds), hint: '0–300 seconds; default 60.' },
+        ] },
+      ]
+    },
+  },
+
+  {
+    path: '/device',
+    title: 'My attendance device',
+    menu: 'My device',
+    roles: ['student'],
+    async load(actor) {
+      const devices = await myDevices(actor as Actor)
+      return { devices: devices.map((device) => ({ ...device, signing: device.signed ? 'P-256 signing enabled' : 'Enroll a signing key in the mobile app' })), activeOptions: devices.filter((device) => device.status === 'active').map((device) => ({ value: device.id, label: device.label ?? device.deviceHash })) }
+    },
+    sections: () => [
+      { kind: 'note', text: 'Use the CampusOS mobile app to enroll this phone’s signing key. An administrator approves it here before you scan. Every scan asks for biometric or device PIN verification. Replacing a phone requires a new key and approval.' },
+      { kind: 'table', title: 'My devices', rows: 'devices', columns: [{ key: 'label', label: 'Device' }, { key: 'status', label: 'Status', kind: 'status' }, { key: 'signing', label: 'Signing' }] },
+      { kind: 'form', title: 'Revoke my lost phone', path: '/devices/revoke', submit: 'Revoke', fields: [{ name: 'deviceId', label: 'Device', kind: 'select', options: 'activeOptions' }] },
     ],
   },
 

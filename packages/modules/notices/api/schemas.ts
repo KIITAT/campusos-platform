@@ -40,7 +40,7 @@ export const attachSchema = z
 export const removeAttachmentSchema = z.object({ attachmentId: uuid }).meta({ id: 'NoticeAttachmentRemove' })
 
 export const publishNoticeSchema = z
-  .object({ noticeId: uuid })
+  .object({ noticeId: uuid, queued: z.preprocess(ticked, z.boolean()).default(false) })
   .meta({ id: 'NoticePublish' })
 
 export const withdrawNoticeSchema = z

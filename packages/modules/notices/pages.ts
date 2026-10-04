@@ -134,6 +134,7 @@ export const pages: PluginPage[] = [
               path: '/board/publish',
               fields: [
                 { name: 'noticeId', label: 'Draft', kind: 'select' as const, options: 'drafts' },
+                { name: 'queued', label: 'Deliver through the background worker', kind: 'checkbox' as const, optional: true },
               ],
             },
             {
