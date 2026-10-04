@@ -6,7 +6,7 @@
     "build": "turbo build",
     "typecheck": "turbo typecheck",
     "lint": "eslint .",
-    "test": "turbo test --continue",
+    "test": "turbo test --continue --concurrency=1",
     "db:generate": "pnpm -F @campusos/db exec drizzle-kit generate",
     "db:migrate": "pnpm -F @campusos/db exec drizzle-kit migrate",
     "db:check": "pnpm -F @campusos/db exec drizzle-kit check",
