@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm'
 import {
   boolean,
   check,
+  customType,
   date,
   index,
   numeric,
@@ -33,6 +34,7 @@ const tenantId = () =>
     .references(() => institutions.id, { onDelete: 'cascade' })
 
 const pk = () => uuid().primaryKey().defaultRandom()
+const daterange = customType<{ data: string }>({ dataType: () => 'daterange' })
 const createdAt = () =>
   timestamp('created_at', { withTimezone: true }).notNull().defaultNow()
 
@@ -310,6 +312,12 @@ export const slots = pgTable(
     dayOfWeek: smallint('day_of_week').notNull(),
     startsAt: time('starts_at').notNull(),
     endsAt: time('ends_at').notNull(),
+    /**
+     * The term's dates, copied from the offering by trigger (0006), so that a
+     * slot clashes only with slots of an overlapping term. Never written by
+     * the application: optional here so an insert can leave it out.
+     */
+    termDates: daterange('term_dates'),
     createdAt: createdAt(),
   },
   () => [
