@@ -18,7 +18,7 @@ import {
   setCurrentTerm,
   type Actor,
 } from './api'
-import { departments, sectionMembers } from './schema'
+import { departments, offerings, sectionMembers } from './schema'
 
 const SLUGS = ['acad-a', 'acad-b']
 let instA: string
@@ -36,6 +36,7 @@ const ids = {
   program: '',
   course: '',
   course2: '',
+  course3: '',
   room: '',
   room2: '',
   term: '',
@@ -94,6 +95,14 @@ before(async () => {
       departmentId: ids.dept,
       code: 'cs302',
       title: 'Databases',
+      credits: 3,
+    })
+  ).id
+  ids.course3 = (
+    await createCourse(admin(), {
+      departmentId: ids.dept,
+      code: 'cs303',
+      title: 'Networks',
       credits: 3,
     })
   ).id
@@ -312,6 +321,41 @@ test('a lecturer cannot be booked into two rooms at once', async () => {
         endsAt: '10:15',
       }),
     (e: unknown) => e instanceof AcademicError && e.code === 'clash',
+  )
+})
+
+test('next term, the same room and lecturer at the same hour are free again', async () => {
+  // Monday 09:00 in this room, taught by this lecturer, is taken in 2026-ODD.
+  // The even term does not overlap it, so the same hour is not a clash.
+  const s = await listStructure(admin())
+  const even = s.terms.find((t) => t.code === '2027-EVEN')!
+  const next = await createOffering(admin(), {
+    termId: even.id,
+    courseId: ids.course,
+    sectionId: ids.section,
+    facultyUserId: ids.faculty,
+  })
+  const slot = await createSlot(admin(), {
+    offeringId: next.id,
+    roomId: ids.room,
+    dayOfWeek: 1,
+    startsAt: '09:00',
+    endsAt: '10:00',
+  })
+  assert.equal(slot.dayOfWeek, 1)
+})
+
+test('handing a class to a lecturer who is teaching at that hour is refused', async () => {
+  // An unstaffed class on Monday at 09:30 in the second room: no clash yet.
+  const spare = await createOffering(admin(), { termId: ids.term, courseId: ids.course3, sectionId: ids.section })
+  await createSlot(admin(), { offeringId: spare.id, roomId: ids.room2, dayOfWeek: 1, startsAt: '09:30', endsAt: '10:30' })
+  // The lecturer already teaches Monday 09:00-10:00: they cannot take it.
+  await assert.rejects(
+    () =>
+      withTenant(instA, (tx) =>
+        tx.update(offerings).set({ facultyUserId: ids.faculty }).where(eq(offerings.id, spare.id)),
+      ),
+    (e: unknown) => /already booked when this class meets/.test(String((e as { cause?: Error }).cause?.message)),
   )
 })
 

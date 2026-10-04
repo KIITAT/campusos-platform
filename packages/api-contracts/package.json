@@ -35,6 +35,7 @@
     "@campusos/module-parents": "workspace:*",
     "@campusos/module-quizzes": "workspace:*",
     "@campusos/module-skills": "workspace:*",
+    "@campusos/module-timetable": "workspace:*",
     "@types/node": "^24.10.1",
     "tsx": "^4.23.12"
   }

@@ -21,6 +21,7 @@ import skills from '@campusos/module-skills/plugin'
 import feedback from '@campusos/module-feedback/plugin'
 import mentoring from '@campusos/module-mentoring/plugin'
 import care from '@campusos/module-care/plugin'
+import timetable from '@campusos/module-timetable/plugin'
 
 /**
  * Every module, as the host will see it after installing the package.
@@ -47,6 +48,7 @@ const PLUGINS: Plugin[] = [
   feedback,
   mentoring,
   care,
+  timetable,
 ]
 
 const MODULES_DIR = join(process.cwd(), '..', 'modules')
@@ -117,10 +119,10 @@ test('the whole product still answers the same number of endpoints', () => {
   // notice's own page and the documents that go with it. Finance then became
   // the whole of the books -- receivables and payables, GST and TDS, the bank,
   // stock, buying and selling, fixed assets, funds and the statements -- and
-  // went from 13 to 183.
+  // went from 13 to 183; the timetable solver arrived with 41.
   // A regression guard on the conversion, not a target.
   const total = PLUGINS.reduce((n, p) => n + p.routes.length, 0)
-  assert.equal(total, 586, `expected 586 endpoints across all modules, found ${total}`)
+  assert.equal(total, 627, `expected 627 endpoints across all modules, found ${total}`)
 })
 
 test('a longer path is never swallowed by a shorter one', () => {
@@ -156,6 +158,9 @@ test('only the document routes return bytes instead of JSON', () => {
     'finance/reports/export.csv',
     'mentoring/leave/document.pdf',
     'notices/board/attachment',
+    'timetable/live/pdf',
+    'timetable/my/pdf',
+    'timetable/runs/pdf',
   ])
 })
 
