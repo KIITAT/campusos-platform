@@ -129,10 +129,11 @@ test('the whole product still answers the same number of endpoints', () => {
   // notice's own page and the documents that go with it. Finance then became
   // the whole of the books -- receivables and payables, GST and TDS, the bank,
   // stock, buying and selling, fixed assets, funds and the statements -- and
-  // went from 13 to 183; the timetable solver arrived with 41.
+  // went from 13 to 183; the timetable solver arrived with 41. CSV import then
+  // gave eleven modules the same three: what it imports, a template, and run.
   // A regression guard on the conversion, not a target.
   const total = PLUGINS.reduce((n, p) => n + p.routes.length, 0)
-  assert.equal(total, 679, `expected 679 endpoints across all modules, found ${total}`)
+  assert.equal(total, 712, `expected 712 endpoints across all modules, found ${total}`)
 })
 
 test('a longer path is never swallowed by a shorter one', () => {
@@ -155,22 +156,33 @@ test('only the document routes return bytes instead of JSON', () => {
     p.routes.filter((r) => r.raw).map((r) => `${p.manifest.id}${r.path}`),
   )
   assert.deepEqual(raw.sort(), [
+    'academic/imports/template',
+    'admissions/imports/template',
+    'alumni/imports/template',
     'ceremonies/certificate.pdf',
     'examinations/admit-card.pdf',
     'examinations/grade-report.pdf',
+    'examinations/imports/template',
     'examinations/paper.pdf',
     'examinations/transcript.pdf',
     'fees/demand-letter.pdf',
     'fees/receipt.pdf',
+    'finance/imports/template',
     'finance/invoices/pdf',
     'finance/orders/pdf',
     'finance/payments/pdf',
     'finance/reports/export.csv',
+    'hostel/imports/template',
+    'hr/imports/template',
+    'library/imports/template',
+    'mentoring/imports/template',
     'mentoring/leave/document.pdf',
     'notices/board/attachment',
+    'placement/imports/template',
     'timetable/live/pdf',
     'timetable/my/pdf',
     'timetable/runs/pdf',
+    'transport/imports/template',
   ])
 })
 
