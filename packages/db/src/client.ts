@@ -1,4 +1,5 @@
 import './env'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { Pool } from 'pg'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { sql } from 'drizzle-orm'
@@ -100,13 +101,30 @@ export const authDb = new Proxy({} as ReturnType<typeof drizzle>, {
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
 /**
+ * The batch a withTenant call is running inside, if any. Set only by
+ * withTenantBatch, so every ordinary request keeps its own transaction.
+ */
+const batch = new AsyncLocalStorage<{ institutionId: string; tx: Tx }>()
+
+/**
  * Runs `fn` in a transaction scoped to one institution. RLS policies read
  * `app.institution_id`, so every tenant query must go through here.
+ *
+ * Inside withTenantBatch it joins the batch's transaction as a savepoint
+ * instead, so that a file of rows written through the module's own operations
+ * commits, or is rolled back, as one.
  */
 export function withTenant<T>(
   institutionId: string,
   fn: (tx: Tx) => Promise<T>,
 ): Promise<T> {
+  const outer = batch.getStore()
+  if (outer) {
+    if (outer.institutionId !== institutionId) {
+      return Promise.reject(new Error('a batch cannot reach another institution'))
+    }
+    return outer.tx.transaction(fn)
+  }
   return db.transaction(async (tx) => {
     // set_config, not `SET LOCAL` -- SET does not take bind parameters, so the
     // interpolated form would be injectable. Third arg `true` makes it
@@ -116,5 +134,35 @@ export function withTenant<T>(
       sql`select set_config('app.institution_id', ${institutionId}, true)`,
     )
     return fn(tx)
+  })
+}
+
+/** Runs one step of a batch in its own savepoint: a step that fails leaves no trace. */
+export type BatchStep = <R>(run: () => Promise<R>) => Promise<R>
+
+/**
+ * One transaction for many operations, for a CSV import.
+ *
+ * Every withTenant reached from `fn` -- the module's ordinary create and update
+ * operations, with all their checks -- joins this transaction, and each
+ * `step` gets a savepoint of its own, so a bad row is rolled back alone and
+ * the rows after it still see what the rows before it wrote. Throw from `fn`
+ * to roll the whole batch back: that is how a dry run leaves nothing behind.
+ *
+ * Steps run one at a time. Two at once would interleave savepoints on the
+ * same connection.
+ */
+export function withTenantBatch<T>(
+  institutionId: string,
+  fn: (step: BatchStep) => Promise<T>,
+): Promise<T> {
+  if (batch.getStore()) return Promise.reject(new Error('a batch cannot start inside another'))
+  return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select set_config('app.institution_id', ${institutionId}, true)`,
+    )
+    const step: BatchStep = (run) =>
+      tx.transaction((savepoint) => batch.run({ institutionId, tx: savepoint }, run))
+    return batch.run({ institutionId, tx }, () => fn(step))
   })
 }
