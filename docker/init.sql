@@ -13,7 +13,11 @@ create role campusos_app with login password 'campusos_app';
 grant connect on database campusos to campusos_app;
 grant usage on schema public to campusos_app;
 
--- existing objects (none on a fresh DB) + everything migrations create later
+-- existing objects (none on a fresh DB) + everything migrations create later.
+-- Broad on purpose: core migration 0005 then takes back what the app role
+-- must not hold (credentials, institutions and entitlements, rewriting the
+-- audit log, deleting people), so the end state matches the web host's
+-- migrate on an upgrade.
 grant select, insert, update, delete on all tables in schema public to campusos_app;
 grant usage, select on all sequences in schema public to campusos_app;
 alter default privileges in schema public

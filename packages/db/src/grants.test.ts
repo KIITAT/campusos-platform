@@ -124,6 +124,7 @@ test('the audit trail is append-only for the owner too (AUD-01)', async () => {
     appendOnly,
   )
   await assert.rejects(() => authDb.delete(auditLog).where(eq(auditLog.institutionId, inst)), appendOnly)
+  await assert.rejects(() => authDb.execute(sql`truncate audit_log`), appendOnly)
   // Deleting a person who has a trail would null the actor on every row they
   // wrote. That is a rewrite too, so it is refused: people are erased instead.
   await assert.rejects(() => authDb.delete(users).where(eq(users.id, person)), appendOnly)

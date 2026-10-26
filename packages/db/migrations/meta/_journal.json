@@ -36,6 +36,13 @@
       "when": 1791158400000,
       "tag": "0004_job_queue",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792997756201,
+      "tag": "0005_security_hotfixes",
+      "breakpoints": true
     }
   ]
 }
