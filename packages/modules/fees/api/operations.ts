@@ -35,6 +35,23 @@ import { postInvoice, postPayment, postRefund, postWaiverChange } from './postin
 
 const MODULE = 'fees'
 
+/**
+ * Methods whose reference names one transfer in the whole banking system -- a
+ * UTR, a UPI reference -- and so is receipted once (ACC-18). A cheque number
+ * does not: two banks' cheques can both be 000123.
+ */
+export const ONE_RECEIPT_PER_REFERENCE = ['bank_transfer', 'upi'] as const
+const onePerReference = (m: string) => (ONE_RECEIPT_PER_REFERENCE as readonly string[]).includes(m)
+
+/** The constraint a drizzle error carries, down its cause chain. */
+const constraintOf = (e: unknown): string | undefined => {
+  for (let x: unknown = e; x instanceof Error; x = (x as { cause?: unknown }).cause) {
+    const c = (x as { constraint?: string }).constraint
+    if (c) return c
+  }
+  return undefined
+}
+
 export interface Actor extends ViewerScope {
   id: string
   email?: string | null
@@ -385,23 +402,51 @@ export async function recordPaymentWithin(tx: Tx, tenant: string, actor: Actor, 
     throw new FeeError(400, 'not_a_student', 'fees are recorded against students')
   }
 
+  // A UTR already receipted -- typed twice, or typed once and now arriving as
+  // the student's verified claim -- is refused before it takes a receipt
+  // number. The unique index is what holds when two requests race past this.
+  const reference = data.reference?.trim() || null
+  if (reference && onePerReference(data.method)) {
+    const [prior] = await tx
+      .select({ receiptNo: feePayments.receiptNo })
+      .from(feePayments)
+      .where(
+        and(
+          inArray(feePayments.method, [...ONE_RECEIPT_PER_REFERENCE]),
+          sql`${feePayments.reference} is not null and btrim(${feePayments.reference}) <> ''`,
+          sql`upper(btrim(${feePayments.reference})) = upper(${reference})`,
+        ),
+      )
+    if (prior) {
+      throw new FeeError(409, 'duplicate_reference', `${reference} is already receipted as ${prior.receiptNo}`)
+    }
+  }
+
   const receiptNo = await nextReceiptNo(tx, tenant)
 
-  const [row] = await tx
-    .insert(feePayments)
-    .values({
-      institutionId: tenant,
-      studentId: data.studentId,
-      termId: data.termId,
-      amountPaise: data.amountPaise,
-      method: data.method,
-      reference: data.reference,
-      receivedAt: data.receivedAt,
-      recordedBy: actor.id,
-      receiptNo,
-      notes: data.notes,
-    })
-    .returning()
+  let row: typeof feePayments.$inferSelect | undefined
+  try {
+    ;[row] = await tx
+      .insert(feePayments)
+      .values({
+        institutionId: tenant,
+        studentId: data.studentId,
+        termId: data.termId,
+        amountPaise: data.amountPaise,
+        method: data.method,
+        reference,
+        receivedAt: data.receivedAt,
+        recordedBy: actor.id,
+        receiptNo,
+        notes: data.notes,
+      })
+      .returning()
+  } catch (e) {
+    if (constraintOf(e) === 'fee_payments_reference') {
+      throw new FeeError(409, 'duplicate_reference', `${reference} has just been receipted by another request`)
+    }
+    throw e
+  }
 
   // Recording is not itself a discretionary act, but it moves money, so it
   // is on the trail without needing a typed reason.
@@ -418,7 +463,7 @@ export async function recordPaymentWithin(tx: Tx, tenant: string, actor: Actor, 
       studentId: data.studentId,
       amountPaise: data.amountPaise,
       method: data.method,
-      reference: data.reference,
+      reference,
     },
   })
 

@@ -173,6 +173,11 @@ export const feePayments = pgTable(
   },
   (t) => [
     uniqueIndex('fee_payments_receipt').on(t.institutionId, t.receiptNo),
+    // One receipt per UTR or UPI reference (ACC-18, fees 0007). Cheque numbers
+    // repeat across banks, so cheques are not in it.
+    uniqueIndex('fee_payments_reference')
+      .on(t.institutionId, sql`upper(btrim(${t.reference}))`)
+      .where(sql`method IN ('bank_transfer', 'upi') AND reference IS NOT NULL AND btrim(reference) <> ''`),
     index('fee_payments_student').on(t.studentId),
     index('fee_payments_term').on(t.termId),
     check('fee_payments_amount', sql`amount_paise > 0`),
