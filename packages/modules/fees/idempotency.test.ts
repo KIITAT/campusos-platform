@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { eq, inArray, sql } from 'drizzle-orm'
 import { authDb, institutions, users, verifyChains, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
-import { recordPayment, type Actor } from './api'
+import { chargeStudent, recordPayment, refundPayment, type Actor } from './api'
 
 /**
  * ACC-18: a payment recorded once per idempotency key.
@@ -18,7 +18,7 @@ const SLUG = 'fees-idem'
 const OTHER = 'fees-idem-other'
 let inst = ''
 let other = ''
-const ids = { clerk: '', clerk2: '', s1: '', otherClerk: '', otherStudent: '', term: '', otherTerm: '' }
+const ids = { clerk: '', clerk2: '', adm: '', s1: '', otherClerk: '', otherStudent: '', term: '', otherTerm: '' }
 
 const as = (id: string, role: Actor['role'], institutionId: string): Actor => ({ id, role, institutionId, email: null })
 const clerk = () => as(ids.clerk, 'accounts_staff', inst)
@@ -97,6 +97,7 @@ before(async () => {
     .returning({ id: users.id })
   ids.clerk = people[0]!.id
   ids.clerk2 = people[1]!.id
+  ids.adm = people[2]!.id
   ids.s1 = people[3]!.id
   ids.otherClerk = people[4]!.id
   ids.otherStudent = people[6]!.id
@@ -271,4 +272,59 @@ test('without a key a payment is recorded as before', async () => {
   await recordPayment(clerk(), body())
   await recordPayment(clerk(), body())
   assert.equal((await tally()).payments - before.payments, 2)
+})
+
+/**
+ * NEW-15: a refund and a manual charge are the same kind of act as a payment.
+ * Submitted twice, each used to happen twice: two refunds paid out and posted,
+ * two charges billed. They take the same key, for their own operation.
+ */
+async function sums(institutionId = inst) {
+  const r = await authDb.execute<{ refunds: number; refundEntries: number; charges: number; chargeAudits: number }>(sql`
+    select
+      (select count(*)::int from fee_refunds where institution_id = ${institutionId}) as refunds,
+      (select count(*)::int from finance_journal_entries
+        where institution_id = ${institutionId} and source_module = 'fees' and source_ref like 'refund:%') as "refundEntries",
+      (select count(*)::int from fee_student_charges where institution_id = ${institutionId}) as charges,
+      (select count(*)::int from audit_log
+        where institution_id = ${institutionId} and entity = 'fee_student_charges' and action = 'charge') as "chargeAudits"`)
+  return r.rows[0]!
+}
+
+test('a refund submitted twice with one key is paid out once (NEW-15)', async () => {
+  const p = await recordPayment(clerk(), body({ amount: '5000' }))
+  const adm = keyed(as(ids.adm, 'institution_admin', inst), randomUUID())
+  const refund = { paymentId: p.id, amount: '1000', reason: 'overpaid at the counter' }
+  const before = await sums()
+  const first = await refundPayment(adm, refund)
+  const second = await refundPayment(adm, refund)
+  assert.equal(second.id, first.id)
+  assert.equal((second as { replayed?: boolean }).replayed, true)
+  assert.match(String((second as { notice?: string }).notice), /Already refunded/)
+  const now = await sums()
+  assert.equal(now.refunds - before.refunds, 1, 'one refund')
+  assert.equal(now.refundEntries - before.refundEntries, 1, 'one journal entry')
+})
+
+test('a manual charge submitted twice with one key is charged once (NEW-15)', async () => {
+  const actor = keyed(clerk(), randomUUID())
+  const charge = { studentId: ids.s1, termId: ids.term, label: 'Lost library book', amount: '450' }
+  const before = await sums()
+  const first = await chargeStudent(actor, charge)
+  const second = await chargeStudent(actor, charge)
+  assert.equal(second.id, first.id)
+  assert.equal((second as { replayed?: boolean }).replayed, true)
+  const now = await sums()
+  assert.equal(now.charges - before.charges, 1, 'one charge')
+  assert.equal(now.chargeAudits - before.chargeAudits, 1, 'one audit row')
+})
+
+test('a key used for a payment does not answer a refund (NEW-15)', async () => {
+  const adm = keyed(as(ids.adm, 'institution_admin', inst), randomUUID())
+  const p = await recordPayment(adm, body({ amount: '3000' }))
+  const r = await refundPayment(adm, {
+    paymentId: p.id, amount: '500', reason: 'part refund, same key',
+  })
+  assert.notEqual(r.id, p.id)
+  assert.notEqual((r as { replayed?: boolean }).replayed, true)
 })
