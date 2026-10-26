@@ -77,11 +77,15 @@ const optionalId = z
 
 /**
  * The accounts office, or a storekeeper of every store a document touches. A
- * storekeeper named for no particular store keeps them all.
+ * storekeeper named for no particular store keeps them all. With no store in
+ * question (a list, a batch) it takes a storekeeper of some store: an empty
+ * list used to check nothing at all (NEW-18).
  */
 async function requireStores(tx: Tx, actor: Actor, warehouseIds: (string | null | undefined)[]) {
   if (canOperate(actor.role)) return
-  for (const w of new Set(warehouseIds.filter((x): x is string => !!x))) {
+  const stores = new Set(warehouseIds.filter((x): x is string => !!x))
+  if (!stores.size) return requireCapability(tx, actor, 'storekeeper')
+  for (const w of stores) {
     await requireCapability(tx, actor, 'storekeeper', w)
   }
 }
