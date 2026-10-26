@@ -107,7 +107,7 @@ export const feeWaivers = pgTable(
     institutionId: tenantId(),
     studentId: text('student_id')
       .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
+      .references(() => users.id, { onDelete: 'no action' }),
     feeItemId: uuid('fee_item_id')
       .notNull()
       .references(() => feeItems.id, { onDelete: 'cascade' }),
@@ -154,7 +154,7 @@ export const feePayments = pgTable(
     institutionId: tenantId(),
     studentId: text('student_id')
       .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
+      .references(() => users.id, { onDelete: 'no action' }),
     termId: uuid('term_id')
       .notNull()
       .references(() => terms.id, { onDelete: 'restrict' }),
@@ -218,7 +218,7 @@ export const feeInvoices = pgTable(
     institutionId: tenantId(),
     studentId: text('student_id')
       .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
+      .references(() => users.id, { onDelete: 'no action' }),
     termId: uuid('term_id')
       .notNull()
       .references(() => terms.id, { onDelete: 'restrict' }),
@@ -362,7 +362,7 @@ export const scholarshipAwards = pgTable(
       .references(() => scholarships.id, { onDelete: 'restrict' }),
     studentId: text('student_id')
       .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
+      .references(() => users.id, { onDelete: 'no action' }),
     termId: uuid('term_id')
       .notNull()
       .references(() => terms.id, { onDelete: 'cascade' }),
@@ -438,7 +438,7 @@ export const dropCredits = pgTable(
     institutionId: tenantId(),
     studentId: text('student_id')
       .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
+      .references(() => users.id, { onDelete: 'no action' }),
     termId: uuid('term_id')
       .notNull()
       .references(() => terms.id, { onDelete: 'cascade' }),
@@ -476,7 +476,7 @@ export const studentCharges = pgTable(
     institutionId: tenantId(),
     studentId: text('student_id')
       .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
+      .references(() => users.id, { onDelete: 'no action' }),
     termId: uuid('term_id')
       .notNull()
       .references(() => terms.id, { onDelete: 'restrict' }),
@@ -554,7 +554,7 @@ export const transferClaims = pgTable(
     institutionId: tenantId(),
     studentId: text('student_id')
       .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
+      .references(() => users.id, { onDelete: 'no action' }),
     termId: uuid('term_id')
       .notNull()
       .references(() => terms.id, { onDelete: 'restrict' }),
@@ -612,7 +612,7 @@ export const demandLetters = pgTable(
     number: text().notNull(),
     studentId: text('student_id')
       .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
+      .references(() => users.id, { onDelete: 'no action' }),
     termId: uuid('term_id')
       .notNull()
       .references(() => terms.id, { onDelete: 'restrict' }),

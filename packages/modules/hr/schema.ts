@@ -194,7 +194,7 @@ export const payComponents = pgTable(
     institutionId: tenantId(),
     staffId: uuid('staff_id')
       .notNull()
-      .references(() => staff.id, { onDelete: 'cascade' }),
+      .references(() => staff.id, { onDelete: 'no action' }),
     code: text().notNull(),
     label: text().notNull(),
     kind: componentKindEnum().notNull(),
@@ -230,7 +230,7 @@ export const payslips = pgTable(
     institutionId: tenantId(),
     staffId: uuid('staff_id')
       .notNull()
-      .references(() => staff.id, { onDelete: 'cascade' }),
+      .references(() => staff.id, { onDelete: 'no action' }),
     /** First day of the month it covers. A month is the unit; a date is storable. */
     period: date().notNull(),
     grossPaise: paise('gross_paise').notNull(),
@@ -537,7 +537,7 @@ export const separations = pgTable(
     institutionId: tenantId(),
     staffId: uuid('staff_id')
       .notNull()
-      .references(() => staff.id, { onDelete: 'cascade' }),
+      .references(() => staff.id, { onDelete: 'no action' }),
     changeId: uuid('change_id').references(() => employmentChanges.id, {
       onDelete: 'set null',
     }),
@@ -762,7 +762,7 @@ export const leaveEncashments = pgTable(
     institutionId: tenantId(),
     staffId: uuid('staff_id')
       .notNull()
-      .references(() => staff.id, { onDelete: 'cascade' }),
+      .references(() => staff.id, { onDelete: 'no action' }),
     leaveTypeId: uuid('leave_type_id')
       .notNull()
       .references(() => leaveTypes.id, { onDelete: 'restrict' }),
@@ -1549,7 +1549,7 @@ export const salaryAssignments = pgTable(
     institutionId: tenantId(),
     staffId: uuid('staff_id')
       .notNull()
-      .references(() => staff.id, { onDelete: 'cascade' }),
+      .references(() => staff.id, { onDelete: 'no action' }),
     structureId: uuid('structure_id')
       .notNull()
       .references(() => salaryStructures.id, { onDelete: 'restrict' }),
@@ -1631,7 +1631,7 @@ export const taxElections = pgTable(
     institutionId: tenantId(),
     staffId: uuid('staff_id')
       .notNull()
-      .references(() => staff.id, { onDelete: 'cascade' }),
+      .references(() => staff.id, { onDelete: 'no action' }),
     regimeId: uuid('regime_id')
       .notNull()
       .references(() => taxRegimes.id, { onDelete: 'restrict' }),
@@ -1715,7 +1715,7 @@ export const salaryWithholdings = pgTable(
     institutionId: tenantId(),
     staffId: uuid('staff_id')
       .notNull()
-      .references(() => staff.id, { onDelete: 'cascade' }),
+      .references(() => staff.id, { onDelete: 'no action' }),
     fromPeriod: date('from_period').notNull(),
     reason: text().notNull(),
     liftedAt: timestamp('lifted_at', { withTimezone: true }),

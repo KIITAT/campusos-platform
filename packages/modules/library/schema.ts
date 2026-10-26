@@ -133,7 +133,7 @@ export const loans = pgTable(
       .references(() => copies.id, { onDelete: 'cascade' }),
     borrowerId: text('borrower_id')
       .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
+      .references(() => users.id, { onDelete: 'no action' }),
     issuedAt: timestamp('issued_at', { withTimezone: true }).notNull().defaultNow(),
     dueOn: timestamp('due_on', { withTimezone: true }).notNull(),
     returnedAt: timestamp('returned_at', { withTimezone: true }),
