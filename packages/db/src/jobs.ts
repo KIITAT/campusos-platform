@@ -2,7 +2,7 @@ import { and, eq, sql } from 'drizzle-orm'
 import { isDeepStrictEqual } from 'node:util'
 import { check, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
 import { withTenant } from './client'
-import { institutions, institutionModules, users } from './schema'
+import { institutions, users } from './schema'
 import { tenantPolicy } from './rls'
 
 export const jobs = pgTable('background_jobs', {
@@ -86,13 +86,15 @@ export async function failJob(tenant: string, id: string, leaseToken: string, er
 }
 
 export async function jobActor(tx: JobTransaction, tenant: string, actorId: string | null, moduleId: string, roles: readonly Role[], alwaysEnabled = false) {
-  const [institution] = await tx.select().from(institutions).where(eq(institutions.id, tenant)).for('share')
-  if (!institution || institution.suspendedAt || !actorId) throw new Error('job actor not authorized')
+  // The institution and entitlement rows are locked FOR SHARE until the job
+  // commits, so a suspension waits for it. The application role may no longer
+  // lock them itself (SEC-05); core 0006's gate does, for this tenant only.
+  const { rows: [gate] } = await tx.execute<{ is_active: boolean | null; is_enabled: boolean | null }>(
+    sql`select * from campusos_job_gate(${tenant}, ${alwaysEnabled ? null : moduleId})`,
+  )
+  if (!gate?.is_active || !actorId) throw new Error('job actor not authorized')
   const [actor] = await tx.select({ id: users.id, institutionId: users.institutionId, email: users.email, role: users.role, erasedAt: users.erasedAt }).from(users).where(and(eq(users.id, actorId), eq(users.institutionId, tenant))).for('share')
   if (!actor || actor.erasedAt || !roles.includes(actor.role)) throw new Error('job actor not authorized')
-  if (!alwaysEnabled) {
-    const [entitlement] = await tx.select().from(institutionModules).where(and(eq(institutionModules.institutionId, tenant), eq(institutionModules.moduleId, moduleId))).for('share')
-    if (!entitlement?.enabled) throw new Error('job module not enabled')
-  }
+  if (!alwaysEnabled && !gate.is_enabled) throw new Error('job module not enabled')
   return actor
 }

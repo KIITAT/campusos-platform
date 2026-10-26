@@ -133,6 +133,38 @@ test('the audit trail is append-only for the owner too (AUD-01)', async () => {
   assert.equal(row!.actorId, person)
 })
 
+test('the two definer functions answer only for the caller’s own institution (SEC-05)', async () => {
+  const [elsewhere] = await authDb
+    .insert(institutions)
+    .values({ slug: 'grants-elsewhere', name: 'Elsewhere', allowedEmailDomains: [] })
+    .returning({ id: institutions.id })
+  try {
+    const [u] = await authDb
+      .insert(users)
+      .values({ email: 'guardian@grants-elsewhere.test', institutionId: elsewhere!.id, role: 'parent' })
+      .returning({ id: users.id })
+    await authDb.execute(sql`insert into sessions ("sessionToken", "userId", expires) values ('grants-elsewhere', ${u!.id}, now() + interval '1 day')`)
+
+    // Ending another institution's guardian's sessions ends none of them.
+    const ended = await withTenant(inst, (tx) => tx.execute<{ n: number }>(sql`select campusos_end_sessions(${u!.id}) as n`))
+    assert.equal(ended.rows[0]!.n, 0)
+    const left = await authDb.execute<{ n: number }>(sql`select count(*)::int as n from sessions where "userId" = ${u!.id}`)
+    assert.equal(left.rows[0]!.n, 1)
+    // In their own institution, it does.
+    const own = await withTenant(elsewhere!.id, (tx) => tx.execute<{ n: number }>(sql`select campusos_end_sessions(${u!.id}) as n`))
+    assert.equal(own.rows[0]!.n, 1)
+
+    // A job may lock and read only its own institution, and never outside one.
+    const elsewhereGate = sql`select * from campusos_job_gate(${elsewhere!.id}, null)`
+    await assert.rejects(() => withTenant(inst, (tx) => tx.execute(elsewhereGate)), says(/its own institution/))
+    await assert.rejects(() => db.execute(sql`select * from campusos_job_gate(${inst}, null)`), says(/its own institution/))
+    const gate = await withTenant(inst, (tx) => tx.execute<{ is_active: boolean }>(sql`select * from campusos_job_gate(${inst}, 'finance')`))
+    assert.equal(gate.rows[0]!.is_active, true)
+  } finally {
+    await authDb.delete(institutions).where(eq(institutions.id, elsewhere!.id))
+  }
+})
+
 test('offboarding an institution still removes it and its trail', async () => {
   const [gone] = await authDb
     .insert(institutions)
