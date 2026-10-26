@@ -64,6 +64,13 @@
       "when": 1793006000038,
       "tag": "0008_audit_chain_seal",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793016385865,
+      "tag": "0009_audit_chain_hardening",
+      "breakpoints": true
     }
   ]
 }
