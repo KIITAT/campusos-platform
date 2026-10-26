@@ -113,6 +113,7 @@ export const pages: PluginPage[] = [
         note: 'The prerequisite chain is checked against your record. If it refuses, the way through is a waiver from the registrar, not a second attempt here.',
         submit: 'Register',
         path: '/register',
+        roles: [...STAFF, 'student'],
         fields: [
           { name: 'studentId', label: 'Student id', value: String(data.studentId), kind: 'hidden' },
           {
@@ -129,6 +130,7 @@ export const pages: PluginPage[] = [
         note: 'Inside add/drop it leaves no mark. After it, and up to the withdrawal deadline, it is a withdrawal.',
         submit: 'Drop',
         path: '/drop',
+        roles: [...STAFF, 'student'],
         fields: [
           { name: 'studentId', label: 'Student id', value: String(data.studentId), kind: 'hidden' },
           {

@@ -20,7 +20,7 @@ export const manifest: ModuleManifest = {
   name: 'Enrollment',
   description:
     'Registration windows, prerequisite checking, seat limits and waitlists, and add/drop with a dated event for every change.',
-  version: '0.1.0',
+  version: '0.2.0',
   alwaysEnabled: false,
   dependsOn: ['academic'],
   pricing: { model: 'not_priced_yet', priceINR: null },
@@ -51,5 +51,6 @@ export const manifest: ModuleManifest = {
     },
   ],
 
+  routeRoles: true,
   apiBasePath: '/api/v1/modules/enrollment',
 }
