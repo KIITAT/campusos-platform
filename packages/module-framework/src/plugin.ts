@@ -29,6 +29,12 @@ export interface PluginActor extends ViewerScope {
   email?: string | null
   role: Role
   institutionId: string | null
+  /**
+   * The caller's idempotency key, when it sent one: the `Idempotency-Key`
+   * header, or the nonce in a portal form. An operation that promises "once per
+   * key" passes it to `withIdempotencyKey` (@campusos/db); any other ignores it.
+   */
+  idempotencyKey?: string
 }
 
 export type PluginMethod = 'GET' | 'POST' | 'PUT' | 'DELETE'
