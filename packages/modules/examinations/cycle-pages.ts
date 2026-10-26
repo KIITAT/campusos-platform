@@ -277,6 +277,7 @@ export const cyclePages: PluginPage[] = [
           note: 'One enrolment and one backlog window per term; setting it again moves it. Fees apply to backlog papers, per paper, and are charged through Fees where it is on.',
           submit: 'Set the window',
           path: '/windows',
+          roles: [...CELL],
           fields: [
             { name: 'termId', label: 'Term', kind: 'select', options: 'termOptions' },
             {
