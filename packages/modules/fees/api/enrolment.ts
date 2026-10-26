@@ -21,8 +21,11 @@ import { feeInvoices, feePayments, studentCharges } from '../schema'
  * A declaration counts for a term when its dates overlap the term:
  *
  *   declared_on <= term ends  AND  (ended_on IS NULL OR ended_on > term starts)
+ *   AND  (ended_on IS NULL OR ended_on > declared_on)
  *
- * so a student withdrawn before the term is not billed for it, one who left
+ * The last clause drops a declaration ended the day it was made: a mistake
+ * withdrawn at once, not a student who read the programme. So a student
+ * withdrawn before the term is not billed for it, one who left
  * during it is (refund rules and drop credits handle the rest), and re-running
  * a past term next year gives the same roster. A school's class is a programme
  * until P1-13 decides otherwise; promotion ends one declaration and starts the
@@ -39,6 +42,7 @@ type Tx = Parameters<Parameters<typeof withTenant>[1]>[0]
 const overlapsTerm = and(
   lte(studentPrograms.declaredOn, terms.endsOn),
   or(isNull(studentPrograms.endedOn), gt(studentPrograms.endedOn, terms.startsOn)),
+  or(isNull(studentPrograms.endedOn), gt(studentPrograms.endedOn, studentPrograms.declaredOn)),
 )
 
 /** The programmes this student is enrolled in for this term, primary first. */
@@ -142,7 +146,8 @@ export async function notEnrolled(tx: Tx, termId: string, studentId?: string | n
         sql`not exists (
           select 1 from academic_student_programs sp join academic_terms t on t.id = ${termId}
            where sp.student_id = academic_section_members.user_id
-             and sp.declared_on <= t.ends_on and (sp.ended_on is null or sp.ended_on > t.starts_on))`,
+             and sp.declared_on <= t.ends_on and (sp.ended_on is null or sp.ended_on > t.starts_on)
+             and (sp.ended_on is null or sp.ended_on > sp.declared_on))`,
       ),
     )
     .orderBy(asc(users.email), asc(programs.code))

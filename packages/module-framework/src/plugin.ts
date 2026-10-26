@@ -33,6 +33,9 @@ export interface PluginActor extends ViewerScope {
    * The caller's idempotency key, when it sent one: the `Idempotency-Key`
    * header, or the nonce in a portal form. An operation that promises "once per
    * key" passes it to `withIdempotencyKey` (@campusos/db); any other ignores it.
+   * It names one act: a handler that runs a keyed operation several times for
+   * one request (a bulk action, an import) must not pass this actor to each,
+   * or every call after the first is refused as a reused key.
    */
   idempotencyKey?: string
 }

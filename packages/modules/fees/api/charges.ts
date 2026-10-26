@@ -137,7 +137,9 @@ export async function chargeStudent(actor: Actor, input: unknown) {
         })
         return row
       },
-      async (id) => (await tx.select().from(studentCharges).where(eq(studentCharges.id, id)))[0],
+      // A charge cancelled since is not answered as if it stood.
+      async (id) =>
+        (await tx.select().from(studentCharges).where(and(eq(studentCharges.id, id), isNull(studentCharges.cancelledAt))))[0],
     )
     return replayed
       ? { ...value, replayed: true, notice: 'Already charged. Nothing was charged twice.' }
