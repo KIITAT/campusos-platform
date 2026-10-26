@@ -7,7 +7,7 @@ import { after, before, test } from 'node:test'
 import { URL } from 'node:url'
 
 /**
- * The P0-01, P0-02 and P0-06 migrations applied as an upgrade, not only on a
+ * The P0-01, P0-02, P0-03 and P0-06 migrations applied as an upgrade, not only on a
  * fresh database.
  *
  * CI's fresh path runs core first and every module after it. An institution
@@ -34,6 +34,9 @@ const NEW_FILES = new Set([
   'fees/0007_idempotency_and_references.sql',
   'hr/0010_money_outlives_the_person.sql',
   'library/0002_loans_outlive_the_borrower.sql',
+  'academic/0007_student_relations.sql',
+  'enrollment/0001_student_relations.sql',
+  'mentoring/0001_student_relations.sql',
 ])
 const NEW_CORE_FROM = 5
 
@@ -204,5 +207,26 @@ test('fees 0007 applies as an upgrade: the claim table under RLS, the reference 
           where conrelid = 'fee_idempotency_keys'::regclass and contype = 'f' and confdeltype = 'c') as cascades,
         (select indisunique from pg_index where indexrelid = 'fee_payments_reference'::regclass) as unique_reference`)
     assert.deepEqual(rows[0], { rls: true, policies: 1, cascades: 2, unique_reference: true })
+  })
+})
+
+test('P0-03 applies as an upgrade: the relation views, readable by the app role only, through one function (SEC-07)', { skip: !url && 'MIGRATION_DATABASE_URL is not set' }, async () => {
+  await withClient(at(DB), async (c) => {
+    const { rows } = await c.query(`
+      select
+        (select array_agg(c.relname::text order by c.relname) from pg_class c
+          where c.relnamespace = 'student_relations'::regnamespace and c.relkind = 'v') as views,
+        (select bool_and(coalesce(c.reloptions, '{}') @> array['security_invoker=true']) from pg_class c
+          where c.relnamespace = 'student_relations'::regnamespace and c.relkind = 'v') as invoker,
+        (select bool_and(has_table_privilege('campusos_app', c.oid, 'SELECT')) from pg_class c
+          where c.relnamespace = 'student_relations'::regnamespace and c.relkind = 'v') as app_reads,
+        has_function_privilege('campusos_app', 'public.campusos_student_relation(text, text, text)', 'EXECUTE') as app_asks,
+        has_function_privilege('public', 'public.campusos_student_relation(text, text, text)', 'EXECUTE') as public_asks,
+        (select count(*)::int from information_schema.columns
+          where table_name = 'academic_sections' and column_name = 'class_teacher_id') as class_teacher`)
+    assert.deepEqual(rows[0], {
+      views: ['academic_class_teacher', 'academic_hod', 'academic_teaches', 'enrollment_teaches', 'mentoring_mentor'],
+      invoker: true, app_reads: true, app_asks: true, public_asks: false, class_teacher: 1,
+    })
   })
 })

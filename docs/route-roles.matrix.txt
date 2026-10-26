@@ -10,6 +10,8 @@ POST /api/v1/modules/academic/rooms                                      SI.....
 POST /api/v1/modules/academic/terms                                      SI........ op
 POST /api/v1/modules/academic/terms/current                              SI........ op
 POST /api/v1/modules/academic/sections                                   SI........ op
+POST /api/v1/modules/academic/sections/class-teacher                     SI........ op
+POST /api/v1/modules/academic/departments/head                           SI........ op
 POST /api/v1/modules/academic/sections/members                           SI........ op
 POST /api/v1/modules/academic/offerings                                  SI........ op
 POST /api/v1/modules/academic/slots                                      SI........ op
@@ -184,7 +186,7 @@ POST /api/v1/modules/examinations/papers                                 SIHF...
 GET /api/v1/modules/examinations/papers                                  SIHF...... gate
 GET /api/v1/modules/examinations/paper.pdf                               SI........ gate
 GET /api/v1/modules/examinations/stats                                   SIHF...... gate
-GET /api/v1/modules/examinations/performance                             SIHF...s.. op
+GET /api/v1/modules/examinations/performance                             SIHF...s.. gate
 GET /api/v1/modules/examinations/imports                                 SIHF...... gate
 GET /api/v1/modules/examinations/imports/template                        SIHF...... gate
 POST /api/v1/modules/examinations/imports/run                            SIHF...... gate
@@ -314,8 +316,8 @@ POST /api/v1/modules/finance/warehouses                                  SI.....
 POST /api/v1/modules/finance/warehouses/archive                          SI........ op
 GET /api/v1/modules/finance/batches                                      SI..A..... op
 POST /api/v1/modules/finance/batches                                     SIHFALO... gate
-GET /api/v1/modules/finance/stock-entries                                SIHFALO... gate
-GET /api/v1/modules/finance/stock-entries/detail                         SIHFALO... gate
+GET /api/v1/modules/finance/stock-entries                                SIHFALO... op
+GET /api/v1/modules/finance/stock-entries/detail                         SIHFALO... op
 POST /api/v1/modules/finance/stock-entries                               SIHFALO... gate
 POST /api/v1/modules/finance/stock-entries/submit                        SIHFALO... gate
 POST /api/v1/modules/finance/stock-entries/cancel                        SIHFALO... gate
