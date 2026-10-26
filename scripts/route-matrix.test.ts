@@ -21,9 +21,9 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { eq } from 'drizzle-orm'
-import { authDb, institutions, users } from '@campusos/db'
-import { ROLES, authorizeRoute, type Plugin, type PluginActor, type PluginSection, type Role } from '@campusos/module-framework'
+import { eq } from '../packages/db/node_modules/drizzle-orm/index.js'
+import { authDb, institutions, users } from '../packages/db/src/index'
+import { ROLES, authorizeRoute, type Plugin, type PluginActor, type PluginSection, type Role } from '../packages/module-framework/src/index'
 
 const root = resolve(import.meta.dirname, '..')
 const matrixFile = join(root, 'docs/route-roles.matrix.txt')
