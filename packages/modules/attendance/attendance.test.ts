@@ -1,6 +1,6 @@
 import { after, before, beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { eq } from 'drizzle-orm'
+import { eq, gte, sql } from 'drizzle-orm'
 import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
 import {
@@ -22,6 +22,10 @@ import {
   type Actor,
 } from './api'
 import { devices, records, sessions, settings } from './schema'
+
+// The audit trail is append-only (AUD-01): a reset cannot empty it, so each
+// test reads only the rows written since its own reset.
+let since = new Date(0)
 
 const SLUG = 'att-test'
 const ROOM = { latitude: 20.2961, longitude: 85.8245 }
@@ -140,7 +144,7 @@ beforeEach(async () => {
     await tx.delete(records)
     await tx.delete(sessions)
     await tx.delete(devices)
-    await tx.delete(auditLog)
+    since = new Date(Math.floor(Number((await tx.execute<{ ms: string }>(sql`select extract(epoch from clock_timestamp()) * 1000 as ms`)).rows[0]!.ms)))
   })
   // s1 has an approved device by default; s2 has none.
   const d = await registerDevice(student(ids.s1), { deviceHash: HASH_A })
@@ -480,7 +484,7 @@ test('an override writes a row in the shared audit log', async () => {
     studentId: ids.s2,
     reason: 'verified in person, handset left at home',
   })
-  const trail = await withTenant(inst, (tx) => tx.select().from(auditLog))
+  const trail = await withTenant(inst, (tx) => tx.select().from(auditLog).where(gte(auditLog.at, since)))
   assert.equal(trail.length, 1)
   assert.equal(trail[0]!.moduleId, 'attendance')
   assert.equal(trail[0]!.action, 'attendance.override')

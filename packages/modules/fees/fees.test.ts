@@ -1,6 +1,6 @@
 import { after, before, beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { eq, sql } from 'drizzle-orm'
+import { eq, gte, sql } from 'drizzle-orm'
 import { auditLog, authDb, db, institutions, users, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
 import {
@@ -20,13 +20,17 @@ import {
 } from './api'
 import { feeItems, feePayments, feeWaivers, receiptCounters } from './schema'
 
+// The audit trail is append-only (AUD-01): a reset cannot empty it, so each
+// test reads only the rows written since its own reset.
+let since = new Date(0)
+
 const SLUG = 'fees-test'
 const OTHER = 'fees-other'
 let inst: string
 let other: string
 const ids = {
   prog: '', prog2: '', term: '', term2: '',
-  s1: '', s2: '', s3: '', clerk: '', adm: '', fac: '',
+  s1: '', s2: '', s3: '', clerk: '', adm: '', fac: '', secA: '',
 }
 
 const A = (over: Partial<Actor>): Actor => ({
@@ -133,6 +137,7 @@ before(async () => {
     programId: p2.id, label: 'b', admissionYear: 2026,
   })
   // s1, s2 in btech; s3 in mtech.
+  ids.secA = secA.id
   await academic.addSectionMember(st, { sectionId: secA.id, userId: ids.s1 })
   await academic.addSectionMember(st, { sectionId: secA.id, userId: ids.s2 })
   await academic.addSectionMember(st, { sectionId: secB.id, userId: ids.s3 })
@@ -147,7 +152,7 @@ beforeEach(async () => {
     await tx.delete(feeWaivers)
     await tx.delete(feeItems)
     await tx.delete(receiptCounters)
-    await tx.delete(auditLog)
+    since = new Date(Math.floor(Number((await tx.execute<{ ms: string }>(sql`select extract(epoch from clock_timestamp()) * 1000 as ms`)).rows[0]!.ms)))
   })
 })
 
@@ -269,7 +274,7 @@ test('a waiver is granted, revised and revoked, and every step is on the trail',
   await revokeWaiver(admin(), { waiverId: revised.id, reason: 'appeal withdrawn by student' })
 
   const trail = await withTenant(inst, (tx) =>
-    tx.select({ action: auditLog.action, reason: auditLog.reason }).from(auditLog),
+    tx.select({ action: auditLog.action, reason: auditLog.reason }).from(auditLog).where(gte(auditLog.at, since)),
   )
   assert.deepEqual(
     trail.map((t) => t.action).sort(),
@@ -508,4 +513,61 @@ test('a clerk of another institution cannot reach into this one', async () => {
     () => reconcilePayment(outsider, { paymentId: p.id, reason: 'not mine to touch' }),
     (e: unknown) => code(e) === 'no_such_payment',
   )
+})
+
+// --- money outlives the person (DATA-09) ------------------------------------
+
+/** A student of their own, so deleting them cannot disturb another test. */
+async function freshStudent(tag: string) {
+  const [u] = await authDb
+    .insert(users)
+    .values({ email: `${tag}@fees.test`, institutionId: inst, role: 'student', name: tag })
+    .returning({ id: users.id })
+  await academic.addSectionMember(admin(), { sectionId: ids.secA, userId: u!.id })
+  return u!.id
+}
+
+test('deleting a student does not delete the money they paid (DATA-09)', async () => {
+  await tuition()
+  const s = await freshStudent('leaver')
+  const p = await pay({ studentId: s })
+  await reconcilePayment(clerk(), { paymentId: p.id, reason: 'matched HDFC statement line 7' })
+  // As the owner, which may delete people at all: the receipt still stays.
+  await assert.rejects(() => authDb.delete(users).where(eq(users.id, s)), saysDb(/foreign key/))
+  const kept = await withTenant(inst, (tx) => tx.select().from(feePayments).where(eq(feePayments.studentId, s)))
+  assert.equal(kept.length, 1)
+})
+
+test('a payment recorded while its student is being deleted is never lost (DATA-09)', async () => {
+  await tuition()
+  const s = await freshStudent('racer')
+
+  // Forced, not hoped for. A transaction holds the student's row the way a
+  // payment's foreign-key check does; the deletion queues behind it; the
+  // payment, whose key share does not conflict, goes ahead and commits; then
+  // the hold is released and the deletion resumes against a recorded payment.
+  let release = () => {}
+  let held = () => {}
+  const isHeld = new Promise<void>((r) => (held = r))
+  const blocker = authDb.transaction(async (tx) => {
+    await tx.execute(sql`select 1 from users where id = ${s} for key share`)
+    held()
+    await new Promise<void>((r) => (release = r))
+  })
+  await isHeld
+  const deletion = authDb.delete(users).where(eq(users.id, s)).then(() => 'deleted', () => 'refused')
+  for (let i = 0; i < 100; i++) {
+    const waiting = await authDb.execute<{ n: number }>(sql`
+      select count(*)::int as n from pg_stat_activity
+       where wait_event_type = 'Lock' and query like 'delete from "users"%'`)
+    if (waiting.rows[0]!.n > 0) break
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  const p = await pay({ studentId: s })
+  release()
+  await blocker
+
+  assert.equal(await deletion, 'refused')
+  const kept = await authDb.select().from(feePayments).where(eq(feePayments.id, p.id))
+  assert.equal(kept.length, 1, 'a recorded payment vanished with its student')
 })

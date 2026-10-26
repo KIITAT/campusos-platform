@@ -1,7 +1,7 @@
 import { after, before, beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { eq } from 'drizzle-orm'
-import { authDb, db } from './client'
+import { authDb } from './client'
 import {
   PAIRING_TTL_MS,
   claimPairing,
@@ -32,7 +32,7 @@ before(async () => {
 })
 
 beforeEach(async () => {
-  await db.delete(deviceTokens).where(eq(deviceTokens.userId, student))
+  await authDb.delete(deviceTokens).where(eq(deviceTokens.userId, student))
 })
 
 after(async () => {
@@ -48,7 +48,7 @@ test('a pairing code is short, typable, and free of ambiguous characters', async
 
 test('the pairing code is never stored, only its hash', async () => {
   const { code } = await startPairing(inst, student)
-  const [row] = await db
+  const [row] = await authDb
     .select()
     .from(deviceTokens)
     .where(eq(deviceTokens.userId, student))
@@ -68,7 +68,7 @@ test('claiming a code yields a token that resolves to the user', async () => {
 test('the token itself is not stored either', async () => {
   const { code } = await startPairing(inst, student)
   const claimed = await claimPairing(code, null)
-  const [row] = await db
+  const [row] = await authDb
     .select()
     .from(deviceTokens)
     .where(eq(deviceTokens.userId, student))
@@ -88,13 +88,13 @@ test('case and surrounding space do not stop a person typing it correctly', asyn
 
 test('an expired code is refused and cleaned up', async () => {
   const { code } = await startPairing(inst, student)
-  await db
+  await authDb
     .update(deviceTokens)
     .set({ pairingExpiresAt: new Date(Date.now() - 1000) })
     .where(eq(deviceTokens.userId, student))
 
   assert.equal(await claimPairing(code, null), null)
-  const left = await db.select().from(deviceTokens).where(eq(deviceTokens.userId, student))
+  const left = await authDb.select().from(deviceTokens).where(eq(deviceTokens.userId, student))
   assert.equal(left.length, 0, 'a dead pairing does not linger')
 })
 

@@ -1,6 +1,6 @@
 import { after, before, beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, gte, inArray, sql } from 'drizzle-orm'
 import {
   acceptInvitation,
   auditLog,
@@ -33,6 +33,10 @@ import {
 } from './api'
 import { routes } from './routes'
 import { guardianInvites, links } from './schema'
+
+// The audit trail is append-only (AUD-01): a reset cannot empty it, so each
+// test reads only the rows written since its own reset.
+let since = new Date(0)
 
 /**
  * Phase G: a guardian arrives by invitation, not by domain, and sees exactly
@@ -95,7 +99,7 @@ beforeEach(async () => {
       await tx.execute(sql`select set_config('app.audit_reason', 'test reset', true)`)
       await tx.delete(links)
       await tx.delete(guardianInvites)
-      await tx.delete(auditLog)
+      since = new Date(Math.floor(Number((await tx.execute<{ ms: string }>(sql`select extract(epoch from clock_timestamp()) * 1000 as ms`)).rows[0]!.ms)))
     })
   }
   await authDb.delete(invitations).where(inArray(invitations.institutionId, [inst, other]))
@@ -252,7 +256,7 @@ test('withdrawing after acceptance ends access now: links gone, account pending,
   assert.deepEqual(await invitedAccess('mum@family.test'), { ok: false, reason: 'not_invited' })
 
   const [row] = await withTenant(inst, (tx) =>
-    tx.select().from(auditLog).where(and(eq(auditLog.action, 'parents.guardian_withdrawn'), eq(auditLog.entityId, out.invitationId!))),
+    tx.select().from(auditLog).where(and(gte(auditLog.at, since), and(eq(auditLog.action, 'parents.guardian_withdrawn'), eq(auditLog.entityId, out.invitationId!)))),
   )
   assert.equal(row!.reason, 'court order received')
 

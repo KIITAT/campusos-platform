@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict'
 import { generateKeyPairSync, randomUUID, sign } from 'node:crypto'
 import { after, before, beforeEach, test } from 'node:test'
-import { eq } from 'drizzle-orm'
-import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
+import { and, eq, gte, sql } from 'drizzle-orm'
+import { auditLog, authDb, exportSubject, institutions, users, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
 import * as attendance from './api'
 import { devices, offlineCredentials, records, sessions, settings } from './schema'
 import { pages } from './pages'
+
+// The audit trail is append-only (AUD-01): a reset cannot empty it, so each
+// test reads only the rows written since its own reset.
+let since = new Date(0)
 
 const keys = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
 const publicKey = keys.publicKey.export({ type: 'spki', format: 'der' }).toString('base64')
@@ -68,7 +72,7 @@ beforeEach(async () => {
     await tx.delete(sessions)
     await tx.delete(offlineCredentials)
     await tx.delete(devices)
-    await tx.delete(auditLog)
+    since = new Date(Math.floor(Number((await tx.execute<{ ms: string }>(sql`select extract(epoch from clock_timestamp()) * 1000 as ms`)).rows[0]!.ms)))
     await tx.update(settings).set({ requireSignedScans: true, acceptLateSync: true, maxLateSyncHours: 24, clockSkewSeconds: 60 })
   })
   assert.equal(typeof attendance.registerDeviceKey, 'function')
@@ -156,6 +160,20 @@ test('preparation secrets and revoked credentials stay protected', async () => {
   await attendance.revokeCredential(teacher, { sessionId: credential.sessionId })
   const qr = attendance.encodeQr(attendance.currentQr(credential.secret, credential.sessionId, credential.windowSeconds))
   await assert.rejects(attendance.signedScan(student, envelope(qr)), failure('credential_revoked'))
+})
+
+test('exporting a teacher never hands over an attendance signing secret (NEW-01)', async () => {
+  await attendance.prepareSession(teacher, { slotId, onDate: today })
+  const [prepared] = await withTenant(tenant, (tx) => tx.select().from(offlineCredentials))
+  let text = JSON.stringify(await exportSubject(tenant, teacher.id))
+  assert.ok(!text.includes(prepared!.tokenSecret), 'the offline QR signing secret was exported')
+
+  await withTenant(tenant, (tx) => tx.delete(offlineCredentials))
+  const { session } = await online()
+  const [opened] = await withTenant(tenant, (tx) => tx.select().from(sessions).where(eq(sessions.id, session.id)))
+  text = JSON.stringify(await exportSubject(tenant, teacher.id))
+  assert.ok(text.includes(session.id), 'the session the teacher opened is still theirs to see')
+  assert.ok(!text.includes(opened!.tokenSecret), 'the live QR secret was exported')
 })
 
 test('enrollment proves possession, never overwrites keys, and revoked devices cannot sign', async () => {
@@ -250,7 +268,7 @@ test('explicit teacher start records an all-absent class once with an audit rece
   const summary = await attendance.attendanceSummary(student, student.id)
   assert.equal(summary[0]!.held, 1)
   assert.equal(summary[0]!.absent, 1)
-  const trail = await withTenant(tenant, (tx) => tx.select().from(auditLog).where(eq(auditLog.action, 'attendance.session-held')))
+  const trail = await withTenant(tenant, (tx) => tx.select().from(auditLog).where(and(gte(auditLog.at, since), eq(auditLog.action, 'attendance.session-held'))))
   assert.equal(trail.length, 1)
   assert.equal(trail[0]!.detail!.startedAt, start.startedAt)
   await attendance.revokeCredential(teacher, { sessionId: credential.sessionId })

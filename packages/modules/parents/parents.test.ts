@@ -1,6 +1,6 @@
 import { after, before, beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { eq, sql } from 'drizzle-orm'
+import { eq, gte, sql } from 'drizzle-orm'
 import {
   auditLog,
   authDb,
@@ -26,6 +26,10 @@ import {
 } from './api'
 import { links } from './schema'
 
+// The audit trail is append-only (AUD-01): a reset cannot empty it, so each
+// test reads only the rows written since its own reset.
+let since = new Date(0)
+
 const SLUG = 'parent-test'
 const OTHER = 'parent-other'
 let inst: string
@@ -47,7 +51,8 @@ const code = (e: unknown) => (e as ParentError).code
 const status = (e: unknown) => (e as ParentError).status
 
 async function setModule(id: string, on: boolean) {
-  await db
+  // Entitlements are written by the auth role or the console (SEC-05).
+  await authDb
     .insert(institutionModules)
     .values({ institutionId: inst, moduleId: id, enabled: on })
     .onConflictDoUpdate({
@@ -106,7 +111,7 @@ beforeEach(async () => {
   await withTenant(inst, async (tx) => {
     await tx.execute(sql`select set_config('app.audit_reason', 'test reset', true)`)
     await tx.delete(links)
-    await tx.delete(auditLog)
+    since = new Date(Math.floor(Number((await tx.execute<{ ms: string }>(sql`select extract(epoch from clock_timestamp()) * 1000 as ms`)).rows[0]!.ms)))
   })
   for (const m of ['attendance', 'examinations', 'fees', 'library', 'hostel']) {
     await setModule(m, false)
@@ -204,7 +209,7 @@ test('verifying and revoking are both audited', async () => {
   await revokeLink(admin(), { linkId: link.id, reason: 'court order restricting contact' })
 
   const trail = await withTenant(inst, (tx) =>
-    tx.select({ action: auditLog.action, reason: auditLog.reason }).from(auditLog),
+    tx.select({ action: auditLog.action, reason: auditLog.reason }).from(auditLog).where(gte(auditLog.at, since)),
   )
   assert.deepEqual(
     trail.map((t) => t.action),

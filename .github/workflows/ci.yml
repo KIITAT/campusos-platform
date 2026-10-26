@@ -60,6 +60,10 @@ jobs:
       - run: pnpm test
       - run: node --test scripts/module-catalog.test.mjs
       - run: node --import ./packages/db/node_modules/tsx/dist/loader.mjs --test scripts/demo-finance.test.ts
+      # Each module on core plus only what it declares (DATA-03), and the
+      # P0-01 migrations applied as an upgrade over every module.
+      - run: node --test scripts/install-alone.test.mjs
+      - run: node --test scripts/migration-upgrade.test.mjs
 
       # Packing is part of CI, not only of release: a module that cannot be
       # bundled into a loadable plugin is broken whether or not anyone is

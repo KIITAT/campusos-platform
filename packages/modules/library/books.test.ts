@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import { like, sql } from 'drizzle-orm'
 import {
   authDb,
-  db,
   institutionModules,
   institutions,
   users,
@@ -79,7 +78,8 @@ after(async () => {
 
 /** Turn the books on or off for this institution, as the console would. */
 async function setFinance(d: Desk, on: boolean) {
-  await db
+  // Entitlements are written by the auth role or the console (SEC-05).
+  await authDb
     .insert(institutionModules)
     .values({ institutionId: d.id, moduleId: 'finance', enabled: on })
     .onConflictDoUpdate({

@@ -35,7 +35,9 @@ test('concurrent claims return one owner and a stale lease cannot complete it', 
   assert.equal(claims.filter(Boolean).length, 1)
   await assert.rejects(database.runClaimedJob(tenant, claimed.id, '00000000-0000-4000-8000-000000000000', async () => ({})), /lease/)
   const result = await database.runClaimedJob(tenant, claimed.id, claimed.leaseToken!, async (tx) => {
-    await tx.update(database.institutions).set({ name: 'Committed with job' }).where(eq(database.institutions.id, tenant))
+    // Any tenant row will do as the job's effect; institutions is read-only to
+    // the application role now (SEC-05), so the actor's own row stands in.
+    await tx.update(database.users).set({ name: 'Committed with job' }).where(eq(database.users.id, actorId))
     return { posted: true }
   })
   assert.deepEqual(result, { posted: true })
@@ -49,7 +51,7 @@ test('failed effects roll back and bounded retries eventually become dead', asyn
     const claimed = await database.claimJob(tenant, 'failure-worker', 30)
     assert.equal(claimed!.id, job.id)
     await assert.rejects(database.runClaimedJob(tenant, job.id, claimed!.leaseToken!, async (tx) => {
-      await tx.update(database.institutions).set({ name: 'Must roll back' }).where(eq(database.institutions.id, tenant))
+      await tx.update(database.users).set({ name: 'Must roll back' }).where(eq(database.users.id, actorId))
       throw new Error('simulated handler failure')
     }))
     const failed = await database.failJob(tenant, job.id, claimed!.leaseToken!, 'handler_failed')
@@ -59,8 +61,8 @@ test('failed effects roll back and bounded retries eventually become dead', asyn
       await database.withTenant(tenant, (tx) => tx.update(database.jobs).set({ runAfter: new Date(0) }).where(eq(database.jobs.id, job.id)))
     }
   }
-  const [institution] = await database.authDb.select().from(database.institutions).where(eq(database.institutions.id, tenant))
-  assert.equal(institution!.name, 'Committed with job')
+  const [person] = await database.authDb.select().from(database.users).where(eq(database.users.id, actorId))
+  assert.equal(person!.name, 'Committed with job')
 })
 
 test('abandoned leases recover and exhausted abandoned jobs become dead', async () => {

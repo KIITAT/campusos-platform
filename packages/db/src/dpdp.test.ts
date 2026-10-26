@@ -1,7 +1,9 @@
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { authDb, db, withTenant } from './client'
+import { claimPairing, startPairing } from './device-tokens'
+import { issueInvitation } from './invitations'
 import {
   CONSENT_VERSION,
   consentCurrent,
@@ -78,6 +80,50 @@ test('an export finds records by walking the foreign keys, not a hand-written li
     Object.keys(bundle.records).some((k) => k.startsWith('audit_log.')),
     `audit_log missing from ${Object.keys(bundle.records).join(', ')}`,
   )
+})
+
+test('an export never carries a credential (SEC-01)', async () => {
+  // Every kind of credential that names a user: an Auth.js session, a linked
+  // Google account, a paired phone and an invitation the subject sent.
+  await authDb.execute(sql`
+    insert into sessions ("sessionToken", "userId", expires)
+    values ('DPDP-LIVE-SESSION', ${subject}, now() + interval '1 day')`)
+  await authDb.execute(sql`
+    insert into accounts ("userId", type, provider, "providerAccountId", refresh_token, access_token, id_token)
+    values (${subject}, 'oidc', 'google', 'dpdp-google', 'DPDP-REFRESH', 'DPDP-ACCESS', 'DPDP-ID')`)
+  const pairing = await startPairing(inst, subject, 'Subject phone')
+  assert.ok(await claimPairing(pairing.code))
+  await withTenant(inst, (tx) =>
+    issueInvitation(tx, { institutionId: inst, email: 'invitee@dpdp.test', role: 'student', createdBy: subject }),
+  )
+  const hashes = await authDb.execute<{ h: string }>(sql`
+    select token_hash as h from device_tokens where user_id = ${subject}
+    union all select token_hash from invitations where created_by = ${subject}`)
+  assert.equal(hashes.rows.length, 2)
+
+  const bundle = await exportSubject(inst, subject)
+  const text = JSON.stringify(bundle)
+  for (const key of Object.keys(bundle.records)) {
+    assert.doesNotMatch(key, /^(sessions|accounts|verificationToken)\./, `${key} was exported`)
+  }
+  for (const secret of ['DPDP-LIVE-SESSION', 'DPDP-REFRESH', 'DPDP-ACCESS', 'DPDP-ID', ...hashes.rows.map((r) => r.h)]) {
+    assert.ok(!text.includes(secret), `a credential was exported: ${secret.slice(0, 12)}…`)
+  }
+  // The subject still learns which phones they paired, and whom they invited.
+  assert.equal((bundle.records['device_tokens.user_id']?.[0] as { device_name?: string })?.device_name, 'Subject phone')
+  assert.ok(text.includes('invitee@dpdp.test'))
+})
+
+test('a table nobody has classified is left out of the export (SEC-01)', async () => {
+  // A plugin that ships a table before core classifies it fails safe.
+  await authDb.execute(sql`create table dpdp_probe_unreviewed (user_id text references users(id) on delete cascade, note text)`)
+  try {
+    await authDb.execute(sql`insert into dpdp_probe_unreviewed values (${subject}, 'UNREVIEWED-NOTE')`)
+    const bundle = await exportSubject(inst, subject)
+    assert.ok(!JSON.stringify(bundle).includes('UNREVIEWED-NOTE'))
+  } finally {
+    await authDb.execute(sql`drop table dpdp_probe_unreviewed`)
+  }
 })
 
 test('an export refuses a subject from another institution', async () => {

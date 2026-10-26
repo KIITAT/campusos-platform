@@ -1,6 +1,6 @@
 import { after, before, beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { eq, sql } from 'drizzle-orm'
+import { eq, gte, sql } from 'drizzle-orm'
 import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
 import {
@@ -19,6 +19,10 @@ import {
   type Actor,
 } from './api'
 import { examMarks, exams, schemes } from './schema'
+
+// The audit trail is append-only (AUD-01): a reset cannot empty it, so each
+// test reads only the rows written since its own reset.
+let since = new Date(0)
 
 const SLUG = 'exam-test'
 let inst: string
@@ -137,7 +141,7 @@ beforeEach(async () => {
     await tx.update(exams).set({ publishedAt: null, publishedBy: null })
     await tx.delete(examMarks)
     await tx.delete(exams)
-    await tx.delete(auditLog)
+    since = new Date(Math.floor(Number((await tx.execute<{ ms: string }>(sql`select extract(epoch from clock_timestamp()) * 1000 as ms`)).rows[0]!.ms)))
     await tx.delete(schemes)
   })
 })
@@ -203,7 +207,7 @@ test('marks can be entered and amended freely before publication', async () => {
   const s = await sheet(A({}), e.id)
   assert.equal(s.entries.find((x) => x.studentId === ids.s1)?.obtained, 35)
   // No audit rows: an unpublished amendment is ordinary work, not a revision.
-  const trail = await withTenant(inst, (tx) => tx.select().from(auditLog))
+  const trail = await withTenant(inst, (tx) => tx.select().from(auditLog).where(gte(auditLog.at, since)))
   assert.equal(trail.length, 0)
 })
 
@@ -402,7 +406,7 @@ test('unpublishing is admin only, needs a reason, and is audited', async () => {
     reason: 'published against the wrong cohort, withdrawing',
   })
 
-  const trail = await withTenant(inst, (tx) => tx.select().from(auditLog))
+  const trail = await withTenant(inst, (tx) => tx.select().from(auditLog).where(gte(auditLog.at, since)))
   assert.equal(trail.length, 2) // published, then unpublished
   assert.equal(trail[1]!.action, 'exam.unpublished')
 

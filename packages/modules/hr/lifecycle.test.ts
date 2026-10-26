@@ -1,6 +1,6 @@
 import { after, before, beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, gte, sql } from 'drizzle-orm'
 import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
 import {
   HrError,
@@ -31,6 +31,10 @@ import {
   separations,
   staff,
 } from './schema'
+
+// The audit trail is append-only (AUD-01): a reset cannot empty it, so each
+// test reads only the rows written since its own reset.
+let since = new Date(0)
 
 /**
  * The employment over time: the checklist a joiner is put through, the changes
@@ -135,7 +139,7 @@ beforeEach(async () => {
       await tx.delete(onboardingTemplates)
       await tx.delete(staff)
       await tx.delete(employeeGrades)
-      await tx.delete(auditLog)
+      since = new Date(Math.floor(Number((await tx.execute<{ ms: string }>(sql`select extract(epoch from clock_timestamp()) * 1000 as ms`)).rows[0]!.ms)))
     })
   }
 })
@@ -474,7 +478,7 @@ test('separating ends the employment, records the change, and says how', async (
   assert.equal(history[0]!.fromDesignation, 'Assistant Professor')
 
   const trail = await withTenant(inst, (tx) =>
-    tx.select().from(auditLog).where(eq(auditLog.action, 'hr.separated')),
+    tx.select().from(auditLog).where(and(gte(auditLog.at, since), eq(auditLog.action, 'hr.separated'))),
   )
   assert.equal(trail.length, 1)
   assert.match(String(trail[0]!.reason), /another university/)

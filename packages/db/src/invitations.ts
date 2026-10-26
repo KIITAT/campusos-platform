@@ -11,7 +11,7 @@ import {
 } from 'drizzle-orm/pg-core'
 import { authDb, withTenant } from './client'
 import { tenantPolicy } from './rls'
-import { institutions, roleEnum, sessions, users } from './schema'
+import { institutions, roleEnum, users } from './schema'
 
 /**
  * Invitations: the one way into an institution that is not its email domain.
@@ -273,7 +273,9 @@ export async function withdrawInvitation(
   if (!row) return null
   if (row.userId) {
     await tx.update(users).set({ role: 'pending' }).where(eq(users.id, row.userId))
-    await tx.delete(sessions).where(eq(sessions.userId, row.userId))
+    // Through core 0006's function: the application role cannot touch sessions
+    // (SEC-05), and this ends only this person's, in this institution.
+    await tx.execute(sql`select campusos_end_sessions(${row.userId})`)
   }
   return row
 }
