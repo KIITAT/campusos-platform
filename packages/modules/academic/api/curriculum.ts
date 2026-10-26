@@ -1,3 +1,4 @@
+import { assertCanAccessStudent } from '@campusos/module-framework'
 import { and, desc, eq, inArray, or } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import { users, withTenant } from '@campusos/db'
@@ -44,17 +45,10 @@ import {
  * about a student -- and because a 700-line file is a file nobody opens.
  */
 
-/** Anyone may read their own record; staff read anyone's. */
-function requireStudentView(actor: Actor, studentId: string): string {
+/** A student's record: the student, and whoever canAccessStudent relates to them (SEC-07). */
+async function requireStudentView(actor: Actor, studentId: string): Promise<string> {
   const tenant = requireReader(actor)
-  const staff =
-    actor.role === 'institution_admin' ||
-    actor.role === 'super_admin' ||
-    actor.role === 'hod' ||
-    actor.role === 'faculty'
-  if (!staff && actor.id !== studentId) {
-    throw new AcademicError(403, 'forbidden', 'not permitted')
-  }
+  await withTenant(tenant, (tx) => assertCanAccessStudent(tx, actor, studentId, 'academic_record'))
   return tenant
 }
 
@@ -298,7 +292,7 @@ export async function endStudentProgram(actor: Actor, input: unknown) {
 
 export async function listStudentPrograms(actor: Actor, input: unknown) {
   const studentId = studentRefSchema.parse(input ?? {}).studentId ?? actor.id
-  const tenant = requireStudentView(actor, studentId)
+  const tenant = await requireStudentView(actor, studentId)
   return withTenant(tenant, (tx) =>
     tx
       .select({
@@ -378,7 +372,7 @@ export async function recordCompletion(actor: Actor, input: unknown) {
 
 export async function listCompletions(actor: Actor, input: unknown) {
   const studentId = studentRefSchema.parse(input ?? {}).studentId ?? actor.id
-  const tenant = requireStudentView(actor, studentId)
+  const tenant = await requireStudentView(actor, studentId)
   return withTenant(tenant, (tx) =>
     tx
       .select({
@@ -422,7 +416,7 @@ export async function listCompletions(actor: Actor, input: unknown) {
  */
 export async function checkEligibility(actor: Actor, input: unknown): Promise<Eligibility> {
   const data = eligibilitySchema.parse(input)
-  const tenant = requireStudentView(actor, data.studentId)
+  const tenant = await requireStudentView(actor, data.studentId)
 
   return withTenant(tenant, async (tx) => {
     const [course] = await tx

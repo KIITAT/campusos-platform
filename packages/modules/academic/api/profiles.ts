@@ -1,3 +1,4 @@
+import { assertCanAccessStudent, type StudentPurpose } from '@campusos/module-framework'
 import { eq } from 'drizzle-orm'
 import * as z from 'zod'
 import { audit, users, withTenant } from '@campusos/db'
@@ -47,12 +48,16 @@ export interface StudentProfile {
   updatedAt: Date | null
 }
 
-const isStaff = (r: Actor['role']) => r === 'institution_admin' || r === 'super_admin' || r === 'hod' || r === 'faculty'
-
-export async function studentProfile(actor: Actor, studentId: string): Promise<StudentProfile> {
+/**
+ * Contact details are the `profile` purpose (SEC-07): the student, a verified
+ * guardian, the class teacher, the mentor, the HoD and the office. A module
+ * that needs the profile for its own read (a grade report's name and roll
+ * number, a demand letter's address) asks under that read's purpose.
+ */
+export async function studentProfile(actor: Actor, studentId: string, purpose: StudentPurpose = 'profile'): Promise<StudentProfile> {
   const tenant = requireReader(actor)
-  if (actor.id !== studentId && !isStaff(actor.role)) throw new AcademicError(403, 'forbidden', 'not permitted')
   return withTenant(tenant, async (tx) => {
+    await assertCanAccessStudent(tx, actor, studentId, purpose)
     const [u] = await tx
       .select({ id: users.id, name: users.name, email: users.email, role: users.role })
       .from(users)
