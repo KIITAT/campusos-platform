@@ -58,6 +58,33 @@ test('consent to an older notice does not count as consent to this one', async (
   await recordConsent(inst, subject)
 })
 
+test('consent is on the audit trail with the version before and after, atomically (NEW-10)', async () => {
+  const rows = () =>
+    withTenant(inst, (tx) =>
+      tx.select().from(auditLog).where(sql`${auditLog.action} = 'dpdp.consented' and ${auditLog.entityId} = ${subject}`).orderBy(auditLog.at),
+    )
+  const start = (await rows()).length
+  await recordConsent(inst, subject, '2021-01-01')
+  await recordConsent(inst, subject)
+  const after = (await rows()).slice(start)
+  assert.deepEqual(after.map((r) => [r.actorId, r.detail]), [
+    [subject, { before: { version: CONSENT_VERSION }, after: { version: '2021-01-01' } }],
+    [subject, { before: { version: '2021-01-01' }, after: { version: CONSENT_VERSION } }],
+  ])
+
+  await authDb.execute(sql.raw(`
+    create function test_refuse_audit() returns trigger language plpgsql as $
+    begin if new.action = 'dpdp.consented' then raise exception 'audit refused for the test'; end if; return new; end $;
+    create trigger test_refuse_audit before insert on audit_log for each row execute function test_refuse_audit();`))
+  try {
+    await assert.rejects(() => recordConsent(inst, subject, '2022-02-02'))
+  } finally {
+    await authDb.execute(sql.raw('drop trigger test_refuse_audit on audit_log; drop function test_refuse_audit();'))
+  }
+  const [row] = await withTenant(inst, (tx) => tx.select({ v: users.consentVersion }).from(users).where(eq(users.id, subject)))
+  assert.equal(row!.v, CONSENT_VERSION, 'no consent change without its audit row')
+})
+
 test('an export finds records by walking the foreign keys, not a hand-written list', async () => {
   // audit_log references users.id, so a row there must turn up without this
   // test -- or the export -- naming the table.

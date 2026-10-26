@@ -1,6 +1,7 @@
 import { after, before, beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { eq } from 'drizzle-orm'
+import { randomUUID } from 'node:crypto'
+import { eq, sql } from 'drizzle-orm'
 import { authDb } from './client'
 import {
   PAIRING_TTL_MS,
@@ -151,4 +152,79 @@ test('the device list shows a pending pairing as pending', async () => {
   const [row] = await listDevices(student)
   assert.equal(row!.pending, true)
   assert.equal(row!.lastUsedAt, null)
+})
+
+/** The audit rows about one device. */
+const deviceTrail = async (id: string) =>
+  (
+    await authDb.execute<{ action: string; actor_id: string | null; institution_id: string; detail: Record<string, unknown> | null }>(sql`
+      select action, actor_id, institution_id::text as institution_id, detail from audit_log
+       where entity = 'device_tokens' and entity_id = ${id} order by action`)
+  ).rows
+
+/**
+ * Makes the next audit row with this action fail, as a full disk or a broken
+ * trigger would, to show that the change it describes is rolled back with it.
+ */
+async function refusingAudit(action: string, run: () => Promise<unknown>): Promise<void> {
+  await authDb.execute(sql.raw(`
+    create function test_refuse_audit() returns trigger language plpgsql as $$
+    begin if new.action = '${action}' then raise exception 'audit refused for the test'; end if; return new; end $$;
+    create trigger test_refuse_audit before insert on audit_log for each row execute function test_refuse_audit();`))
+  try {
+    await assert.rejects(run)
+  } finally {
+    await authDb.execute(sql.raw('drop trigger test_refuse_audit on audit_log; drop function test_refuse_audit();'))
+  }
+}
+
+test('pairing, claiming and revoking a phone each leave one audit row, by the person, naming no secret (NEW-10)', async () => {
+  const { code } = await startPairing(inst, student, 'a phone')
+  const [pending] = await listDevices(student)
+  const claimed = await claimPairing(code, 'a phone')
+  assert.ok(claimed)
+  assert.equal(await revokeDevice(student, pending!.id), true)
+
+  const rows = await deviceTrail(pending!.id)
+  assert.deepEqual(rows.map((r) => r.action), ['device.paired', 'device.pairing', 'device.revoked'])
+  assert.ok(rows.every((r) => r.actor_id === student && r.institution_id === inst))
+  assert.ok(rows.every((r) => r.detail?.deviceId === pending!.id))
+  assert.ok(!JSON.stringify(rows).includes(code) && !JSON.stringify(rows).includes(claimed.token), 'no secret on the trail')
+})
+
+test('asking twice records how many pending codes the new one replaced (NEW-10)', async () => {
+  await startPairing(inst, student)
+  await startPairing(inst, student)
+  const [pending] = await listDevices(student)
+  const [row] = await deviceTrail(pending!.id)
+  assert.equal(row!.detail?.replaced, 1)
+})
+
+test('a wrong code, an expired code and somebody else’s revoke write nothing (NEW-10)', async () => {
+  const count = async () =>
+    (await authDb.execute<{ n: number }>(sql`select count(*)::int as n from audit_log where institution_id = ${inst} and entity = 'device_tokens'`)).rows[0]!.n
+  const { code } = await startPairing(inst, student)
+  const [device] = await listDevices(student)
+  const start = await count()
+
+  assert.equal(await claimPairing('ZZZZZZ'), null)
+  await authDb.update(deviceTokens).set({ pairingExpiresAt: new Date(Date.now() - 1000) }).where(eq(deviceTokens.id, device!.id))
+  assert.equal(await claimPairing(code), null)
+  assert.equal(await revokeDevice(randomUUID(), device!.id), false)
+  assert.equal(await count(), start)
+})
+
+test('a pairing, claim or revoke whose audit row fails leaves nothing changed (NEW-10)', async () => {
+  await refusingAudit('device.pairing', () => startPairing(inst, student, 'refused'))
+  assert.deepEqual(await listDevices(student), [], 'no pairing without its audit row')
+
+  const { code } = await startPairing(inst, student, 'kept')
+  await refusingAudit('device.paired', () => claimPairing(code))
+  const [pending] = await listDevices(student)
+  assert.equal(pending!.pending, true, 'the code is still unclaimed')
+  const claimed = await claimPairing(code)
+  assert.ok(claimed)
+
+  await refusingAudit('device.revoked', () => revokeDevice(student, pending!.id))
+  assert.equal(await userForToken(claimed.token), student, 'still not revoked')
 })
