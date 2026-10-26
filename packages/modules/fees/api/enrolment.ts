@@ -7,7 +7,7 @@ import {
   studentPrograms,
   terms,
 } from '@campusos/module-academic/schema'
-import { feeInvoices, feeItems, feePayments, studentCharges } from '../schema'
+import { feeInvoices, feePayments, studentCharges } from '../schema'
 
 /**
  * Who is billed for a term, and for which programmes (ACC-19, decision 189).
@@ -133,11 +133,15 @@ export async function notEnrolled(tx: Tx, termId: string, studentId?: string | n
       and(
         eq(users.role, 'student'),
         studentId ? eq(sectionMembers.userId, studentId) : undefined,
-        sql`exists (select 1 from ${feeItems} where ${feeItems.programId} = ${sections.programId} and ${feeItems.termId} = ${termId})`,
-        sql`not exists (select 1 from ${studentPrograms} where ${studentPrograms.studentId} = ${sectionMembers.userId} and ${studentPrograms.programId} = ${sections.programId})`,
+        // Plain SQL with table names: the outer row is named by its table,
+        // never by a drizzle column (api-contracts' correlated-subquery guard).
+        sql`exists (select 1 from fee_items f where f.program_id = academic_sections.program_id and f.term_id = ${termId})`,
+        sql`not exists (
+          select 1 from academic_student_programs sp
+           where sp.student_id = academic_section_members.user_id and sp.program_id = academic_sections.program_id)`,
         sql`not exists (
           select 1 from academic_student_programs sp join academic_terms t on t.id = ${termId}
-           where sp.student_id = ${sectionMembers.userId}
+           where sp.student_id = academic_section_members.user_id
              and sp.declared_on <= t.ends_on and (sp.ended_on is null or sp.ended_on > t.starts_on))`,
       ),
     )
