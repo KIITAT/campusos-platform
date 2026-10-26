@@ -71,7 +71,11 @@ before(async () => {
       { email: 's@refs-other.test', institutionId: other, role: 'student', name: 'Other Student' },
     ])
     .returning({ id: users.id })
-  ;[ids.clerk, ids.adm, ids.s1, ids.s2, ids.otherClerk] = people.slice(0, 5).map((p) => p.id)
+  ids.clerk = people[0]!.id
+  ids.adm = people[1]!.id
+  ids.s1 = people[2]!.id
+  ids.s2 = people[3]!.id
+  ids.otherClerk = people[4]!.id
   ids.otherStudent = people[6]!.id
   const adm = as(ids.adm, 'institution_admin', inst)
   ids.term = (await academic.createTerm(adm, { code: 't1', name: 'Autumn', startsOn: '2026-07-01', endsOn: '2026-12-01' })).id
