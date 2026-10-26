@@ -7,7 +7,7 @@ import {
   timestamp,
   uuid,
 } from 'drizzle-orm/pg-core'
-import { db } from './client'
+import { authDb } from './client'
 import { institutions, users } from './schema'
 
 /**
@@ -59,6 +59,8 @@ export const deviceTokens = pgTable(
   // tables: a bearer token has to be resolved to a user *before* there is any
   // tenant context to scope by. Chicken and egg, and the rows hold only hashes
   // -- reading every one of them tells an attacker nothing they can present.
+  // Even so, only the auth role reads or writes them (SEC-05): the application
+  // role, which every request and plugin runs as, has no grant on this table.
   (t) => [index('device_tokens_user').on(t.userId, t.revokedAt)],
 )
 
@@ -94,11 +96,11 @@ export async function startPairing(
 
   // A pending pairing is replaced rather than accumulated: somebody who asks
   // twice because the first code scrolled away should not leave a live one.
-  await db
+  await authDb
     .delete(deviceTokens)
     .where(and(eq(deviceTokens.userId, userId), isNull(deviceTokens.lastUsedAt), sql`${deviceTokens.pairingHash} is not null`))
 
-  await db.insert(deviceTokens).values({
+  await authDb.insert(deviceTokens).values({
     institutionId,
     userId,
     tokenHash: `unclaimed:${sha256(code)}`,
@@ -130,19 +132,19 @@ export async function claimPairing(
 ): Promise<ClaimedToken | null> {
   const hash = sha256(code.trim().toUpperCase())
 
-  const [row] = await db
+  const [row] = await authDb
     .select()
     .from(deviceTokens)
     .where(eq(deviceTokens.pairingHash, hash))
   if (!row) return null
 
   if (!row.pairingExpiresAt || row.pairingExpiresAt.getTime() < Date.now()) {
-    await db.delete(deviceTokens).where(eq(deviceTokens.id, row.id))
+    await authDb.delete(deviceTokens).where(eq(deviceTokens.id, row.id))
     return null
   }
 
   const token = randomBytes(32).toString('base64url')
-  await db
+  await authDb
     .update(deviceTokens)
     .set({
       tokenHash: sha256(token),
@@ -169,7 +171,7 @@ export async function userForToken(token: string): Promise<string | null> {
   if (!token || token.length < 20) return null
   const hash = sha256(token)
 
-  const [row] = await db
+  const [row] = await authDb
     .select({
       id: deviceTokens.id,
       userId: deviceTokens.userId,
@@ -185,7 +187,7 @@ export async function userForToken(token: string): Promise<string | null> {
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null
 
   // Best-effort: a failed touch must not fail the request it is describing.
-  void db
+  void authDb
     .update(deviceTokens)
     .set({ lastUsedAt: new Date() })
     .where(eq(deviceTokens.id, row.id))
@@ -195,7 +197,7 @@ export async function userForToken(token: string): Promise<string | null> {
 }
 
 export async function listDevices(userId: string) {
-  return db
+  return authDb
     .select({
       id: deviceTokens.id,
       deviceName: deviceTokens.deviceName,
@@ -211,7 +213,7 @@ export async function listDevices(userId: string) {
 
 /** Revoking is immediate and keeps the row, so "which phone was it" survives. */
 export async function revokeDevice(userId: string, id: string): Promise<boolean> {
-  const rows = await db
+  const rows = await authDb
     .update(deviceTokens)
     .set({ revokedAt: new Date() })
     .where(and(eq(deviceTokens.id, id), eq(deviceTokens.userId, userId)))

@@ -47,18 +47,26 @@ export const corePool = pool
 export const db = drizzle(pool, { schema })
 
 /**
- * Owner role. Bypasses RLS -- for the Auth.js adapter only.
+ * Auth role (`AUTH_DATABASE_URL`). Bypasses RLS -- for identity and the
+ * control plane only: the Auth.js adapter, device tokens, and the host's
+ * institution and entitlement writes.
  *
  * Sign-in looks a user up by email before any subdomain-derived tenant context
  * exists, so it cannot run under the users RLS policy. Confining that to one
  * exported handle keeps the bypass to a single, greppable code path; every
- * other query path must use `db`.
+ * other query path must use `db`, whose role has no grant on these tables at
+ * all (SEC-05).
+ *
+ * Without `AUTH_DATABASE_URL` this falls back to the owner. The console and the
+ * install CLI rely on that on purpose; the web server refuses to start in
+ * production without it (SEC-14).
  */
 let ownerDb: ReturnType<typeof drizzle> | null = null
 
 const owner = () =>
   (ownerDb ??= drizzle(
-    new Pool({ connectionString: process.env.AUTH_DATABASE_URL ?? process.env.MIGRATION_DATABASE_URL, connectionTimeoutMillis: 5000, statement_timeout: process.env.AUTH_DATABASE_URL ? 30000 : 0, max: 2 }),
+    // Five, not two: every mobile request resolves its bearer token here.
+    new Pool({ connectionString: process.env.AUTH_DATABASE_URL ?? process.env.MIGRATION_DATABASE_URL, connectionTimeoutMillis: 5000, statement_timeout: process.env.AUTH_DATABASE_URL ? 30000 : 0, max: 5 }),
     { schema },
   ))
 
