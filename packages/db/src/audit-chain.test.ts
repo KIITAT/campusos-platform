@@ -21,7 +21,7 @@ import { institutions, users } from './schema'
  */
 
 const PREFIX = 'chain-test'
-const app = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 6 })
+const app = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 12 })
 
 /** Postgres's message, which drizzle hangs off `.cause`. */
 const says = (re: RegExp) => (e: unknown) => {
@@ -333,15 +333,17 @@ test('the chain and the platform log are append-only for the owner too; offboard
 test('platform events are chained too, and the application role cannot write them (AUD-01, AUD-02)', async () => {
   const { platformAudit } = await import('./audit')
   const { verifyChains } = await import('./audit-chain')
+  // The platform log keeps every earlier run's rows, so this run's are told apart by entity id.
+  const run = randomUUID()
   for (const n of [1, 2]) {
     await authDb.transaction((tx) =>
       platformAudit(tx, {
         actorId: null, actorEmail: 'operator', moduleId: 'core', action: 'test.platform-chain',
-        entity: 'x', entityId: String(n), reason: 'platform chain', detail: { n, 'ଅ': 'अ' },
+        entity: 'x', entityId: `${run}-${n}`, reason: 'platform chain', detail: { n, 'ଅ': 'अ' },
       }),
     )
   }
-  const rows = await authDb.execute<{ seq: string }>(sql`select seq::text as seq from platform_audit_log where action = 'test.platform-chain' order by seq`)
+  const rows = await authDb.execute<{ seq: string }>(sql`select seq::text as seq from platform_audit_log where action = 'test.platform-chain' and entity_id like ${run + '-%'} order by seq`)
   assert.equal(rows.rows.length, 2)
   assert.equal(Number(rows.rows[1]!.seq), Number(rows.rows[0]!.seq) + 1)
   assert.deepEqual((await verifyChains({ platform: true })).problems, [])
@@ -360,10 +362,12 @@ test('deleting an institution leaves a platform record of its final chain head; 
 
   await authDb.delete(institutions).where(sql`${institutions.id} = ${t}`)
 
-  const rec = await authDb.execute<{ detail: { slug: string; finalSeq: number; finalHash: string; auditRows: number } }>(sql`
+  const rec = await authDb.execute<{ detail: { slug: string; finalSeq: number; finalHash: string; auditRows: number; by: string } }>(sql`
     select detail from platform_audit_log where action = 'institution.deleted' and institution_id = ${t}`)
   assert.equal(rec.rows.length, 1)
-  assert.deepEqual(rec.rows[0]!.detail, { slug: `${PREFIX}-offboarded`, finalSeq: 2, finalHash: head!.hash, auditRows: 2 })
+  const { by, ...rest } = rec.rows[0]!.detail
+  assert.deepEqual(rest, { slug: `${PREFIX}-offboarded`, finalSeq: 2, finalHash: head!.hash, auditRows: 2 })
+  assert.equal(by, new URL(process.env.MIGRATION_DATABASE_URL!).username, 'the database role that deleted it')
   assert.deepEqual((await verifyChains({ institutionId: t, anchors: [anchor] })).problems, [])
 
   // A chain that vanished with no such record is reported.
@@ -396,7 +400,7 @@ test('anchors that go backwards, or do not match their own digest, are reported 
 test('sealing the import maximum of 5,000 rows in one transaction is quick (AUD-01)', async () => {
   const t = await tenant('volume')
   const c = await session(t)
-  let commitMs = 0
+  let commitMs: number
   try {
     await c.query(
       `insert into audit_log (institution_id, module_id, action, entity, entity_id, reason)
@@ -413,4 +417,55 @@ test('sealing the import maximum of 5,000 rows in one transaction is quick (AUD-
   assert.equal(sealed.rows[0]!.n, 5000)
   console.log(`sealing 5,000 rows at commit took ${Math.round(commitMs)} ms`)
   assert.ok(commitMs < 10_000, `sealing took ${Math.round(commitMs)} ms`)
+})
+
+test('a purge checkpoint on the platform chain lets a chain start after seq 1; without one the cut is missing rows (AUD-01, for P1-08)', async () => {
+  const { platformAudit } = await import('./audit')
+  const { verifyChains } = await import('./audit-chain')
+  const t = await tenant('purged')
+  for (const n of [1, 2, 3]) await trail(t, `purged.${n}`, n)
+  const [first] = await chain(t)
+
+  // What a retention purge (P1-08) will do: drop a prefix, with the guards off.
+  await asOwner(
+    'alter table audit_log disable trigger audit_log_append_only',
+    'alter table audit_chain disable trigger audit_chain_append_only',
+    `delete from audit_chain where institution_id = '${t}' and seq = 1`,
+    `delete from audit_log where institution_id = '${t}' and action = 'purged.1'`,
+    'alter table audit_chain enable trigger audit_chain_append_only',
+    'alter table audit_log enable trigger audit_log_append_only',
+  )
+  assert.deepEqual((await verifyChains({ institutionId: t })).problems.map((p) => `${p.kind}@${p.seq}`), ['missing@1'])
+
+  await authDb.transaction((tx) =>
+    platformAudit(tx, {
+      institutionId: t, actorId: null, moduleId: 'core', action: 'audit.checkpoint', entity: 'audit_chain', entityId: t,
+      reason: 'retention purge', detail: { chain: `tenant:${t}`, seq: 1, hash: first!.hash.toString('hex') },
+    }),
+  )
+  assert.deepEqual((await verifyChains({ institutionId: t })).problems, [])
+})
+
+test('ten sessions committing audited work in one institution at once leave one gap-free chain (AUD-01)', async () => {
+  const { verifyChains } = await import('./audit-chain')
+  const t = await tenant('stress')
+  const sessions = await Promise.all(Array.from({ length: 10 }, () => session(t)))
+  try {
+    // Every session has written before any commits, so all ten commits contend for the seal.
+    for (const [i, c] of sessions.entries()) {
+      for (const n of [1, 2, 3]) await write(c, t, `stress.${i}.${n}`)
+    }
+    await Promise.all(sessions.map((c) => c.query('commit')))
+  } finally {
+    for (const c of sessions) c.release()
+  }
+  const rows = await chain(t)
+  assert.equal(rows.length, 30)
+  assert.deepEqual(rows.map((r) => Number(r.seq)), Array.from({ length: 30 }, (_, i) => i + 1))
+  // Each transaction's three rows are sealed together, since a commit seals all of its own rows at once.
+  for (let i = 0; i < 30; i += 3) {
+    const owner = rows[i]!.action.split('.')[1]
+    assert.ok(rows.slice(i, i + 3).every((r) => r.action.split('.')[1] === owner), `seq ${i + 1}..${i + 3} come from one transaction`)
+  }
+  assert.deepEqual((await verifyChains({ institutionId: t })).problems, [])
 })
