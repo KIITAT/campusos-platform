@@ -4,6 +4,8 @@ import {
   addEquivalenceSchema,
   addPrerequisiteSchema,
   addSectionMemberSchema,
+  setClassTeacherSchema,
+  setDepartmentHeadSchema,
   createCourseSchema,
   createDepartmentSchema,
   createOfferingSchema,
@@ -106,6 +108,8 @@ export const paths = {
   [`${base}/terms/current`]: post('Mark a term as current', setCurrentTermSchema),
   [`${base}/sections`]: post('Create a cohort', createSectionSchema),
   [`${base}/sections/members`]: post('Add a student to a cohort', addSectionMemberSchema),
+  [`${base}/sections/class-teacher`]: post("Set or clear a cohort's class teacher, by email", setClassTeacherSchema),
+  [`${base}/departments/head`]: post("Set or clear a department's head (a HoD), by email", setDepartmentHeadSchema),
   [`${base}/offerings`]: post('Offer a course to a cohort in a term', createOfferingSchema),
   [`${base}/slots`]: post('Add a weekly timetable slot', createSlotSchema),
 

@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, isNotNull } from 'drizzle-orm'
 import { audit, auditLog, users, withTenant } from '@campusos/db'
-import { assertCanAccessStudent, viewsOnBehalf, type Role, type ViewerScope } from '@campusos/module-framework'
+import { assertCanAccessStudent, type Role, type ViewerScope } from '@campusos/module-framework'
 import {
   courses,
   institutions,

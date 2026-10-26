@@ -133,7 +133,7 @@ test('the whole product still answers the same number of endpoints', () => {
   // gave eleven modules the same three: what it imports, a template, and run.
   // A regression guard on the conversion, not a target.
   const total = PLUGINS.reduce((n, p) => n + p.routes.length, 0)
-  assert.equal(total, 712, `expected 712 endpoints across all modules, found ${total}`)
+  assert.equal(total, 714, `expected 714 endpoints across all modules, found ${total}`)
 })
 
 test('a longer path is never swallowed by a shorter one', () => {
