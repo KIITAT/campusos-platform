@@ -40,7 +40,7 @@ export type ChainProblemKind =
   | 'anchor_regressed'
   /** An anchor document that does not match its own digest. */
   | 'anchor_corrupt'
-  /** An anchored chain is gone, and no `institution.deleted` event explains it. */
+  /** An anchored chain is gone, and no deleted institution explains it. */
   | 'chain_vanished'
 
 export interface ChainProblem {
@@ -91,14 +91,6 @@ const field = (v: string | null) => (v === null ? '~' : `${Buffer.byteLength(v, 
 /** The `prev_hash` of a chain's first link. */
 export const genesis = (chain: string) => sha256(Buffer.from(`campusos-audit-genesis:${chain}`, 'utf8'))
 
-/** Microseconds since the epoch, as Postgres stores them, to `YYYY-MM-DDTHH:MM:SS.ffffffZ` in UTC. */
-function stamp(micros: string): string {
-  const us = BigInt(micros)
-  const ms = us / 1000n - (us % 1000n < 0n ? 1n : 0n)
-  const rest = us - ms * 1000n
-  return `${new Date(Number(ms)).toISOString().slice(0, 23)}${rest.toString().padStart(3, '0')}Z`
-}
-
 /** A row as the verifier reads it: every value as text, as the hash sees it. */
 type ChainRow = {
   seq: string
@@ -106,7 +98,8 @@ type ChainRow = {
   hash: Buffer
   /** NULL when the link survives its audit row. */
   id: string | null
-  at_us: string | null
+  /** `YYYY-MM-DDTHH:MM:SS.ffffffZ` in UTC, formatted by Postgres as the seal formats it; NULL if not finite. */
+  at_text: string | null
   institution_id: string | null
   actor_id: string | null
   module_id: string | null
@@ -122,14 +115,14 @@ type ChainRow = {
 /** Rebuilds one link's hash. `chain` is the institution id, or 'platform'. */
 export function rowHash(prev: Buffer, chain: string, r: ChainRow): Buffer {
   const header =
-    field(HASH_FORMAT) + field(chain) + field(r.seq) + field(r.id) + field(r.at_us === null ? null : stamp(r.at_us)) +
+    field(HASH_FORMAT) + field(chain) + field(r.seq) + field(r.id) + field(r.at_text) +
     field(r.institution_id) + field(r.actor_id) + field(r.module_id) + field(r.action) + field(r.entity) + field(r.entity_id)
   const content = sha256(r.salt ?? Buffer.alloc(0), Buffer.from(field(r.actor_email) + field(r.reason) + field(r.detail), 'utf8'))
   return sha256(prev, Buffer.from(header, 'utf8'), content)
 }
 
 const COLUMNS = sql.raw(`
-  a.id::text as id, (extract(epoch from a.at) * 1000000)::bigint::text as at_us,
+  a.id::text as id, to_char(a.at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as at_text,
   a.institution_id::text as institution_id, a.actor_id, a.module_id, a.action, a.entity, a.entity_id,
   a.actor_email, a.reason, a.detail::text as detail, a.salt`)
 
@@ -148,47 +141,33 @@ const platformBatch = (after: number) =>
      where a.seq > ${after}
      order by a.seq limit ${BATCH}`)
 
-/** A purge (P1-08) records where the kept part of a chain starts. */
-interface Checkpoint {
-  seq: number
-  hash: string
-}
-
 interface Walked {
   rows: number
   head: { seq: number; hash: string } | null
   /** The hashes at the seqs some anchor asked about. */
   at: Map<number, string>
-  first: number | null
 }
 
 /**
- * Walks one chain: recomputes every link from its stored `prev_hash`, so an
- * edited row is reported once rather than poisoning everything after it.
+ * Walks one chain from seq 1: recomputes every link from its stored
+ * `prev_hash`, so an edited row is reported once rather than poisoning
+ * everything after it. Nothing in the database can excuse a missing prefix:
+ * a purge (P1-08) will have to carry its checkpoint in the anchors.
  */
 async function walk(
   name: string,
   chain: string,
   next: (after: number) => Promise<{ rows: ChainRow[] }>,
   wanted: Set<number>,
-  checkpoints: Checkpoint[],
   problems: ChainProblem[],
 ): Promise<Walked> {
-  const out: Walked = { rows: 0, head: null, at: new Map(), first: null }
+  const out: Walked = { rows: 0, head: null, at: new Map() }
   let expected = 1
   let prev: Buffer = genesis(chain)
   for (let after = 0; ; ) {
     const { rows } = await next(after)
     for (const r of rows) {
       const seq = Number(r.seq)
-      if (out.first === null) {
-        out.first = seq
-        const cp = checkpoints.find((c) => c.seq === seq - 1 && c.hash === r.prev_hash.toString('hex'))
-        if (cp) {
-          expected = seq
-          prev = r.prev_hash
-        }
-      }
       if (seq !== expected) {
         problems.push({
           kind: 'missing',
@@ -289,23 +268,23 @@ export async function verifyChains(opts: VerifyOptions = {}): Promise<VerifyRepo
     }
   }
 
-  // What the platform chain says about deletions and purges.
-  const events = await authDb.execute<{ action: string; institution_id: string | null; detail: Record<string, unknown> | null }>(sql`
-    select action, institution_id::text as institution_id, detail from platform_audit_log
-     where action in ('institution.deleted', 'audit.checkpoint')`)
+  // Deletions the platform chain records (NEW-09). Since 0009 only the
+  // institutions trigger can write one, but the owner can switch triggers off,
+  // so a record counts only if the institution really is gone, and only the
+  // first record for it.
+  const events = await authDb.execute<{ institution_id: string; detail: Record<string, unknown> | null }>(sql`
+    select p.institution_id::text as institution_id, p.detail from platform_audit_log p
+     where p.action = 'institution.deleted' and p.institution_id is not null
+       and not exists (select 1 from institutions i where i.id = p.institution_id)
+     order by p.seq`)
   const deleted = new Map<string, { finalSeq: number | null; finalHash: string | null }>()
-  const checkpoints = new Map<string, Checkpoint[]>()
   for (const e of events.rows) {
-    if (e.action === 'institution.deleted' && e.institution_id) {
-      deleted.set(`tenant:${e.institution_id}`, {
-        finalSeq: typeof e.detail?.finalSeq === 'number' ? e.detail.finalSeq : null,
-        finalHash: typeof e.detail?.finalHash === 'string' ? e.detail.finalHash : null,
-      })
-    } else if (e.action === 'audit.checkpoint' && typeof e.detail?.chain === 'string') {
-      const list = checkpoints.get(e.detail.chain) ?? []
-      list.push({ seq: Number(e.detail.seq), hash: String(e.detail.hash) })
-      checkpoints.set(e.detail.chain, list)
-    }
+    const name = `tenant:${e.institution_id}`
+    if (deleted.has(name)) continue
+    deleted.set(name, {
+      finalSeq: typeof e.detail?.finalSeq === 'number' ? e.detail.finalSeq : null,
+      finalHash: typeof e.detail?.finalHash === 'string' ? e.detail.finalHash : null,
+    })
   }
 
   // Which chains to walk: those in the database, and any an anchor names.
@@ -341,7 +320,6 @@ export async function verifyChains(opts: VerifyOptions = {}): Promise<VerifyRepo
       id,
       name === 'platform' ? platformBatch : (after) => tenantBatch(id, after),
       wanted,
-      checkpoints.get(name) ?? [],
       problems,
     )
     chains.push({ chain: name, rows: walked.rows, head: walked.head })
@@ -355,7 +333,6 @@ export async function verifyChains(opts: VerifyOptions = {}): Promise<VerifyRepo
         continue
       }
       const gone = deleted.get(name)
-      const cut = (checkpoints.get(name) ?? []).find((c) => c.seq >= a.seq)
       if (walked.rows === 0 && gone) {
         if (gone.finalSeq === null || gone.finalSeq < a.seq || (gone.finalSeq === a.seq && gone.finalHash !== a.hash)) {
           problems.push({
@@ -364,10 +341,6 @@ export async function verifyChains(opts: VerifyOptions = {}): Promise<VerifyRepo
             seq: a.seq,
             message: `the institution was deleted at seq ${gone.finalSeq}, which does not match anchor ${a.runId} (${a.at})`,
           })
-        }
-      } else if (walked.rows > 0 && walked.first !== null && a.seq < walked.first && cut) {
-        if (cut.seq === a.seq && cut.hash !== a.hash) {
-          problems.push({ kind: 'anchor_mismatch', chain: name, seq: a.seq, message: `the purge checkpoint at seq ${a.seq} differs from anchor ${a.runId}` })
         }
       } else if (walked.rows === 0) {
         problems.push({
