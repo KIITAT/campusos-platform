@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { audit, users, withTenant } from '@campusos/db'
-import type { Role } from '@campusos/module-framework'
+import { assertCanAccessStudent, type Role } from '@campusos/module-framework'
 import { assessments, frameworks, levels, skills, type Level } from '../schema'
 import {
   addLevelSchema,
@@ -224,6 +224,8 @@ export async function assess(actor: Actor, input: unknown) {
   const d = assessSchema.parse(input)
   return named(() =>
     withTenant(tenant, async (tx) => {
+      // A teacher judges the students they teach, class-teach or mentor (SEC-07).
+      await assertCanAccessStudent(tx, actor, d.studentId, 'skills')
       const s = await studentIn(tx, d.studentId)
       const [row] = await tx
         .insert(assessments)
@@ -278,12 +280,12 @@ export async function selfAssess(actor: Actor, input: unknown) {
 /**
  * A student's skills: for each live skill, the latest judgement from each
  * side, the gap between them, and the whole history. The student sees their
- * own; staff see anybody's.
+ * own; staff those they teach, class-teach, mentor or head (SEC-07).
  */
 export async function profile(actor: Actor, studentId: string) {
   const tenant = tenantOf(actor)
-  if (!isStaff(actor.role) && actor.id !== studentId) throw new SkillError(403, 'forbidden', 'not permitted')
   return withTenant(tenant, async (tx) => {
+    await assertCanAccessStudent(tx, actor, studentId, 'skills')
     const student = await studentIn(tx, studentId)
     const live = await tx
       .select({ id: skills.id, code: skills.code, name: skills.name, category: skills.category, frameworkId: skills.frameworkId, retiredAt: skills.retiredAt })
