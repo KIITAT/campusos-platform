@@ -7,8 +7,8 @@ import { after, before, test } from 'node:test'
 import { URL } from 'node:url'
 
 /**
- * The P0-01 and P0-02 migrations applied as an upgrade, not only on a fresh
- * database.
+ * The P0-01, P0-02 and P0-06 migrations applied as an upgrade, not only on a
+ * fresh database.
  *
  * CI's fresh path runs core first and every module after it. An institution
  * upgrading runs the new core migrations on a database that already holds
@@ -28,9 +28,10 @@ const pg = require('pg')
 const { drizzle } = require('drizzle-orm/node-postgres')
 const { migrate } = require('drizzle-orm/node-postgres/migrator')
 
-/** The files P0-01 added. Everything else is the previous level. */
+/** The module files P0-01 and P0-06 added. Everything else is the previous level. */
 const NEW_FILES = new Set([
   'fees/0006_money_outlives_the_person.sql',
+  'fees/0007_idempotency_and_references.sql',
   'hr/0010_money_outlives_the_person.sql',
   'library/0002_loans_outlive_the_borrower.sql',
 ])
@@ -190,5 +191,18 @@ test('the upgrade seals the existing trail per institution, in (at, id) order, a
       select c.seq::int, a.salt is not null as salted from audit_chain c join audit_log a on a.id = c.audit_id
        where a.action = 'after.upgrade'`)
     assert.deepEqual(next.rows, [{ seq: 4, salted: true }])
+  })
+})
+
+test('fees 0007 applies as an upgrade: the claim table under RLS, the reference index (ACC-18)', { skip: !url && 'MIGRATION_DATABASE_URL is not set' }, async () => {
+  await withClient(at(DB), async (c) => {
+    const { rows } = await c.query(`
+      select
+        (select relrowsecurity from pg_class where oid = 'fee_idempotency_keys'::regclass) as rls,
+        (select count(*)::int from pg_policy where polrelid = 'fee_idempotency_keys'::regclass) as policies,
+        (select count(*)::int from pg_constraint
+          where conrelid = 'fee_idempotency_keys'::regclass and contype = 'f' and confdeltype = 'c') as cascades,
+        (select indisunique from pg_index where indexrelid = 'fee_payments_reference'::regclass) as unique_reference`)
+    assert.deepEqual(rows[0], { rls: true, policies: 1, cascades: 2, unique_reference: true })
   })
 })
