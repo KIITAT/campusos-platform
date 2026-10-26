@@ -1,6 +1,6 @@
 import { after, before, beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { eq, sql } from 'drizzle-orm'
+import { eq, gte, sql } from 'drizzle-orm'
 import {
   auditLog,
   authDb,
@@ -32,6 +32,10 @@ import {
   type Actor,
 } from './api'
 import { allocations, blocks, checkIns, leaves, rooms, visitors } from './schema'
+
+// The audit trail is append-only (AUD-01): a reset cannot empty it, so each
+// test reads only the rows written since its own reset.
+let since = new Date(0)
 
 const SLUG = 'hostel-test'
 const OTHER = 'hostel-other'
@@ -67,7 +71,8 @@ const today = () => new Date().toISOString().slice(0, 10)
 
 /** Turn the Attendance entitlement on or off for this institution. */
 async function setAttendance(on: boolean) {
-  await db
+  // Entitlements are written by the auth role or the console (SEC-05).
+  await authDb
     .insert(institutionModules)
     .values({ institutionId: inst, moduleId: 'attendance', enabled: on })
     .onConflictDoUpdate({
@@ -115,7 +120,7 @@ beforeEach(async () => {
     await tx.delete(allocations)
     await tx.delete(rooms)
     await tx.delete(blocks)
-    await tx.delete(auditLog)
+    since = new Date(Math.floor(Number((await tx.execute<{ ms: string }>(sql`select extract(epoch from clock_timestamp()) * 1000 as ms`)).rows[0]!.ms)))
   })
   await setAttendance(false)
 
@@ -228,7 +233,7 @@ test('vacating frees the bed, is audited, and keeps the history', async () => {
   assert.equal(room.occupied, 2)
 
   const trail = await withTenant(inst, (tx) =>
-    tx.select({ action: auditLog.action, reason: auditLog.reason }).from(auditLog),
+    tx.select({ action: auditLog.action, reason: auditLog.reason }).from(auditLog).where(gte(auditLog.at, since)),
   )
   assert.equal(trail[0]!.action, 'hostel.vacated')
   assert.match(trail[0]!.reason!, /new block/)

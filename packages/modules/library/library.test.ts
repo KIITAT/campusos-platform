@@ -1,7 +1,7 @@
 import { after, before, beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { eq, sql } from 'drizzle-orm'
-import { auditLog, authDb, db, institutions, users, withTenant } from '@campusos/db'
+import { authDb, db, institutions, users, withTenant } from '@campusos/db'
 import {
   LibraryError,
   addCopies,
@@ -109,7 +109,6 @@ beforeEach(async () => {
     await tx.delete(copies)
     await tx.delete(titles)
     await tx.delete(settings)
-    await tx.delete(auditLog)
   })
 })
 

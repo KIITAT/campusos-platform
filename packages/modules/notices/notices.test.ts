@@ -1,6 +1,6 @@
 import { after, before, beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { eq, sql } from 'drizzle-orm'
+import { eq, gte, sql } from 'drizzle-orm'
 import { auditLog, authDb, db, institutions, users, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
 import {
@@ -21,6 +21,10 @@ import {
   type Actor,
 } from './api'
 import { noticeAttachments, notices, notifications } from './schema'
+
+// The audit trail is append-only (AUD-01): a reset cannot empty it, so each
+// test reads only the rows written since its own reset.
+let since = new Date(0)
 
 const SLUG = 'notice-test'
 const OTHER = 'notice-other'
@@ -93,7 +97,7 @@ beforeEach(async () => {
     await tx.execute(sql`select set_config('app.audit_reason', 'test reset', true)`)
     await tx.delete(notifications)
     await tx.delete(notices)
-    await tx.delete(auditLog)
+    since = new Date(Math.floor(Number((await tx.execute<{ ms: string }>(sql`select extract(epoch from clock_timestamp()) * 1000 as ms`)).rows[0]!.ms)))
   })
 })
 
@@ -293,7 +297,7 @@ test('withdrawing takes the notice and its inbox copies away, and is audited', a
   assert.equal((await board(student(ids.s1))).length, 0)
 
   const trail = await withTenant(inst, (tx) =>
-    tx.select({ action: auditLog.action, reason: auditLog.reason }).from(auditLog),
+    tx.select({ action: auditLog.action, reason: auditLog.reason }).from(auditLog).where(gte(auditLog.at, since)),
   )
   assert.equal(trail[0]!.action, 'notice.withdrawn')
   assert.match(trail[0]!.reason!, /wrong cohort/)

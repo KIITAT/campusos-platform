@@ -1,6 +1,6 @@
 import { after, before, beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { eq, sql } from 'drizzle-orm'
+import { eq, gte, sql } from 'drizzle-orm'
 import { auditLog, authDb, db, institutions, users, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
 import {
@@ -19,6 +19,10 @@ import {
   type Actor,
 } from './api'
 import { feeItems, feePayments, feeWaivers, receiptCounters } from './schema'
+
+// The audit trail is append-only (AUD-01): a reset cannot empty it, so each
+// test reads only the rows written since its own reset.
+let since = new Date(0)
 
 const SLUG = 'fees-test'
 const OTHER = 'fees-other'
@@ -147,7 +151,7 @@ beforeEach(async () => {
     await tx.delete(feeWaivers)
     await tx.delete(feeItems)
     await tx.delete(receiptCounters)
-    await tx.delete(auditLog)
+    since = new Date(Math.floor(Number((await tx.execute<{ ms: string }>(sql`select extract(epoch from clock_timestamp()) * 1000 as ms`)).rows[0]!.ms)))
   })
 })
 
@@ -269,7 +273,7 @@ test('a waiver is granted, revised and revoked, and every step is on the trail',
   await revokeWaiver(admin(), { waiverId: revised.id, reason: 'appeal withdrawn by student' })
 
   const trail = await withTenant(inst, (tx) =>
-    tx.select({ action: auditLog.action, reason: auditLog.reason }).from(auditLog),
+    tx.select({ action: auditLog.action, reason: auditLog.reason }).from(auditLog).where(gte(auditLog.at, since)),
   )
   assert.deepEqual(
     trail.map((t) => t.action).sort(),

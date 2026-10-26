@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import { eq, like } from 'drizzle-orm'
 import {
   authDb,
-  db,
   institutionModules,
   institutions,
   users,
@@ -70,7 +69,8 @@ const asEnrollment = (a: Actor): enrollment.Actor => ({
 const books = (c: Campus): Books => c.admin as unknown as Books
 
 async function turnOn(id: string, moduleId: string, enabled = true) {
-  await db
+  // Entitlements are written by the auth role or the console (SEC-05).
+  await authDb
     .insert(institutionModules)
     .values({ institutionId: id, moduleId, enabled })
     .onConflictDoUpdate({

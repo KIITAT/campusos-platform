@@ -1,6 +1,6 @@
 import { after, before, beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { eq, sql } from 'drizzle-orm'
+import { eq, gte, sql } from 'drizzle-orm'
 import { auditLog, authDb, db, institutions, users, withTenant } from '@campusos/db'
 import {
   HrError,
@@ -21,6 +21,10 @@ import {
   type Actor,
 } from './api'
 import { leaveRequests, leaveTypes, payComponents, payslips, staff } from './schema'
+
+// The audit trail is append-only (AUD-01): a reset cannot empty it, so each
+// test reads only the rows written since its own reset.
+let since = new Date(0)
 
 const SLUG = 'hr-test'
 const OTHER = 'hr-other'
@@ -104,7 +108,7 @@ beforeEach(async () => {
     await tx.delete(leaveRequests)
     await tx.delete(leaveTypes)
     await tx.delete(staff)
-    await tx.delete(auditLog)
+    since = new Date(Math.floor(Number((await tx.execute<{ ms: string }>(sql`select extract(epoch from clock_timestamp()) * 1000 as ms`)).rows[0]!.ms)))
   })
   casual = (await createLeaveType(admin(), { code: 'cl', name: 'Casual leave', annualDays: 12 })).id
   unpaid = (
@@ -171,7 +175,7 @@ test('ending employment is audited and cannot happen twice', async () => {
     (e: unknown) => code(e) === 'already_ended',
   )
   const trail = await withTenant(inst, (tx) =>
-    tx.select({ action: auditLog.action }).from(auditLog),
+    tx.select({ action: auditLog.action }).from(auditLog).where(gte(auditLog.at, since)),
   )
   assert.equal(trail[0]!.action, 'hr.employment_ended')
 })
@@ -344,7 +348,7 @@ test('cancelling approved leave is audited and allowed', async () => {
   assert.equal(cancelled.status, 'cancelled')
 
   const trail = await withTenant(inst, (tx) =>
-    tx.select({ action: auditLog.action }).from(auditLog),
+    tx.select({ action: auditLog.action }).from(auditLog).where(gte(auditLog.at, since)),
   )
   assert.ok(trail.some((t) => t.action === 'hr.leave_cancelled'))
 })
