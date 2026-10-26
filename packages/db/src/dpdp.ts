@@ -1,6 +1,7 @@
 import { eq, sql } from 'drizzle-orm'
 import { audit } from './audit'
-import { db, withTenant } from './client'
+import { authDb, db, withTenant } from './client'
+import { EXPORT_POLICY, exportableRow, type ExportRule } from './dpdp-policy'
 import { users } from './schema'
 
 /**
@@ -69,9 +70,10 @@ export interface ExportBundle {
  * Everything held about one person, as JSON.
  *
  * Discovered from the catalogue rather than from a hand-written list: any
- * table with a column referencing `users.id` is included automatically, so a
- * module added next year is covered without anybody remembering to edit this.
- * A hand-maintained list is a compliance gap with a code review attached.
+ * table with a column referencing `users.id` is found, so a module added next
+ * year is not missed. Found is not the same as handed over, though: a table
+ * is exported only as `EXPORT_POLICY` classifies it, and credentials never are
+ * (SEC-01). An unclassified table is left out, and CI names it.
  */
 export async function exportSubject(
   institutionId: string,
@@ -97,19 +99,43 @@ export async function exportSubject(
   `)
 
   const records: Record<string, unknown[]> = {}
+  const keep = (table: string, column: string, rows: Record<string, unknown>[]) => {
+    if (rows.length > 0) records[`${table}.${column}`] = rows.map((row) => exportableRow(table, row))
+  }
+  const select = (rule: ExportRule) =>
+    typeof rule === 'object' && 'only' in rule
+      ? sql.join(rule.only.map((c) => sql.identifier(c)), sql`, `)
+      : sql`*`
+  const throughAuth = (rule: ExportRule) => typeof rule === 'object' && 'through' in rule
+
+  const classified = columns.rows.filter(
+    ({ table_name }) => table_name !== 'users' && (EXPORT_POLICY[table_name] ?? 'exclude') !== 'exclude',
+  )
   await withTenant(institutionId, async (tx) => {
-    for (const { table_name, column_name } of columns.rows) {
-      if (table_name === 'users') continue
-      const rows = await tx.execute(
-        sql`select * from ${sql.identifier(table_name)}
+    for (const { table_name, column_name } of classified) {
+      const rule = EXPORT_POLICY[table_name]!
+      if (throughAuth(rule)) continue
+      const rows = await tx.execute<Record<string, unknown>>(
+        sql`select ${select(rule)} from ${sql.identifier(table_name)}
              where ${sql.identifier(column_name)} = ${userId}
              limit 5000`,
       )
-      if (rows.rows.length > 0) {
-        records[`${table_name}.${column_name}`] = rows.rows
-      }
+      keep(table_name, column_name, rows.rows)
     }
   })
+  // Tables with no row-level security, which only the auth role may read
+  // (SEC-05): the institution is named explicitly instead.
+  for (const { table_name, column_name } of classified) {
+    const rule = EXPORT_POLICY[table_name]!
+    if (!throughAuth(rule)) continue
+    const rows = await authDb.execute<Record<string, unknown>>(
+      sql`select ${select(rule)} from ${sql.identifier(table_name)}
+           where ${sql.identifier(column_name)} = ${userId}
+             and institution_id = ${institutionId}
+           limit 5000`,
+    )
+    keep(table_name, column_name, rows.rows)
+  }
 
   return {
     exportedAt: new Date().toISOString(),

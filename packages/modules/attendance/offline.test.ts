@@ -162,7 +162,6 @@ test('exporting a teacher never hands over an attendance signing secret (NEW-01)
   await attendance.prepareSession(teacher, { slotId, onDate: today })
   const [prepared] = await withTenant(tenant, (tx) => tx.select().from(offlineCredentials))
   let text = JSON.stringify(await exportSubject(tenant, teacher.id))
-  assert.ok(text.includes(prepared!.id), 'the teacher still sees the class they prepared')
   assert.ok(!text.includes(prepared!.tokenSecret), 'the offline QR signing secret was exported')
 
   await withTenant(tenant, (tx) => tx.delete(offlineCredentials))
