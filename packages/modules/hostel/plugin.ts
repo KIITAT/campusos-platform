@@ -1,4 +1,5 @@
-import { validatePlugin, withImports, type Plugin } from '@campusos/module-framework'
+import { validatePlugin, withRouteRoles, withImports, type Plugin } from '@campusos/module-framework'
+import { routeRoles } from './route-roles'
 import { withTenantBatch } from '@campusos/db'
 import { manifest } from './manifest'
 import { paths as openapiPaths } from './api/openapi'
@@ -14,7 +15,7 @@ import { imports } from './imports'
  * apiBasePath that does not match its id -- fails on load rather than on the
  * first request in a corridor.
  */
-export const plugin: Plugin = withImports({ manifest, routes, openapiPaths, pages }, imports, withTenantBatch)
+export const plugin: Plugin = withRouteRoles(withImports({ manifest, routes, openapiPaths, pages }, imports, withTenantBatch), routeRoles)
 validatePlugin(plugin)
 
 export default plugin
