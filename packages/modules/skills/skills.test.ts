@@ -2,7 +2,7 @@ import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { eq, like } from 'drizzle-orm'
+import { eq, like, sql as raw } from 'drizzle-orm'
 import { authDb, institutions, users, withTenant } from '@campusos/db'
 import {
   addLevel,
@@ -67,6 +67,10 @@ async function campus(): Promise<Campus> {
   })
   const sql = await createSkill(admin, { frameworkId: f.id, code: 'sql-query', name: 'Writing SQL queries', category: 'Technical' })
   const comm = await createSkill(admin, { frameworkId: f.id, code: 'COMM-WRITTEN', name: 'Written communication', category: 'Communication' })
+  // Dr Rao mentors both students: since SEC-07 a teacher judges the students
+  // they teach, class-teach or mentor, not everyone's (mentoring's relation view).
+  await withTenant(id, (tx) => tx.execute(raw`insert into mentor_assignments (institution_id, student_id, mentor_id, assigned_by)
+    values (${id}, ${asha}, ${t}, ${adm}), (${id}, ${bilal}, ${t}, ${adm})`))
   return {
     id,
     admin,
@@ -154,7 +158,7 @@ test('who may judge whom', async () => {
     (e) => code(e) === 'no_such_student',
   )
   // A student sees their own profile, not a classmate's.
-  await assert.rejects(profile(c.asha, c.bilal.id), (e) => code(e) === 'forbidden')
+  await assert.rejects(profile(c.asha, c.bilal.id), (e) => code(e) === 'not_your_student')
 
   // Past the module: the database holds the same line.
   await assert.rejects(

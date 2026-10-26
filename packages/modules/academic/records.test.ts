@@ -373,7 +373,7 @@ test('a student reads their own audit and nobody else’s', async () => {
   assert.equal((await degreeAudit(c.student, { studentId: c.student.id })).programCode, 'BTCS')
   await assert.rejects(
     () => degreeAudit(c.other, { studentId: c.student.id }),
-    (e: unknown) => errorCode(e) === 'forbidden',
+    (e: unknown) => errorCode(e) === 'not_your_student',
   )
 })
 

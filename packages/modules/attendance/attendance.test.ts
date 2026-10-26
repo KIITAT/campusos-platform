@@ -562,7 +562,7 @@ test('the summary counts classes held against classes attended, class by class',
   assert.deepEqual([mine!.held, mine!.present, mine!.absent, mine!.percent], [3, 2, 1, 66.7])
   const [theirs] = await attendanceSummary(admin(), ids.s2)
   assert.deepEqual([theirs!.present, theirs!.percent], [0, 0])
-  await assert.rejects(attendanceSummary(student(ids.s2), ids.s1), (e) => (e as { code?: string }).code === 'forbidden')
+  await assert.rejects(attendanceSummary(student(ids.s2), ids.s1), (e) => (e as { code?: string }).code === 'not_your_student')
 })
 
 // --- tenant isolation ------------------------------------------------------
