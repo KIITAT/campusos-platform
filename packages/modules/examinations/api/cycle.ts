@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm'
 import { audit, withTenant } from '@campusos/db'
-import { moduleEnabled, readUpload, UploadError } from '@campusos/module-framework'
+import { assertCanAccessStudent, moduleEnabled, readUpload, UploadError, type StudentPurpose } from '@campusos/module-framework'
 import { studentProfile, type Actor as AcademicActor } from '@campusos/module-academic/api'
 import { completion, type Actor as FeedbackActor } from '@campusos/module-feedback/api'
 import { manifest as feedbackManifest } from '@campusos/module-feedback/manifest'
@@ -66,12 +66,9 @@ const requireStudent = (actor: Actor) => {
   if (actor.role !== 'student') throw new ExamError(403, 'forbidden', 'this is the student’s to do')
   return t
 }
-/** A student reads their own; staff read anybody's. */
-const mayRead = (actor: Actor, studentId: string) => {
-  if (actor.role === 'student' ? actor.id !== studentId : !isStaff(actor.role)) {
-    throw new ExamError(403, 'forbidden', 'not permitted')
-  }
-}
+/** The student, and whoever canAccessStudent relates to them for this (SEC-07). */
+const mayRead = (actor: Actor, studentId: string, purpose: StudentPurpose) =>
+  withTenant(tenantOf(actor), (tx) => assertCanAccessStudent(tx, actor, studentId, purpose))
 
 const REFUSALS: Record<string, [400 | 403 | 409, string]> = {
   exam_windows_once: [409, 'that term already has that window; change its dates instead'],
@@ -481,7 +478,7 @@ export interface AdmitCard {
 
 export async function admitCard(actor: Actor, studentId: string, termId: string): Promise<AdmitCard> {
   const tenant = tenantOf(actor)
-  mayRead(actor, studentId)
+  await mayRead(actor, studentId, 'admit_card')
   return withTenant(tenant, async (tx) => {
     const e = await activeEnrolment(tx, studentId, termId)
     if (!e) throw new ExamError(409, 'not_enrolled', 'there is an admit card only for an enrolment; enrol first')
@@ -638,7 +635,7 @@ export interface GradeReport {
  */
 export async function gradeReport(actor: Actor, studentId: string, termId: string): Promise<GradeReport> {
   const tenant = tenantOf(actor)
-  mayRead(actor, studentId)
+  await mayRead(actor, studentId, 'academic_record')
   if (actor.role === 'student') {
     const g = await feedbackGate(actor, tenant, studentId, termId)
     if (g.applies && !g.complete) {
@@ -649,7 +646,7 @@ export async function gradeReport(actor: Actor, studentId: string, termId: strin
       )
     }
   }
-  const p = await studentProfile(actor as unknown as AcademicActor, studentId)
+  const p = await studentProfile(actor as unknown as AcademicActor, studentId, 'academic_record')
   return withTenant(tenant, async (tx) => {
     const [t] = await tx.select().from(terms).where(eq(terms.id, termId))
     if (!t) throw new ExamError(404, 'no_such_term', 'no such term')
@@ -854,7 +851,7 @@ export async function examStats(actor: Actor, examId: string) {
 /** One student across every published exam, beside their class. */
 export async function studentPerformance(actor: Actor, studentId: string) {
   const tenant = tenantOf(actor)
-  mayRead(actor, studentId)
+  await mayRead(actor, studentId, 'academic_record')
   return withTenant(tenant, async (tx) => {
     const rows = await tx.execute(sql`
       select t.code as term, c.code as course, x.name as exam, x.kind, x.max_marks::float as max,
