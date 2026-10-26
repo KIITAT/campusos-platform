@@ -1,6 +1,6 @@
 import { and, eq, isNull, sql } from 'drizzle-orm'
 import { audit, users, withTenant } from '@campusos/db'
-import { viewsOnBehalf, type Role, type ViewerScope } from '@campusos/module-framework'
+import { assertCanAccessStudent, viewsOnBehalf, type Role, type ViewerScope } from '@campusos/module-framework'
 import {
   courses,
   offerings,
@@ -760,16 +760,13 @@ export function classesNeeded(counted: number, held: number, minimumPercent: num
  * session opened for the class; present is a mark in it; excused is a session
  * missed on a day an excuse covers. For a term, or every term.
  *
- * The student reads their own; staff read anybody's; a verified guardian reads
- * the students they were cleared for.
+ * The student reads their own, a verified guardian theirs, and whoever
+ * teaches, mentors or heads them (SEC-07): not every lecturer.
  */
 export async function attendanceSummary(actor: Actor, studentId: string, termId?: string | null): Promise<AttendanceLine[]> {
   const tenant = tenantOf(actor)
-  const staff = isAdmin(actor.role) || actor.role === 'hod' || actor.role === 'faculty'
-  if (studentId !== actor.id && !staff && !viewsOnBehalf(actor, studentId)) {
-    throw new AttendanceError(403, 'forbidden', 'not permitted')
-  }
   return withTenant(tenant, async (tx) => {
+    await assertCanAccessStudent(tx, actor, studentId, 'attendance')
     const rules = await rulesOf(tx, tenant)
     const rows = await tx.execute(sql`
       select o.id as offering_id, c.code, c.title, coalesce(f.name, f.email) as teacher, t.code as term,
