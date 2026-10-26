@@ -181,10 +181,23 @@ export async function grantWaiver(actor: Actor, input: unknown) {
         amountPaise: feeItems.amountPaise,
         label: feeItems.label,
         termId: feeItems.termId,
+        programId: feeItems.programId,
       })
       .from(feeItems)
       .where(eq(feeItems.id, data.feeItemId))
     if (!item) throw new FeeError(404, 'no_such_item', 'no such charge')
+
+    // Only a charge the student actually has (ACC-22): an item of a programme
+    // they are enrolled in for its term, by the rule that bills them. Anything
+    // else would post waiver expense against a debt that was never raised.
+    const enrolled = await enrolledPrograms(tx, data.studentId, item.termId)
+    if (!enrolled.some((p) => p.programId === item.programId)) {
+      throw new FeeError(
+        400,
+        'item_not_charged',
+        `the ${item.label} charge does not apply to this student in that term`,
+      )
+    }
 
     // A waiver larger than the charge would make the balance negative, which
     // is a refund owed rather than a fee forgiven -- a different thing that
