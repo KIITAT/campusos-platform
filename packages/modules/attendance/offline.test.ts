@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { generateKeyPairSync, randomUUID, sign } from 'node:crypto'
 import { after, before, beforeEach, test } from 'node:test'
 import { eq } from 'drizzle-orm'
-import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
+import { auditLog, authDb, exportSubject, institutions, users, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
 import * as attendance from './api'
 import { devices, offlineCredentials, records, sessions, settings } from './schema'
@@ -156,6 +156,21 @@ test('preparation secrets and revoked credentials stay protected', async () => {
   await attendance.revokeCredential(teacher, { sessionId: credential.sessionId })
   const qr = attendance.encodeQr(attendance.currentQr(credential.secret, credential.sessionId, credential.windowSeconds))
   await assert.rejects(attendance.signedScan(student, envelope(qr)), failure('credential_revoked'))
+})
+
+test('exporting a teacher never hands over an attendance signing secret (NEW-01)', async () => {
+  await attendance.prepareSession(teacher, { slotId, onDate: today })
+  const [prepared] = await withTenant(tenant, (tx) => tx.select().from(offlineCredentials))
+  let text = JSON.stringify(await exportSubject(tenant, teacher.id))
+  assert.ok(text.includes(prepared!.id), 'the teacher still sees the class they prepared')
+  assert.ok(!text.includes(prepared!.tokenSecret), 'the offline QR signing secret was exported')
+
+  await withTenant(tenant, (tx) => tx.delete(offlineCredentials))
+  const { session } = await online()
+  const [opened] = await withTenant(tenant, (tx) => tx.select().from(sessions).where(eq(sessions.id, session.id)))
+  text = JSON.stringify(await exportSubject(tenant, teacher.id))
+  assert.ok(text.includes(session.id), 'the session the teacher opened is still theirs to see')
+  assert.ok(!text.includes(opened!.tokenSecret), 'the live QR secret was exported')
 })
 
 test('enrollment proves possession, never overwrites keys, and revoked devices cannot sign', async () => {
