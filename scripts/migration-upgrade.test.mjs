@@ -7,7 +7,8 @@ import { after, before, test } from 'node:test'
 import { URL } from 'node:url'
 
 /**
- * The P0-01 migrations applied as an upgrade, not only on a fresh database.
+ * The P0-01 and P0-02 migrations applied as an upgrade, not only on a fresh
+ * database.
  *
  * CI's fresh path runs core first and every module after it. An institution
  * upgrading runs the new core migrations on a database that already holds
@@ -15,6 +16,9 @@ import { URL } from 'node:url'
  * where a revoke, a trigger or a foreign-key rewrite that finds its target by
  * name would fail -- so it is run here: core to 0004 and every module file
  * that existed before, then the rest.
+ *
+ * The previous level also holds an audit trail in two institutions, because
+ * P0-02's 0008 seals the rows it finds into their chains (AUD-01).
  */
 
 const ROOT = resolve(import.meta.dirname, '..')
@@ -104,6 +108,20 @@ before(async () => {
     await applyModules(c, (f) => !NEW_FILES.has(f))
     // with the grants every earlier install ended with (docker/init.sql).
     await c.query('grant select, insert, update, delete on all tables in schema public to campusos_app')
+    // An audit trail written before the chain existed: two rows share a
+    // timestamp, so the (at, id) order is exercised, and the content is awkward.
+    await c.query(`
+      with i as (
+        insert into institutions (slug, name) values ('upgrade-one', 'One'), ('upgrade-two', 'Two') returning id, slug
+      )
+      insert into audit_log (institution_id, actor_email, module_id, action, entity, entity_id, reason, detail, at)
+      select i.id, v.email, 'core', v.action, 'x', v.n, v.reason, v.detail::jsonb, v.at::timestamptz
+        from i join (values
+          ('upgrade-one', 'legacy.1', '1', 'a@example.in', 'कारण', '{"ଅ": [1, 2], "big": 123456789012345678901234567890}', '2026-01-01T10:00:00.123456Z'),
+          ('upgrade-one', 'legacy.2', '2', null, '', null, '2026-01-01T10:00:01Z'),
+          ('upgrade-one', 'legacy.3', '3', null, 'same instant', '{"b": 1, "a": 1.50}', '2026-01-01T10:00:01Z'),
+          ('upgrade-two', 'legacy.4', '4', 'b@example.in', 'other tenant', null, '2026-01-02T00:00:00Z')
+        ) as v(slug, action, n, email, reason, detail, at) on v.slug = i.slug`)
     // ...then the upgrade, in the order an installation runs it.
     await migrateCore(c, Number.MAX_SAFE_INTEGER)
     await applyModules(c, (f) => NEW_FILES.has(f))
@@ -135,9 +153,42 @@ test('the P0-01 migrations apply as an upgrade over every module (DATA-03, AUD-0
                     'hr_leave_encashments', 'hr_tax_elections', 'hr_separations'))
               or (t.relname = 'library_loans' and a.attname = 'borrower_id'))) as no_action`)
     assert.deepEqual(rows[0], {
-      gist: 1, triggers: 2, gates: 2,
+      // P0-01's two guards, then P0-02's salt and seal.
+      gist: 1, triggers: 4, gates: 2,
       app_reads_sessions: false, app_updates_audit: false,
       no_action: 16,
     })
+  })
+})
+
+test('the upgrade seals the existing trail per institution, in (at, id) order, and keeps sealing after it (AUD-01)', { skip: !url && 'MIGRATION_DATABASE_URL is not set' }, async () => {
+  await withClient(at(DB), async (c) => {
+    const links = await c.query(`
+      select i.slug, c.seq::int, a.action, a.salt is null as unsalted,
+             c.prev_hash = coalesce(lag(c.hash) over (partition by c.institution_id order by c.seq),
+                                    campusos_audit_genesis(c.institution_id::text)) as linked,
+             c.hash = campusos_audit_hash(c.prev_hash, c.institution_id::text, c.seq, a.id, a.at, a.institution_id,
+                        a.actor_id, a.module_id, a.action, a.entity, a.entity_id, a.actor_email, a.reason, a.detail, a.salt) as hashed
+        from audit_chain c join audit_log a on a.id = c.audit_id join institutions i on i.id = c.institution_id
+       where i.slug like 'upgrade-%'
+       order by i.slug, c.seq`)
+    const tie = await c.query(`
+      select array_agg(action order by id) as by_id from audit_log where entity_id in ('2', '3') and action like 'legacy.%'`)
+    assert.deepEqual(
+      links.rows.map((r) => [r.slug, r.seq, r.action]),
+      [['upgrade-one', 1, 'legacy.1'], ['upgrade-one', 2, tie.rows[0].by_id[0]], ['upgrade-one', 3, tie.rows[0].by_id[1]], ['upgrade-two', 1, 'legacy.4']],
+    )
+    assert.ok(links.rows.every((r) => r.unsalted && r.linked && r.hashed), 'every legacy row is linked and hashed, without a salt')
+
+    // After the upgrade, a new row joins the end of its institution's chain.
+    await c.query('begin')
+    await c.query(`
+      insert into audit_log (institution_id, module_id, action, entity, entity_id, reason)
+      select id, 'core', 'after.upgrade', 'x', '5', 'new' from institutions where slug = 'upgrade-one'`)
+    await c.query('commit')
+    const next = await c.query(`
+      select c.seq::int, a.salt is not null as salted from audit_chain c join audit_log a on a.id = c.audit_id
+       where a.action = 'after.upgrade'`)
+    assert.deepEqual(next.rows, [{ seq: 4, salted: true }])
   })
 })
