@@ -39,6 +39,12 @@ export interface PluginActor extends ViewerScope {
    * or every call after the first is refused as a reused key.
    */
   idempotencyKey?: string
+  /**
+   * Set by the host for a module an operator listed in
+   * CAMPUSOS_AUTHZ_REPORT_ONLY: canAccessStudent logs what it would have
+   * refused and allows it (decision 196). Plugins never read the environment.
+   */
+  authzReportOnly?: boolean
 }
 
 export type PluginMethod = 'GET' | 'POST' | 'PUT' | 'DELETE'
@@ -111,6 +117,26 @@ export function authorizeRoute(manifest: ModuleManifest, route: PluginRoute, rol
   if (role === 'pending') return 'deny'
   const admitted = manifest.routeRoles ? route.roles ?? [] : manifest.rolesWithAccess
   return admitted.includes(role) ? 'allow' : 'deny'
+}
+
+/**
+ * Give each route its roles from one table keyed `METHOD /path`, kept beside
+ * the module's routes (`route-roles.ts`). A route without an entry, or an
+ * entry without a route, is an error at load: the table cannot drift from the
+ * routes. Routes that already carry roles (`withImports`) keep them.
+ */
+export function withRouteRoles(plugin: Plugin, table: Record<string, readonly Role[]>): Plugin {
+  const unused = new Set(Object.keys(table))
+  const routes = plugin.routes.map((r) => {
+    const key = `${r.method} ${r.path}`
+    unused.delete(key)
+    if (r.roles) return r
+    const roles = table[key]
+    if (!roles) throw new Error(`${plugin.manifest.id}: route ${key} has no entry in its role table`)
+    return { ...r, roles }
+  })
+  if (unused.size) throw new Error(`${plugin.manifest.id}: role table names no such route: ${[...unused].join(', ')}`)
+  return { ...plugin, routes }
 }
 
 /** Every route a plugin declares, absolute, for logging and documentation. */

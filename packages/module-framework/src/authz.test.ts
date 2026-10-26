@@ -71,3 +71,12 @@ test('the shared role groups nest as their names say, and none admits pending', 
   assert.equal(hasRole('accounts_staff', OFFICE), true)
   assert.equal(hasRole('faculty', OFFICE), false)
 })
+
+test('withRouteRoles fills roles from the table and refuses a missing or a stray entry', async () => {
+  const { withRouteRoles } = await import('./plugin')
+  const p = plugin(manifest({ routeRoles: true }), [route(), { ...route(['student']), path: '/y' }])
+  const out = withRouteRoles(p, { 'GET /x': ['faculty'] })
+  assert.deepEqual(out.routes.map((r) => r.roles), [['faculty'], ['student']])
+  assert.throws(() => withRouteRoles(p, {}), /GET \/x has no entry/)
+  assert.throws(() => withRouteRoles(p, { 'GET /x': ['faculty'], 'POST /z': ['faculty'] }), /no such route: POST \/z/)
+})
