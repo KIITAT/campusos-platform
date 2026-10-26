@@ -34,7 +34,7 @@ export async function recordConsent(
       .select({ version: users.consentVersion })
       .from(users)
       .where(eq(users.id, userId))
-      .for('update')
+      .for('no key update')
     if (!before) return
     await tx
       .update(users)

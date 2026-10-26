@@ -155,7 +155,7 @@ export async function claimPairing(
       .select()
       .from(deviceTokens)
       .where(eq(deviceTokens.pairingHash, hash))
-      .for('update')
+      .for('no key update')
     if (!row) return null
 
     if (!row.pairingExpiresAt || row.pairingExpiresAt.getTime() < Date.now()) {

@@ -247,7 +247,7 @@ export async function bindInvitedUser(userId: string, email: string): Promise<bo
       .select({ role: users.role })
       .from(users)
       .where(and(eq(users.id, userId), isNull(users.institutionId)))
-      .for('update')
+      .for('no key update')
     if (before) {
       await tx
         .update(users)
