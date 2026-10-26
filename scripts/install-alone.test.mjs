@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 import { after, before, test } from 'node:test'
+import { URL } from 'node:url'
 
 /**
  * Every module installs on a fresh database holding core and its declared
