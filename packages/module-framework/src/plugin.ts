@@ -1,4 +1,5 @@
 import type { ModuleManifest, Role, ViewerScope } from './types'
+import { ROLES } from './roles'
 import type { PluginPage } from './pages'
 import type { JobTransaction } from '@campusos/db/jobs'
 
@@ -58,6 +59,12 @@ export interface PluginRoute {
    */
   handler: (actor: PluginActor, req: Request) => Promise<unknown>
   raw?: boolean
+  /**
+   * Who may call it (decision 192). The host refuses every other role before
+   * the handler runs, when the manifest sets `routeRoles`. The operation keeps
+   * its own check: page loaders and other modules call it in-process.
+   */
+  roles?: readonly Role[]
 }
 
 /** The whole of a plugin's public surface. */
@@ -95,6 +102,17 @@ export function matchRoute(
   return candidates[0] ?? null
 }
 
+/**
+ * May this role call this route at all? Deny by default: a module that
+ * declares route roles admits only the roles each route names; a legacy one
+ * (no `routeRoles`) only the roles its manifest names. `pending` never.
+ */
+export function authorizeRoute(manifest: ModuleManifest, route: PluginRoute, role: Role): 'allow' | 'deny' {
+  if (role === 'pending') return 'deny'
+  const admitted = manifest.routeRoles ? route.roles ?? [] : manifest.rolesWithAccess
+  return admitted.includes(role) ? 'allow' : 'deny'
+}
+
 /** Every route a plugin declares, absolute, for logging and documentation. */
 export const pluginPaths = (plugin: Plugin): string[] =>
   plugin.routes.map(
@@ -129,6 +147,13 @@ export function validatePlugin(plugin: Plugin): void {
       throw new Error(`${manifest.id}: route ${r.path} must not end with a slash`)
     }
     const key = `${r.method} ${r.path}`
+    if (manifest.routeRoles) {
+      if (!r.roles?.length) throw new Error(`${manifest.id}: route ${key} declares no roles`)
+      for (const role of r.roles) {
+        if (!ROLES.includes(role)) throw new Error(`${manifest.id}: route ${key} names unknown role ${role}`)
+        if (role === 'pending') throw new Error(`${manifest.id}: route ${key} admits pending`)
+      }
+    }
     if (seen.has(key)) throw new Error(`${manifest.id}: duplicate route ${key}`)
     seen.add(key)
   }

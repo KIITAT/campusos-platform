@@ -258,10 +258,12 @@ export function withImports(plugin: Plugin, specs: ImportSpec[], batch: ImportBa
   const visible = (actor: PluginActor) => specs.filter((s) => s.roles.includes(actor.role))
   const templateHref = (id: string) => `${base}/imports/template?id=${id}`
 
+  const roles = [...new Set(specs.flatMap((s) => s.roles))]
   const routes: PluginRoute[] = [
     {
       method: 'GET',
       path: '/imports',
+      roles,
       handler: async (actor) => {
         if (!actor.institutionId) throw new ImportError(400, 'no_institution', 'no institution for this session')
         return visible(actor).map((s) => ({ id: s.id, title: s.title, note: s.note, columns: s.columns, template: templateHref(s.id) }))
@@ -270,6 +272,7 @@ export function withImports(plugin: Plugin, specs: ImportSpec[], batch: ImportBa
     {
       method: 'GET',
       path: '/imports/template',
+      roles,
       raw: true,
       handler: async (actor, req) => {
         const spec = find(actor, new URL(req.url).searchParams.get('id'))
@@ -285,6 +288,7 @@ export function withImports(plugin: Plugin, specs: ImportSpec[], batch: ImportBa
     {
       method: 'POST',
       path: '/imports/run',
+      roles,
       handler: async (actor, req) => {
         const body = (await jsonBody(req)) as Record<string, unknown>
         return runImport(find(actor, body?.importId), actor, body, batch)
@@ -292,7 +296,6 @@ export function withImports(plugin: Plugin, specs: ImportSpec[], batch: ImportBa
     },
   ]
 
-  const roles = [...new Set(specs.flatMap((s) => s.roles))]
   const page = {
     path: '/import',
     title: 'Import from CSV',
