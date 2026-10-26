@@ -1,10 +1,10 @@
 import { and, asc, desc, eq, isNull } from 'drizzle-orm'
 import * as z from 'zod'
-import { audit, users, withTenant } from '@campusos/db'
+import { audit, users, withIdempotencyKey, withTenant } from '@campusos/db'
 import type { Role } from '@campusos/module-framework'
 import { terms } from '@campusos/module-academic/schema'
 import { parseRupeesToPaise } from '@campusos/money'
-import { studentCharges } from '../schema'
+import { feeIdempotencyKeys, studentCharges } from '../schema'
 import { FeeError, type Actor } from './operations'
 
 /**
@@ -107,29 +107,41 @@ export const cancelStudentChargeSchema = z
   .object({ chargeId: z.uuid(), reason: z.string().trim().min(5).max(500) })
   .meta({ id: 'FeeStudentChargeCancel' })
 
+/** Once per idempotency key, as a payment is (NEW-15): submitted twice, charged once. */
 export async function chargeStudent(actor: Actor, input: unknown) {
   const tenant = requireFinance(actor)
   const d = chargeStudentSchema.parse(input)
   const amountPaise = parseRupeesToPaise(d.amount)
   if (amountPaise === null || amountPaise <= 0) throw new FeeError(400, 'bad_amount', 'enter an amount in rupees, more than nothing')
   return withTenant(tenant, async (tx) => {
-    const row = await chargeStudentWithin(tx, tenant, actor.id, {
-      studentId: d.studentId,
-      termId: d.termId,
-      label: d.label,
-      amountPaise,
-    })
-    await audit(tx, {
-      institutionId: tenant,
-      actorId: actor.id,
-      actorEmail: actor.email ?? null,
-      moduleId: MODULE,
-      action: 'charge',
-      entity: 'fee_student_charges',
-      entityId: row.id,
-      reason: d.label,
-    })
-    return { ...row, notice: 'Charged. It is billed on the next invoice.' }
+    const { value, replayed } = await withIdempotencyKey(
+      tx,
+      feeIdempotencyKeys,
+      { institutionId: tenant, actorId: actor.id, operation: 'charge', key: actor.idempotencyKey, request: d },
+      async () => {
+        const row = await chargeStudentWithin(tx, tenant, actor.id, {
+          studentId: d.studentId,
+          termId: d.termId,
+          label: d.label,
+          amountPaise,
+        })
+        await audit(tx, {
+          institutionId: tenant,
+          actorId: actor.id,
+          actorEmail: actor.email ?? null,
+          moduleId: MODULE,
+          action: 'charge',
+          entity: 'fee_student_charges',
+          entityId: row.id,
+          reason: d.label,
+        })
+        return row
+      },
+      async (id) => (await tx.select().from(studentCharges).where(eq(studentCharges.id, id)))[0],
+    )
+    return replayed
+      ? { ...value, replayed: true, notice: 'Already charged. Nothing was charged twice.' }
+      : { ...value, notice: 'Charged. It is billed on the next invoice.' }
   })
 }
 

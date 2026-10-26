@@ -649,73 +649,89 @@ export async function listInvoices(actor: Actor, termId: string) {
  * erased it would answer a different question from the one the student's
  * receipt asks. The database refuses a refund larger than its payment too, so
  * that the check surviving is not a matter of remembering to call it.
+ *
+ * Once per idempotency key, as a payment is (NEW-15): a refund form submitted
+ * twice pays out once.
  */
 export async function refundPayment(actor: Actor, input: unknown) {
   const tenant = requireAdmin(actor)
   const data = refundPaymentSchema.parse(input)
 
   return withTenant(tenant, async (tx) => {
-    const [payment] = await tx
-      .select()
-      .from(feePayments)
-      .where(eq(feePayments.id, data.paymentId))
-    if (!payment) throw new FeeError(404, 'no_such_payment', 'no such payment')
-
-    const [sums] = await tx
-      .select({ back: sql<number>`coalesce(sum(${feeRefunds.amountPaise}), 0)::bigint` })
-      .from(feeRefunds)
-      .where(eq(feeRefunds.paymentId, payment.id))
-    const already = Number(sums?.back ?? 0)
-
-    if (already + data.amount > payment.amountPaise) {
-      throw new FeeError(
-        400,
-        'refund_exceeds_payment',
-        `receipt ${payment.receiptNo} has ${payment.amountPaise - already} paise left to refund`,
-      )
-    }
-
-    const [row] = await tx
-      .insert(feeRefunds)
-      .values({
-        institutionId: tenant,
-        paymentId: payment.id,
-        amountPaise: data.amount,
-        method: data.method ?? payment.method,
-        reference: data.reference ?? null,
-        reason: data.reason,
-        refundedBy: actor.id,
-      })
-      .returning()
-
-    await audit(tx, {
-      institutionId: tenant,
-      actorId: actor.id,
-      actorEmail: actor.email ?? null,
-      moduleId: MODULE,
-      action: 'fee.refunded',
-      entity: 'fee_refunds',
-      entityId: row!.id,
-      reason: data.reason,
-      detail: {
-        studentId: payment.studentId,
-        receiptNo: payment.receiptNo,
-        amountPaise: data.amount,
-        ofPaise: payment.amountPaise,
-        method: row!.method,
-      },
-    })
-
-    await postRefund(tx, tenant, actor.id, {
-      id: row!.id,
-      receiptNo: payment.receiptNo,
-      amountPaise: row!.amountPaise,
-      method: row!.method,
-      refundedAt: row!.refundedAt,
-    })
-
-    return row!
+    const { value, replayed } = await withIdempotencyKey(
+      tx,
+      feeIdempotencyKeys,
+      { institutionId: tenant, actorId: actor.id, operation: 'refund', key: actor.idempotencyKey, request: data },
+      () => refundWithin(tx, tenant, actor, data),
+      async (id) => (await tx.select().from(feeRefunds).where(eq(feeRefunds.id, id)))[0],
+    )
+    return replayed ? { ...value, replayed: true, notice: 'Already refunded. Nothing was refunded twice.' } : value
   })
+}
+
+type RefundInput = ReturnType<typeof refundPaymentSchema.parse>
+
+async function refundWithin(tx: Tx, tenant: string, actor: Actor, data: RefundInput) {
+  const [payment] = await tx
+    .select()
+    .from(feePayments)
+    .where(eq(feePayments.id, data.paymentId))
+  if (!payment) throw new FeeError(404, 'no_such_payment', 'no such payment')
+
+  const [sums] = await tx
+    .select({ back: sql<number>`coalesce(sum(${feeRefunds.amountPaise}), 0)::bigint` })
+    .from(feeRefunds)
+    .where(eq(feeRefunds.paymentId, payment.id))
+  const already = Number(sums?.back ?? 0)
+
+  if (already + data.amount > payment.amountPaise) {
+    throw new FeeError(
+      400,
+      'refund_exceeds_payment',
+      `receipt ${payment.receiptNo} has ${payment.amountPaise - already} paise left to refund`,
+    )
+  }
+
+  const [row] = await tx
+    .insert(feeRefunds)
+    .values({
+      institutionId: tenant,
+      paymentId: payment.id,
+      amountPaise: data.amount,
+      method: data.method ?? payment.method,
+      reference: data.reference ?? null,
+      reason: data.reason,
+      refundedBy: actor.id,
+    })
+    .returning()
+
+  await audit(tx, {
+    institutionId: tenant,
+    actorId: actor.id,
+    actorEmail: actor.email ?? null,
+    moduleId: MODULE,
+    action: 'fee.refunded',
+    entity: 'fee_refunds',
+    entityId: row!.id,
+    reason: data.reason,
+    detail: {
+      studentId: payment.studentId,
+      receiptNo: payment.receiptNo,
+      amountPaise: data.amount,
+      ofPaise: payment.amountPaise,
+      method: row!.method,
+    },
+  })
+
+  await postRefund(tx, tenant, actor.id, {
+    id: row!.id,
+    receiptNo: payment.receiptNo,
+    amountPaise: row!.amountPaise,
+    method: row!.method,
+    refundedAt: row!.refundedAt,
+  })
+
+  return row!
 }
 
 /**
