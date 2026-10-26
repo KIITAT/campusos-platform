@@ -35,6 +35,34 @@ const gated = {
   '403': { description: 'Forbidden, or the module is not enabled', content: json(err) },
 }
 
+/**
+ * An act that moves money, done once per idempotency key (ACC-18, NEW-15,
+ * decision 187). The portal sends one with every form; an API client should.
+ */
+const idempotent = (act: string) => ({
+  parameters: [
+    {
+      name: 'Idempotency-Key',
+      in: 'header',
+      required: false,
+      description:
+        `Says "the same ${act}". Sent again by the same person, it is answered with the first ${act}, ` +
+        'with "replayed": true, and nothing is done twice. 8 to 128 characters from A-Z a-z 0-9 . _ : - ' +
+        '(a UUID fits). Kept for the life of the record.',
+      schema: { type: 'string', pattern: '^[A-Za-z0-9._:-]{8,128}$' },
+    },
+  ],
+})
+const keyRefusals = {
+  '400': { description: 'invalid_idempotency_key: a malformed Idempotency-Key', content: json(err) },
+  '409': {
+    description:
+      'idempotency_key_reused: the key was already used for a different request; ' +
+      'idempotent_result_gone: what it produced no longer exists',
+    content: json(err),
+  },
+}
+
 export const paths = {
   [`${base}/scholarships`]: {
     get: {
@@ -128,8 +156,9 @@ export const paths = {
     post: {
       summary: 'Charge one student, billed on their next invoice',
       tags: ['fees'],
+      ...idempotent('charge'),
       requestBody: { content: json(chargeStudentSchema) },
-      responses: { '200': { description: 'Created' }, ...gated },
+      responses: { '200': { description: 'Created, or replayed' }, ...gated, ...keyRefusals },
     },
   },
   [`${base}/charges/cancel`]: {
@@ -168,7 +197,9 @@ export const paths = {
     post: {
       summary: "Issue a term's charges and post them to the books",
       description:
-        'Turns the price list into money owed for every student in the term. ' +
+        'Turns the price list into money owed for every student enrolled in the term: ' +
+        'a programme declaration whose dates overlap it, or a charge of their own for it. ' +
+        'The answer lists, as notEnrolled, section members never declared into the programme. ' +
         'Safe to run again: a student already issued is skipped, and a charge ' +
         'added since goes out on a supplementary entry for the difference.',
       tags: ['fees'],
@@ -188,10 +219,15 @@ export const paths = {
         'The payment itself is never deleted or amended. Never more can go ' +
         'back than came in, which the database enforces as well as this module.',
       tags: ['fees'],
+      ...idempotent('refund'),
       requestBody: { content: json(refundPaymentSchema) },
       responses: {
-        '200': { description: 'Refunded' },
-        '400': { description: 'More than the payment has left to refund', content: json(err) },
+        '200': { description: 'Refunded, or replayed' },
+        ...keyRefusals,
+        '400': {
+          description: 'More than the payment has left to refund, or invalid_idempotency_key',
+          content: json(err),
+        },
         '404': { description: 'No such payment', content: json(err) },
         ...gated,
       },
@@ -207,7 +243,14 @@ export const paths = {
         'previous amount in the audit trail.',
       tags: ['fees'],
       requestBody: { content: json(grantWaiverSchema) },
-      responses: { '200': { description: 'Granted' }, ...gated },
+      responses: {
+        '200': { description: 'Granted' },
+        '400': {
+          description: "item_not_charged: the item is not of a programme the student is enrolled in for its term",
+          content: json(err),
+        },
+        ...gated,
+      },
     },
   },
   [`${base}/waivers/revoke`]: {
@@ -222,9 +265,22 @@ export const paths = {
   [`${base}/payments`]: {
     post: {
       summary: 'Record a payment and issue a receipt number',
+      description:
+        'A bank transfer or UPI reference is receipted once per institution, ignoring case and padding.',
       tags: ['fees'],
+      ...idempotent('payment'),
       requestBody: { content: json(recordPaymentSchema) },
-      responses: { '200': { description: 'Recorded' }, ...gated },
+      responses: {
+        '200': { description: 'Recorded, or replayed' },
+        ...gated,
+        ...keyRefusals,
+        '409': {
+          description:
+            'duplicate_reference: that UTR or UPI reference is already receipted; ' +
+            'idempotency_key_reused or idempotent_result_gone',
+          content: json(err),
+        },
+      },
     },
   },
   [`${base}/payments/reconcile`]: {
@@ -310,7 +366,7 @@ function transfersAndLetters() {
     [`${base}/transfers/verify`]: post(
       'Verify a transfer against the bank statement',
       verifyClaimSchema,
-      'Records the payment, receipted and reconciled, in the same act.',
+      'Records the payment, receipted and reconciled, in the same act. A UTR already receipted is refused (409 duplicate_reference) and the claim stays pending.',
     ),
     [`${base}/transfers/reject`]: post('Reject a reported transfer, with a reason', rejectClaimSchema),
     [`${base}/letters/settings`]: {
