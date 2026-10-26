@@ -264,6 +264,18 @@ export const pages: PluginPage[] = [
       },
       {
         kind: 'form',
+        title: 'Head of department',
+        note: 'The HoD sees the records of this department’s students, and only theirs. Leave the email empty to clear it.',
+        submit: 'Set head',
+        path: '/departments/head',
+        roles: [...REGISTRAR],
+        fields: [
+          { name: 'departmentId', label: 'Department', kind: 'select', options: 'departmentOptions' },
+          { name: 'email', label: 'HoD’s email', optional: true },
+        ],
+      },
+      {
+        kind: 'form',
         title: 'Add a programme',
         submit: 'Add',
         path: '/programs',
@@ -436,6 +448,18 @@ export const pages: PluginPage[] = [
           { name: 'programId', label: 'Programme', kind: 'select', options: 'programOptions' },
           { name: 'label', label: 'Label', hint: 'e.g. a, b' },
           { name: 'admissionYear', label: 'Admission year', kind: 'number' },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Class teacher',
+        note: 'Sees the contact details and records of this cohort’s students. Leave the email empty to clear it.',
+        submit: 'Set class teacher',
+        path: '/sections/class-teacher',
+        roles: [...REGISTRAR],
+        fields: [
+          { name: 'sectionId', label: 'Cohort', kind: 'select', options: 'sectionOptions' },
+          { name: 'email', label: 'Teacher’s email', optional: true },
         ],
       },
       {

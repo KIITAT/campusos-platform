@@ -22,7 +22,9 @@ import {
   createSectionSchema,
   createSlotSchema,
   createTermSchema,
+  setClassTeacherSchema,
   setCurrentTermSchema,
+  setDepartmentHeadSchema,
   setTermCalendarSchema,
   type Timetable,
 } from './schemas'
@@ -222,6 +224,44 @@ export async function createSection(actor: Actor, input: unknown) {
     if (!row) throw new AcademicError(409, 'exists', 'that cohort already exists')
     return row
   }).catch((e) => rethrowConflict(e, 'invalid', 'cohort rejected by a constraint'))
+}
+
+/** A member of this institution with one of these roles, by email. */
+async function staffByEmail(tx: Parameters<Parameters<typeof withTenant>[1]>[0], tenant: string, email: string, roles: readonly Role[]) {
+  const [person] = await tx
+    .select({ id: users.id, role: users.role })
+    .from(users)
+    .where(and(eq(users.institutionId, tenant), sql`lower(${users.email}) = ${email.toLowerCase()}`))
+  if (!person) throw new AcademicError(404, 'no_such_user', `nobody here has the email ${email}`)
+  if (!roles.includes(person.role)) throw new AcademicError(400, 'wrong_role', `${email} is ${person.role.replace('_', ' ')}, not ${roles.join(' or ').replace('_', ' ')}`)
+  return person.id
+}
+
+/**
+ * The head of a department: the HoD whose student-level view covers its
+ * programmes' students (decision 194). Until one is set, no HoD sees them.
+ */
+export async function setDepartmentHead(actor: Actor, input: unknown) {
+  const tenant = requireWriter(actor)
+  const data = setDepartmentHeadSchema.parse(input)
+  return withTenant(tenant, async (tx) => {
+    const head = data.email ? await staffByEmail(tx, tenant, data.email, ['hod']) : null
+    const [row] = await tx.update(departments).set({ hodUserId: head }).where(eq(departments.id, data.departmentId)).returning()
+    if (!row) throw new AcademicError(404, 'no_such_department', 'no such department')
+    return row
+  })
+}
+
+/** A section's class teacher (K-12): their students' contact details and records. */
+export async function setClassTeacher(actor: Actor, input: unknown) {
+  const tenant = requireWriter(actor)
+  const data = setClassTeacherSchema.parse(input)
+  return withTenant(tenant, async (tx) => {
+    const teacher = data.email ? await staffByEmail(tx, tenant, data.email, ['faculty', 'hod']) : null
+    const [row] = await tx.update(sections).set({ classTeacherId: teacher }).where(eq(sections.id, data.sectionId)).returning()
+    if (!row) throw new AcademicError(404, 'no_such_section', 'no such section')
+    return row
+  })
 }
 
 export async function addSectionMember(actor: Actor, input: unknown) {
