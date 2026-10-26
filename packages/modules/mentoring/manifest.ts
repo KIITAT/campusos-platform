@@ -5,7 +5,7 @@ export const manifest: ModuleManifest = {
   name: 'Mentoring',
   description:
     'A mentor and co-mentor for every student, who see the whole of them -- record, attendance, results, fees, where they live -- keep notes, talk with them, and decide their leave. Approved leave reaches the hostel roll call.',
-  version: '0.2.0',
+  version: '0.3.0',
   alwaysEnabled: false,
   dependsOn: ['academic'],
   softDependsOn: ['attendance', 'examinations', 'fees', 'hostel'],
@@ -20,5 +20,6 @@ export const manifest: ModuleManifest = {
     { label: 'My mentor and leave', href: '/m/mentoring/me', roles: ['student'] },
   ],
 
+  routeRoles: true,
   apiBasePath: '/api/v1/modules/mentoring',
 }
