@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { eq, inArray, sql } from 'drizzle-orm'
 import { authDb, institutions, users, verifyChains, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
-import { chargeStudent, recordPayment, refundPayment, type Actor } from './api'
+import { cancelStudentCharge, chargeStudent, recordPayment, refundPayment, type Actor } from './api'
 
 /**
  * ACC-18: a payment recorded once per idempotency key.
@@ -327,4 +327,12 @@ test('a key used for a payment does not answer a refund (NEW-15)', async () => {
   })
   assert.notEqual(r.id, p.id)
   assert.notEqual((r as { replayed?: boolean }).replayed, true)
+})
+
+test('a charge cancelled since is not replayed as live (NEW-15)', async () => {
+  const actor = keyed(clerk(), randomUUID())
+  const charge = { studentId: ids.s1, termId: ids.term, label: 'Duplicate admit card', amount: '100' }
+  const first = await chargeStudent(actor, charge)
+  await cancelStudentCharge(clerk(), { chargeId: first.id, reason: 'raised in error' })
+  await assert.rejects(() => chargeStudent(actor, charge), (e: unknown) => code(e) === 'idempotent_result_gone')
 })

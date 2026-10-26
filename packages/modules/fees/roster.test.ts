@@ -169,3 +169,10 @@ test('a scholarship is assessed on the programmes the student is enrolled in', a
   const s10 = await assessAid(adm(), { studentId: ids.s10!, termId: term.college })
   assert.equal(s10.chargedPaise, 6000000)
 })
+
+test('a declaration ended the day it was made bills nothing', async () => {
+  // A mistaken declaration, withdrawn the same day, mid-term (review of P0-06).
+  await declare('s8', 'MT', '2026-08-01', { status: 'withdrawn', endedOn: '2026-08-01' })
+  const s8 = await assessAid(adm(), { studentId: ids.s8!, termId: term.college })
+  assert.equal(s8.chargedPaise, 0)
+})
