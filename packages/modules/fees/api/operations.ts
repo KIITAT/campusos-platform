@@ -767,6 +767,10 @@ export async function reconcilePayment(actor: Actor, input: unknown) {
         amountPaise: row.amountPaise,
         method: row.method,
         reference: row.reference,
+        // LOW-05: the clerk who took the money confirming it themselves is
+        // findable in the trail; P0-07 decides whether to refuse it.
+        recordedBy: row.recordedBy,
+        selfReconciled: row.recordedBy === actor.id,
       },
     })
 

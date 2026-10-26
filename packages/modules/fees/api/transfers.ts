@@ -322,6 +322,8 @@ export async function verifyClaim(actor: Actor, input: unknown) {
         entity: 'fee_payments',
         entityId: payment.id,
         reason: d.note ?? `transfer ${c.utr} found on the bank statement`,
+        // Recording and reconciling are one act here, by design (LOW-05).
+        detail: { recordedBy: actor.id, selfReconciled: true },
       })
       await tx.update(feePayments).set({ reconciledAt: new Date(), reconciledBy: actor.id }).where(eq(feePayments.id, payment.id))
       await tx
