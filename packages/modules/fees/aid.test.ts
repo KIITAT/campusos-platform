@@ -139,6 +139,7 @@ async function campus(): Promise<Campus> {
       sectionId: section.id,
       userId: student,
     })
+    await academic.declareProgram(asAcademic(admin), { studentId: student, programId: program.id, declaredOn: day(-365) })
   }
 
   return {

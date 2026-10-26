@@ -88,6 +88,7 @@ async function campus(): Promise<Campus> {
     admissionYear: 2026,
   })
   await academic.addSectionMember(admin, { sectionId: section.id, userId: people[2]!.id })
+  await academic.declareProgram(admin, { studentId: people[2]!.id, programId: program.id, declaredOn: '2025-07-01' })
 
   return {
     id,

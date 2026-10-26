@@ -104,6 +104,8 @@ before(async () => {
   })
   await academic.addSectionMember(st, { sectionId: section.id, userId: ids.s1 })
   await academic.addSectionMember(st, { sectionId: section.id, userId: ids.s2 })
+  // Fees follow programme declarations (ACC-19).
+  for (const s of [ids.s1, ids.s2]) await academic.declareProgram(st, { studentId: s, programId: prog.id, declaredOn: '2025-07-01' })
   await academic.setCurrentTerm(st, { termId })
 })
 

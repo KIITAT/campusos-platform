@@ -1,12 +1,7 @@
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { audit, auditLog, users, withIdempotencyKey, withTenant } from '@campusos/db'
 import { viewsOnBehalf, type Role, type ViewerScope } from '@campusos/module-framework'
-import {
-  programs,
-  sectionMembers,
-  sections,
-  terms,
-} from '@campusos/module-academic/schema'
+import { programs, terms } from '@campusos/module-academic/schema'
 import {
   dropCredits,
   feeIdempotencyKeys,
@@ -32,6 +27,7 @@ import {
 } from './schemas'
 import { ledger, overpaidPaise, type LedgerLine } from './ledger'
 import { postInvoice, postPayment, postRefund, postWaiverChange } from './posting'
+import { duesRoster, enrolledPrograms, notEnrolled, termRoster } from './enrolment'
 
 const MODULE = 'fees'
 
@@ -503,16 +499,9 @@ export async function issueInvoices(actor: Actor, input: unknown) {
       .where(eq(terms.id, data.termId))
     if (!term) throw new FeeError(404, 'no_such_term', 'no such term')
 
-    const roster = await tx
-      .selectDistinct({
-        studentId: users.id,
-        studentName: users.name,
-        studentEmail: users.email,
-      })
-      .from(sectionMembers)
-      .innerJoin(users, eq(users.id, sectionMembers.userId))
-      .where(data.studentId ? eq(sectionMembers.userId, data.studentId) : undefined)
-      .orderBy(asc(users.email))
+    // Enrolled in the term, by programme declaration (ACC-19): not every
+    // section member, who may have left, or be there for an elective.
+    const roster = await termRoster(tx, data.termId, data.studentId)
 
     const issued = []
     let unchanged = 0
@@ -606,7 +595,17 @@ export async function issueInvoices(actor: Actor, input: unknown) {
       })
     }
 
-    return { termCode: term.code, issued, unchanged }
+    // Sitting in a section, never declared: not billed, and named, so a
+    // forgotten declaration is fixed rather than quietly going unbilled.
+    const missing = await notEnrolled(tx, data.termId, data.studentId)
+    const named = missing.slice(0, 10).map((m) => `${m.studentName ?? m.studentEmail} (${m.programCode})`)
+    const notice =
+      `Invoiced ${issued.length} for ${term.code}; ${unchanged} unchanged.` +
+      (missing.length > 0
+        ? ` Not invoiced, because they are in a section but not enrolled in its programme: ${named.join(', ')}${missing.length > named.length ? ` and ${missing.length - named.length} more` : ''}.`
+        : '')
+
+    return { termCode: term.code, issued, unchanged, notEnrolled: missing, notice }
   })
 }
 
@@ -768,15 +767,11 @@ export async function paymentTrail(actor: Actor, paymentId: string) {
 // --- reads ----------------------------------------------------------------
 
 /**
- * Charges applying to one student in one term: the fee items for whichever
- * programmes their cohorts belong to.
+ * Charges applying to one student in one term: the fee items of the
+ * programmes they are enrolled in for it (ACC-19), and their own charges.
  */
 async function chargesFor(tx: Tx, studentId: string, termId: string) {
-  const progs = await tx
-    .selectDistinct({ programId: sections.programId })
-    .from(sectionMembers)
-    .innerJoin(sections, eq(sections.id, sectionMembers.sectionId))
-    .where(eq(sectionMembers.userId, studentId))
+  const progs = await enrolledPrograms(tx, studentId, termId)
 
   // Charges on this student alone -- a backlog paper -- whatever programme
   // they read, billed beside the programme's own lines.
@@ -945,7 +940,10 @@ export async function studentLedger(
 
 /**
  * Defaulters for a term. Every enrolled student, not only those who have paid
- * something, because the ones who have paid nothing are the point of the report.
+ * something, because the ones who have paid nothing are the point of the report
+ * -- plus anyone the term has invoiced or taken money from, so a student who
+ * left owing stays on it. One row per student (NEW-16), whatever number of
+ * programmes they read.
  */
 export async function duesReport(actor: Actor, termId: string): Promise<DuesReport> {
   const tenant = requireFinance(actor)
@@ -957,18 +955,7 @@ export async function duesReport(actor: Actor, termId: string): Promise<DuesRepo
       .where(eq(terms.id, termId))
     if (!term) throw new FeeError(404, 'no_such_term', 'no such term')
 
-    const roster = await tx
-      .selectDistinct({
-        studentId: users.id,
-        studentName: users.name,
-        studentEmail: users.email,
-        programCode: programs.code,
-      })
-      .from(sectionMembers)
-      .innerJoin(users, eq(users.id, sectionMembers.userId))
-      .innerJoin(sections, eq(sections.id, sectionMembers.sectionId))
-      .innerJoin(programs, eq(programs.id, sections.programId))
-      .orderBy(asc(programs.code), asc(users.email))
+    const roster = await duesRoster(tx, termId)
 
     const rows = []
     for (const s of roster) {
@@ -992,11 +979,12 @@ export async function duesReport(actor: Actor, termId: string): Promise<DuesRepo
       )
       if (l.payablePaise === 0 && l.paidPaise === 0) continue
 
+      const codes = (await enrolledPrograms(tx, s.studentId, termId)).map((p) => p.code)
       rows.push({
         studentId: s.studentId,
         studentName: s.studentName,
         studentEmail: s.studentEmail,
-        programCode: s.programCode,
+        programCode: codes.length > 0 ? codes.join(', ') : '—',
         creditedPaise: l.creditedPaise,
         payablePaise: l.payablePaise,
         paidPaise: l.paidPaise,

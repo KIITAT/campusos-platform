@@ -2,7 +2,7 @@ import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm'
 import * as z from 'zod'
 import { audit, users, withTenant } from '@campusos/db'
 import type { Role } from '@campusos/module-framework'
-import { programs, sectionMembers, sections, terms } from '@campusos/module-academic/schema'
+import { programs, terms } from '@campusos/module-academic/schema'
 import { studentProfile, type Actor as AcademicActor } from '@campusos/module-academic/api'
 import { formatPaise, parseRupeesToPaise } from '@campusos/money'
 import {
@@ -15,6 +15,7 @@ import {
 } from '../schema'
 import { FeeError, recordPaymentWithin, studentLedger, type Actor } from './operations'
 import { rupeesInWords } from './words'
+import { enrolledPrograms } from './enrolment'
 
 /**
  * Paying by bank transfer, and saying what is owed -- KIIT's "RTGS Submit
@@ -425,13 +426,12 @@ export async function issueDemandLetter(actor: Actor, input: unknown) {
   return named(() =>
     withTenant(tenant, async (tx) => {
       const [t] = await tx.select().from(terms).where(eq(terms.id, d.termId))
-      const [prog] = await tx
-        .select({ code: programs.code, name: programs.name })
-        .from(sectionMembers)
-        .innerJoin(sections, eq(sections.id, sectionMembers.sectionId))
-        .innerJoin(programs, eq(programs.id, sections.programId))
-        .where(eq(sectionMembers.userId, studentId))
-        .limit(1)
+      // The programme the student is enrolled in for that term, primary first
+      // (ACC-19) -- not whichever section they happen to sit in.
+      const [enrolled] = await enrolledPrograms(tx, studentId, d.termId)
+      const [prog] = enrolled
+        ? await tx.select({ code: programs.code, name: programs.name }).from(programs).where(eq(programs.id, enrolled.programId))
+        : []
       const [account] = await tx
         .select()
         .from(bankAccounts)

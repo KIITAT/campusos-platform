@@ -2,7 +2,7 @@ import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import { audit, users, withTenant } from '@campusos/db'
 import { moduleEnabled } from '@campusos/module-framework'
 import { degreeAudit, type Actor as Academic } from '@campusos/module-academic/api'
-import { sectionMembers, sections, terms } from '@campusos/module-academic/schema'
+import { terms } from '@campusos/module-academic/schema'
 import { manifest as enrollmentManifest } from '@campusos/module-enrollment/manifest'
 import { creditLoad, listRegistrationEvents } from '@campusos/module-enrollment/api'
 import { manifest as feesManifest } from '../manifest'
@@ -24,6 +24,7 @@ import {
   type AidAssessment,
 } from './schemas'
 import { postDropCredit, postScholarship } from './posting'
+import { enrolledPrograms } from './enrolment'
 
 /**
  * Student financials: the aid an institution funds itself, and what a course
@@ -58,14 +59,9 @@ const asAcademic = (a: Actor): Academic => ({
   institutionId: a.institutionId,
 })
 
-/** The programmes this student is taught in, which is what they are charged for. */
-async function programsOf(tx: Tx, studentId: string): Promise<string[]> {
-  const rows = await tx
-    .selectDistinct({ programId: sections.programId })
-    .from(sectionMembers)
-    .innerJoin(sections, eq(sections.id, sectionMembers.sectionId))
-    .where(eq(sectionMembers.userId, studentId))
-  return rows.map((r) => r.programId)
+/** The programmes this student is enrolled in for the term, which is what they are charged for (ACC-19). */
+async function programsOf(tx: Tx, studentId: string, termId: string): Promise<string[]> {
+  return (await enrolledPrograms(tx, studentId, termId)).map((r) => r.programId)
 }
 
 /** What a term's charges come to for this student, gross of anything forgiven. */
@@ -75,7 +71,7 @@ async function chargedPaise(
   termId: string,
   proratableOnly = false,
 ): Promise<number> {
-  const progs = await programsOf(tx, studentId)
+  const progs = await programsOf(tx, studentId, termId)
   if (progs.length === 0) return 0
 
   const [row] = await tx
