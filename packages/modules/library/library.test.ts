@@ -678,3 +678,18 @@ test('the chase list is the titles with no copy on the shelf, and only those', a
   assert.deepEqual(chase, [gone.title.id, none.id].sort())
   assert.ok(!chase.includes(shelved.title.id))
 })
+
+// --- money outlives the person (DATA-09) ------------------------------------
+
+test('deleting a borrower does not delete their loans or what they owe (DATA-09)', async () => {
+  const [b] = await authDb
+    .insert(users)
+    .values({ email: 'leaver@lib.test', institutionId: inst, role: 'student', name: 'Leaver' })
+    .returning({ id: users.id })
+  const { copies: c } = await stocked()
+  await issue(desk(), { copyId: c[0]!.id, borrowerId: b!.id })
+  // As the owner, which may delete at all: the loan, and any fine on it, stays.
+  await assert.rejects(() => authDb.delete(users).where(eq(users.id, b!.id)), saysDb(/foreign key/))
+  const kept = await withTenant(inst, (tx) => tx.select().from(loans).where(eq(loans.borrowerId, b!.id)))
+  assert.equal(kept.length, 1)
+})

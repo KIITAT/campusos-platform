@@ -560,3 +560,15 @@ test('an administrator of another institution cannot reach into this one', async
     (e: unknown) => code(e) === 'no_such_staff',
   )
 })
+
+// --- money outlives the person (DATA-09) ------------------------------------
+
+test('deleting a staff record does not delete their payslips (DATA-09)', async () => {
+  const s = await hire({ employeeCode: 'E-DATA9' })
+  await paid(s.id)
+  await generatePayroll(admin(), { period: '2026-03', staffId: s.id })
+  // As the owner, which may delete at all: the payslip still stays.
+  await assert.rejects(() => authDb.delete(staff).where(eq(staff.id, s.id)), saysDb(/foreign key/))
+  const kept = await withTenant(inst, (tx) => tx.select().from(payslips).where(eq(payslips.staffId, s.id)))
+  assert.equal(kept.length, 1)
+})
