@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { audit, auditLog, users, withIdempotencyKey, withTenant } from '@campusos/db'
-import { viewsOnBehalf, type Role, type ViewerScope } from '@campusos/module-framework'
+import { assertCanAccessStudent, viewsOnBehalf, type Role, type ViewerScope } from '@campusos/module-framework'
 import { programs, terms } from '@campusos/module-academic/schema'
 import {
   dropCredits,
@@ -896,16 +896,11 @@ export async function studentLedger(
   termId: string,
 ): Promise<StudentLedger> {
   const tenant = tenantOf(actor)
-  // A student may read their own; the finance desk may read any.
-  if (!viewsOnBehalf(actor, studentId)) {
-    if (actor.role === 'student') {
-      if (studentId !== actor.id) throw new FeeError(403, 'forbidden', 'not permitted')
-    } else if (!isFinance(actor.role) && actor.role !== 'hod') {
-      throw new FeeError(403, 'forbidden', 'not permitted')
-    }
-  }
 
   return withTenant(tenant, async (tx): Promise<StudentLedger> => {
+    // The student, a verified guardian, the accounts office, and the HoD of the
+    // student's department only (SEC-07).
+    await assertCanAccessStudent(tx, actor, studentId, 'fee_ledger')
     const [student] = await tx
       .select({ name: users.name, email: users.email })
       .from(users)
