@@ -47,13 +47,23 @@ before(async () => {
   otherAdmin = people[1]!.id
 })
 
+/**
+ * Frees the test addresses. A bound account has an audit row now (NEW-10),
+ * which keeps its user row (DATA-09), so it is renamed rather than deleted;
+ * deleting its institution takes it at the end.
+ */
+async function retireGuardians() {
+  await authDb.delete(users).where(sql`${users.email} like '%@guardian.test' and ${users.institutionId} is null`)
+  await authDb.update(users).set({ email: sql`${users.id} || '@retired.invalid'` }).where(sql`${users.email} like '%@guardian.test'`)
+}
+
 beforeEach(async () => {
   await authDb.delete(invitations).where(inArray(invitations.institutionId, [inst, other]))
-  await authDb.delete(users).where(sql`${users.email} like '%@guardian.test'`)
+  await retireGuardians()
 })
 
 after(async () => {
-  await authDb.delete(users).where(sql`${users.email} like '%@guardian.test'`)
+  await retireGuardians()
   await authDb.delete(institutions).where(inArray(institutions.slug, SLUGS))
 })
 

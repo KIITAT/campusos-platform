@@ -73,8 +73,8 @@ test('consent is on the audit trail with the version before and after, atomicall
   ])
 
   await authDb.execute(sql.raw(`
-    create function test_refuse_audit() returns trigger language plpgsql as $
-    begin if new.action = 'dpdp.consented' then raise exception 'audit refused for the test'; end if; return new; end $;
+    create function test_refuse_audit() returns trigger language plpgsql as $$
+    begin if new.action = 'dpdp.consented' then raise exception 'audit refused for the test'; end if; return new; end $$;
     create trigger test_refuse_audit before insert on audit_log for each row execute function test_refuse_audit();`))
   try {
     await assert.rejects(() => recordConsent(inst, subject, '2022-02-02'))

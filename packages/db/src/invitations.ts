@@ -9,6 +9,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core'
+import { audit } from './audit'
 import { authDb, withTenant } from './client'
 import { tenantPolicy } from './rls'
 import { institutions, roleEnum, users } from './schema'
@@ -241,14 +242,32 @@ export async function invitedAccess(email: string): Promise<InvitedAccess> {
 export async function bindInvitedUser(userId: string, email: string): Promise<boolean> {
   const access = await invitedAccess(email)
   if (!access.ok) return false
-  await authDb
-    .update(users)
-    .set({ institutionId: access.institutionId, role: access.role })
-    .where(and(eq(users.id, userId), isNull(users.institutionId)))
-  await authDb
-    .update(invitations)
-    .set({ userId })
-    .where(and(inArray(invitations.id, access.invitationIds), isNull(invitations.userId)))
+  await authDb.transaction(async (tx) => {
+    const [before] = await tx
+      .select({ role: users.role })
+      .from(users)
+      .where(and(eq(users.id, userId), isNull(users.institutionId)))
+      .for('update')
+    if (before) {
+      await tx
+        .update(users)
+        .set({ institutionId: access.institutionId, role: access.role })
+        .where(eq(users.id, userId))
+    }
+    await tx
+      .update(invitations)
+      .set({ userId })
+      .where(and(inArray(invitations.id, access.invitationIds), isNull(invitations.userId)))
+    // A new member of the institution, with a role (NEW-10). By id only: the
+    // address is on the users row, where erasure can reach it.
+    if (before) {
+      await audit(tx, {
+        institutionId: access.institutionId, actorId: userId, moduleId: 'core', action: 'user.bound',
+        entity: 'users', entityId: userId, reason: 'a new account was bound by an accepted invitation',
+        detail: { before: { role: before.role }, after: { role: access.role }, invitationIds: access.invitationIds },
+      })
+    }
+  })
   return true
 }
 
