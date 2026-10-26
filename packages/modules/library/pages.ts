@@ -127,8 +127,8 @@ export const pages: PluginPage[] = [
         kind: 'form',
         title: 'Search',
         submit: 'Search',
-        path: '/titles',
-        method: 'POST',
+        path: '/catalogue',
+        method: 'GET',
         fields: [
           {
             name: 'q',
