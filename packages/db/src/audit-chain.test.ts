@@ -419,7 +419,7 @@ test('sealing the import maximum of 5,000 rows in one transaction is quick (AUD-
   assert.ok(commitMs < 10_000, `sealing took ${Math.round(commitMs)} ms`)
 })
 
-test('a purge checkpoint on the platform chain lets a chain start after seq 1; without one the cut is missing rows (AUD-01, for P1-08)', async () => {
+test('a prefix cut from a chain is reported missing; no platform row excuses it (AUD-01, for P1-08)', async () => {
   const { platformAudit } = await import('./audit')
   const { verifyChains } = await import('./audit-chain')
   const t = await tenant('purged')
@@ -437,13 +437,20 @@ test('a purge checkpoint on the platform chain lets a chain start after seq 1; w
   )
   assert.deepEqual((await verifyChains({ institutionId: t })).problems.map((p) => `${p.kind}@${p.seq}`), ['missing@1'])
 
-  await authDb.transaction((tx) =>
-    platformAudit(tx, {
-      institutionId: t, actorId: null, moduleId: 'core', action: 'audit.checkpoint', entity: 'audit_chain', entityId: t,
-      reason: 'retention purge', detail: { chain: `tenant:${t}`, seq: 1, hash: first!.hash.toString('hex') },
-    }),
+  // A checkpoint is reserved for P1-08, which will carry it in the off-server
+  // anchors; on the platform chain alone anybody with the owner's keys could
+  // write one, so it is refused there and would be ignored anyway.
+  await assert.rejects(
+    () =>
+      authDb.transaction((tx) =>
+        platformAudit(tx, {
+          institutionId: t, actorId: null, moduleId: 'core', action: 'audit.checkpoint', entity: 'audit_chain', entityId: t,
+          reason: 'retention purge', detail: { chain: `tenant:${t}`, seq: 1, hash: first!.hash.toString('hex') },
+        }),
+      ),
+    says(/written by the database only/),
   )
-  assert.deepEqual((await verifyChains({ institutionId: t })).problems, [])
+  assert.deepEqual((await verifyChains({ institutionId: t })).problems.map((p) => `${p.kind}@${p.seq}`), ['missing@1'])
 })
 
 test('ten sessions committing audited work in one institution at once leave one gap-free chain (AUD-01)', async () => {
@@ -467,5 +474,115 @@ test('ten sessions committing audited work in one institution at once leave one 
     const owner = rows[i]!.action.split('.')[1]
     assert.ok(rows.slice(i, i + 3).every((r) => r.action.split('.')[1] === owner), `seq ${i + 1}..${i + 3} come from one transaction`)
   }
+  assert.deepEqual((await verifyChains({ institutionId: t })).problems, [])
+})
+
+// --- review findings (P0-02) -------------------------------------------------
+
+test('only the database writes the platform rows that explain missing history (AUD-01)', async () => {
+  const { platformAudit } = await import('./audit')
+  for (const action of ['institution.deleted', 'audit.checkpoint']) {
+    await assert.rejects(
+      () =>
+        authDb.transaction((tx) =>
+          platformAudit(tx, { actorId: null, moduleId: 'core', action, entity: 'institutions', entityId: randomUUID(), reason: 'forged' }),
+        ),
+      says(/written by the database only/),
+      action,
+    )
+  }
+})
+
+test('a vanished chain is excused only if its institution is really gone (AUD-01, NEW-09)', async () => {
+  const { anchorDocument, chainHeads, verifyChains } = await import('./audit-chain')
+  const t = await tenant('wiped')
+  for (const n of [1, 2]) await trail(t, `wiped.${n}`, n)
+  const [head] = await chainHeads({ institutionId: t })
+  const anchor = anchorDocument([head!], { runId: randomUUID(), server: 'test' })
+
+  // As someone with the owner's keys: wipe a live institution's trail, then
+  // append a chain-valid "institution.deleted" for it, the platform trigger off.
+  await asOwner(
+    'alter table audit_log disable trigger audit_log_append_only',
+    'alter table audit_chain disable trigger audit_chain_append_only',
+    `delete from audit_chain where institution_id = '${t}'`,
+    `delete from audit_log where institution_id = '${t}'`,
+    'alter table audit_chain enable trigger audit_chain_append_only',
+    'alter table audit_log enable trigger audit_log_append_only',
+    'alter table platform_audit_log disable trigger platform_audit_log_chain',
+    `do $$ declare prev bytea; s bigint; r platform_audit_log; begin
+       select p.seq, p.hash into s, prev from platform_audit_log p order by p.seq desc limit 1;
+       if not found then s := 0; prev := campusos_audit_genesis('platform'); end if;
+       r.id := gen_random_uuid(); r.at := now(); r.institution_id := '${t}'; r.module_id := 'core';
+       r.action := 'institution.deleted'; r.entity := 'institutions'; r.entity_id := '${t}'; r.reason := 'forged';
+       r.detail := jsonb_build_object('finalSeq', 2, 'finalHash', '${head!.hash}');
+       r.seq := s + 1; r.prev_hash := prev;
+       r.hash := campusos_audit_hash(prev, 'platform', r.seq, r.id, r.at, r.institution_id, null, r.module_id,
+                                     r.action, r.entity, r.entity_id, null, r.reason, r.detail, null);
+       insert into platform_audit_log values (r.*);
+     end $$`,
+    'alter table platform_audit_log enable trigger platform_audit_log_chain',
+  )
+
+  const { problems } = await verifyChains({ institutionId: t, anchors: [anchor] })
+  assert.deepEqual(problems.map((p) => `${p.kind}@${p.seq}`), ['chain_vanished@2'])
+})
+
+test('the definer trigger functions cannot be attached to another table (AUD-01)', async () => {
+  const c = await app.connect()
+  try {
+    await c.query('begin')
+    await c.query('create temp table forged (id uuid, institution_id uuid, slug text) on commit drop')
+    for (const fn of ['campusos_institution_deleted', 'campusos_platform_audit_chain', 'campusos_audit_seal']) {
+      await c.query('savepoint s')
+      await assert.rejects(
+        () => c.query(`create trigger forged_${fn} before delete on forged for each row execute function ${fn}()`),
+        /permission denied/,
+        fn,
+      )
+      await c.query('rollback to savepoint s')
+    }
+  } finally {
+    await c.query('rollback')
+    c.release()
+  }
+})
+
+test('a temporary table named institutions does not open the trail (AUD-01)', async () => {
+  const t = await tenant('shadow')
+  const [u] = await authDb
+    .insert(users)
+    .values({ email: 'shadow@chain-test.invalid', institutionId: t, role: 'faculty' })
+    .returning({ id: users.id })
+  await withTenant(t, (tx) =>
+    audit(tx, { institutionId: t, actorId: u!.id, moduleId: 'core', action: 'shadow.1', entity: 'x', entityId: '1', reason: 'chain test' }),
+  )
+  // Deleting the person would null the actor on their trail; the guard allows
+  // that only during offboarding, which it checks against public.institutions.
+  await assert.rejects(
+    () => asOwner('create temp table institutions (id uuid) on commit drop', `delete from users where id = '${u!.id}'`),
+    says(/audit_log is append-only/),
+  )
+})
+
+test('the database, not the caller, says when an audit row was written (AUD-01)', async () => {
+  const { verifyChains } = await import('./audit-chain')
+  const t = await tenant('clock')
+  const c = await session(t)
+  try {
+    await c.query(
+      `insert into audit_log (institution_id, module_id, action, entity, entity_id, reason, at) values
+       ($1, 'core', 'clock.past', 'x', '1', 'chain test', '1999-01-01'),
+       ($1, 'core', 'clock.infinite', 'x', '2', 'chain test', 'infinity')`,
+      [t],
+    )
+    await c.query('commit')
+  } finally {
+    c.release()
+  }
+  const rows = await authDb.execute<{ action: string; recent: boolean }>(sql`
+    select action, (at > now() - interval '5 minutes' and at <= now()) as recent
+      from audit_log where institution_id = ${t} order by action`)
+  assert.deepEqual(rows.rows.map((r) => [r.action, r.recent]), [['clock.infinite', true], ['clock.past', true]])
   assert.deepEqual((await verifyChains({ institutionId: t })).problems, [])
 })
