@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm'
-import { audit, auditLog, users, withTenant } from '@campusos/db'
+import { audit, auditLog, users, withIdempotencyKey, withTenant } from '@campusos/db'
 import { viewsOnBehalf, type Role, type ViewerScope } from '@campusos/module-framework'
 import {
   programs,
@@ -9,6 +9,7 @@ import {
 } from '@campusos/module-academic/schema'
 import {
   dropCredits,
+  feeIdempotencyKeys,
   feeInvoices,
   scholarshipAwards,
   feeItems,
@@ -39,6 +40,8 @@ export interface Actor extends ViewerScope {
   email?: string | null
   role: Role
   institutionId: string | null
+  /** The caller's idempotency key, from the host (ACC-18). */
+  idempotencyKey?: string | null
 }
 
 export class FeeError extends Error {
@@ -323,20 +326,37 @@ async function nextReceiptNo(tx: Tx, tenant: string): Promise<string> {
   return `${row!.prefix}-${String(row!.next - 1).padStart(6, '0')}`
 }
 
+/**
+ * Money received at the counter, once per idempotency key (ACC-18).
+ *
+ * The key is claimed before anything else is written -- before the receipt
+ * number above all -- so a form submitted twice waits for the first
+ * submission and is answered with its receipt, and the series keeps no gap.
+ */
 export async function recordPayment(actor: Actor, input: unknown) {
   const tenant = requireFinance(actor)
   const data = recordPaymentSchema.parse(input)
-  return withTenant(tenant, (tx) =>
-    recordPaymentWithin(tx, tenant, actor, {
-      studentId: data.studentId,
-      termId: data.termId,
-      amountPaise: data.amount,
-      method: data.method,
-      reference: data.reference ?? null,
-      receivedAt: data.receivedAt ? new Date(data.receivedAt) : new Date(),
-      notes: data.notes ?? null,
-    }),
-  )
+  return withTenant(tenant, async (tx) => {
+    const { value, replayed } = await withIdempotencyKey(
+      tx,
+      feeIdempotencyKeys,
+      { institutionId: tenant, actorId: actor.id, operation: 'payment', key: actor.idempotencyKey, request: data },
+      () =>
+        recordPaymentWithin(tx, tenant, actor, {
+          studentId: data.studentId,
+          termId: data.termId,
+          amountPaise: data.amount,
+          method: data.method,
+          reference: data.reference ?? null,
+          receivedAt: data.receivedAt ? new Date(data.receivedAt) : new Date(),
+          notes: data.notes ?? null,
+        }),
+      async (id) => (await tx.select().from(feePayments).where(eq(feePayments.id, id)))[0],
+    )
+    return replayed
+      ? { ...value, replayed: true, notice: `Already recorded as receipt ${value.receiptNo}. Nothing was recorded twice.` }
+      : value
+  })
 }
 
 export interface PaymentInput {

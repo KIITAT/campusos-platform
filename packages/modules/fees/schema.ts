@@ -16,7 +16,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core'
-import { institutions, tenantPolicy, users } from '@campusos/db'
+import { idempotencyKeysTable, institutions, tenantPolicy, users } from '@campusos/db'
 import { programs, terms } from '@campusos/module-academic/schema'
 
 /**
@@ -662,3 +662,14 @@ export const letterSettings = pgTable(
   },
   () => [tenantPolicy('fee_letter_settings')],
 )
+
+// --- one act per idempotency key ---------------------------------------------
+
+/**
+ * Claims on the idempotency keys of payments, refunds and charges (ACC-18,
+ * NEW-15). A row is written first in the operation's transaction and commits
+ * with what it guards, so a second submission of the same form waits for the
+ * first and gets its receipt back rather than a second one. See
+ * `withIdempotencyKey` in @campusos/db.
+ */
+export const feeIdempotencyKeys = idempotencyKeysTable('fee_idempotency_keys')
