@@ -26,9 +26,10 @@ import { institutions, users } from './schema'
  *  - a *device token*, long and long-lived, which the phone then holds.
  *
  * The pairing code exists so the long-lived credential never travels through a
- * QR photo, a screenshot or a chat message. It is six characters because it is
- * typed by a person, and it expires in ten minutes because that is how long it
- * takes to walk to a phone.
+ * QR photo, a screenshot or a chat message. It is eight characters because it is
+ * typed by a person, and short enough to type, long enough (2^40) that guessing,
+ * at the claim route's limit, finds nothing, and it expires in ten minutes
+ * because that is how long it takes to walk to a phone.
  *
  * Only hashes are stored. A stolen database backup yields no usable token, and
  * the hash is plain SHA-256 rather than a password KDF on purpose: these are
@@ -70,12 +71,20 @@ const sha256 = (s: string) => createHash('sha256').update(s).digest('hex')
 /** Unambiguous under a bad phone camera and a worse handwriting: no 0/O, 1/I. */
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 
+export const PAIRING_CODE_LENGTH = 8
+
 const pairingCode = () => {
-  const bytes = randomBytes(6)
+  const bytes = randomBytes(PAIRING_CODE_LENGTH)
   return [...bytes].map((b) => ALPHABET[b % ALPHABET.length]).join('')
 }
 
 export const PAIRING_TTL_MS = 10 * 60 * 1000
+
+/** A device token unused this long stops working (SEC-06, decision 200). */
+export const DEVICE_TOKEN_IDLE_DAYS = 90
+
+/** Not revoked, and used within the idle limit. Never-used rows count from their creation. */
+const live = sql`${deviceTokens.revokedAt} is null and coalesce(${deviceTokens.lastUsedAt}, ${deviceTokens.createdAt}) > now() - make_interval(days => ${DEVICE_TOKEN_IDLE_DAYS})`
 
 export interface Pairing {
   /** Shown once, on the screen the person is already looking at. */
@@ -136,13 +145,13 @@ export interface ClaimedToken {
  * Redeem a pairing code for a device token.
  *
  * Unauthenticated by necessity -- the phone has no credential yet -- so it is
- * the one endpoint in the product where an attacker can guess. Six characters
- * from a 32-symbol alphabet is 2^30, single-use, ten minutes; the rate limit is
- * that a redeemed or expired code is gone.
+ * the one endpoint in the product where an attacker can guess. Eight characters
+ * from a 32-symbol alphabet is 2^40, single use, ten minutes, and the claim
+ * route allows ten attempts per address per fifteen minutes (decision 199).
  *
  * The row is locked while it is redeemed, so two phones racing with one code
  * cannot both be handed a token. Only a success is audited: auditing every
- * guess would let anyone grow the trail (P0-04 rate-limits and logs failures).
+ * guess would let anyone grow the trail (the route rate-limits attempts).
  */
 export async function claimPairing(
   code: string,
@@ -205,7 +214,7 @@ export async function userForToken(token: string): Promise<string | null> {
       revokedAt: deviceTokens.revokedAt,
     })
     .from(deviceTokens)
-    .where(eq(deviceTokens.tokenHash, hash))
+    .where(and(eq(deviceTokens.tokenHash, hash), live))
   if (!row || row.revokedAt) return null
 
   const a = Buffer.from(row.tokenHash)
@@ -231,6 +240,7 @@ export async function listDevices(userId: string) {
       revokedAt: deviceTokens.revokedAt,
       createdAt: deviceTokens.createdAt,
       pending: sql<boolean>`${deviceTokens.pairingHash} is not null`,
+      expired: sql<boolean>`${deviceTokens.revokedAt} is null and ${deviceTokens.pairingHash} is null and coalesce(${deviceTokens.lastUsedAt}, ${deviceTokens.createdAt}) <= now() - make_interval(days => ${DEVICE_TOKEN_IDLE_DAYS})`,
     })
     .from(deviceTokens)
     .where(eq(deviceTokens.userId, userId))
@@ -249,6 +259,49 @@ export async function revokeDevice(userId: string, id: string): Promise<boolean>
     await audit(tx, {
       institutionId: row.institutionId, actorId: userId, moduleId: 'core', action: 'device.revoked',
       entity: 'device_tokens', entityId: row.id, reason: 'a phone was signed out',
+      detail: { deviceId: row.id },
+    })
+    return true
+  })
+}
+
+/**
+ * Replace a live token with a new one (SEC-06, decision 200). The old token
+ * stops working when this commits; a lost answer means pairing again.
+ */
+export async function rotateDeviceToken(token: string): Promise<string | null> {
+  if (!token || token.length < 20) return null
+  return authDb.transaction(async (tx) => {
+    const [row] = await tx
+      .select({ id: deviceTokens.id, userId: deviceTokens.userId, institutionId: deviceTokens.institutionId })
+      .from(deviceTokens)
+      .where(and(eq(deviceTokens.tokenHash, sha256(token)), live))
+      .for('update')
+    if (!row) return null
+    const next = randomBytes(32).toString('base64url')
+    await tx.update(deviceTokens).set({ tokenHash: sha256(next), lastUsedAt: new Date() }).where(eq(deviceTokens.id, row.id))
+    await audit(tx, {
+      institutionId: row.institutionId, actorId: row.userId, moduleId: 'core', action: 'device.rotated',
+      entity: 'device_tokens', entityId: row.id, reason: 'a phone replaced its token',
+      detail: { deviceId: row.id },
+    })
+    return next
+  })
+}
+
+/** The phone signing itself out: revoke the token it holds (SEC-06). */
+export async function revokeDeviceToken(token: string): Promise<boolean> {
+  if (!token || token.length < 20) return false
+  return authDb.transaction(async (tx) => {
+    const [row] = await tx
+      .update(deviceTokens)
+      .set({ revokedAt: new Date() })
+      .where(and(eq(deviceTokens.tokenHash, sha256(token)), isNull(deviceTokens.revokedAt)))
+      .returning({ id: deviceTokens.id, userId: deviceTokens.userId, institutionId: deviceTokens.institutionId })
+    if (!row) return false
+    await audit(tx, {
+      institutionId: row.institutionId, actorId: row.userId, moduleId: 'core', action: 'device.revoked',
+      entity: 'device_tokens', entityId: row.id, reason: 'a phone signed itself out',
       detail: { deviceId: row.id },
     })
     return true
