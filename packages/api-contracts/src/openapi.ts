@@ -86,7 +86,7 @@ export const coreDocument = createDocument({
       post: {
         summary: 'Generate a pairing code for a phone',
         description:
-          'Six characters, ten minutes, single use. It exists so the long-lived device token ' +
+          'Eight characters, ten minutes, single use. It exists so the long-lived device token ' +
           'never travels through a screenshot or a chat message.',
         responses: { '200': { description: 'A code, shown once' } },
       },
@@ -99,10 +99,12 @@ export const coreDocument = createDocument({
           'A wrong, expired or malformed code returns the same 401, so guessing learns nothing. ' +
           'The token is then sent as `Authorization: Bearer`; everything downstream (the module ' +
           'gate, each operation’s own checks, RLS) is identical to a browser session, so the ' +
-          'mobile client can never reach anything the web client cannot.',
+          'mobile client can never reach anything the web client cannot.' +
+          ' Ten attempts per address per fifteen minutes.',
         responses: {
           '200': { description: 'A device token, shown once' },
           '401': { description: 'Not a valid code', content: json(errorSchema) },
+          '429': { description: 'Too many attempts from this address; see Retry-After', content: json(errorSchema) },
         },
       },
     },
@@ -112,6 +114,26 @@ export const coreDocument = createDocument({
         responses: {
           '204': { description: 'Revoked' },
           '404': { description: 'No such device', content: json(errorSchema) },
+        },
+      },
+    },
+    '/api/v1/devices/rotate': {
+      post: {
+        summary: 'Replace this phone’s device token',
+        description: 'Bearer only. The old token stops working at once; the new one is shown once.',
+        responses: {
+          '200': { description: 'A new device token' },
+          '401': { description: 'Not a live device token', content: json(errorSchema) },
+        },
+      },
+    },
+    '/api/v1/devices/sign-out': {
+      post: {
+        summary: 'Revoke the device token this request carries',
+        description: 'Bearer only. What a phone calls when its user signs out.',
+        responses: {
+          '204': { description: 'Revoked' },
+          '401': { description: 'Not a live device token', content: json(errorSchema) },
         },
       },
     },
@@ -140,6 +162,7 @@ export const coreDocument = createDocument({
         responses: {
           '200': { description: 'OK' },
           '403': { description: 'Not yours to export', content: json(errorSchema) },
+          '429': { description: 'Five exports per person per hour; see Retry-After', content: json(errorSchema) },
         },
       },
     },
