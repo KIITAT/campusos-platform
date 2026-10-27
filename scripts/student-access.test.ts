@@ -22,6 +22,7 @@ import * as attendance from '../packages/modules/attendance/api/index'
 import * as mentoring from '../packages/modules/mentoring/api/index'
 import * as skills from '../packages/modules/skills/api/index'
 import * as fees from '../packages/modules/fees/api/index'
+import * as enrollment from '../packages/modules/enrollment/api/index'
 
 type Who = 'admin' | 'accounts' | 'hodA' | 'hodB' | 'classTeacher' | 'lecturer' | 'mentor' | 'stranger' | 'student' | 'other'
 const ROLE: Record<Who, string> = {
@@ -107,6 +108,17 @@ test('the academic record: programmes, completions, eligibility, degree audit', 
   ]
   for (const who of ['stranger', 'hodB', 'accounts'] as Who[]) for (const r of reads(who)) await refused(`record as ${who}`, r)
   for (const who of ['lecturer', 'classTeacher', 'mentor', 'hodA', 'admin', 'student'] as Who[]) for (const r of reads(who)) await admitted(`record as ${who}`, r)
+}))
+
+test('course registrations, credit load and add/drop events of one student (review)', () => quietly(async () => {
+  const reads = (who: Who) => [
+    () => enrollment.listRegistrations(as(who), { studentId: S() }),
+    () => enrollment.creditLoad(as(who), { studentId: S(), termId }),
+    () => enrollment.listRegistrationEvents(as(who), { studentId: S(), termId }),
+  ]
+  for (const who of ['stranger', 'hodB', 'other'] as Who[]) for (const r of reads(who)) await refused(`registrations as ${who}`, r)
+  for (const who of ['hodA', 'admin', 'student'] as Who[]) for (const r of reads(who)) await admitted(`registrations as ${who}`, r)
+  for (const who of ['lecturer', 'classTeacher', 'mentor'] as Who[]) for (const r of reads(who).slice(0, 2)) await admitted(`registrations as ${who}`, r)
 }))
 
 test('transcripts: a lecturer outside the student’s offerings cannot read them (acceptance)', () => quietly(async () => {
