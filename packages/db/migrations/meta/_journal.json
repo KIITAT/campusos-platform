@@ -71,6 +71,13 @@
       "when": 1793016385865,
       "tag": "0009_audit_chain_hardening",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793041127996,
+      "tag": "0010_student_relations",
+      "breakpoints": true
     }
   ]
 }

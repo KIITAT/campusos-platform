@@ -447,3 +447,19 @@ test('the statements agree with each other: the balance sheet balances and the s
   assert.equal(fs.utilisedPercent, 6)
   await balanced(b)
 })
+
+test('stock entries and batches are the stores’ and the office’s, not every member’s (NEW-18)', async () => {
+  const b = await books()
+  const { listStockEntries, stockEntryDetail, createBatch } = await import('./api')
+  const chalk = await item(b, 'CHALK3')
+  const entry = (await createStockEntry(b.staff, { kind: 'receipt', postingDate: DAY, submit: true, lines: [{ itemId: chalk, qty: '5', rate: '5' }] })) as { id: string }
+  for (const who of [b.faculty, b.keeper]) {
+    await refused(listStockEntries(who), 'forbidden')
+    await refused(stockEntryDetail(who, entry.id), 'forbidden')
+    await refused(createBatch(who, { itemId: chalk, batchNo: 'B-1' }), 'forbidden')
+  }
+  await grantJob(b.admin, { userId: b.keeper.id, capability: 'storekeeper' })
+  assert.ok((await listStockEntries(b.keeper)).length >= 1)
+  assert.equal((await stockEntryDetail(b.keeper, entry.id)).entry.id, entry.id)
+  assert.ok((await listStockEntries(b.staff)).length >= 1, 'the accounts office')
+})

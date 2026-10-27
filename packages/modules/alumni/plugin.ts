@@ -1,4 +1,5 @@
-import { validatePlugin, withImports, type Plugin } from '@campusos/module-framework'
+import { validatePlugin, withRouteRoles, withImports, type Plugin } from '@campusos/module-framework'
+import { routeRoles } from './route-roles'
 import { withTenantBatch } from '@campusos/db'
 import { manifest } from './manifest'
 import { paths as openapiPaths } from './api/openapi'
@@ -6,6 +7,6 @@ import { routes } from './routes'
 import { pages } from './pages'
 import { imports } from './imports'
 
-export const plugin: Plugin = withImports({ manifest, routes, openapiPaths, pages }, imports, withTenantBatch)
+export const plugin: Plugin = withRouteRoles(withImports({ manifest, routes, openapiPaths, pages }, imports, withTenantBatch), routeRoles)
 validatePlugin(plugin)
 export default plugin

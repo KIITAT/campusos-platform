@@ -1,5 +1,6 @@
 import { and, asc, eq, inArray, isNotNull } from 'drizzle-orm'
 import { audit, withTenant } from '@campusos/db'
+import { assertCanAccessStudent } from '@campusos/module-framework'
 import { postCompletionWithin } from '@campusos/module-academic/api'
 import {
   courseCompletions,
@@ -211,16 +212,9 @@ export async function officialTranscript(
 ): Promise<Transcript> {
   const tenant = actor.institutionId
   if (!tenant) throw new ExamError(400, 'no_institution', 'no institution for this session')
-  const staff =
-    actor.role === 'institution_admin' ||
-    actor.role === 'super_admin' ||
-    actor.role === 'hod' ||
-    actor.role === 'faculty'
-  if (!staff && actor.id !== studentId) {
-    throw new ExamError(403, 'forbidden', 'not permitted')
-  }
 
   return withTenant(tenant, async (tx): Promise<Transcript> => {
+    await assertCanAccessStudent(tx, actor, studentId, 'academic_record')
     const [student] = await tx
       .select({ name: users.name, email: users.email })
       .from(users)

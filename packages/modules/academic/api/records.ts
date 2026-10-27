@@ -1,3 +1,4 @@
+import { assertCanAccessStudent } from '@campusos/module-framework'
 import { and, eq, inArray } from 'drizzle-orm'
 import { audit, users, withTenant } from '@campusos/db'
 import {
@@ -193,16 +194,9 @@ export async function degreeAudit(actor: Actor, input: unknown): Promise<DegreeA
   const data = degreeAuditQuerySchema.parse(input)
   const studentId = data.studentId
   const tenant = requireReader(actor)
-  const staff =
-    actor.role === 'institution_admin' ||
-    actor.role === 'super_admin' ||
-    actor.role === 'hod' ||
-    actor.role === 'faculty'
-  if (!staff && actor.id !== studentId) {
-    throw new AcademicError(403, 'forbidden', 'not permitted')
-  }
 
   return withTenant(tenant, async (tx): Promise<DegreeAudit> => {
+    await assertCanAccessStudent(tx, actor, studentId, 'academic_record')
     const [student] = await tx
       .select({ name: users.name })
       .from(users)

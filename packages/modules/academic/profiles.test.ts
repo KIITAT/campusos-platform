@@ -63,9 +63,10 @@ test('the office keeps it, the student reads their own, and every change is on t
   assert.match(r.notice, /rollNo/)
   const p = await studentProfile(c.asha, c.asha.id)
   assert.equal(p.address, '12 Patia Road, Bhubaneswar, Odisha, 751024')
-  assert.equal((await studentProfile(c.teacher, c.asha.id)).rollNo, '2515590')
+  // A lecturer with no relation to her no longer reads her phone and address (SEC-07).
+  await assert.rejects(studentProfile(c.teacher, c.asha.id), (e) => code(e) === 'not_your_student')
 
-  await assert.rejects(studentProfile(c.bilal, c.asha.id), (e) => code(e) === 'forbidden')
+  await assert.rejects(studentProfile(c.bilal, c.asha.id), (e) => code(e) === 'not_your_student')
   await assert.rejects(setStudentProfile(c.asha, { studentId: c.asha.id, phone: '1234567' }), (e) => code(e) === 'forbidden')
   await assert.rejects(setStudentProfile(c.admin, { studentId: c.bilal.id, rollNo: '2515590' }), (e) => code(e) === 'academic_student_profiles_roll')
   await assert.rejects(setStudentProfile(c.admin, { studentId: c.teacher.id, rollNo: 'T1' }), (e) => code(e) === 'academic_student_profile_student')

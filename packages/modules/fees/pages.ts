@@ -405,6 +405,7 @@ export const pages: PluginPage[] = [
           'Confirm it against the bank separately, below.',
         submit: 'Record payment',
         path: '/payments',
+        roles: [...OFFICE],
         fields: [
           { name: 'studentId', kind: 'hidden', label: '', value: String(data.studentId ?? '') },
           { name: 'termId', kind: 'hidden', label: '', value: String(data.termId ?? '') },
@@ -437,6 +438,7 @@ export const pages: PluginPage[] = [
         note: 'Which statement line this matches. Recorded on the audit trail.',
         submit: 'Confirm',
         path: '/payments/reconcile',
+        roles: [...OFFICE],
         fields: [
           { name: 'paymentId', label: 'Payment', kind: 'select', options: 'pending' },
           { name: 'reason', label: 'Reason' },

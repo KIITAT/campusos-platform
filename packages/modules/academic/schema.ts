@@ -213,9 +213,15 @@ export const sections = pgTable(
       .references(() => programs.id, { onDelete: 'restrict' }),
     label: text().notNull(),
     admissionYear: smallint('admission_year').notNull(),
+    /**
+     * The class teacher (K-12): sees the section's students' contact details
+     * and records (student_relations.academic_class_teacher, P0-03).
+     */
+    classTeacherId: text('class_teacher_id').references(() => users.id, { onDelete: 'set null' }),
     createdAt: createdAt(),
   },
   (t) => [
+    index('academic_sections_class_teacher').on(t.classTeacherId).where(sql`class_teacher_id is not null`),
     uniqueIndex('academic_sections_identity').on(
       t.institutionId,
       t.programId,
@@ -250,6 +256,7 @@ export const sectionMembers = pgTable(
   },
   (t) => [
     primaryKey({ columns: [t.sectionId, t.userId] }),
+    index('academic_section_members_user').on(t.userId),
     tenantPolicy('academic_section_members'),
   ],
 )
@@ -283,6 +290,7 @@ export const offerings = pgTable(
   },
   (t) => [
     uniqueIndex('academic_offerings_identity').on(t.termId, t.courseId, t.sectionId),
+    index('academic_offerings_faculty').on(t.facultyUserId).where(sql`faculty_user_id is not null`),
     tenantPolicy('academic_offerings'),
   ],
 )

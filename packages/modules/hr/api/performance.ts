@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { users, withTenant } from '@campusos/db'
 import {
   appraisalCycles,
@@ -389,6 +389,13 @@ export async function giveAppraisalFeedback(actor: Actor, input: unknown) {
     if (person.userId === actor.id) {
       throw new HrError(403, 'self_feedback', 'nobody writes feedback on their own appraisal')
     }
+    // SEC-16: feedback is a colleague's, so the writer must be on the staff now.
+    const [colleague] = await tx
+      .select({ id: staff.id })
+      .from(staff)
+      .where(and(eq(staff.userId, actor.id), isNull(staff.leftOn)))
+      .limit(1)
+    if (!colleague) throw new HrError(403, 'not_staff', 'only a member of staff gives appraisal feedback')
     if (row.status === 'completed') throw new HrError(409, 'completed', 'that appraisal is complete')
     const [created] = await tx
       .insert(appraisalFeedback)

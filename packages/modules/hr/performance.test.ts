@@ -40,7 +40,7 @@ const SLUG = 'hr-perf'
 const OTHER = 'hr-perf-other'
 let inst: string
 let other: string
-const ids = { adm: '', hod: '', fac: '', peer: '', otherAdm: '' }
+const ids = { adm: '', hod: '', fac: '', peer: '', otherAdm: '', student: '', parent: '' }
 let teaching = ''
 let research = ''
 
@@ -91,6 +91,8 @@ before(async () => {
       { email: 'fac@hrperf.test', institutionId: inst, role: 'faculty', name: 'Dr Lecturer' },
       { email: 'peer@hrperf.test', institutionId: inst, role: 'faculty', name: 'Dr Peer' },
       { email: 'adm@hrperfother.test', institutionId: other, role: 'institution_admin', name: 'O' },
+      { email: 'stu@hrperf.test', institutionId: inst, role: 'student', name: 'A Student' },
+      { email: 'par@hrperf.test', institutionId: inst, role: 'parent', name: 'A Parent' },
     ])
     .returning({ id: users.id })
   ids.adm = people[0]!.id
@@ -98,6 +100,8 @@ before(async () => {
   ids.fac = people[2]!.id
   ids.peer = people[3]!.id
   ids.otherAdm = people[4]!.id
+  ids.student = people[5]!.id
+  ids.parent = people[6]!.id
 })
 
 beforeEach(async () => {
@@ -205,6 +209,7 @@ test('weights add to 100, and nobody reviews themselves', async () => {
 
 test('colleagues give candid feedback: named to HR, anonymous to the appraisee', async () => {
   const { appraisalId } = await openCycleWithLecturer()
+  await createStaff(admin(), { employeeCode: 'F-2', name: 'Dr Peer', designation: 'Professor', joinedOn: '2020-01-01', userId: ids.peer })
   await giveAppraisalFeedback(peer(), {
     appraisalId, relation: 'peer', rating: 4,
     strengths: 'Generous with lab time for students.', improvements: 'Replies to email slowly.',
@@ -288,4 +293,27 @@ test('the reviewer’s list says what is waiting on them', async () => {
 test('one college’s appraisals are nobody else’s', async () => {
   await openCycleWithLecturer()
   assert.equal((await listCycles(outsider())).length, 0)
+})
+
+test('only a colleague on the staff gives appraisal feedback: not a student, a parent or a stranger to the payroll (SEC-16)', async () => {
+  const { appraisalId } = await openCycleWithLecturer()
+  const feedback = { appraisalId, relation: 'other', rating: 1, strengths: 'Nothing to say here.', improvements: 'Everything, frankly.' }
+  for (const who of [A({ id: ids.student, role: 'student' }), A({ id: ids.parent, role: 'parent' }), peer()]) {
+    await assert.rejects(() => giveAppraisalFeedback(who, feedback), (e: unknown) => code(e) === 'not_staff', who.role)
+  }
+  // Nor once a colleague has left.
+  const left = await createStaff(admin(), { employeeCode: 'F-3', name: 'Dr Peer', designation: 'Professor', joinedOn: '2020-01-01', userId: ids.peer })
+  await withTenant(inst, (tx) => tx.update(staff).set({ leftOn: '2026-01-01' }).where(eq(staff.id, left.id)))
+  await assert.rejects(() => giveAppraisalFeedback(peer(), feedback), (e: unknown) => code(e) === 'not_staff', 'former staff')
+  const rows = await withTenant(inst, (tx) => tx.select().from(appraisalFeedback))
+  assert.equal(rows.length, 0)
+})
+
+test('an appraisal is read by HR, its reviewer and its appraisee only (SEC-16)', async () => {
+  const { appraisalId } = await openCycleWithLecturer()
+  for (const who of [peer(), A({ id: ids.student, role: 'student' }), A({ id: ids.parent, role: 'parent' })]) {
+    await assert.rejects(() => appraisalView(who, appraisalId), (e: unknown) => code(e) === 'forbidden', who.role)
+  }
+  assert.ok(await appraisalView(hod(), appraisalId), 'the reviewer')
+  assert.ok(await appraisalView(lecturer(), appraisalId), 'the appraisee')
 })

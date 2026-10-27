@@ -424,7 +424,7 @@ export async function issueDemandLetter(actor: Actor, input: unknown) {
   if (actor.role !== 'student' && !isFinance(actor.role)) throw new FeeError(403, 'forbidden', 'not permitted')
 
   const ledger = await studentLedger(actor, studentId, d.termId)
-  const profile = await studentProfile(actor as unknown as AcademicActor, studentId).catch(() => null)
+  const profile = await studentProfile(actor as unknown as AcademicActor, studentId, 'fee_ledger').catch(() => null)
   return named(() =>
     withTenant(tenant, async (tx) => {
       const [t] = await tx.select().from(terms).where(eq(terms.id, d.termId))

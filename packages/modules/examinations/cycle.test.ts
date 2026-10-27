@@ -155,7 +155,7 @@ test('enrolment happens in its window, with the details the student confirmed, a
   const pdf = Buffer.from(await admitCardPdf(card))
   assert.equal(pdf.subarray(0, 5).toString(), '%PDF-')
 
-  await assert.rejects(admitCard(c.bilal, c.asha.id, c.termId), (e2) => code(e2) === 'forbidden')
+  await assert.rejects(admitCard(c.bilal, c.asha.id, c.termId), (e2) => code(e2) === 'not_your_student')
   await assert.rejects(admitCard(c.bilal, c.bilal.id, c.termId), (e2) => code(e2) === 'not_enrolled')
 
   const list = await enrolmentList(c.admin, c.termId)
@@ -316,5 +316,5 @@ test('statistics: an exam’s spread and pass rate, and a student beside their c
 
   const mine = await studentPerformance(c.asha, c.asha.id)
   assert.deepEqual(mine.map((r) => [r.exam, r.percent, r.classMean, r.versus]), [['Quiz', 90, 60, 30]])
-  await assert.rejects(studentPerformance(c.asha, c.bilal.id), (e) => code(e) === 'forbidden')
+  await assert.rejects(studentPerformance(c.asha, c.bilal.id), (e) => code(e) === 'not_your_student')
 })

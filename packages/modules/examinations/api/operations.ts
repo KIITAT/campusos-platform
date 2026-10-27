@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, isNotNull } from 'drizzle-orm'
 import { audit, auditLog, users, withTenant } from '@campusos/db'
-import { viewsOnBehalf, type Role, type ViewerScope } from '@campusos/module-framework'
+import { assertCanAccessStudent, type Role, type ViewerScope } from '@campusos/module-framework'
 import {
   courses,
   institutions,
@@ -558,18 +558,11 @@ export async function sheet(actor: Actor, examId: string) {
  */
 export async function transcript(actor: Actor, studentId: string): Promise<Transcript> {
   const tenant = tenantOf(actor)
-  // A verified viewer -- a parent, via the Parent Portal -- reads exactly the
-  // students they were cleared for, and nothing else changes for them.
-  if (!viewsOnBehalf(actor, studentId)) {
-    if (actor.role === 'student' && studentId !== actor.id) {
-      throw new ExamError(403, 'forbidden', 'not permitted')
-    }
-    if (actor.role !== 'student' && !canMark(actor.role)) {
-      throw new ExamError(403, 'forbidden', 'not permitted')
-    }
-  }
 
   return withTenant(tenant, async (tx): Promise<Transcript> => {
+    // The student, a verified guardian, and whoever teaches, mentors or heads
+    // them (SEC-07): not every lecturer in the institution.
+    await assertCanAccessStudent(tx, actor, studentId, 'academic_record')
     const scheme = await schemeInForce(tx)
 
     const [student] = await tx

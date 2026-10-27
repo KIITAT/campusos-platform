@@ -30,7 +30,14 @@ export interface ModuleManifest {
    */
   softDependsOn?: string[]
   pricing: { model: PricingModel; priceINR: number | null }
+  /**
+   * Who sees the module in menus. With `routeRoles` set it governs nothing
+   * else: each route names who may call it. Without (an archive built before
+   * P0-03) the host also refuses every route to a role outside it.
+   */
   rolesWithAccess: Role[]
+  /** Every route declares `roles` and the host enforces them (decision 192). */
+  routeRoles?: true
   navEntries: { label: string; href: string; roles: Role[] }[]
   apiBasePath: string
   /**

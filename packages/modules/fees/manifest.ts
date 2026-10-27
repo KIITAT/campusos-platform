@@ -5,7 +5,7 @@ export const manifest: ModuleManifest = {
   name: 'Fees & Finance',
   description:
     'Fee structures per programme and term, scholarships and waivers, payment recording with manual reconciliation, receipts and defaulter reporting.',
-  version: '0.6.0',
+  version: '0.7.0',
   alwaysEnabled: false,
   /**
    * finance, because every charge, payment, waiver and refund posts a balanced
@@ -47,5 +47,6 @@ export const manifest: ModuleManifest = {
     { label: 'Transfers', href: '/m/fees/transfers', roles: ['institution_admin', 'accounts_staff'] },
   ],
 
+  routeRoles: true,
   apiBasePath: '/api/v1/modules/fees',
 }

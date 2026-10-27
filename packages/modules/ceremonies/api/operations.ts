@@ -9,7 +9,7 @@ import {
   users,
   withTenant,
 } from '@campusos/db'
-import type { Role } from '@campusos/module-framework'
+import { assertCanAccessStudent, type Role } from '@campusos/module-framework'
 import { degreeAudit, type DegreeAudit } from '@campusos/module-academic/api'
 import { programs, studentPrograms } from '@campusos/module-academic/schema'
 import { candidates, ceremonies, certificates, holds, type Candidate } from '../schema'
@@ -639,14 +639,12 @@ export async function listCertificates(actor: Actor, ceremonyId?: string) {
   )
 }
 
-/** One certificate: the office sees any, a student only their own. */
+/** One certificate: the office sees any, the HoD their department's, a student their own. */
 export async function certificateView(actor: Actor, certificateId: string) {
   const tenant = tenantOf(actor)
   return withTenant(tenant, async (tx) => {
     const c = await certificateIn(tx, certificateId)
-    if (!isOffice(actor.role) && actor.role !== 'hod' && c.studentId !== actor.id) {
-      throw new CeremonyError(403, 'forbidden', 'not permitted')
-    }
+    await assertCanAccessStudent(tx, actor, c.studentId, 'certificates')
     const [replacedBy] = await tx
       .select({ id: certificates.id, serial: certificates.serial })
       .from(certificates)

@@ -81,6 +81,7 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   academic_offerings: 'export',
   academic_prerequisite_waivers: 'export',
   academic_section_members: 'export',
+  academic_sections: 'export',
   academic_student_profiles: 'export',
   academic_student_programs: 'export',
 

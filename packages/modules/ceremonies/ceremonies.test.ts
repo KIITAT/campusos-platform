@@ -341,7 +341,10 @@ test('a student sees their own standing and certificate, not anybody else\'s', a
   assert.equal(theirs.certificates.length, 0)
   assert.match(theirs.ceremonies[0]!.shortOf!, /short|CORE/)
 
-  await assert.rejects(certificateView(c.short, cert!.id), (x) => code(x) === 'forbidden')
+  // Another student, a lecturer, and a HoD who heads no department of hers (SEC-07).
+  for (const who of [c.short, c.faculty, { ...c.faculty, role: 'hod' as const }]) {
+    await assert.rejects(certificateView(who, cert!.id), (x) => code(x) === 'not_your_student', who.role)
+  }
   await assert.rejects(listCandidates(c.done as never, e.id), (x) => code(x) === 'forbidden')
   await assert.rejects(runEligibility(c.faculty, { ceremonyId: e.id }), (x) => code(x) === 'forbidden')
 })

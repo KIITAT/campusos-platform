@@ -122,6 +122,15 @@ export const createSectionSchema = z
   })
   .meta({ id: 'AcademicCreateSection' })
 
+/** Who heads a department, or a section's class teacher; no email clears it. */
+export const setDepartmentHeadSchema = z
+  .object({ departmentId: uuid, email: z.preprocess((v) => (v === '' ? undefined : v), z.string().trim().email().optional()) })
+  .meta({ id: 'AcademicSetDepartmentHead' })
+
+export const setClassTeacherSchema = z
+  .object({ sectionId: uuid, email: z.preprocess((v) => (v === '' ? undefined : v), z.string().trim().email().optional()) })
+  .meta({ id: 'AcademicSetClassTeacher' })
+
 export const addSectionMemberSchema = z
   .object({ sectionId: uuid, userId: z.string().min(1) })
   .meta({ id: 'AcademicAddSectionMember' })

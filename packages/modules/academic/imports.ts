@@ -10,6 +10,7 @@ import {
   createProgram,
   createRoom,
   createSection,
+  setClassTeacher,
   createTerm,
   declareProgram,
 } from './api'
@@ -176,13 +177,16 @@ export const imports: ImportSpec[] = [
       { name: 'program', required: true, note: 'The programme code', example: 'BTCS' },
       { name: 'admission_year', required: true, note: 'The year the cohort was admitted', example: '2025' },
       { name: 'label', required: true, note: 'The section label', example: 'A' },
+      { name: 'class_teacher_email', note: 'The class teacher, for a school', example: 'meera@school.edu' },
     ],
     row: async (actor, { values: v }) => {
       const pid = await programId(actor, v.program!)
       const year = Number(v.admission_year)
-      if (Number.isInteger(year) && (await one(actor, (tx) => tx.select({ id: sections.id }).from(sections).where(and(eq(sections.programId, pid), eq(sections.admissionYear, year), eq(sections.label, upper(v.label!))))))) return 'skipped'
-      await createSection(actor, { programId: pid, admissionYear: v.admission_year, label: v.label })
-      return 'created'
+      const existing = Number.isInteger(year) ? await one(actor, (tx) => tx.select({ id: sections.id, classTeacherId: sections.classTeacherId }).from(sections).where(and(eq(sections.programId, pid), eq(sections.admissionYear, year), eq(sections.label, upper(v.label!))))) : undefined
+      if (existing && (!v.class_teacher_email || existing.classTeacherId)) return 'skipped'
+      const id = existing?.id ?? (await createSection(actor, { programId: pid, admissionYear: v.admission_year, label: v.label })).id
+      if (v.class_teacher_email) await setClassTeacher(actor, { sectionId: id, email: v.class_teacher_email })
+      return existing ? 'updated' : 'created'
     },
   },
   {

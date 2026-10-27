@@ -17,7 +17,7 @@ export const manifest: ModuleManifest = {
   name: 'Finance & Books',
   description:
     'Double-entry books for the whole institution: ledger, receivables and payables, GST and TDS, bank import and reconciliation, stock with batches and serials, purchasing and selling, fixed assets, funds and grants, and statements.',
-  version: '0.5.0',
+  version: '0.6.0',
   alwaysEnabled: false,
   dependsOn: [],
   pricing: { model: 'flat_monthly', priceINR: 2000 },
@@ -37,5 +37,6 @@ export const manifest: ModuleManifest = {
     { label: 'Approvals', href: '/m/finance/approvals', roles: STAFF },
   ],
 
+  routeRoles: true,
   apiBasePath: '/api/v1/modules/finance',
 }

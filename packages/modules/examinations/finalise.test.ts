@@ -422,12 +422,12 @@ test('a student reads their own transcripts and nobody else’s', async () => {
   assert.equal((await officialTranscript(self, c.a)).terms.length, 1)
   await assert.rejects(
     () => officialTranscript(self, c.b),
-    (e: unknown) => errorCode(e) === 'forbidden',
+    (e: unknown) => errorCode(e) === 'not_your_student',
   )
   // The provisional one has always answered the same way, and still does.
   await assert.rejects(
     () => transcript(self, c.b),
-    (e: unknown) => errorCode(e) === 'forbidden',
+    (e: unknown) => errorCode(e) === 'not_your_student',
   )
 })
 

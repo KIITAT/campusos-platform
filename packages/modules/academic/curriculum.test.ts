@@ -597,11 +597,11 @@ test('a student reads their own record and nobody else’s', async () => {
 
   await assert.rejects(
     () => listCompletions(c.other, { studentId: c.student.id }),
-    (e: unknown) => errorCode(e) === 'forbidden',
+    (e: unknown) => errorCode(e) === 'not_your_student',
   )
   await assert.rejects(
     () => checkEligibility(c.other, { studentId: c.student.id, courseId: intro.id }),
-    (e: unknown) => errorCode(e) === 'forbidden',
+    (e: unknown) => errorCode(e) === 'not_your_student',
   )
 })
 

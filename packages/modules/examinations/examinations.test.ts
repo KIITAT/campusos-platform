@@ -610,7 +610,8 @@ test('the transcript renders to a real PDF', async () => {
 })
 
 test('a provisional transcript still renders', async () => {
-  const t = await transcript(A({}), ids.s3)
+  // As the office: the lecturer teaches s1 and s2, not s3 (SEC-07).
+  const t = await transcript(A({ id: ids.adm, role: 'institution_admin' }), ids.s3)
   const bytes = await transcriptPdf(t)
   assert.equal(Buffer.from(bytes.subarray(0, 5)).toString(), '%PDF-')
 })

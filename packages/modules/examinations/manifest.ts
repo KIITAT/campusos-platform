@@ -5,7 +5,7 @@ export const manifest: ModuleManifest = {
   name: 'Examinations & Grading',
   description:
     'Exam scheduling, marks entry with publish-locking, configurable grade scales and transcripts; the examination cycle -- enrolment, admit cards, backlog booking, semester grade reports, sealed question papers -- and statistics.',
-  version: '0.3.2',
+  version: '0.4.0',
   alwaysEnabled: false,
   dependsOn: ['academic'],
   softDependsOn: ['feedback', 'fees'],
@@ -28,5 +28,6 @@ export const manifest: ModuleManifest = {
     { label: 'Grade scales', href: '/m/examinations/scales', roles: ['institution_admin'] },
   ],
 
+  routeRoles: true,
   apiBasePath: '/api/v1/modules/examinations',
 }

@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm'
 import { audit, users, withTenant } from '@campusos/db'
-import { moduleEnabled, readUpload, UploadError, type Role } from '@campusos/module-framework'
+import { assertCanAccessStudent, canAccessStudent, moduleEnabled, readUpload, UploadError, type Role } from '@campusos/module-framework'
 import { sectionMembers, sections, programs, terms } from '@campusos/module-academic/schema'
 import { studentProfile } from '@campusos/module-academic/api'
 import { attendanceSummary, excuseWithin, revokeExcuseForSourceWithin } from '@campusos/module-attendance/api'
@@ -122,13 +122,15 @@ async function currentOf(tx: Tx, studentId: string) {
   return a ?? null
 }
 
-/** Whether this reader may see this student as a mentor does. */
+/**
+ * Whether this reader may see this student as a mentor does: the mentor or
+ * co-mentor, the HoD of the student's department, the office (SEC-07). Not,
+ * any more, every HoD in the institution.
+ */
 async function assertMentorOf(tx: Tx, actor: Actor, studentId: string) {
-  if (runs(actor.role)) return
-  const a = await currentOf(tx, studentId)
-  if (!a || (a.mentorId !== actor.id && a.coMentorId !== actor.id)) {
-    throw new MentorError(403, 'not_your_mentee', 'that student is not your mentee')
-  }
+  await assertCanAccessStudent(tx, actor, studentId, 'mentoring').catch((e: { code?: string }) => {
+    throw e?.code === 'not_your_student' ? new MentorError(403, 'not_your_mentee', 'that student is not your mentee') : e
+  })
 }
 
 /**
@@ -360,8 +362,9 @@ export async function menteeView(actor: Actor, studentId: string) {
       thread: await threadRows(tx, actor, studentId),
     }
   })
-  const fees = feesOn && base.term
-    ? await studentLedger(actor as Any, studentId, base.term.id).then(
+  // A mentor does not see the fee ledger; a HoD and the office do.
+  const fees = feesOn && base.term && (await withTenant(tenant, (tx) => canAccessStudent(tx, actor, studentId, 'fee_ledger')))
+    ? await studentLedger(actor as Any, studentId, base.term!.id).then(
         (l) => ({ term: base.term!.code, payable: formatPaise(l.payablePaise), paid: formatPaise(l.paidPaise), outstanding: formatPaise(l.outstandingPaise), owes: l.outstandingPaise > 0 }),
         () => null,
       )
@@ -560,10 +563,11 @@ export async function pendingLeave(actor: Actor) {
       .where(
         and(
           eq(leaveApplications.status, 'pending'),
-          runs(actor.role)
+          // The office sees every application; anyone else, those of the
+          // students they mentor or head the department of (SEC-07).
+          isAdmin(actor.role)
             ? undefined
-            : sql`exists (select 1 from mentor_assignments a where a.student_id = mentor_leave_applications.student_id
-                            and a.to_on is null and ${actor.id} in (a.mentor_id, a.co_mentor_id))`,
+            : sql`public.campusos_student_relation(${actor.id}, mentor_leave_applications.student_id, 'mentoring') is not null`,
         ),
       )
       .orderBy(asc(leaveApplications.startsOn))

@@ -5,7 +5,7 @@ export const manifest: ModuleManifest = {
   name: 'Library',
   description:
     'Catalogue of titles and physical copies, issue and return at the desk, overdue fines with configurable rules, and a borrowing status view for students.',
-  version: '0.2.2',
+  version: '0.3.0',
   alwaysEnabled: false,
   dependsOn: ['academic'],
   /**
@@ -20,6 +20,7 @@ export const manifest: ModuleManifest = {
     'super_admin',
     'institution_admin',
     'library_staff',
+    'hod',
     'faculty',
     'student',
   ],
@@ -31,5 +32,6 @@ export const manifest: ModuleManifest = {
     { label: 'My library', href: '/m/library/me', roles: ['student', 'faculty'] },
   ],
 
+  routeRoles: true,
   apiBasePath: '/api/v1/modules/library',
 }

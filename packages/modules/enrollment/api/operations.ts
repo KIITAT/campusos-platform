@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
 import { users, withTenant } from '@campusos/db'
-import type { Role } from '@campusos/module-framework'
+import { assertCanAccessStudent, type Role } from '@campusos/module-framework'
 import { checkEligibility } from '@campusos/module-academic/api'
 import { courses, offerings, terms } from '@campusos/module-academic/schema'
 import { offeringLimits, registrationEvents, registrations } from '../schema'
@@ -460,8 +460,9 @@ export async function listRegistrations(actor: Actor, input: unknown) {
   const studentId = data.studentId ?? actor.id
   const tenant = requireReader(actor, studentId)
 
-  return withTenant(tenant, (tx) =>
-    tx
+  return withTenant(tenant, async (tx) => {
+    await assertCanAccessStudent(tx, actor, studentId, 'academic_record')
+    return tx
       .select({
         id: registrations.id,
         studentId: registrations.studentId,
@@ -487,8 +488,8 @@ export async function listRegistrations(actor: Actor, input: unknown) {
             )
           : eq(registrations.studentId, studentId),
       )
-      .orderBy(courses.code),
-  )
+      .orderBy(courses.code)
+  })
 }
 
 /**
@@ -502,6 +503,7 @@ export async function creditLoad(actor: Actor, input: unknown): Promise<CreditLo
   const tenant = requireReader(actor, studentId)
 
   return withTenant(tenant, async (tx) => {
+    await assertCanAccessStudent(tx, actor, studentId, 'academic_record')
     const [row] = await tx
       .select({
         credits: sql<number>`coalesce(sum(${registrations.credits}), 0)::int`,
@@ -540,6 +542,7 @@ export async function listRegistrationEvents(actor: Actor, input: unknown) {
   }
 
   return withTenant(tenant, async (tx) => {
+    if (data.studentId) await assertCanAccessStudent(tx, actor, data.studentId, 'academic_record')
     const live = tx
       .select({ id: registrations.id })
       .from(registrations)
