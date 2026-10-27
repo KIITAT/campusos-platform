@@ -7,7 +7,7 @@ import { after, before, test } from 'node:test'
 import { URL } from 'node:url'
 
 /**
- * The P0-01, P0-02, P0-03 and P0-06 migrations applied as an upgrade, not only on a
+ * The P0-01, P0-02, P0-03, P0-04 and P0-06 migrations applied as an upgrade, not only on a
  * fresh database.
  *
  * CI's fresh path runs core first and every module after it. An institution
@@ -228,5 +228,18 @@ test('P0-03 applies as an upgrade: the relation views, readable by the app role 
       views: ['academic_class_teacher', 'academic_hod', 'academic_teaches', 'enrollment_teaches', 'mentoring_mentor'],
       invoker: true, app_reads: true, app_asks: true, public_asks: false, class_teacher: 1,
     })
+  })
+})
+
+test('P0-04 applies as an upgrade: the counter table and its definer function, callable by no role but the owner by default (SEC-02)', { skip: !url && 'MIGRATION_DATABASE_URL is not set' }, async () => {
+  await withClient(at(DB), async (c) => {
+    const { rows } = await c.query(`
+      select
+        to_regclass('public.rate_limit_counters') is not null as t,
+        (select relrowsecurity from pg_class where oid = 'public.rate_limit_counters'::regclass) as rls,
+        has_function_privilege('campusos_app', 'public.campusos_rate_limit(text,text,integer,integer)', 'EXECUTE') as app,
+        has_function_privilege('public', 'public.campusos_rate_limit(text,text,integer,integer)', 'EXECUTE') as pub,
+        has_table_privilege('campusos_app', 'public.rate_limit_counters', 'SELECT') as app_reads`)
+    assert.deepEqual(rows[0], { t: true, rls: true, app: false, pub: false, app_reads: false })
   })
 })
