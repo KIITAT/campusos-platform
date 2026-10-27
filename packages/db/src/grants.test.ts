@@ -63,6 +63,8 @@ test('the application role holds exactly the planned privileges on core control 
     institutions: ['SELECT'],
     institution_modules: ['SELECT'],
     audit_log: ['INSERT', 'SELECT'],
+    audit_chain: ['SELECT'],
+    platform_audit_log: [],
     users: ['INSERT', 'SELECT', 'UPDATE'],
   }
   const got = await authDb.execute<{ t: string; p: string[] }>(sql`
@@ -124,7 +126,10 @@ test('the audit trail is append-only for the owner too (AUD-01)', async () => {
     appendOnly,
   )
   await assert.rejects(() => authDb.delete(auditLog).where(eq(auditLog.institutionId, inst)), appendOnly)
-  await assert.rejects(() => authDb.execute(sql`truncate audit_log`), appendOnly)
+  // Since P0-02 the chain's foreign key refuses a bare truncate before the guard
+  // runs; truncating both together reaches the guards.
+  await assert.rejects(() => authDb.execute(sql`truncate audit_log`), says(/append-only|referenced in a foreign key constraint/))
+  await assert.rejects(() => authDb.execute(sql`truncate audit_log, audit_chain`), says(/append-only/))
   // Deleting a person who has a trail would null the actor on every row they
   // wrote. That is a rewrite too, so it is refused: people are erased instead.
   await assert.rejects(() => authDb.delete(users).where(eq(users.id, person)), appendOnly)

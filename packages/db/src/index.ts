@@ -2,6 +2,7 @@ export { db, authDb, withTenant, withTenantBatch, corePool, useSharedPool, type 
 export * from './rls'
 export * from './schema'
 export * from './audit'
+export * from './audit-chain'
 export * from './dpdp'
 export * from './device-tokens'
 export * from './invitations'

@@ -7,6 +7,7 @@ import {
   timestamp,
   uuid,
 } from 'drizzle-orm/pg-core'
+import { audit } from './audit'
 import { authDb } from './client'
 import { institutions, users } from './schema'
 
@@ -94,22 +95,35 @@ export async function startPairing(
   const code = pairingCode()
   const expiresAt = new Date(Date.now() + PAIRING_TTL_MS)
 
-  // A pending pairing is replaced rather than accumulated: somebody who asks
-  // twice because the first code scrolled away should not leave a live one.
-  await authDb
-    .delete(deviceTokens)
-    .where(and(eq(deviceTokens.userId, userId), isNull(deviceTokens.lastUsedAt), sql`${deviceTokens.pairingHash} is not null`))
+  return authDb.transaction(async (tx) => {
+    // A pending pairing is replaced rather than accumulated: somebody who asks
+    // twice because the first code scrolled away should not leave a live one.
+    const replaced = await tx
+      .delete(deviceTokens)
+      .where(and(eq(deviceTokens.userId, userId), isNull(deviceTokens.lastUsedAt), sql`${deviceTokens.pairingHash} is not null`))
+      .returning({ id: deviceTokens.id })
 
-  await authDb.insert(deviceTokens).values({
-    institutionId,
-    userId,
-    tokenHash: `unclaimed:${sha256(code)}`,
-    pairingHash: sha256(code),
-    pairingExpiresAt: expiresAt,
-    deviceName: deviceName ?? null,
+    const [row] = await tx
+      .insert(deviceTokens)
+      .values({
+        institutionId,
+        userId,
+        tokenHash: `unclaimed:${sha256(code)}`,
+        pairingHash: sha256(code),
+        pairingExpiresAt: expiresAt,
+        deviceName: deviceName ?? null,
+      })
+      .returning({ id: deviceTokens.id })
+
+    // Who can reach the institution's data changes here (NEW-10). The device
+    // name is the person's own label, so it stays off the trail.
+    await audit(tx, {
+      institutionId, actorId: userId, moduleId: 'core', action: 'device.pairing',
+      entity: 'device_tokens', entityId: row!.id, reason: 'a phone pairing was started',
+      detail: { deviceId: row!.id, replaced: replaced.length },
+    })
+    return { code, expiresAt }
   })
-
-  return { code, expiresAt }
 }
 
 export interface ClaimedToken {
@@ -125,6 +139,10 @@ export interface ClaimedToken {
  * the one endpoint in the product where an attacker can guess. Six characters
  * from a 32-symbol alphabet is 2^30, single-use, ten minutes; the rate limit is
  * that a redeemed or expired code is gone.
+ *
+ * The row is locked while it is redeemed, so two phones racing with one code
+ * cannot both be handed a token. Only a success is audited: auditing every
+ * guess would let anyone grow the trail (P0-04 rate-limits and logs failures).
  */
 export async function claimPairing(
   code: string,
@@ -132,31 +150,39 @@ export async function claimPairing(
 ): Promise<ClaimedToken | null> {
   const hash = sha256(code.trim().toUpperCase())
 
-  const [row] = await authDb
-    .select()
-    .from(deviceTokens)
-    .where(eq(deviceTokens.pairingHash, hash))
-  if (!row) return null
+  return authDb.transaction(async (tx) => {
+    const [row] = await tx
+      .select()
+      .from(deviceTokens)
+      .where(eq(deviceTokens.pairingHash, hash))
+      .for('no key update')
+    if (!row) return null
 
-  if (!row.pairingExpiresAt || row.pairingExpiresAt.getTime() < Date.now()) {
-    await authDb.delete(deviceTokens).where(eq(deviceTokens.id, row.id))
-    return null
-  }
+    if (!row.pairingExpiresAt || row.pairingExpiresAt.getTime() < Date.now()) {
+      await tx.delete(deviceTokens).where(eq(deviceTokens.id, row.id))
+      return null
+    }
 
-  const token = randomBytes(32).toString('base64url')
-  await authDb
-    .update(deviceTokens)
-    .set({
-      tokenHash: sha256(token),
-      // Single use: the code is consumed by redeeming it.
-      pairingHash: null,
-      pairingExpiresAt: null,
-      deviceName: deviceName ?? row.deviceName,
-      lastUsedAt: new Date(),
+    const token = randomBytes(32).toString('base64url')
+    await tx
+      .update(deviceTokens)
+      .set({
+        tokenHash: sha256(token),
+        // Single use: the code is consumed by redeeming it.
+        pairingHash: null,
+        pairingExpiresAt: null,
+        deviceName: deviceName ?? row.deviceName,
+        lastUsedAt: new Date(),
+      })
+      .where(eq(deviceTokens.id, row.id))
+
+    await audit(tx, {
+      institutionId: row.institutionId, actorId: row.userId, moduleId: 'core', action: 'device.paired',
+      entity: 'device_tokens', entityId: row.id, reason: 'a phone was paired with a code',
+      detail: { deviceId: row.id },
     })
-    .where(eq(deviceTokens.id, row.id))
-
-  return { token, userId: row.userId, institutionId: row.institutionId }
+    return { token, userId: row.userId, institutionId: row.institutionId }
+  })
 }
 
 /**
@@ -213,10 +239,18 @@ export async function listDevices(userId: string) {
 
 /** Revoking is immediate and keeps the row, so "which phone was it" survives. */
 export async function revokeDevice(userId: string, id: string): Promise<boolean> {
-  const rows = await authDb
-    .update(deviceTokens)
-    .set({ revokedAt: new Date() })
-    .where(and(eq(deviceTokens.id, id), eq(deviceTokens.userId, userId)))
-    .returning({ id: deviceTokens.id })
-  return rows.length > 0
+  return authDb.transaction(async (tx) => {
+    const [row] = await tx
+      .update(deviceTokens)
+      .set({ revokedAt: new Date() })
+      .where(and(eq(deviceTokens.id, id), eq(deviceTokens.userId, userId)))
+      .returning({ id: deviceTokens.id, institutionId: deviceTokens.institutionId })
+    if (!row) return false
+    await audit(tx, {
+      institutionId: row.institutionId, actorId: userId, moduleId: 'core', action: 'device.revoked',
+      entity: 'device_tokens', entityId: row.id, reason: 'a phone was signed out',
+      detail: { deviceId: row.id },
+    })
+    return true
+  })
 }

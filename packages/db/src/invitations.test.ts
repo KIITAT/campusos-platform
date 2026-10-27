@@ -47,13 +47,23 @@ before(async () => {
   otherAdmin = people[1]!.id
 })
 
+/**
+ * Frees the test addresses. A bound account has an audit row now (NEW-10),
+ * which keeps its user row (DATA-09), so it is renamed rather than deleted;
+ * deleting its institution takes it at the end.
+ */
+async function retireGuardians() {
+  await authDb.delete(users).where(sql`${users.email} like '%@guardian.test' and ${users.institutionId} is null`)
+  await authDb.update(users).set({ email: sql`${users.id} || '@retired.invalid'` }).where(sql`${users.email} like '%@guardian.test'`)
+}
+
 beforeEach(async () => {
   await authDb.delete(invitations).where(inArray(invitations.institutionId, [inst, other]))
-  await authDb.delete(users).where(sql`${users.email} like '%@guardian.test'`)
+  await retireGuardians()
 })
 
 after(async () => {
-  await authDb.delete(users).where(sql`${users.email} like '%@guardian.test'`)
+  await retireGuardians()
   await authDb.delete(institutions).where(inArray(institutions.slug, SLUGS))
 })
 
@@ -199,4 +209,33 @@ test('the application role can ask whether an address is taken, and only from in
 
   const res = await db.execute(sql`select campusos_address_taken_elsewhere('adm@inviteother.test') as taken`)
   assert.equal((res.rows[0] as { taken: unknown }).taken, null, 'no tenant, no answer')
+})
+
+test('binding by invitation is on the audit trail, and a refused one leaves the account unbound (NEW-10)', async () => {
+  const { token, invitation } = await issue(inst, admin, 'dad@guardian.test')
+  const [u] = await authDb.insert(users).values({ email: 'dad@guardian.test' }).returning({ id: users.id })
+  await acceptInvitation(inst, token)
+
+  await authDb.execute(sql.raw(`
+    create function test_refuse_audit() returns trigger language plpgsql as $$
+    begin if new.action = 'user.bound' then raise exception 'audit refused for the test'; end if; return new; end $$;
+    create trigger test_refuse_audit before insert on audit_log for each row execute function test_refuse_audit();`))
+  try {
+    await assert.rejects(() => bindInvitedUser(u!.id, 'dad@guardian.test'))
+  } finally {
+    await authDb.execute(sql.raw('drop trigger test_refuse_audit on audit_log; drop function test_refuse_audit();'))
+  }
+  const [still] = await authDb.select().from(users).where(eq(users.id, u!.id))
+  assert.equal(still!.institutionId, null, 'no binding without its audit row')
+
+  assert.equal(await bindInvitedUser(u!.id, 'dad@guardian.test'), true)
+  const rows = await authDb.execute<{ actor_id: string; institution_id: string; entity_id: string; detail: Record<string, unknown> }>(sql`
+    select actor_id, institution_id::text as institution_id, entity_id, detail from audit_log
+     where action = 'user.bound' and entity_id = ${u!.id}`)
+  assert.equal(rows.rows.length, 1)
+  assert.deepEqual(rows.rows[0], {
+    actor_id: u!.id, institution_id: inst, entity_id: u!.id,
+    detail: { before: { role: 'pending' }, after: { role: 'parent' }, invitationIds: [invitation.id] },
+  })
+  assert.ok(!JSON.stringify(rows.rows).includes('dad@guardian.test'), 'the address is not in the detail')
 })

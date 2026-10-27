@@ -50,6 +50,27 @@
       "when": 1792998651563,
       "tag": "0006_tenant_gates",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793005927675,
+      "tag": "0007_audit_chain",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793006000038,
+      "tag": "0008_audit_chain_seal",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1793016385865,
+      "tag": "0009_audit_chain_hardening",
+      "breakpoints": true
     }
   ]
 }

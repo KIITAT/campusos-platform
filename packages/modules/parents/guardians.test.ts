@@ -103,12 +103,22 @@ beforeEach(async () => {
     })
   }
   await authDb.delete(invitations).where(inArray(invitations.institutionId, [inst, other]))
-  await authDb.delete(users).where(sql`${users.email} like '%@family.test'`)
+  await retireGuardians()
   await authDb.delete(institutionModules).where(eq(institutionModules.institutionId, inst))
 })
 
+/**
+ * Frees the test addresses. A guardian bound by invitation has an audit row
+ * since P0-02 (NEW-10), which keeps their user row (DATA-09), so they are
+ * renamed rather than deleted; deleting the institution takes them at the end.
+ */
+async function retireGuardians() {
+  await authDb.delete(users).where(sql`${users.email} like '%@family.test' and ${users.institutionId} is null`)
+  await authDb.update(users).set({ email: sql`${users.id} || '@retired.invalid'` }).where(sql`${users.email} like '%@family.test'`)
+}
+
 after(async () => {
-  await authDb.delete(users).where(sql`${users.email} like '%@family.test'`)
+  await retireGuardians()
   await authDb.delete(institutions).where(inArray(institutions.slug, [SLUG, OTHER]))
 })
 

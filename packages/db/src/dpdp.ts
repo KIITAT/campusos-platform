@@ -30,10 +30,22 @@ export async function recordConsent(
   version = CONSENT_VERSION,
 ): Promise<void> {
   await withTenant(institutionId, async (tx) => {
+    const [before] = await tx
+      .select({ version: users.consentVersion })
+      .from(users)
+      .where(eq(users.id, userId))
+      .for('no key update')
+    if (!before) return
     await tx
       .update(users)
       .set({ consentedAt: new Date(), consentVersion: version })
       .where(eq(users.id, userId))
+    // Consent is evidence the institution may have to produce (NEW-10).
+    await audit(tx, {
+      institutionId, actorId: userId, moduleId: 'core', action: 'dpdp.consented',
+      entity: 'users', entityId: userId, reason: 'the person agreed to the privacy notice',
+      detail: { before: { version: before.version }, after: { version } },
+    })
   })
 }
 

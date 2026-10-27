@@ -70,7 +70,8 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   invitations: { omit: ['token_hash'] },
   // Leases and payloads of internal work, not a record about the person.
   background_jobs: 'exclude',
-  audit_log: 'export',
+  // The salt is the chain's, not the person's (P0-02).
+  audit_log: { omit: ['salt'] },
   installed_plugins: { only: ['module_id', 'version', 'installed_at'] },
 
   // academic
