@@ -1,14 +1,10 @@
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm'
-import { audit, auditLog, users, withTenant } from '@campusos/db'
+import { audit, auditLog, users, withIdempotencyKey, withTenant } from '@campusos/db'
 import { viewsOnBehalf, type Role, type ViewerScope } from '@campusos/module-framework'
-import {
-  programs,
-  sectionMembers,
-  sections,
-  terms,
-} from '@campusos/module-academic/schema'
+import { programs, terms } from '@campusos/module-academic/schema'
 import {
   dropCredits,
+  feeIdempotencyKeys,
   feeInvoices,
   scholarshipAwards,
   feeItems,
@@ -31,14 +27,34 @@ import {
 } from './schemas'
 import { ledger, overpaidPaise, type LedgerLine } from './ledger'
 import { postInvoice, postPayment, postRefund, postWaiverChange } from './posting'
+import { duesRoster, enrolledPrograms, notEnrolled, termRoster } from './enrolment'
 
 const MODULE = 'fees'
+
+/**
+ * Methods whose reference names one transfer in the whole banking system -- a
+ * UTR, a UPI reference -- and so is receipted once (ACC-18). A cheque number
+ * does not: two banks' cheques can both be 000123.
+ */
+export const ONE_RECEIPT_PER_REFERENCE = ['bank_transfer', 'upi'] as const
+const onePerReference = (m: string) => (ONE_RECEIPT_PER_REFERENCE as readonly string[]).includes(m)
+
+/** The constraint a drizzle error carries, down its cause chain. */
+const constraintOf = (e: unknown): string | undefined => {
+  for (let x: unknown = e; x instanceof Error; x = (x as { cause?: unknown }).cause) {
+    const c = (x as { constraint?: string }).constraint
+    if (c) return c
+  }
+  return undefined
+}
 
 export interface Actor extends ViewerScope {
   id: string
   email?: string | null
   role: Role
   institutionId: string | null
+  /** The caller's idempotency key, from the host (ACC-18). */
+  idempotencyKey?: string | null
 }
 
 export class FeeError extends Error {
@@ -165,10 +181,23 @@ export async function grantWaiver(actor: Actor, input: unknown) {
         amountPaise: feeItems.amountPaise,
         label: feeItems.label,
         termId: feeItems.termId,
+        programId: feeItems.programId,
       })
       .from(feeItems)
       .where(eq(feeItems.id, data.feeItemId))
     if (!item) throw new FeeError(404, 'no_such_item', 'no such charge')
+
+    // Only a charge the student actually has (ACC-22): an item of a programme
+    // they are enrolled in for its term, by the rule that bills them. Anything
+    // else would post waiver expense against a debt that was never raised.
+    const enrolled = await enrolledPrograms(tx, data.studentId, item.termId)
+    if (!enrolled.some((p) => p.programId === item.programId)) {
+      throw new FeeError(
+        400,
+        'item_not_charged',
+        `the ${item.label} charge does not apply to this student in that term`,
+      )
+    }
 
     // A waiver larger than the charge would make the balance negative, which
     // is a refund owed rather than a fee forgiven -- a different thing that
@@ -323,20 +352,37 @@ async function nextReceiptNo(tx: Tx, tenant: string): Promise<string> {
   return `${row!.prefix}-${String(row!.next - 1).padStart(6, '0')}`
 }
 
+/**
+ * Money received at the counter, once per idempotency key (ACC-18).
+ *
+ * The key is claimed before anything else is written -- before the receipt
+ * number above all -- so a form submitted twice waits for the first
+ * submission and is answered with its receipt, and the series keeps no gap.
+ */
 export async function recordPayment(actor: Actor, input: unknown) {
   const tenant = requireFinance(actor)
   const data = recordPaymentSchema.parse(input)
-  return withTenant(tenant, (tx) =>
-    recordPaymentWithin(tx, tenant, actor, {
-      studentId: data.studentId,
-      termId: data.termId,
-      amountPaise: data.amount,
-      method: data.method,
-      reference: data.reference ?? null,
-      receivedAt: data.receivedAt ? new Date(data.receivedAt) : new Date(),
-      notes: data.notes ?? null,
-    }),
-  )
+  return withTenant(tenant, async (tx) => {
+    const { value, replayed } = await withIdempotencyKey(
+      tx,
+      feeIdempotencyKeys,
+      { institutionId: tenant, actorId: actor.id, operation: 'payment', key: actor.idempotencyKey, request: data },
+      () =>
+        recordPaymentWithin(tx, tenant, actor, {
+          studentId: data.studentId,
+          termId: data.termId,
+          amountPaise: data.amount,
+          method: data.method,
+          reference: data.reference ?? null,
+          receivedAt: data.receivedAt ? new Date(data.receivedAt) : new Date(),
+          notes: data.notes ?? null,
+        }),
+      async (id) => (await tx.select().from(feePayments).where(eq(feePayments.id, id)))[0],
+    )
+    return replayed
+      ? { ...value, replayed: true, notice: `Already recorded as receipt ${value.receiptNo}. Nothing was recorded twice.` }
+      : value
+  })
 }
 
 export interface PaymentInput {
@@ -365,23 +411,51 @@ export async function recordPaymentWithin(tx: Tx, tenant: string, actor: Actor, 
     throw new FeeError(400, 'not_a_student', 'fees are recorded against students')
   }
 
+  // A UTR already receipted -- typed twice, or typed once and now arriving as
+  // the student's verified claim -- is refused before it takes a receipt
+  // number. The unique index is what holds when two requests race past this.
+  const reference = data.reference?.trim() || null
+  if (reference && onePerReference(data.method)) {
+    const [prior] = await tx
+      .select({ receiptNo: feePayments.receiptNo })
+      .from(feePayments)
+      .where(
+        and(
+          inArray(feePayments.method, [...ONE_RECEIPT_PER_REFERENCE]),
+          sql`${feePayments.reference} is not null and btrim(${feePayments.reference}) <> ''`,
+          sql`upper(btrim(${feePayments.reference})) = upper(${reference})`,
+        ),
+      )
+    if (prior) {
+      throw new FeeError(409, 'duplicate_reference', `${reference} is already receipted as ${prior.receiptNo}`)
+    }
+  }
+
   const receiptNo = await nextReceiptNo(tx, tenant)
 
-  const [row] = await tx
-    .insert(feePayments)
-    .values({
-      institutionId: tenant,
-      studentId: data.studentId,
-      termId: data.termId,
-      amountPaise: data.amountPaise,
-      method: data.method,
-      reference: data.reference,
-      receivedAt: data.receivedAt,
-      recordedBy: actor.id,
-      receiptNo,
-      notes: data.notes,
-    })
-    .returning()
+  let row: typeof feePayments.$inferSelect | undefined
+  try {
+    ;[row] = await tx
+      .insert(feePayments)
+      .values({
+        institutionId: tenant,
+        studentId: data.studentId,
+        termId: data.termId,
+        amountPaise: data.amountPaise,
+        method: data.method,
+        reference,
+        receivedAt: data.receivedAt,
+        recordedBy: actor.id,
+        receiptNo,
+        notes: data.notes,
+      })
+      .returning()
+  } catch (e) {
+    if (constraintOf(e) === 'fee_payments_reference') {
+      throw new FeeError(409, 'duplicate_reference', `${reference} has just been receipted by another request`)
+    }
+    throw e
+  }
 
   // Recording is not itself a discretionary act, but it moves money, so it
   // is on the trail without needing a typed reason.
@@ -398,7 +472,7 @@ export async function recordPaymentWithin(tx: Tx, tenant: string, actor: Actor, 
       studentId: data.studentId,
       amountPaise: data.amountPaise,
       method: data.method,
-      reference: data.reference,
+      reference,
     },
   })
 
@@ -438,16 +512,9 @@ export async function issueInvoices(actor: Actor, input: unknown) {
       .where(eq(terms.id, data.termId))
     if (!term) throw new FeeError(404, 'no_such_term', 'no such term')
 
-    const roster = await tx
-      .selectDistinct({
-        studentId: users.id,
-        studentName: users.name,
-        studentEmail: users.email,
-      })
-      .from(sectionMembers)
-      .innerJoin(users, eq(users.id, sectionMembers.userId))
-      .where(data.studentId ? eq(sectionMembers.userId, data.studentId) : undefined)
-      .orderBy(asc(users.email))
+    // Enrolled in the term, by programme declaration (ACC-19): not every
+    // section member, who may have left, or be there for an elective.
+    const roster = await termRoster(tx, data.termId, data.studentId)
 
     const issued = []
     let unchanged = 0
@@ -541,7 +608,17 @@ export async function issueInvoices(actor: Actor, input: unknown) {
       })
     }
 
-    return { termCode: term.code, issued, unchanged }
+    // Sitting in a section, never declared: not billed, and named, so a
+    // forgotten declaration is fixed rather than quietly going unbilled.
+    const missing = await notEnrolled(tx, data.termId, data.studentId)
+    const named = missing.slice(0, 10).map((m) => `${m.studentName ?? m.studentEmail} (${m.programCode})`)
+    const notice =
+      `Invoiced ${issued.length} for ${term.code}; ${unchanged} unchanged.` +
+      (missing.length > 0
+        ? ` Not invoiced, because they are in a section but not enrolled in its programme: ${named.join(', ')}${missing.length > named.length ? ` and ${missing.length - named.length} more` : ''}.`
+        : '')
+
+    return { termCode: term.code, issued, unchanged, notEnrolled: missing, notice }
   })
 }
 
@@ -572,73 +649,89 @@ export async function listInvoices(actor: Actor, termId: string) {
  * erased it would answer a different question from the one the student's
  * receipt asks. The database refuses a refund larger than its payment too, so
  * that the check surviving is not a matter of remembering to call it.
+ *
+ * Once per idempotency key, as a payment is (NEW-15): a refund form submitted
+ * twice pays out once.
  */
 export async function refundPayment(actor: Actor, input: unknown) {
   const tenant = requireAdmin(actor)
   const data = refundPaymentSchema.parse(input)
 
   return withTenant(tenant, async (tx) => {
-    const [payment] = await tx
-      .select()
-      .from(feePayments)
-      .where(eq(feePayments.id, data.paymentId))
-    if (!payment) throw new FeeError(404, 'no_such_payment', 'no such payment')
-
-    const [sums] = await tx
-      .select({ back: sql<number>`coalesce(sum(${feeRefunds.amountPaise}), 0)::bigint` })
-      .from(feeRefunds)
-      .where(eq(feeRefunds.paymentId, payment.id))
-    const already = Number(sums?.back ?? 0)
-
-    if (already + data.amount > payment.amountPaise) {
-      throw new FeeError(
-        400,
-        'refund_exceeds_payment',
-        `receipt ${payment.receiptNo} has ${payment.amountPaise - already} paise left to refund`,
-      )
-    }
-
-    const [row] = await tx
-      .insert(feeRefunds)
-      .values({
-        institutionId: tenant,
-        paymentId: payment.id,
-        amountPaise: data.amount,
-        method: data.method ?? payment.method,
-        reference: data.reference ?? null,
-        reason: data.reason,
-        refundedBy: actor.id,
-      })
-      .returning()
-
-    await audit(tx, {
-      institutionId: tenant,
-      actorId: actor.id,
-      actorEmail: actor.email ?? null,
-      moduleId: MODULE,
-      action: 'fee.refunded',
-      entity: 'fee_refunds',
-      entityId: row!.id,
-      reason: data.reason,
-      detail: {
-        studentId: payment.studentId,
-        receiptNo: payment.receiptNo,
-        amountPaise: data.amount,
-        ofPaise: payment.amountPaise,
-        method: row!.method,
-      },
-    })
-
-    await postRefund(tx, tenant, actor.id, {
-      id: row!.id,
-      receiptNo: payment.receiptNo,
-      amountPaise: row!.amountPaise,
-      method: row!.method,
-      refundedAt: row!.refundedAt,
-    })
-
-    return row!
+    const { value, replayed } = await withIdempotencyKey(
+      tx,
+      feeIdempotencyKeys,
+      { institutionId: tenant, actorId: actor.id, operation: 'refund', key: actor.idempotencyKey, request: data },
+      () => refundWithin(tx, tenant, actor, data),
+      async (id) => (await tx.select().from(feeRefunds).where(eq(feeRefunds.id, id)))[0],
+    )
+    return replayed ? { ...value, replayed: true, notice: 'Already refunded. Nothing was refunded twice.' } : value
   })
+}
+
+type RefundInput = ReturnType<typeof refundPaymentSchema.parse>
+
+async function refundWithin(tx: Tx, tenant: string, actor: Actor, data: RefundInput) {
+  const [payment] = await tx
+    .select()
+    .from(feePayments)
+    .where(eq(feePayments.id, data.paymentId))
+  if (!payment) throw new FeeError(404, 'no_such_payment', 'no such payment')
+
+  const [sums] = await tx
+    .select({ back: sql<number>`coalesce(sum(${feeRefunds.amountPaise}), 0)::bigint` })
+    .from(feeRefunds)
+    .where(eq(feeRefunds.paymentId, payment.id))
+  const already = Number(sums?.back ?? 0)
+
+  if (already + data.amount > payment.amountPaise) {
+    throw new FeeError(
+      400,
+      'refund_exceeds_payment',
+      `receipt ${payment.receiptNo} has ${payment.amountPaise - already} paise left to refund`,
+    )
+  }
+
+  const [row] = await tx
+    .insert(feeRefunds)
+    .values({
+      institutionId: tenant,
+      paymentId: payment.id,
+      amountPaise: data.amount,
+      method: data.method ?? payment.method,
+      reference: data.reference ?? null,
+      reason: data.reason,
+      refundedBy: actor.id,
+    })
+    .returning()
+
+  await audit(tx, {
+    institutionId: tenant,
+    actorId: actor.id,
+    actorEmail: actor.email ?? null,
+    moduleId: MODULE,
+    action: 'fee.refunded',
+    entity: 'fee_refunds',
+    entityId: row!.id,
+    reason: data.reason,
+    detail: {
+      studentId: payment.studentId,
+      receiptNo: payment.receiptNo,
+      amountPaise: data.amount,
+      ofPaise: payment.amountPaise,
+      method: row!.method,
+    },
+  })
+
+  await postRefund(tx, tenant, actor.id, {
+    id: row!.id,
+    receiptNo: payment.receiptNo,
+    amountPaise: row!.amountPaise,
+    method: row!.method,
+    refundedAt: row!.refundedAt,
+  })
+
+  return row!
 }
 
 /**
@@ -674,6 +767,10 @@ export async function reconcilePayment(actor: Actor, input: unknown) {
         amountPaise: row.amountPaise,
         method: row.method,
         reference: row.reference,
+        // LOW-05: the clerk who took the money confirming it themselves is
+        // findable in the trail; P0-07 decides whether to refuse it.
+        recordedBy: row.recordedBy,
+        selfReconciled: row.recordedBy === actor.id,
       },
     })
 
@@ -703,15 +800,11 @@ export async function paymentTrail(actor: Actor, paymentId: string) {
 // --- reads ----------------------------------------------------------------
 
 /**
- * Charges applying to one student in one term: the fee items for whichever
- * programmes their cohorts belong to.
+ * Charges applying to one student in one term: the fee items of the
+ * programmes they are enrolled in for it (ACC-19), and their own charges.
  */
 async function chargesFor(tx: Tx, studentId: string, termId: string) {
-  const progs = await tx
-    .selectDistinct({ programId: sections.programId })
-    .from(sectionMembers)
-    .innerJoin(sections, eq(sections.id, sectionMembers.sectionId))
-    .where(eq(sectionMembers.userId, studentId))
+  const progs = await enrolledPrograms(tx, studentId, termId)
 
   // Charges on this student alone -- a backlog paper -- whatever programme
   // they read, billed beside the programme's own lines.
@@ -880,7 +973,10 @@ export async function studentLedger(
 
 /**
  * Defaulters for a term. Every enrolled student, not only those who have paid
- * something, because the ones who have paid nothing are the point of the report.
+ * something, because the ones who have paid nothing are the point of the report
+ * -- plus anyone the term has invoiced or taken money from, so a student who
+ * left owing stays on it. One row per student (NEW-16), whatever number of
+ * programmes they read.
  */
 export async function duesReport(actor: Actor, termId: string): Promise<DuesReport> {
   const tenant = requireFinance(actor)
@@ -892,18 +988,7 @@ export async function duesReport(actor: Actor, termId: string): Promise<DuesRepo
       .where(eq(terms.id, termId))
     if (!term) throw new FeeError(404, 'no_such_term', 'no such term')
 
-    const roster = await tx
-      .selectDistinct({
-        studentId: users.id,
-        studentName: users.name,
-        studentEmail: users.email,
-        programCode: programs.code,
-      })
-      .from(sectionMembers)
-      .innerJoin(users, eq(users.id, sectionMembers.userId))
-      .innerJoin(sections, eq(sections.id, sectionMembers.sectionId))
-      .innerJoin(programs, eq(programs.id, sections.programId))
-      .orderBy(asc(programs.code), asc(users.email))
+    const roster = await duesRoster(tx, termId)
 
     const rows = []
     for (const s of roster) {
@@ -927,11 +1012,12 @@ export async function duesReport(actor: Actor, termId: string): Promise<DuesRepo
       )
       if (l.payablePaise === 0 && l.paidPaise === 0) continue
 
+      const codes = (await enrolledPrograms(tx, s.studentId, termId)).map((p) => p.code)
       rows.push({
         studentId: s.studentId,
         studentName: s.studentName,
         studentEmail: s.studentEmail,
-        programCode: s.programCode,
+        programCode: codes.length > 0 ? codes.join(', ') : '—',
         creditedPaise: l.creditedPaise,
         payablePaise: l.payablePaise,
         paidPaise: l.paidPaise,

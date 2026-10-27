@@ -16,7 +16,7 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core'
-import { institutions, tenantPolicy, users } from '@campusos/db'
+import { idempotencyKeysTable, institutions, tenantPolicy, users } from '@campusos/db'
 import { programs, terms } from '@campusos/module-academic/schema'
 
 /**
@@ -173,6 +173,11 @@ export const feePayments = pgTable(
   },
   (t) => [
     uniqueIndex('fee_payments_receipt').on(t.institutionId, t.receiptNo),
+    // One receipt per UTR or UPI reference (ACC-18, fees 0007). Cheque numbers
+    // repeat across banks, so cheques are not in it.
+    uniqueIndex('fee_payments_reference')
+      .on(t.institutionId, sql`upper(btrim(${t.reference}))`)
+      .where(sql`method IN ('bank_transfer', 'upi') AND reference IS NOT NULL AND btrim(reference) <> ''`),
     index('fee_payments_student').on(t.studentId),
     index('fee_payments_term').on(t.termId),
     check('fee_payments_amount', sql`amount_paise > 0`),
@@ -662,3 +667,14 @@ export const letterSettings = pgTable(
   },
   () => [tenantPolicy('fee_letter_settings')],
 )
+
+// --- one act per idempotency key ---------------------------------------------
+
+/**
+ * Claims on the idempotency keys of payments, refunds and charges (ACC-18,
+ * NEW-15). A row is written first in the operation's transaction and commits
+ * with what it guards, so a second submission of the same form waits for the
+ * first and gets its receipt back rather than a second one. See
+ * `withIdempotencyKey` in @campusos/db.
+ */
+export const feeIdempotencyKeys = idempotencyKeysTable('fee_idempotency_keys')

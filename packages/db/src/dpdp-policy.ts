@@ -126,6 +126,9 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   // fees
   fee_demand_letters: 'export',
   fee_drop_credits: 'export',
+  // Replay guards on payments, refunds and charges (P0-06): ids and a hash,
+  // nothing the person said or did that the receipt does not already record.
+  fee_idempotency_keys: 'exclude',
   fee_invoices: 'export',
   fee_payments: 'export',
   fee_refunds: 'export',

@@ -67,6 +67,7 @@ async function campus() {
   const section = await academic.createSection(a, { programId: program.id, label: 'a', admissionYear: 2026 })
   await academic.addSectionMember(a, { sectionId: section.id, userId: asha.id })
   await academic.addSectionMember(a, { sectionId: section.id, userId: bilal.id })
+  for (const s of [asha, bilal]) await academic.declareProgram(a, { studentId: s.id, programId: program.id, declaredOn: '2025-07-01' })
   await academic.setStudentProfile(a, { studentId: asha.id, rollNo: '2505101', registrationNo: '25168010101' })
   await createFeeItem(admin, { programId: program.id, termId: term.id, label: 'Tuition', amount: '2,50,000' })
   await createFeeItem(admin, { programId: program.id, termId: term.id, label: 'Hostel', amount: '47,345' })

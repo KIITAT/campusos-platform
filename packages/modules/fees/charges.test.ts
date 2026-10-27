@@ -51,6 +51,7 @@ async function campus() {
   const term = await academic.createTerm(admin, { code: 't1', name: 'Sem 1', startsOn: '2026-01-05', endsOn: '2026-05-30' })
   const section = await academic.createSection(admin, { programId: program.id, label: 'a', admissionYear: 2026 })
   await academic.addSectionMember(admin, { sectionId: section.id, userId: people[2]!.id })
+  await academic.declareProgram(admin, { studentId: people[2]!.id, programId: program.id, declaredOn: '2025-07-01' })
   await createFeeItem(admin, { programId: program.id, termId: term.id, label: 'Tuition', amount: '45000' })
   return { id, admin, clerk, faculty, studentId: people[2]!.id, facultyId: people[3]!.id, termId: term.id }
 }

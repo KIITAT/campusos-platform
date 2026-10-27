@@ -141,6 +141,10 @@ before(async () => {
   await academic.addSectionMember(st, { sectionId: secA.id, userId: ids.s1 })
   await academic.addSectionMember(st, { sectionId: secA.id, userId: ids.s2 })
   await academic.addSectionMember(st, { sectionId: secB.id, userId: ids.s3 })
+  // Fees follow programme declarations (ACC-19): s1 and s2 read btech, s3 mtech.
+  for (const [s, p] of [[ids.s1, p1.id], [ids.s2, p1.id], [ids.s3, p2.id]] as const) {
+    await academic.declareProgram(st, { studentId: s, programId: p, declaredOn: '2025-07-01' })
+  }
 })
 
 beforeEach(async () => {
@@ -524,6 +528,7 @@ async function freshStudent(tag: string) {
     .values({ email: `${tag}@fees.test`, institutionId: inst, role: 'student', name: tag })
     .returning({ id: users.id })
   await academic.addSectionMember(admin(), { sectionId: ids.secA, userId: u!.id })
+  await academic.declareProgram(admin(), { studentId: u!.id, programId: ids.prog, declaredOn: '2025-07-01' })
   return u!.id
 }
 
