@@ -78,6 +78,13 @@
       "when": 1793041127996,
       "tag": "0010_student_relations",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1793103070117,
+      "tag": "0011_rate_limits",
+      "breakpoints": true
     }
   ]
 }
