@@ -13,14 +13,14 @@ import { join, resolve } from 'node:path'
  * key kept in dist/local-signing, which a host trusts only when told to
  * (CAMPUSOS_REGISTRY_KEYS_FILE).
  *
- *   node scripts/registry-sign.mjs generate <dir>
+ *   node scripts/registry-sign.mjs generate <dir> [--force]
  *   node scripts/registry-sign.mjs sign <registry.json> [--require-key]
  *   node scripts/registry-sign.mjs verify <registry.json> [<public key>]
  */
 
 const ROOT = resolve(import.meta.dirname, '..')
 const LOCAL = process.env.CAMPUSOS_REGISTRY_LOCAL_KEY_DIR || join(ROOT, 'dist', 'local-signing')
-const USAGE = 'usage: registry-sign.mjs generate <dir> | sign <registry.json> [--require-key] | verify <registry.json> [<public key>]'
+const USAGE = 'usage: registry-sign.mjs generate <dir> [--force] | sign <registry.json> [--require-key] | verify <registry.json> [<public key>]'
 
 const fail = (message) => {
   console.error(message)
@@ -30,7 +30,10 @@ const fail = (message) => {
 const spki = (key) => (key.type === 'public' ? key : createPublicKey(key)).export({ format: 'der', type: 'spki' }).toString('base64')
 const keyId = (publicKey) => createHash('sha256').update(Buffer.from(publicKey, 'base64')).digest('hex').slice(0, 16)
 
-function generate(dir) {
+function generate(dir, force = false) {
+  if (!force && existsSync(join(dir, 'private.pem'))) {
+    fail(`${join(dir, 'private.pem')} already exists; generate would destroy that key. Pass --force to replace it.`)
+  }
   mkdirSync(dir, { recursive: true })
   const { privateKey, publicKey } = generateKeyPairSync('ed25519')
   writeFileSync(join(dir, 'private.pem'), privateKey.export({ format: 'pem', type: 'pkcs8' }), { mode: 0o600 })
@@ -50,7 +53,7 @@ const [command, file, ...rest] = process.argv.slice(2)
 if (!file) fail(USAGE)
 
 if (command === 'generate') {
-  const publicKey = generate(file)
+  const publicKey = generate(file, rest.includes('--force'))
   console.log(`public key: ${publicKey}`)
   console.log(`key id: ${keyId(publicKey)}`)
   console.log(`private key: ${join(file, 'private.pem')} -- keep it off this machine's repositories; it is the CAMPUSOS_REGISTRY_SIGNING_KEY secret`)
