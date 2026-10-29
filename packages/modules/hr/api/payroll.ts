@@ -30,6 +30,8 @@ export interface Payslip {
   unpaidLeaveDays: number
   lossOfPayPaise: number
   workingDays: number
+  /** Deductions the gross could not cover: owed back by the person (ACC-14). */
+  arrearsPaise: number
 }
 
 /** Days in the calendar month containing `period`. */
@@ -37,14 +39,34 @@ export function daysInMonth(period: Date): number {
   return new Date(period.getUTCFullYear(), period.getUTCMonth() + 1, 0).getDate()
 }
 
+/** How a part month is paid: by the calendar month's own days, by 30, or by 26 with Sundays off. */
+export type ProrationBasis = 'calendar' | 'days_30' | 'days_26'
+
+/** What a month's pay is divided by to make a day's pay. */
+export function basisDivisor(basis: ProrationBasis, period: string): number {
+  if (basis === 'days_30') return 30
+  if (basis === 'days_26') return 26
+  return daysInMonth(new Date(`${period.slice(0, 7)}-01T00:00:00Z`))
+}
+
+/**
+ * Days from `from` to `to`, both inclusive, that count under a basis: every
+ * day, except Sundays on the 26-day basis. Zero when `to` is before `from`.
+ */
+export function countedDays(from: string, to: string, basis: ProrationBasis): number {
+  const end = Date.parse(`${to}T00:00:00Z`)
+  let n = 0
+  for (let t = Date.parse(`${from}T00:00:00Z`); t <= end; t += 86_400_000) {
+    if (basis !== 'days_26' || new Date(t).getUTCDay() !== 0) n++
+  }
+  return n
+}
+
 /**
  * Whether a dated component was in force during a month. A component that
- * starts mid-month counts for that month: proration by day is a policy choice
- * institutions differ on, and inventing one here would be wrong for most.
+ * starts mid-month counts for that month.
  *
- * `ponytail:` whole-month application. If an institution needs day-level
- * proration for mid-month joiners, it belongs here as an explicit setting
- * rather than as a silent default.
+ * `ponytail:` whole-month application of a component that starts or stops mid-month. Joining and leaving are paid by the day (generatePayroll, ACC-15); a mid-month change to a component is not.
  */
 export function inForce(
   c: { effectiveFrom: string; effectiveTo: string | null },
@@ -75,6 +97,23 @@ export function lossOfPay(
 }
 
 /**
+ * Pay not earned in a month: unpaid leave, and days before joining or after
+ * leaving (ACC-15). Employed the whole month: a day's pay per unpaid day, as
+ * lossOfPay always has. Employed part of it: they earn the gross times the
+ * days employed and not on unpaid leave, over the divisor, never more than
+ * the gross. On the calendar basis the two agree to within a few paise.
+ */
+export function unearnedPay(
+  grossPaise: number,
+  o: { monthDays: number; employedDays: number; unpaidDays: number; divisor: number },
+): number {
+  if (grossPaise <= 0) return 0
+  if (o.employedDays >= o.monthDays) return lossOfPay(grossPaise, o.unpaidDays, o.divisor)
+  const paidDays = Math.max(0, o.employedDays - o.unpaidDays)
+  return grossPaise - Math.min(grossPaise, Math.round((grossPaise * paidDays) / o.divisor))
+}
+
+/**
  * Build a payslip from the components in force and the unpaid leave taken.
  *
  * The result carries its own line snapshot, because a payslip has to read the
@@ -83,7 +122,12 @@ export function lossOfPay(
 export function payslipFor(
   components: Component[],
   opts: {
+    /** Days in the month, counted under the basis. */
     workingDays: number
+    /** Days employed this month, counted like workingDays; the whole month when absent. */
+    employedDays?: number
+    /** What a month's pay is divided by for a day; workingDays when absent. */
+    divisor?: number
     unpaidLeaveDays?: number
     /**
      * One-off earnings for this month -- leave encashment, an expense
@@ -98,7 +142,12 @@ export function payslipFor(
   const deductions = components.filter((c) => c.kind === 'deduction')
 
   const fullGross = earnings.reduce((n, c) => n + c.amountPaise, 0)
-  const lop = lossOfPay(fullGross, unpaidLeaveDays, opts.workingDays)
+  const lop = unearnedPay(fullGross, {
+    monthDays: opts.workingDays,
+    employedDays: opts.employedDays ?? opts.workingDays,
+    unpaidDays: unpaidLeaveDays,
+    divisor: opts.divisor ?? opts.workingDays,
+  })
 
   // Loss of pay is spread across the earnings in proportion, so the payslip
   // lines still add up to the gross rather than carrying a mystery adjustment.
@@ -119,27 +168,32 @@ export function payslipFor(
 
   const extras = (opts.extras ?? []).filter((c) => c.kind === 'earning' && c.amountPaise > 0)
 
-  const lines: PayslipLine[] = [
+  const earningLines = [
     ...earnings.map((c) => ({ ...c, appliedPaise: applied.get(c.code) ?? c.amountPaise })),
     ...extras.map((c) => ({ ...c, appliedPaise: c.amountPaise })),
-    ...deductions.map((c) => ({ ...c, appliedPaise: c.amountPaise })),
   ]
+  const grossPaise = earningLines.reduce((n, l) => n + l.appliedPaise, 0)
 
-  const grossPaise = lines
-    .filter((l) => l.kind === 'earning')
-    .reduce((n, l) => n + l.appliedPaise, 0)
-  const deductionsPaise = deductions.reduce((n, c) => n + c.amountPaise, 0)
+  // Deductions are taken in the order given until the gross is used up. What
+  // is left over is not deducted: it is arrears the person owes (ACC-14).
+  let room = grossPaise
+  const deductionLines = deductions.map((c) => {
+    const taken = Math.min(c.amountPaise, room)
+    room -= taken
+    return { ...c, appliedPaise: taken }
+  })
+  const deductionsPaise = deductionLines.reduce((n, l) => n + l.appliedPaise, 0)
+  const lines: PayslipLine[] = [...earningLines, ...deductionLines]
 
   return {
     lines,
     grossPaise,
     deductionsPaise,
-    // Never negative: deductions larger than the pay is a data error the
-    // institution must see as zero-and-flagged, not as a negative salary.
-    netPaise: Math.max(0, grossPaise - deductionsPaise),
+    netPaise: grossPaise - deductionsPaise,
     unpaidLeaveDays,
     lossOfPayPaise: lop,
     workingDays: opts.workingDays,
+    arrearsPaise: deductions.reduce((n, c) => n + c.amountPaise, 0) - deductionsPaise,
   }
 }
 
