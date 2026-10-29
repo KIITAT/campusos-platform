@@ -459,11 +459,22 @@ test('somebody who left before the month is not paid for it', async () => {
   assert.equal((await generatePayroll(admin(), { period: '2026-03' })).generated, 0)
 })
 
-test('somebody who joins mid-month is paid for that month', async () => {
+test('somebody who joins mid-month is paid from the day they join (ACC-15)', async () => {
   const s = await hire({ joinedOn: '2026-03-20' })
   await paid(s.id, '2026-03-20')
   assert.equal((await generatePayroll(admin(), { period: '2026-02' })).generated, 0)
-  assert.equal((await generatePayroll(admin(), { period: '2026-03' })).generated, 1)
+  const slip = (await generatePayroll(admin(), { period: '2026-03' })).payslips[0]!
+  assert.equal(slip.grossPaise, Math.round((5_600_000 * 12) / 31))
+  assert.equal(slip.lossOfPayPaise, 5_600_000 - slip.grossPaise)
+  assert.equal(slip.deductionsPaise, 480_000)
+})
+
+test('somebody who leaves mid-month is paid to their last day (ACC-15)', async () => {
+  const s = await hire()
+  await paid(s.id)
+  await endEmployment(admin(), { staffId: s.id, leftOn: '2026-03-10', reason: 'resigned in March' })
+  const slip = (await generatePayroll(admin(), { period: '2026-03' })).payslips[0]!
+  assert.equal(slip.grossPaise, Math.round((5_600_000 * 10) / 31))
 })
 
 test('the payslip keeps its own snapshot when the pay later changes', async () => {
