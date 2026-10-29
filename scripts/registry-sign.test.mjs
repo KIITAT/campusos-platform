@@ -69,3 +69,17 @@ test('the release key signs, and verify derives its public half (OPS-02)', () =>
   run(dir, ['sign', file]) // local key
   assert.notEqual(JSON.parse(readFileSync(`${file}.sig`, 'utf8')).keyId, releaseId)
 })
+
+test('generate refuses to overwrite an existing private key unless --force (OPS-02)', () => {
+  const { dir } = setup()
+  const release = join(dir, 'release')
+  run(dir, ['generate', release])
+  const before = readFileSync(join(release, 'private.pem'), 'utf8')
+  assert.throws(
+    () => run(dir, ['generate', release]),
+    (e) => /already exists/.test(String(e.stderr)),
+  )
+  assert.equal(readFileSync(join(release, 'private.pem'), 'utf8'), before)
+  run(dir, ['generate', release, '--force'])
+  assert.notEqual(readFileSync(join(release, 'private.pem'), 'utf8'), before)
+})
