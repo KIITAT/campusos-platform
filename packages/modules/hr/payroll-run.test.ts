@@ -5,7 +5,7 @@ import { and, eq, like, sql } from 'drizzle-orm'
 import { auditLog, authDb, db, institutions, users, withTenant } from '@campusos/db'
 import {
   HrError, assignStructure, createLeaveType, createStaff, createStructure, decideEncashment,
-  generatePayroll, getPayrollSettings, listArrears, listRuns, requestEncashment, setComponent,
+  generatePayroll, getPayrollSettings, listArrears, listRuns, paySalaries, requestEncashment, setComponent,
   setPayrollSettings, type Actor,
 } from './api'
 import { payrollArrears, payrollSettings } from './schema'
@@ -206,4 +206,74 @@ test('arrears and the basis belong to one institution (RLS)', async () => {
   assert.deepEqual(await seen(w.id), [0, 0])
   assert.equal((await db.select().from(payrollArrears)).length, 0)
   assert.equal((await db.select().from(payrollSettings)).length, 0)
+})
+
+async function waiting(pattern: string): Promise<number> {
+  const r = await authDb.execute<{ n: number }>(
+    sql`select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and query ilike ${pattern}`,
+  )
+  return r.rows[0]!.n
+}
+
+async function until(check: () => Promise<boolean>) {
+  const deadline = Date.now() + 10_000
+  while (!(await check())) {
+    if (Date.now() > deadline) throw new Error('timed out waiting')
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+}
+
+const settle = <T>(p: Promise<T>) =>
+  p.then(() => ({ ok: true as const, error: null }), (error: unknown) => ({ ok: false as const, error }))
+
+test('a payment cannot commit beside a payslip still being written for the month (ACC-25)', async () => {
+  const c = await college()
+  const a = await hire(c, { employeeCode: 'A-1' })
+  const b = await hire(c, { employeeCode: 'B-1', name: 'Second Lecturer' })
+  await salaried(c, a.id)
+  await salaried(c, b.id)
+  const el = await createLeaveType(c.admin, {
+    code: 'el', name: 'Earned leave', annualDays: 15, encashable: true, encashmentComponents: ['basic'],
+  })
+  const req = await requestEncashment(c.admin, {
+    staffId: b.id, leaveTypeId: el.id, year: 2026, days: 1, period: '2026-10', reason: 'one day sold back',
+  })
+  await decideEncashment(c.admin, { requestId: req.id, approve: true })
+  await generatePayroll(c.admin, { period: '2026-10', staffId: a.id })
+
+  // Hold B's encashment, so B's run stops after writing B's payslip and
+  // before committing it.
+  let release!: () => void
+  const held = new Promise<void>((resolve) => (release = resolve))
+  let holding!: () => void
+  const locked = new Promise<void>((resolve) => (holding = resolve))
+  const holder = authDb.transaction(async (tx) => {
+    await tx.execute(sql`select 1 from hr_leave_encashments where id = ${req.id} for update`)
+    holding()
+    await held
+  })
+  await locked
+
+  const run = settle(generatePayroll(c.admin, { period: '2026-10', staffId: b.id }))
+  await until(async () => (await waiting('%update "hr_leave_encashments"%')) >= 1)
+  let settled = false
+  const payment = settle(paySalaries(c.admin, { period: '2026-10', paidOn: '2026-11-02' }))
+  void payment.then(() => (settled = true))
+  // Without the lock the payment commits now, without B. With it, it waits
+  // for the month that B's run holds.
+  try {
+    await until(async () => settled || (await waiting('%pg_advisory_xact_lock(1213354066%')) >= 1)
+  } finally {
+    release()
+    await holder
+  }
+  const [r1, r2] = await Promise.all([run, payment])
+  assert.equal(r1.ok, true, String(r1.error))
+  assert.equal(r2.ok, true, String(r2.error))
+  const r = await authDb.execute<{ paid: string; owed: string; slips: number }>(sql`
+    select (select amount_paise from hr_salary_payments where institution_id = ${c.id} and period = '2026-10-01')::text as paid,
+           (select sum(net_paise) from hr_payslips where institution_id = ${c.id} and period = '2026-10-01' and not withheld)::text as owed,
+           (select count(*)::int from hr_payslips where institution_id = ${c.id} and period = '2026-10-01') as slips`)
+  assert.equal(r.rows[0]!.slips, 2)
+  assert.equal(r.rows[0]!.paid, r.rows[0]!.owed, 'the payment covers every payslip of the month')
 })
