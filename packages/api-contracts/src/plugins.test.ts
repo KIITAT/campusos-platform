@@ -131,9 +131,10 @@ test('the whole product still answers the same number of endpoints', () => {
   // stock, buying and selling, fixed assets, funds and the statements -- and
   // went from 13 to 183; the timetable solver arrived with 41. CSV import then
   // gave eleven modules the same three: what it imports, a template, and run.
+  // P0-08 added two to hr: the payroll basis, read and set.
   // A regression guard on the conversion, not a target.
   const total = PLUGINS.reduce((n, p) => n + p.routes.length, 0)
-  assert.equal(total, 714, `expected 714 endpoints across all modules, found ${total}`)
+  assert.equal(total, 716, `expected 716 endpoints across all modules, found ${total}`)
 })
 
 test('a longer path is never swallowed by a shorter one', () => {
