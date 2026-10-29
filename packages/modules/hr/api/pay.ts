@@ -5,7 +5,9 @@ import {
   gratuityPayouts,
   gratuityRules,
   payComponents,
+  payrollArrears,
   payrollRuns,
+  payrollSettings,
   payslips,
   salaryAssignments,
   salaryStructureLines,
@@ -37,6 +39,7 @@ import {
   structureAmounts,
   taxYearOf,
   type Component,
+  type ProrationBasis,
   type StructureLine,
 } from './payroll'
 import {
@@ -47,6 +50,7 @@ import {
   electRegimeSchema,
   liftWithholdingSchema,
   payGratuitySchema,
+  payrollSettingsSchema,
   releasePayslipSchema,
   withholdSalarySchema,
 } from './schemas'
@@ -567,6 +571,69 @@ export async function listWithheld(actor: Actor) {
       .innerJoin(staff, eq(staff.id, payslips.staffId))
       .where(eq(payslips.withheld, true))
       .orderBy(desc(payslips.period)),
+  )
+}
+
+// --- part months -------------------------------------------------------------
+
+/** The institution's basis for part months; calendar until one is set. */
+export async function payrollBasis(tx: Tx): Promise<ProrationBasis> {
+  const [row] = await tx.select({ basis: payrollSettings.prorationBasis }).from(payrollSettings)
+  return (row?.basis as ProrationBasis | undefined) ?? 'calendar'
+}
+
+export async function getPayrollSettings(actor: Actor) {
+  const tenant = requireHr(actor)
+  return withTenant(tenant, async (tx) => ({ prorationBasis: await payrollBasis(tx) }))
+}
+
+/** Audited: it changes what every joiner, leaver and day of unpaid leave is paid. */
+export async function setPayrollSettings(actor: Actor, input: unknown) {
+  const tenant = requireAdmin(actor)
+  const d = payrollSettingsSchema.parse(input)
+  return withTenant(tenant, async (tx) => {
+    const from = await payrollBasis(tx)
+    await audit(tx, {
+      institutionId: tenant,
+      actorId: actor.id,
+      actorEmail: actor.email ?? null,
+      moduleId: MODULE,
+      action: 'hr.payroll_basis_set',
+      entity: 'hr_payroll_settings',
+      entityId: tenant,
+      reason: `part months paid on the ${d.prorationBasis} basis`,
+      detail: { from, to: d.prorationBasis },
+    })
+    await tx
+      .insert(payrollSettings)
+      .values({ institutionId: tenant, prorationBasis: d.prorationBasis })
+      .onConflictDoUpdate({
+        target: payrollSettings.institutionId,
+        set: { prorationBasis: d.prorationBasis, updatedAt: new Date() },
+      })
+    return { prorationBasis: d.prorationBasis }
+  })
+}
+
+/** Arrears recoverable, newest month first; for one month when given. */
+export async function listArrears(actor: Actor, period?: string) {
+  const tenant = requireHr(actor)
+  return withTenant(tenant, (tx) =>
+    tx
+      .select({
+        id: payrollArrears.id,
+        staffId: payrollArrears.staffId,
+        staffName: staff.name,
+        employeeCode: staff.employeeCode,
+        period: payrollArrears.period,
+        payslipId: payrollArrears.payslipId,
+        arrearsPaise: payrollArrears.amountPaise,
+      })
+      .from(payrollArrears)
+      .innerJoin(staff, eq(staff.id, payrollArrears.staffId))
+      .where(period ? eq(payrollArrears.period, `${period.slice(0, 7)}-01`) : undefined)
+      .orderBy(desc(payrollArrears.period), asc(staff.employeeCode))
+      .limit(500),
   )
 }
 

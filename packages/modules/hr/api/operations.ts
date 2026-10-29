@@ -10,19 +10,21 @@ import {
   tenantOf,
   today,
   type Actor,
+  type Tx,
 } from './guards'
 import {
   leaveRequests,
   leaveTypes,
   payComponents,
+  payrollArrears,
   payrollRuns,
   payslips,
   salaryPayments,
   staff,
 } from '../schema'
 import {
-  daysInMonth,
-  daysInPeriod,
+  basisDivisor,
+  countedDays,
   payslipFor,
   type Component,
 } from './payroll'
@@ -47,7 +49,7 @@ import { balancesFor } from './balances'
 import { assertBalance, encashmentsDue } from './leave'
 import { shiftAllowances } from './shifts'
 import { advanceDeductions, recordPayrollRecoveries } from './expenses'
-import { isWithheld, payableComponents, taxDeduction } from './pay'
+import { isWithheld, payableComponents, payrollBasis, taxDeduction } from './pay'
 import { leaveEncashments } from '../schema'
 
 // --- staff -----------------------------------------------------------------
@@ -412,11 +414,30 @@ export async function componentsFor(actor: Actor, staffId: string) {
 }
 
 /**
+ * One payroll month at a time per institution (ACC-25). generatePayroll and
+ * paySalaries take it first, so a payslip cannot commit after the payment
+ * that should have covered it. Key class 0x48525052 ("HRPR"), apart from
+ * the audit seal's ("AUDT").
+ */
+export async function lockPayrollPeriod(tx: Tx, institutionId: string, period: string) {
+  await tx.execute(sql`select pg_advisory_xact_lock(1213354066, hashtext(${`${institutionId}:${period}`}::text))`)
+}
+
+/** The innermost message along an error's causes, for a run's report. */
+function reasonOf(e: unknown): string {
+  let message = 'unknown error'
+  for (let x: unknown = e; x instanceof Error; x = (x as { cause?: unknown }).cause) message = x.message
+  return message.slice(0, 300)
+}
+
+/**
  * Generate payslips for a month.
  *
  * Idempotent by omission rather than by overwrite: anybody already paid for the
  * period is skipped and counted, because a payslip is a document of record and
  * regenerating it silently is exactly what the guard in 0013 exists to prevent.
+ *
+ * Each person is written in a savepoint: one whose payslip cannot be made is rolled back alone and reported in `failed` (ACC-14). Part months are paid by the day under the institution's basis (ACC-15).
  */
 export async function generatePayroll(actor: Actor, input: unknown): Promise<PayrollRun> {
   const tenant = requireHr(actor)
@@ -473,8 +494,12 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
       })
       .returning({ id: payrollRuns.id })
 
-    const workingDays = daysInMonth(new Date(`${period}T00:00:00Z`))
+    const basis = await payrollBasis(tx)
+    const divisor = basisDivisor(basis, period)
+    const monthDays = countedDays(period, monthEnd, basis)
     const made: PayslipRow[] = []
+    const failed: PayrollRun['failed'] = []
+    const arrears: PayrollRun['arrears'] = []
     let skipped = 0
 
     for (const person of people) {
@@ -483,108 +508,136 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
         continue
       }
 
-      // ponytail: a query pair per person. Fine for a college's staff list; if
-      // this ever runs for thousands, fold into two grouped queries.
-      // What they are paid: their structure at their base, with per-person
-      // components taking precedence, and tax on the taxable part if they have
-      // chosen a regime for the year.
-      const payable = await payableComponents(tx, person.id, period)
-      const tax = await taxDeduction(tx, person.id, period, payable.taxablePaise)
+      // A savepoint per person: a payslip that cannot be written is rolled back and reported alone, not the month (ACC-14).
+      try {
+        const done = await tx.transaction(async (sp) => {
+          // ponytail: a query pair per person. Fine for a college's staff list; if
+          // this ever runs for thousands, fold into two grouped queries.
+          // What they are paid: their structure at their base, with per-person
+          // components taking precedence, and tax on the taxable part if they have
+          // chosen a regime for the year.
+          const payable = await payableComponents(sp, person.id, period)
+          const tax = await taxDeduction(sp, person.id, period, payable.taxablePaise)
 
-      const unpaid = await tx
-        .select({ fromOn: leaveRequests.fromOn, toOn: leaveRequests.toOn })
-        .from(leaveRequests)
-        .innerJoin(leaveTypes, eq(leaveTypes.id, leaveRequests.leaveTypeId))
-        .where(
-          and(
-            eq(leaveRequests.staffId, person.id),
-            eq(leaveRequests.status, 'approved'),
-            eq(leaveTypes.paid, false),
-          ),
-        )
+          const unpaid = await sp
+            .select({ fromOn: leaveRequests.fromOn, toOn: leaveRequests.toOn })
+            .from(leaveRequests)
+            .innerJoin(leaveTypes, eq(leaveTypes.id, leaveRequests.leaveTypeId))
+            .where(
+              and(
+                eq(leaveRequests.staffId, person.id),
+                eq(leaveRequests.status, 'approved'),
+                eq(leaveTypes.paid, false),
+              ),
+            )
 
-      const unpaidLeaveDays = unpaid.reduce((n, l) => n + daysInPeriod(l, period), 0)
+          // Paid for the days employed this month (ACC-15).
+          const from = person.joinedOn > period ? person.joinedOn : period
+          const to = person.leftOn !== null && person.leftOn < monthEnd ? person.leftOn : monthEnd
+          const employedDays = countedDays(from, to, basis)
+          const unpaidLeaveDays = unpaid.reduce(
+            (n, l) => n + countedDays(l.fromOn > from ? l.fromOn : from, l.toOn < to ? l.toOn : to, basis),
+            0,
+          )
+          const days = { workingDays: monthDays, employedDays, divisor, unpaidLeaveDays }
 
-      const inForceComponents: Component[] = tax ? [...payable.components, tax] : payable.components
+          const inForceComponents: Component[] = tax ? [...payable.components, tax] : payable.components
 
-      const encashments = await encashmentsDue(tx, person.id, period)
-      const extras: Component[] = encashments.map((e) => ({
-        code: `leave_encashment:${e.id.slice(0, 8)}`,
-        label: `Leave encashment, ${e.days} days`,
-        kind: 'earning',
-        amountPaise: e.amountPaise,
-      }))
-      // Shift allowances ride alongside, for the days actually worked on a shift.
-      extras.push(...(await shiftAllowances(tx, person, period)))
+          const encashments = await encashmentsDue(sp, person.id, period)
+          const extras: Component[] = encashments.map((e) => ({
+            code: `leave_encashment:${e.id.slice(0, 8)}`,
+            label: `Leave encashment, ${e.days} days`,
+            kind: 'earning',
+            amountPaise: e.amountPaise,
+          }))
+          // Shift allowances ride alongside, for the days actually worked on a shift.
+          extras.push(...(await shiftAllowances(sp, person, period)))
 
-      // Advances come back out of what is left after everything else: the room
-      // is worked out first so a recovery never pushes the payslip below zero.
-      const before = payslipFor(inForceComponents, { workingDays, unpaidLeaveDays, extras })
-      const recoveries = await advanceDeductions(
-        tx,
-        person.id,
-        before.grossPaise - before.deductionsPaise,
-      )
-      const slip = recoveries.length
-        ? payslipFor([...inForceComponents, ...recoveries], { workingDays, unpaidLeaveDays, extras })
-        : before
+          // Advances come back out of what is left after everything else: the room
+          // is worked out first so a recovery never pushes the payslip below zero.
+          const before = payslipFor(inForceComponents, { ...days, extras })
+          const recoveries = await advanceDeductions(
+            sp,
+            person.id,
+            before.grossPaise - before.deductionsPaise,
+          )
+          const slip = recoveries.length
+            ? payslipFor([...inForceComponents, ...recoveries], { ...days, extras })
+            : before
 
-      const [row] = await tx
-        .insert(payslips)
-        .values({
-          institutionId: tenant,
-          staffId: person.id,
-          period,
-          grossPaise: slip.grossPaise,
-          deductionsPaise: slip.deductionsPaise,
-          netPaise: slip.netPaise,
-          unpaidLeaveDays: slip.unpaidLeaveDays,
-          lossOfPayPaise: slip.lossOfPayPaise,
-          lines: slip.lines,
-          runId: run!.id,
-          withheld: await isWithheld(tx, person.id, period),
-          generatedBy: actor.id,
+          const [row] = await sp
+            .insert(payslips)
+            .values({
+              institutionId: tenant,
+              staffId: person.id,
+              period,
+              grossPaise: slip.grossPaise,
+              deductionsPaise: slip.deductionsPaise,
+              netPaise: slip.netPaise,
+              unpaidLeaveDays: slip.unpaidLeaveDays,
+              lossOfPayPaise: slip.lossOfPayPaise,
+              lines: slip.lines,
+              runId: run!.id,
+              withheld: await isWithheld(sp, person.id, period),
+              generatedBy: actor.id,
+            })
+            .returning()
+
+          if (slip.arrearsPaise > 0) {
+            await sp.insert(payrollArrears).values({
+              institutionId: tenant, staffId: person.id, payslipId: row!.id, period, amountPaise: slip.arrearsPaise,
+            })
+          }
+
+          await recordPayrollRecoveries(sp, tenant, row!.id, period, recoveries)
+
+          if (encashments.length > 0) {
+            await sp
+              .update(leaveEncashments)
+              .set({ payslipId: row!.id })
+              .where(inArray(leaveEncashments.id, encashments.map((e) => e.id)))
+          }
+
+          // Same transaction: a payslip the books never heard about is a salary
+          // that does not appear in the month it was earned.
+          await postPayslip(sp, tenant, actor.id, {
+            id: row!.id,
+            period,
+            staffName: person.name,
+            employeeCode: person.employeeCode,
+            department: person.department,
+            grossPaise: slip.grossPaise,
+            deductionsPaise: slip.deductionsPaise,
+            netPaise: slip.netPaise,
+            advanceRecoveryPaise: recoveries.reduce((n, r) => n + r.amountPaise, 0),
+          })
+
+          return {
+            row: {
+              id: row!.id,
+              staffId: person.id,
+              staffName: person.name,
+              employeeCode: person.employeeCode,
+              designation: person.designation,
+              period,
+              grossPaise: slip.grossPaise,
+              deductionsPaise: slip.deductionsPaise,
+              netPaise: slip.netPaise,
+              unpaidLeaveDays: slip.unpaidLeaveDays,
+              lossOfPayPaise: slip.lossOfPayPaise,
+              lines: slip.lines,
+              generatedAt: row!.generatedAt.toISOString(),
+            },
+            arrearsPaise: slip.arrearsPaise,
+          }
         })
-        .returning()
-
-      await recordPayrollRecoveries(tx, tenant, row!.id, period, recoveries)
-
-      if (encashments.length > 0) {
-        await tx
-          .update(leaveEncashments)
-          .set({ payslipId: row!.id })
-          .where(inArray(leaveEncashments.id, encashments.map((e) => e.id)))
+        made.push(done.row)
+        if (done.arrearsPaise > 0) {
+          arrears.push({ staffId: person.id, employeeCode: person.employeeCode, staffName: person.name, arrearsPaise: done.arrearsPaise })
+        }
+      } catch (e) {
+        failed.push({ staffId: person.id, employeeCode: person.employeeCode, staffName: person.name, message: reasonOf(e) })
       }
-
-      // Same transaction: a payslip the books never heard about is a salary
-      // that does not appear in the month it was earned.
-      await postPayslip(tx, tenant, actor.id, {
-        id: row!.id,
-        period,
-        staffName: person.name,
-        employeeCode: person.employeeCode,
-        department: person.department,
-        grossPaise: slip.grossPaise,
-        deductionsPaise: slip.deductionsPaise,
-        netPaise: slip.netPaise,
-        advanceRecoveryPaise: recoveries.reduce((n, r) => n + r.amountPaise, 0),
-      })
-
-      made.push({
-        id: row!.id,
-        staffId: person.id,
-        staffName: person.name,
-        employeeCode: person.employeeCode,
-        designation: person.designation,
-        period,
-        grossPaise: slip.grossPaise,
-        deductionsPaise: slip.deductionsPaise,
-        netPaise: slip.netPaise,
-        unpaidLeaveDays: slip.unpaidLeaveDays,
-        lossOfPayPaise: slip.lossOfPayPaise,
-        lines: slip.lines,
-        generatedAt: row!.generatedAt.toISOString(),
-      })
     }
 
     await tx
@@ -594,6 +647,7 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
         skipped,
         grossPaise: made.reduce((n, p) => n + p.grossPaise, 0),
         netPaise: made.reduce((n, p) => n + p.netPaise, 0),
+        failures: failed.map(({ staffId, employeeCode, message }) => ({ staffId, employeeCode, message })),
       })
       .where(eq(payrollRuns.id, run!.id))
 
@@ -603,6 +657,8 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
       skipped,
       totalNetPaise: made.reduce((n, p) => n + p.netPaise, 0),
       payslips: made,
+      failed,
+      arrears,
     }
   })
 }

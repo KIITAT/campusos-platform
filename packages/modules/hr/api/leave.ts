@@ -8,7 +8,6 @@ import {
   leavePolicyAssignments,
   leavePolicyLines,
   leaveTypes,
-  payComponents,
   payslips,
   salaryPayments,
   staff,
@@ -25,7 +24,8 @@ import {
   type Actor,
   type Tx,
 } from './guards'
-import { daysInMonth, inForce } from './payroll'
+import { basisDivisor } from './payroll'
+import { payableComponents, payrollBasis } from './pay'
 import {
   allocateYearSchema,
   assignPolicySchema,
@@ -557,19 +557,11 @@ export async function decideEncashment(actor: Actor, input: unknown) {
     await assertBalance(tx, row.staffId, row.leaveTypeId, String(row.year), row.days)
 
     const [type] = await tx.select().from(leaveTypes).where(eq(leaveTypes.id, row.leaveTypeId))
-    const components = await tx
-      .select()
-      .from(payComponents)
-      .where(eq(payComponents.staffId, row.staffId))
-    const basis = components
-      .filter(
-        (c) =>
-          c.kind === 'earning' &&
-          type!.encashmentComponents.includes(c.code) &&
-          inForce(c, row.period),
-      )
+    const { components } = await payableComponents(tx, row.staffId, row.period)
+    const wage = components
+      .filter((c) => c.kind === 'earning' && type!.encashmentComponents.includes(c.code))
       .reduce((n, c) => n + c.amountPaise, 0)
-    if (basis === 0) {
+    if (wage === 0) {
       throw new HrError(
         409,
         'no_basis',
@@ -577,7 +569,7 @@ export async function decideEncashment(actor: Actor, input: unknown) {
       )
     }
 
-    const perDay = Math.round(basis / daysInMonth(new Date(`${row.period}T00:00:00Z`)))
+    const perDay = Math.round(wage / basisDivisor(await payrollBasis(tx), row.period))
     const [updated] = await tx
       .update(leaveEncashments)
       .set({

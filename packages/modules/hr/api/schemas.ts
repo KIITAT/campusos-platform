@@ -213,8 +213,17 @@ export const payrollRunSchema = z
     skipped: z.number().int(),
     totalNetPaise: z.number().int(),
     payslips: z.array(payslipRowSchema),
+    /** People the run could not pay, rolled back alone, and why (ACC-14). */
+    failed: z.array(z.object({ staffId: uuid, employeeCode: z.string(), staffName: z.string(), message: z.string() })),
+    /** Deductions past the gross, owed back (ACC-14). */
+    arrears: z.array(z.object({ staffId: uuid, employeeCode: z.string(), staffName: z.string(), arrearsPaise: z.number().int() })),
   })
   .meta({ id: 'HrPayrollRun' })
+
+/** How a part month is paid (ACC-15): see basisDivisor and countedDays. */
+export const payrollSettingsSchema = z
+  .object({ prorationBasis: z.enum(['calendar', 'days_30', 'days_26']) })
+  .meta({ id: 'HrPayrollSettings' })
 
 export const myEmploymentSchema = z
   .object({
