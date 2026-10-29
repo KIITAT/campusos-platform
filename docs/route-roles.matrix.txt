@@ -581,6 +581,8 @@ POST /api/v1/modules/hr/pay/withhold                                     SI.....
 POST /api/v1/modules/hr/pay/withhold/lift                                SI........ op
 POST /api/v1/modules/hr/pay/withheld/release                             SI........ op
 GET /api/v1/modules/hr/payroll/runs                                      SI..A..... op
+GET /api/v1/modules/hr/payroll/settings                                  SI..A..... op
+POST /api/v1/modules/hr/payroll/settings                                 SI........ op
 GET /api/v1/modules/hr/imports                                           SI........ gate
 GET /api/v1/modules/hr/imports/template                                  SI........ gate
 POST /api/v1/modules/hr/imports/run                                      SI........ gate

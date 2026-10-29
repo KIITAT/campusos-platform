@@ -5,6 +5,7 @@ import {
   createStructure,
   createTaxRegime,
   electRegime,
+  getPayrollSettings,
   gratuityQuote,
   liftWithholding,
   listGratuityRules,
@@ -14,6 +15,7 @@ import {
   listWithheld,
   payGratuity,
   releasePayslip,
+  setPayrollSettings,
   withholdSalary,
   type Actor,
 } from './api'
@@ -24,7 +26,7 @@ const post = (path: string, fn: (a: Actor, body: unknown) => Promise<unknown>): 
   handler: async (a, req) => fn(a as Actor, await jsonBody(req)),
 })
 
-/** What feeds a payslip: structures, tax, gratuity, withholding, runs. */
+/** What feeds a payslip: structures, tax, gratuity, withholding, runs, the part-month basis. */
 export const payRoutes: PluginRoute[] = [
   { method: 'GET', path: '/pay/structures', handler: (a) => listStructures(a as Actor) },
   post('/pay/structures', createStructure),
@@ -46,4 +48,6 @@ export const payRoutes: PluginRoute[] = [
   post('/pay/withhold/lift', liftWithholding),
   post('/pay/withheld/release', releasePayslip),
   { method: 'GET', path: '/payroll/runs', handler: (a) => listRuns(a as Actor) },
+  { method: 'GET', path: '/payroll/settings', handler: (a) => getPayrollSettings(a as Actor) },
+  post('/payroll/settings', setPayrollSettings),
 ]

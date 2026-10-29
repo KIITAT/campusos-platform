@@ -8,6 +8,7 @@ import {
   electRegimeSchema,
   liftWithholdingSchema,
   payGratuitySchema,
+  payrollSettingsSchema,
   releasePayslipSchema,
   withholdSalarySchema,
 } from './schemas'
@@ -94,4 +95,13 @@ export const payPaths = {
     'Audited, and posted as the salary liability being discharged.',
   ),
   [`${base}/payroll/runs`]: get('Every payroll run: when, by whom, for how much'),
+  [`${base}/payroll/settings`]: {
+    ...get('How a part month is paid'),
+    ...post(
+      'Set how a part month is paid',
+      payrollSettingsSchema,
+      'calendar: a day is the month over its own days; days_30: over 30; days_26: over 26, Sundays not ' +
+        'counted. Applies to joiners, leavers, unpaid leave and leave encashment from the next run. Audited.',
+    ),
+  },
 }
