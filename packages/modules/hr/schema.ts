@@ -253,6 +253,7 @@ export const payslips = pgTable(
     index('hr_payslips_period').on(t.institutionId, t.period),
     check('hr_payslips_amounts', sql`gross_paise >= 0 and deductions_paise >= 0`),
     check('hr_payslips_net', sql`net_paise = gross_paise - deductions_paise`),
+    check('hr_payslips_net_not_negative', sql`net_paise >= 0`),
     check('hr_payslips_period_start', sql`extract(day from period) = 1`),
     tenantPolicy('hr_payslips'),
   ],
@@ -1744,6 +1745,8 @@ export const payrollRuns = pgTable(
     skipped: smallint().notNull(),
     grossPaise: paise('gross_paise').notNull(),
     netPaise: paise('net_paise').notNull(),
+    /** Who this run could not pay, and why: {staffId, employeeCode, message}[] (ACC-14). */
+    failures: jsonb().notNull().default(sql`'[]'::jsonb`),
     runBy: text('run_by').references(() => users.id, { onDelete: 'set null' }),
     createdAt: createdAt(),
   },
@@ -1751,6 +1754,46 @@ export const payrollRuns = pgTable(
     index('hr_payroll_runs_period').on(t.institutionId, t.period),
     check('hr_payroll_runs_period_start', sql`extract(day from period) = 1`),
     tenantPolicy('hr_payroll_runs'),
+  ],
+)
+
+/**
+ * Deductions a payslip could not take because the gross ran out (ACC-14):
+ * owed back by the person. One row per payslip that had any; it goes with
+ * its payslip, and like it keeps the staff record from being deleted.
+ * Recorded, not yet recovered automatically.
+ */
+export const payrollArrears = pgTable(
+  'hr_payroll_arrears',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    staffId: uuid('staff_id').notNull().references(() => staff.id, { onDelete: 'no action' }),
+    payslipId: uuid('payslip_id').notNull().references(() => payslips.id, { onDelete: 'cascade' }),
+    period: date().notNull(),
+    amountPaise: paise('amount_paise').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hr_payroll_arrears_once').on(t.payslipId),
+    index('hr_payroll_arrears_staff').on(t.institutionId, t.staffId),
+    check('hr_payroll_arrears_amount', sql`amount_paise > 0`),
+    check('hr_payroll_arrears_period_start', sql`extract(day from period) = 1`),
+    tenantPolicy('hr_payroll_arrears'),
+  ],
+)
+
+/** How a part month is paid (ACC-15). One row per institution; none means calendar. */
+export const payrollSettings = pgTable(
+  'hr_payroll_settings',
+  {
+    institutionId: tenantId().primaryKey(),
+    prorationBasis: text('proration_basis').notNull().default('calendar'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  () => [
+    check('hr_payroll_settings_basis', sql`proration_basis in ('calendar', 'days_30', 'days_26')`),
+    tenantPolicy('hr_payroll_settings'),
   ],
 )
 
