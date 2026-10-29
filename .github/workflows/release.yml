@@ -16,6 +16,10 @@ on:
       version:
         description: Version to publish, without the leading v
         required: true
+      first_signed_release:
+        description: Merge an unsigned published index once (the first signed release only)
+        required: false
+        default: 'false'
 
 permissions:
   contents: write
@@ -54,10 +58,27 @@ jobs:
         run: |
           mkdir -p dist
           gh release download --repo "$GITHUB_REPOSITORY" --pattern registry.json --output dist/previous-registry.json || true
+          gh release download --repo "$GITHUB_REPOSITORY" --pattern registry.json.sig --output dist/previous-registry.json.sig || true
           if [ -f dist/previous-registry.json ]; then
             echo "merging $(jq '[.packages[].versions | length] | add' dist/previous-registry.json) existing versions"
           else
             echo "no published index yet; this will be the first"
+          fi
+
+      # The previous index is re-signed by this release, so it is verified
+      # first: merging an index nobody checked would sign whatever was put there.
+      - name: verify the published index
+        env:
+          CAMPUSOS_REGISTRY_SIGNING_KEY: ${{ secrets.CAMPUSOS_REGISTRY_SIGNING_KEY }}
+        run: |
+          if [ ! -f dist/previous-registry.json ]; then exit 0; fi
+          if [ -f dist/previous-registry.json.sig ]; then
+            node scripts/registry-sign.mjs verify dist/previous-registry.json
+          elif [ "${{ inputs.first_signed_release }}" = "true" ]; then
+            echo "merging the unsigned published index once, as asked"
+          else
+            echo "::error::the published registry.json is unsigned; run this workflow by hand with first_signed_release=true once"
+            exit 1
           fi
 
       - name: pack
@@ -80,6 +101,13 @@ jobs:
       # Node is not publishable, whatever the tests said about the workspace.
       - run: node scripts/verify-archives.mjs
 
+      - name: sign the index
+        env:
+          CAMPUSOS_REGISTRY_SIGNING_KEY: ${{ secrets.CAMPUSOS_REGISTRY_SIGNING_KEY }}
+        run: |
+          node scripts/registry-sign.mjs sign dist/registry/registry.json --require-key
+          node scripts/registry-sign.mjs verify dist/registry/registry.json
+
       - name: publish
         uses: softprops/action-gh-release@v2
         with:
@@ -91,7 +119,9 @@ jobs:
             A host installs these from its admin portal; nothing here is an npm
             package and nothing needs a package manager at the institution.
             `registry.json` is the index, and each entry carries the sha256 the
-            host verifies before it will install.
+            host verifies before it will install. `registry.json.sig` is its
+            Ed25519 signature; a host refuses an index without one from a key it
+            trusts.
           # dist/registry is the release laid out as it is served: every
           # archive and the index in one flat directory, which is also exactly
           # what an institution copies to mirror the repository.
