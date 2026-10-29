@@ -10,6 +10,7 @@ import { param, type PluginPage } from '@campusos/module-framework'
 import {
   componentsFor,
   leaveBalances,
+  listArrears,
   listClaims,
   listOpenings,
   listRuns,
@@ -387,13 +388,25 @@ const corePages: PluginPage[] = [
     async load(actor, req) {
       const a = actor as Actor
       const period = param(req, 'period') ?? thisMonth()
-      const [payslips, staff, paid] = await Promise.all([
+      const [payslips, staff, paid, arrears, runs] = await Promise.all([
         listPayslips(a, period),
         listStaff(a),
         listSalaryPayments(a),
+        listArrears(a, period),
+        listRuns(a),
       ])
       const thisOne = paid.find((x) => x.period === `${period.slice(0, 7)}-01`)
+      const month = `${period.slice(0, 7)}-01`
+      const slipped = new Set(payslips.map((p) => p.staffId))
+      const notGenerated = new Map<string, { employeeCode: string; message: string }>()
+      for (const r of runs.filter((x) => x.period === month)) {
+        for (const f of r.failures as { staffId: string; employeeCode: string; message: string }[]) {
+          if (!slipped.has(f.staffId) && !notGenerated.has(f.staffId)) notGenerated.set(f.staffId, f)
+        }
+      }
       return {
+        arrears,
+        notGenerated: [...notGenerated.values()],
         period,
         paidOn: thisOne?.paidOn ?? '',
         paidFrom: thisOne?.paidFrom ?? '',
@@ -444,11 +457,33 @@ const corePages: PluginPage[] = [
         ],
       },
       {
+        kind: 'table',
+        title: 'Not generated',
+        rows: 'notGenerated',
+        empty: 'Everybody in this month’s runs has a payslip.',
+        columns: [
+          { key: 'employeeCode', label: 'Code', kind: 'code' },
+          { key: 'message', label: 'Why' },
+        ],
+      },
+      {
+        kind: 'table',
+        title: 'Arrears recoverable',
+        rows: 'arrears',
+        empty: 'Nobody’s deductions ran past their pay this month.',
+        columns: [
+          { key: 'employeeCode', label: 'Code', kind: 'code' },
+          { key: 'staffName', label: 'Who' },
+          { key: 'arrearsPaise', label: 'Owed back', kind: 'money' },
+        ],
+      },
+      {
         kind: 'form',
         title: 'Run payroll',
         note:
           'Anybody already paid for the month is skipped, not re-paid. Leave the ' +
-          'person blank to run for everybody employed that month.',
+          'person blank to run for everybody employed that month.' +
+          ' Anybody whose payslip cannot be made is listed above and left out; fix the record and run again before paying.',
         submit: 'Generate',
         path: '/payroll',
         fields: [

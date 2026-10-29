@@ -1,6 +1,7 @@
 import { formatPaise } from '@campusos/money'
 import { type PluginPage } from '@campusos/module-framework'
 import {
+  getPayrollSettings,
   listGratuityRules,
   listRuns,
   listStaff,
@@ -23,15 +24,17 @@ export const payPages: PluginPage[] = [
     roles: [...OFFICE],
     async load(actor) {
       const a = actor as Actor
-      const [structures, regimes, rules, withheld, runs, staff] = await Promise.all([
+      const [structures, regimes, rules, withheld, runs, staff, settings] = await Promise.all([
         listStructures(a),
         listTaxRegimes(a),
         listGratuityRules(a),
         listWithheld(a),
         listRuns(a),
         listStaff(a),
+        getPayrollSettings(a),
       ])
       return {
+        basis: settings.prorationBasis,
         structures: structures.map((s) => ({
           ...s,
           makeup: s.lines
@@ -56,7 +59,11 @@ export const payPages: PluginPage[] = [
           formula: `${g.daysPerYear}/${g.divisorDays} of ${g.wageCodes.join('+')} per year, from ${g.minServiceYears} years`,
         })),
         withheld: withheld.map((w) => ({ ...w, month: w.period.slice(0, 7), held: !w.releasedAt })),
-        runs: runs.map((r) => ({ ...r, month: r.period.slice(0, 7) })),
+        runs: runs.map((r) => ({
+          ...r,
+          month: r.period.slice(0, 7),
+          notGenerated: (r.failures as unknown[]).length,
+        })),
         staffOptions: staff.map((s) => ({ value: s.id, label: `${s.employeeCode} - ${s.name}` })),
         structureOptions: structures.map((s) => ({ value: s.id, label: `${s.code} - ${s.name}` })),
         heldOptions: withheld
@@ -64,7 +71,7 @@ export const payPages: PluginPage[] = [
           .map((w) => ({ value: w.id, label: `${w.employeeCode} - ${w.period.slice(0, 7)} (${formatPaise(w.netPaise)})` })),
       }
     },
-    sections: () => [
+    sections: (data) => [
       {
         kind: 'note',
         text:
@@ -72,6 +79,30 @@ export const payPages: PluginPage[] = [
           'taking the place of the line of the same code. Tax is deducted only for somebody who ' +
           'has chosen a regime; nothing statutory is seeded, so slabs and gratuity figures are ' +
           'entered here from the current rules.',
+      },
+      {
+        kind: 'form',
+        title: 'How a part month is paid',
+        note:
+          `Now: ${String(data.basis)}. Joiners, leavers and unpaid leave are paid by the day: calendar ` +
+          'divides the month by its own days, days_30 by 30, days_26 by 26 with Sundays not ' +
+          'counted. Leave sold back uses the same day. Audited.',
+        submit: 'Save',
+        path: '/payroll/settings',
+        roles: [...ADMIN],
+        fields: [
+          {
+            name: 'prorationBasis',
+            label: 'Basis',
+            kind: 'select',
+            value: String(data.basis),
+            options: [
+              { value: 'calendar', label: 'calendar month' },
+              { value: 'days_30', label: '30 days' },
+              { value: 'days_26', label: '26 days, Sundays off' },
+            ],
+          },
+        ],
       },
       {
         kind: 'table',
@@ -182,6 +213,7 @@ export const payPages: PluginPage[] = [
           { key: 'month', label: 'Month' },
           { key: 'generated', label: 'Payslips' },
           { key: 'skipped', label: 'Already done' },
+          { key: 'notGenerated', label: 'Not generated' },
           { key: 'grossPaise', label: 'Gross', kind: 'money' },
           { key: 'netPaise', label: 'Net', kind: 'money' },
         ],
