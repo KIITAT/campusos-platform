@@ -450,6 +450,8 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
     .slice(0, 10)
 
   return withTenant(tenant, async (tx): Promise<PayrollRun> => {
+    // One run or payment per month at a time (ACC-25).
+    await lockPayrollPeriod(tx, tenant, period)
     const people = await tx
       .select()
       .from(staff)
@@ -669,13 +671,15 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
  * The amount comes from the payslips rather than from the caller, so the entry
  * that clears salaries payable is exactly the entry that created it. Once a
  * month is paid it is closed -- a payslip generated afterwards would accrue a
- * salary that this payment was never going to cover.
+ * salary that this payment was never going to cover. It takes the month's lock
+ * first, so it waits for a run still writing payslips (ACC-25).
  */
 export async function paySalaries(actor: Actor, input: unknown) {
   const tenant = requireAdmin(actor)
   const d = paySalariesSchema.parse(input)
 
   return withTenant(tenant, async (tx) => {
+    await lockPayrollPeriod(tx, tenant, d.period)
     const [owed] = await tx
       .select({ total: sql<number>`coalesce(sum(${payslips.netPaise}), 0)::bigint` })
       .from(payslips)
