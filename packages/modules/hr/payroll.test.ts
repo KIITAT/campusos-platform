@@ -1,12 +1,15 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  basisDivisor,
+  countedDays,
   daysInMonth,
   daysInPeriod,
   inForce,
   leaveRemaining,
   lossOfPay,
   payslipFor,
+  unearnedPay,
   type Component,
 } from './api/payroll'
 
@@ -125,12 +128,18 @@ test('deductions are not scaled down by absence', () => {
   assert.equal(p.deductionsPaise, 480_000)
 })
 
-test('net is never negative, however large the deductions', () => {
-  const p = payslipFor([earn('basic', 100_000), deduct('recovery', 500_000)], {
+test('deductions stop at the gross, in order, and the rest is arrears (ACC-14)', () => {
+  const p = payslipFor([earn('basic', 100_000), deduct('pf', 60_000), deduct('recovery', 500_000)], {
     workingDays: 30,
   })
+  assert.equal(p.grossPaise, 100_000)
+  assert.equal(p.deductionsPaise, 100_000)
   assert.equal(p.netPaise, 0)
-  assert.equal(p.deductionsPaise, 500_000)
+  assert.equal(p.arrearsPaise, 460_000)
+  assert.equal(p.lines.find((l) => l.code === 'pf')!.appliedPaise, 60_000)
+  const recovery = p.lines.find((l) => l.code === 'recovery')!
+  assert.equal(recovery.appliedPaise, 40_000)
+  assert.equal(recovery.amountPaise, 500_000)
 })
 
 test('a staff member with no components gets a zero payslip, not a crash', () => {
@@ -149,6 +158,53 @@ test('the snapshot keeps both the contracted and the applied figure', () => {
   const basic = p.lines.find((l) => l.code === 'basic')!
   assert.equal(basic.amountPaise, 4_000_000, 'what they are on')
   assert.ok(basic.appliedPaise < basic.amountPaise, 'what they were paid')
+})
+
+// --- part months (ACC-15) ------------------------------------------------
+
+test('what a day is under each basis (ACC-15)', () => {
+  assert.equal(basisDivisor('calendar', '2026-03-01'), 31)
+  assert.equal(basisDivisor('calendar', '2026-02-01'), 28)
+  assert.equal(basisDivisor('days_30', '2026-03-01'), 30)
+  assert.equal(basisDivisor('days_26', '2026-03-01'), 26)
+  assert.equal(countedDays('2026-03-01', '2026-03-31', 'calendar'), 31)
+  assert.equal(countedDays('2026-03-01', '2026-03-31', 'days_26'), 26)
+  assert.equal(countedDays('2026-03-20', '2026-03-31', 'calendar'), 12)
+  assert.equal(countedDays('2026-03-20', '2026-03-31', 'days_26'), 10)
+  assert.equal(countedDays('2026-03-05', '2026-03-04', 'calendar'), 0)
+})
+
+test('a joiner is paid for the days employed (ACC-15)', () => {
+  const p = payslipFor(salary, { workingDays: 31, employedDays: 12, divisor: 31 })
+  assert.equal(p.grossPaise, 2_167_742)
+  assert.equal(p.lossOfPayPaise, 3_432_258)
+  assert.equal(p.deductionsPaise, 480_000)
+  assert.equal(p.netPaise, 1_687_742)
+  assert.equal(p.arrearsPaise, 0)
+  const earned = p.lines.filter((l) => l.kind === 'earning').reduce((n, l) => n + l.appliedPaise, 0)
+  assert.equal(earned, p.grossPaise)
+})
+
+test('the 30- and 26-day bases pay a part month by its days (ACC-15)', () => {
+  assert.equal(payslipFor(salary, { workingDays: 31, employedDays: 12, divisor: 30 }).grossPaise, 2_240_000)
+  assert.equal(payslipFor(salary, { workingDays: 26, employedDays: 10, divisor: 26 }).grossPaise, 2_153_846)
+})
+
+test('unpaid leave inside a part month is not paid twice over (ACC-15)', () => {
+  const o = { workingDays: 31, employedDays: 12, divisor: 31, unpaidLeaveDays: 2 }
+  assert.equal(payslipFor(salary, o).grossPaise, 1_806_452)
+  assert.equal(
+    unearnedPay(5_600_000, { monthDays: 31, employedDays: 12, unpaidDays: 2, divisor: 31 }),
+    3_793_548,
+  )
+})
+
+test('a whole month is unchanged by the basis apart from the day it divides by (ACC-15)', () => {
+  assert.equal(
+    payslipFor(salary, { workingDays: 31, divisor: 30, unpaidLeaveDays: 1 }).grossPaise,
+    5_600_000 - Math.round(5_600_000 / 30),
+  )
+  assert.equal(payslipFor(salary, { workingDays: 30 }).grossPaise, 5_600_000)
 })
 
 // --- leave entitlement -----------------------------------------------------
