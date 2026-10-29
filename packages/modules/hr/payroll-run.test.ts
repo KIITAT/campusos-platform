@@ -277,3 +277,33 @@ test('a payment cannot commit beside a payslip still being written for the month
   assert.equal(r.rows[0]!.slips, 2)
   assert.equal(r.rows[0]!.paid, r.rows[0]!.owed, 'the payment covers every payslip of the month')
 })
+
+test('a database error part-way through one person rolls back that person alone (ACC-14, savepoint)', async () => {
+  const c = await college()
+  const bad = await hire(c, { employeeCode: 'A-0', name: 'Fails After Payslip' })
+  await setComponent(c.admin, { staffId: bad.id, code: 'pf', label: 'pf', kind: 'deduction', amount: '4800', effectiveFrom: '2026-01-01' })
+  const ok = await hire(c, { employeeCode: 'B-1', name: 'Second Lecturer' })
+  await salaried(c, ok.id)
+  // The bad person's arrears insert, which comes after their payslip insert, is refused by the database.
+  await authDb.execute(sql.raw(
+    `alter table hr_payroll_arrears add constraint p008_probe check (staff_id <> '${bad.id}') not valid`,
+  ))
+  try {
+    const run = await generatePayroll(c.admin, { period: '2026-03' })
+    assert.equal(run.generated, 1)
+    assert.equal(run.payslips[0]!.staffId, ok.id)
+    assert.equal(run.failed.length, 1)
+    assert.equal(run.failed[0]!.staffId, bad.id)
+    assert.match(run.failed[0]!.message, /p008_probe/)
+    const r = await authDb.execute<{ slips: number; arrears: number; entries: number }>(sql`
+      select (select count(*)::int from hr_payslips where staff_id = ${bad.id}) as slips,
+             (select count(*)::int from hr_payroll_arrears where staff_id = ${bad.id}) as arrears,
+             (select count(*)::int from finance_journal_entries
+               where institution_id = ${c.id} and source_module = 'hr'
+                 and source_ref in (select 'payslip:' || id from hr_payslips where staff_id = ${bad.id})) as entries`)
+    assert.deepEqual(r.rows[0], { slips: 0, arrears: 0, entries: 0 })
+    assert.equal((await listRuns(c.admin))[0]!.failures.length, 1)
+  } finally {
+    await authDb.execute(sql`alter table hr_payroll_arrears drop constraint p008_probe`)
+  }
+})
