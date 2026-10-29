@@ -14,8 +14,9 @@
     "openapi": "pnpm -F @campusos/api-contracts openapi",
     "pack:plugins": "node scripts/pack-plugins.mjs",
     "registry:index": "node scripts/build-index.mjs",
+    "registry:sign": "node scripts/registry-sign.mjs sign dist/registry/registry.json",
     "pack:core": "node scripts/pack-core.mjs",
-    "pack:all": "pnpm pack:plugins && pnpm pack:core && pnpm registry:index"
+    "pack:all": "pnpm pack:plugins && pnpm pack:core && pnpm registry:index && pnpm registry:sign"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
