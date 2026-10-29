@@ -7,7 +7,7 @@ import { after, before, test } from 'node:test'
 import { URL } from 'node:url'
 
 /**
- * The P0-01, P0-02, P0-03, P0-04 and P0-06 migrations applied as an upgrade, not only on a
+ * The P0-01, P0-02, P0-03, P0-04, P0-06 and P0-08 migrations applied as an upgrade, not only on a
  * fresh database.
  *
  * CI's fresh path runs core first and every module after it. An institution
@@ -28,11 +28,12 @@ const pg = require('pg')
 const { drizzle } = require('drizzle-orm/node-postgres')
 const { migrate } = require('drizzle-orm/node-postgres/migrator')
 
-/** The module files P0-01 and P0-06 added. Everything else is the previous level. */
+/** The module files P0-01, P0-06 and P0-08 added. Everything else is the previous level. */
 const NEW_FILES = new Set([
   'fees/0006_money_outlives_the_person.sql',
   'fees/0007_idempotency_and_references.sql',
   'hr/0010_money_outlives_the_person.sql',
+  'hr/0011_payroll_runs_whole.sql',
   'library/0002_loans_outlive_the_borrower.sql',
   'academic/0007_student_relations.sql',
   'enrollment/0001_student_relations.sql',
@@ -241,5 +242,22 @@ test('P0-04 applies as an upgrade: the counter table and its definer function, c
         has_function_privilege('public', 'public.campusos_rate_limit(text,text,integer,integer)', 'EXECUTE') as pub,
         has_table_privilege('campusos_app', 'public.rate_limit_counters', 'SELECT') as app_reads`)
     assert.deepEqual(rows[0], { t: true, rls: true, app: false, pub: false, app_reads: false })
+  })
+})
+
+test('hr 0011 applies as an upgrade: arrears and settings under RLS, a payslip never negative (ACC-14, ACC-15)', { skip: !url && 'MIGRATION_DATABASE_URL is not set' }, async () => {
+  await withClient(at(DB), async (c) => {
+    const { rows } = await c.query(`
+      select
+        (select relrowsecurity from pg_class where oid = to_regclass('public.hr_payroll_arrears')) as arrears_rls,
+        (select count(*)::int from pg_policy where polrelid = to_regclass('public.hr_payroll_arrears')) as arrears_policies,
+        (select relrowsecurity from pg_class where oid = to_regclass('public.hr_payroll_settings')) as settings_rls,
+        (select count(*)::int from pg_policy where polrelid = to_regclass('public.hr_payroll_settings')) as settings_policies,
+        (select count(*)::int from pg_constraint where conname = 'hr_payslips_net_not_negative') as net_check,
+        (select count(*)::int from information_schema.columns
+          where table_name = 'hr_payroll_runs' and column_name = 'failures') as failures`)
+    assert.deepEqual(rows[0], {
+      arrears_rls: true, arrears_policies: 1, settings_rls: true, settings_policies: 1, net_check: 1, failures: 1,
+    })
   })
 })
