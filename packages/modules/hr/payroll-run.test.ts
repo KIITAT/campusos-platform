@@ -302,7 +302,7 @@ test('a database error part-way through one person rolls back that person alone 
                where institution_id = ${c.id} and source_module = 'hr'
                  and source_ref in (select 'payslip:' || id from hr_payslips where staff_id = ${bad.id})) as entries`)
     assert.deepEqual(r.rows[0], { slips: 0, arrears: 0, entries: 0 })
-    assert.equal((await listRuns(c.admin))[0]!.failures.length, 1)
+    assert.equal(((await listRuns(c.admin))[0]!.failures as unknown[]).length, 1)
   } finally {
     await authDb.execute(sql`alter table hr_payroll_arrears drop constraint p008_probe`)
   }
