@@ -225,6 +225,8 @@ const DEADLINE_SECONDS = 30
 const MAX_SOLVES = 2
 
 const running = new Map<string, { handle: SolveHandle; done: Promise<void> }>()
+/** Slots claimed by requests still writing their run; counted with `running` so requests that arrive together cannot all pass. */
+let claimed = 0
 
 /** A solve whose server stopped under it is failed after its deadline, freeing the institution's slot. */
 async function sweepStale(tx: Tx) {
@@ -239,9 +241,11 @@ export type SolveFailure = 'interrupted' | 'timed_out' | 'out_of_memory' | 'cras
 export async function generateRun(actor: Actor, input: unknown) {
   const tenant = requireOffice(actor)
   const data = runSchema.parse(input)
-  if (running.size >= MAX_SOLVES) {
+  if (running.size + claimed >= MAX_SOLVES) {
     throw new TimetableError(409, 'solver_busy', 'This server is drafting two timetables already. Try again in a minute.')
   }
+  // Claimed before the first await, released once the thread holds the slot or the insert fails.
+  claimed++
   let started
   try {
     started = await withTenant(tenant, (tx) =>
@@ -279,6 +283,8 @@ export async function generateRun(actor: Actor, input: unknown) {
       throw new TimetableError(409, 'solve_running', 'A timetable is already being drafted for this institution. Wait for it, or cancel it from its page.')
     }
     throw e
+  } finally {
+    claimed--
   }
   startSolve(tenant, actor.id, started.id, started.solverInput, started.kindOf, (started.limit + GRACE_SECONDS) * 1000)
   return {
