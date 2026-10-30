@@ -41,6 +41,7 @@ const NEW_FILES = new Set([
   'mentoring/0001_student_relations.sql',
   'timetable/0001_solves_off_the_request.sql',
   'hr/0012_dpdp_subject.sql',
+  'hr/0013_hr_about_anonymous_feedback.sql',
   'enrollment/0002_dpdp_subject.sql',
   'notices/0002_dpdp_subject.sql',
   'parents/0002_dpdp_subject.sql',

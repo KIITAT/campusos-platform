@@ -472,7 +472,7 @@ GET /api/v1/modules/hostel/imports                                       SI....O
 GET /api/v1/modules/hostel/imports/template                              SI....O... gate
 POST /api/v1/modules/hostel/imports/run                                  SI....O... gate
 
-## hr 0.6.0
+## hr 0.7.0
 GET /api/v1/modules/hr/staff                                             SI..A..... op
 POST /api/v1/modules/hr/staff                                            SI........ op
 POST /api/v1/modules/hr/staff/end                                        SI........ op
