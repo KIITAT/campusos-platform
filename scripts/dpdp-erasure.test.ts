@@ -186,6 +186,15 @@ before(async () => {
     `insert into hr_leave_requests (institution_id, staff_id, leave_type_id, from_on, to_on, reason) values ($1, $2, $3, current_date, current_date, 'family function')`,
     [I, staff, uid()],
   )
+  // colleague feedback from C on M's appraisal, and M's salary assignment
+  const appraisal = uid()
+  await q(`insert into hr_appraisals (id, institution_id, cycle_id, staff_id, reviewer_id) values ($1, $2, $3, $4, $5)`, [appraisal, I, uid(), staff, A])
+  await q(
+    `insert into hr_appraisal_feedback (institution_id, appraisal_id, from_user_id, relation, strengths, improvements, rating)
+     values ($1, $2, $3, 'peer', 'Explains clearly', 'Return work sooner', 4)`,
+    [I, appraisal, C],
+  )
+  await q(`insert into hr_salary_assignments (institution_id, staff_id, structure_id, base_paise, effective_from) values ($1, $2, $3, 4000000, current_date)`, [I, staff, uid()])
   await q('set session_replication_role = origin')
 })
 
@@ -209,6 +218,21 @@ test('the export carries rows about the person and has no cap (AUD-03)', async (
 test('a staff member’s export carries their own HR rows (AUD-03)', async () => {
   const bundle = await exportSubject(inst, id.M)
   assert.equal(bundle.records['about.hr_about.hr_leave_requests']?.length, 1)
+})
+
+test('a staff member’s export does not name who wrote their colleague feedback (review of P1-08a)', async () => {
+  const about = (await exportSubject(inst, id.M)).records['about.hr_about.hr_appraisal_feedback'] as Record<string, unknown>[]
+  assert.equal(about?.length, 1)
+  assert.equal(about[0]!.strengths, 'Explains clearly')
+  assert.ok(!('from_user_id' in about[0]!), 'the writer must stay anonymous to the appraisee')
+  // the writer's own export still carries it, by the foreign key
+  const own = (await exportSubject(inst, id.C)).records['hr_appraisal_feedback.from_user_id']
+  assert.equal(own?.length, 1)
+})
+
+test('a staff member’s export carries their salary assignment (review of P1-08a)', async () => {
+  const bundle = await exportSubject(inst, id.M)
+  assert.equal(bundle.records['about.hr_about.hr_salary_assignments']?.length, 1)
 })
 
 test('a module guard still refuses changing a live person’s free text (AUD-03)', async () => {

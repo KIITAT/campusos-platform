@@ -45,6 +45,16 @@ test('a new table naming a user fails the classification check by name', async (
   assert.deepEqual(missing, ['dpdp_probe_unclassified'])
 })
 
+test('every source a dpdp_subject view names is classified for export (AUD-03)', async () => {
+  const views = await authDb.execute<{ def: string }>(sql`
+    select pg_get_viewdef(c.oid) as def from pg_class c
+     where c.relnamespace = 'dpdp_subject'::regnamespace and c.relkind = 'v'`)
+  const sources = new Set(views.rows.flatMap((r) => [...r.def.matchAll(/'([a-z][a-z0-9_]*)'::text/g)].map((m) => m[1]!)))
+  assert.ok(sources.size > 0, 'no dpdp_subject view found')
+  const missing = [...sources].filter((t) => !(t in EXPORT_POLICY)).sort()
+  assert.deepEqual(missing, [], `classify these in packages/db/src/dpdp-policy.ts: ${missing.join(', ')}`)
+})
+
 test('the classification names no table that no longer exists', async () => {
   const existing = new Set(
     (
