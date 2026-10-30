@@ -287,6 +287,17 @@ test('core 0012 applies as an upgrade: the subject schema and four functions, ex
   })
 })
 
+test('P0-11 applies as an upgrade: the readiness function, callable by the app role only (REL-02)', { skip: !url && 'MIGRATION_DATABASE_URL is not set' }, async () => {
+  await withClient(at(DB), async (c) => {
+    const { rows } = await c.query(`
+      select
+        has_function_privilege('campusos_app', 'public.campusos_readiness()', 'EXECUTE') as app,
+        has_function_privilege('public', 'public.campusos_readiness()', 'EXECUTE') as pub,
+        (select oldest_due_job_seconds >= 0 from campusos_readiness()) as answers`)
+    assert.deepEqual(rows[0], { app: true, pub: false, answers: true })
+  })
+})
+
 test('hr 0011 applies as an upgrade: arrears and settings under RLS, a payslip never negative (ACC-14, ACC-15)', { skip: !url && 'MIGRATION_DATABASE_URL is not set' }, async () => {
   await withClient(at(DB), async (c) => {
     const { rows } = await c.query(`
