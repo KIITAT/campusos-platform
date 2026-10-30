@@ -2,6 +2,7 @@ import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { eq, like, sql } from 'drizzle-orm'
 import { authDb, institutions, users, withTenant } from '@campusos/db'
+import { printedText } from '@campusos/module-framework/pdf'
 import {
   correctCompletion,
   createCourse,
@@ -369,4 +370,27 @@ test('another institution sees none of it', async () => {
   const seen = await withTenant(d.id, (tx) => tx.select().from(certificates))
   assert.equal(seen.length, 0)
   await assert.rejects(runEligibility(d.admin, { ceremonyId: e.id }), (x) => code(x) === 'no_such_ceremony')
+})
+
+test('a certificate prints an Odia name (UX-01)', async () => {
+  const c = await campus()
+  await authDb.update(users).set({ name: 'ଅଭିଷେକ / अभिषेक' }).where(eq(users.id, c.done.id))
+  const e = await ceremonyFor(c)
+  await runEligibility(c.admin, { ceremonyId: e.id })
+  assert.equal((await issueCertificates(c.admin, { ceremonyId: e.id })).issued, 1)
+  const [cert] = await withTenant(c.id, (tx) => tx.select().from(certificates))
+  const doc = await certificateDocument(c.admin, cert!.id)
+  assert.ok((await printedText(doc.bytes)).includes('ଅଭିଷେକ / अभिषेक'))
+})
+
+test('a name that cannot be printed is not issued a certificate (UX-01)', async () => {
+  const c = await campus()
+  await authDb.update(users).set({ name: 'Asha 😀' }).where(eq(users.id, c.done.id))
+  const e = await ceremonyFor(c)
+  await runEligibility(c.admin, { ceremonyId: e.id })
+  const out = await issueCertificates(c.admin, { ceremonyId: e.id })
+  assert.equal(out.issued, 0)
+  const skipped = out.skipped.find((x) => x.name === 'Asha 😀')!
+  assert.match(skipped.reason, /^cannot be printed/)
+  assert.equal((await withTenant(c.id, (tx) => tx.select().from(certificates))).length, 0)
 })
