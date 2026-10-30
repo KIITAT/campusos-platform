@@ -2,7 +2,7 @@
 # rewrite with UPDATE_MATRIX=1. Columns: S=super_admin I=institution_admin H=hod F=faculty A=accounts_staff L=library_staff O=hostel_staff s=student p=parent n=pending.
 # Last column: op = the operation also refuses every undeclared role; gate = the gate is its only role check.
 
-## academic 0.6.0
+## academic 0.7.0
 POST /api/v1/modules/academic/departments                                SI........ op
 POST /api/v1/modules/academic/programs                                   SI........ op
 POST /api/v1/modules/academic/courses                                    SI........ op
@@ -125,7 +125,7 @@ POST /api/v1/modules/care/counsellors/active                             SI.....
 POST /api/v1/modules/care/instruments                                    SI........ op
 POST /api/v1/modules/care/instruments/retire                             SI........ op
 
-## ceremonies 0.2.0
+## ceremonies 0.3.0
 GET /api/v1/modules/ceremonies/ceremonies                                SIH....... op
 POST /api/v1/modules/ceremonies/ceremonies                               SI........ op
 POST /api/v1/modules/ceremonies/ceremonies/status                        SI........ op
@@ -155,7 +155,7 @@ GET /api/v1/modules/enrollment/registrations                             SIHF...
 GET /api/v1/modules/enrollment/credit-load                               SIHF...s.. gate
 GET /api/v1/modules/enrollment/events                                    SIH....s.. gate
 
-## examinations 0.4.0
+## examinations 0.5.0
 GET /api/v1/modules/examinations/exams                                   SIHF...... gate
 POST /api/v1/modules/examinations/exams                                  SIHF...... op
 POST /api/v1/modules/examinations/exams/publish                          SIHF...... op
@@ -214,7 +214,7 @@ GET /api/v1/modules/feedback/give                                        .......
 POST /api/v1/modules/feedback/give                                       .......s.. op
 GET /api/v1/modules/feedback/completion                                  SIHF...s.. gate
 
-## fees 0.7.0
+## fees 0.8.0
 GET /api/v1/modules/fees/bank-accounts                                   SI..A..s.. gate
 POST /api/v1/modules/fees/bank-accounts                                  SI........ op
 POST /api/v1/modules/fees/bank-accounts/retire                           SI........ op
@@ -255,7 +255,7 @@ GET /api/v1/modules/fees/ledger                                          SIH.A..
 GET /api/v1/modules/fees/dues                                            SI..A..... gate
 GET /api/v1/modules/fees/receipt.pdf                                     SI..A..s.. gate
 
-## finance 0.6.0
+## finance 0.7.0
 GET /api/v1/modules/finance/accounts                                     SI..A..... op
 POST /api/v1/modules/finance/accounts                                    SI........ op
 POST /api/v1/modules/finance/accounts/update                             SI........ op
@@ -654,7 +654,7 @@ POST /api/v1/modules/parents/guardians/withdraw                          SI.....
 GET /api/v1/modules/parents/children                                     SI......p. gate
 GET /api/v1/modules/parents/child                                        SI......p. gate
 
-## placement 0.2.0
+## placement 0.3.0
 GET /api/v1/modules/placement/workspace                                  SI.....s.. op
 GET /api/v1/modules/placement/statistics                                 SI........ op
 POST /api/v1/modules/placement/officers                                  SI........ op
@@ -709,7 +709,7 @@ POST /api/v1/modules/skills/assess                                       SIHF...
 POST /api/v1/modules/skills/self-assess                                  .......s.. op
 GET /api/v1/modules/skills/coverage                                      SIHF...... op
 
-## timetable 0.3.0
+## timetable 0.4.0
 GET /api/v1/modules/timetable/settings                                   SIHF...... op
 POST /api/v1/modules/timetable/settings                                  SI........ op
 GET /api/v1/modules/timetable/periods                                    SIHF...... op

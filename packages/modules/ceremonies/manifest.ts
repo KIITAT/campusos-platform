@@ -5,7 +5,7 @@ export const manifest: ModuleManifest = {
   name: 'Ceremonies',
   description:
     'Convocation: who may graduate, found by the degree audit rather than by a list somebody typed; replies and guests; office holds; check-in on the day; and degree certificates, issued only to a student the audit cleared, revoked with a reason and reissued under a new serial.',
-  version: '0.2.0',
+  version: '0.3.0',
   alwaysEnabled: false,
   dependsOn: ['academic'],
   softDependsOn: [],
