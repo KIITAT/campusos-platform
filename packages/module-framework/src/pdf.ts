@@ -173,23 +173,25 @@ export async function pdfText(doc: PDFDocument, content: string): Promise<PdfTex
     draw(page, text, { x, y, size, weight = 'regular', color, opacity }) {
       const bad = unprintable(text)
       if (bad) throw new MissingGlyphError(bad)
+      const runs = runsOf(text)
+      // One span for the whole string, so a name in two scripts reads back as one.
+      page.pushOperators(
+        PDFOperator.of(PDFOperatorNames.BeginMarkedContentSequence, [
+          PDFName.of('Span'),
+          // pdf-lib types an operator argument without a dictionary, but writes one inline.
+          doc.context.obj({ ActualText: PDFHexString.fromText(runs.map((r) => r.text).join('')) }) as never,
+        ]),
+      )
       let at = x
-      for (const run of runsOf(text)) {
+      for (const run of runs) {
         const font = fontFor(run.script, weight)
         // A glyph id of 0 is .notdef, drawn as a box.
         const glyphs: string[] = font.encodeText(run.text).asString().match(/.{4}/g) ?? []
         if (glyphs.includes('0000')) throw new MissingGlyphError(run.text.trim()[0] ?? run.text)
-        page.pushOperators(
-          PDFOperator.of(PDFOperatorNames.BeginMarkedContentSequence, [
-            PDFName.of('Span'),
-            // pdf-lib types an operator argument without a dictionary, but writes one inline.
-            doc.context.obj({ ActualText: PDFHexString.fromText(run.text) }) as never,
-          ]),
-        )
         page.drawText(run.text, { x: at, y, size, font, color, opacity })
-        page.pushOperators(PDFOperator.of(PDFOperatorNames.EndMarkedContent))
         at += font.widthOfTextAtSize(run.text, size)
       }
+      page.pushOperators(PDFOperator.of(PDFOperatorNames.EndMarkedContent))
     },
   }
 }

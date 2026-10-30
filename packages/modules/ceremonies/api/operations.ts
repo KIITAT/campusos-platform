@@ -10,6 +10,7 @@ import {
   withTenant,
 } from '@campusos/db'
 import { assertCanAccessStudent, type Role } from '@campusos/module-framework'
+import { MissingGlyphError, unprintable } from '@campusos/module-framework/pdf'
 import { degreeAudit, type DegreeAudit } from '@campusos/module-academic/api'
 import { programs, studentPrograms } from '@campusos/module-academic/schema'
 import { candidates, ceremonies, certificates, holds, type Candidate } from '../schema'
@@ -475,8 +476,9 @@ export async function issueCertificates(actor: Actor, input: unknown) {
   const tenant = requireOffice(actor)
   const d = issueSchema.parse(input)
 
-  const { ceremony, list } = await withTenant(tenant, async (tx) => {
+  const { ceremony, list, institutionName } = await withTenant(tenant, async (tx) => {
     const ceremony = await ceremonyIn(tx, d.ceremonyId)
+    const [inst] = await tx.select({ name: institutions.name }).from(institutions).where(eq(institutions.id, tenant))
     if (ceremony.status === 'planning') {
       throw new CeremonyError(409, 'ceremony_certificate_planning', 'open the ceremony before issuing certificates')
     }
@@ -490,7 +492,7 @@ export async function issueCertificates(actor: Actor, input: unknown) {
           d.candidateIds?.length ? inArray(candidates.id, d.candidateIds) : undefined,
         ),
       )
-    return { ceremony, list }
+    return { ceremony, list, institutionName: inst?.name ?? '' }
   })
 
   const issued: string[] = []
@@ -522,6 +524,10 @@ export async function issueCertificates(actor: Actor, input: unknown) {
         .from(holds)
         .where(and(eq(holds.candidateId, c.id), isNull(holds.clearedAt)))
       if (open) return `on hold: ${open.reason}`
+      // A serial is issued before anything is printed, so a name the fonts cannot
+      // print is refused here, not discovered when somebody downloads the paper.
+      const bad = unprintable(label) ?? unprintable(c.programName) ?? unprintable(institutionName)
+      if (bad) return `cannot be printed: "${bad}" (U+${(bad.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')})`
 
       const [cert] = await tx
         .insert(certificates)
@@ -605,6 +611,8 @@ export async function reissueCertificate(actor: Actor, input: unknown) {
   }
   return withTenant(tenant, async (tx) => {
     const [student] = await tx.select({ name: users.name }).from(users).where(eq(users.id, old.studentId))
+    const bad = unprintable(student?.name ?? old.studentName) ?? unprintable(old.programName)
+    if (bad) throw new MissingGlyphError(bad)
     const draft = await amendDocument(tx, certificates, old.id, who(actor, tenant), {
       serial: await nextSerial(tx, tenant, old.conferredOn.slice(0, 4)),
       verification_code: code(),

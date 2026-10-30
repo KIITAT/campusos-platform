@@ -1,12 +1,14 @@
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
+import { PDFDocument, rgb } from 'pdf-lib'
+import { pdfText, type Weight } from '@campusos/module-framework/pdf'
 import type { Certificate } from '../schema'
 
 /**
  * The degree certificate as a document to print.
  *
- * pdf-lib and the standard fonts, as the transcript does: no browser, no font
- * data, and WinAnsi only -- a name outside Latin script is folded rather than
- * refused, and embedding a font for Devanagari is a deliberate later decision.
+ * pdf-lib with Noto Sans, through @campusos/module-framework/pdf: a name in any
+ * of nine Indian scripts prints as typed and reads back as typed (it carries
+ * /ActualText), and a character no font has is refused at issue, never folded
+ * to `?` on a document of record.
  *
  * Landscape A4. Nothing on it is decided here: the name, the programme, the
  * date and the serial are the record's, and the verification code is what
@@ -14,7 +16,6 @@ import type { Certificate } from '../schema'
  */
 
 const A4 = { w: 841.89, h: 595.28 }
-const safe = (s: string) => s.replace(/[^\x20-\x7E]/g, '?')
 
 export async function certificatePdf(
   c: Pick<Certificate, 'serial' | 'verificationCode' | 'studentName' | 'programName' | 'conferredOn' | 'cgpa'>,
@@ -24,10 +25,7 @@ export async function certificatePdf(
   doc.setTitle(`Certificate ${c.serial}`)
   doc.setProducer('CampusOS')
   const page = doc.addPage([A4.w, A4.h])
-  const serif = await doc.embedFont(StandardFonts.TimesRoman)
-  const serifBold = await doc.embedFont(StandardFonts.TimesRomanBold)
-  const serifItalic = await doc.embedFont(StandardFonts.TimesRomanItalic)
-  const sans = await doc.embedFont(StandardFonts.Helvetica)
+  const t = await pdfText(doc, JSON.stringify([c, institution]))
   const ink = rgb(0.09, 0.09, 0.1)
   const faint = rgb(0.45, 0.45, 0.48)
 
@@ -43,10 +41,9 @@ export async function certificatePdf(
     })
   }
 
-  const centre = (s: string, y: number, size: number, font = serif, color = ink) => {
-    const t = safe(s)
-    const w = font.widthOfTextAtSize(t, size)
-    page.drawText(t, { x: (A4.w - w) / 2, y, size, font, color })
+  const centre = (s: string, y: number, size: number, weight: Weight = 'regular', color = ink) => {
+    const w = t.width(s, size, weight)
+    t.draw(page, s, { x: (A4.w - w) / 2, y, size, weight, color })
   }
 
   const date = new Date(`${c.conferredOn}T00:00:00Z`).toLocaleDateString('en-GB', {
@@ -56,17 +53,17 @@ export async function certificatePdf(
     timeZone: 'UTC',
   })
 
-  centre(institution.toUpperCase(), 470, 26, serifBold)
-  centre('This is to certify that', 400, 15, serifItalic, faint)
-  centre(c.studentName, 350, 34, serifBold)
-  centre('having fulfilled the requirements of the programme, was admitted to the degree of', 305, 14, serifItalic, faint)
-  centre(c.programName, 262, 24, serif)
-  centre(`on ${date}`, 225, 14, serif, faint)
-  if (c.cgpa !== null) centre(`Cumulative grade point average ${Number(c.cgpa).toFixed(2)}`, 196, 11, sans, faint)
+  centre(institution.toUpperCase(), 470, 26, 'bold')
+  centre('This is to certify that', 400, 15, 'regular', faint)
+  centre(c.studentName, 350, 34, 'bold')
+  centre('having fulfilled the requirements of the programme, was admitted to the degree of', 305, 14, 'regular', faint)
+  centre(c.programName, 262, 24)
+  centre(`on ${date}`, 225, 14, 'regular', faint)
+  if (c.cgpa !== null) centre(`Cumulative grade point average ${Number(c.cgpa).toFixed(2)}`, 196, 11, 'regular', faint)
 
-  page.drawText(safe(`Serial ${c.serial}`), { x: 56, y: 60, size: 9, font: sans, color: faint })
-  const v = safe(`Verification code ${c.verificationCode}`)
-  page.drawText(v, { x: A4.w - 56 - sans.widthOfTextAtSize(v, 9), y: 60, size: 9, font: sans, color: faint })
+  t.draw(page, `Serial ${c.serial}`, { x: 56, y: 60, size: 9, color: faint })
+  const v = `Verification code ${c.verificationCode}`
+  t.draw(page, v, { x: A4.w - 56 - t.width(v, 9), y: 60, size: 9, color: faint })
 
   return doc.save()
 }
