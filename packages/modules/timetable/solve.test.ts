@@ -76,5 +76,11 @@ test('a cancelled solve rejects as cancelled', async () => {
 test('a real solve in a thread returns what the solver returns', async () => {
   const input = tiny()
   const s = solveInThread({ kind: 'solve', input }, 30_000)
-  assert.deepEqual(await s.result, solve(tiny()))
+  // Everything but the wall-clock time the solver reports about itself.
+  const same = (r: unknown) => {
+    const { stats, ...rest } = r as ReturnType<typeof solve>
+    const { ms: _ms, ...counts } = stats
+    return { ...rest, stats: counts }
+  }
+  assert.deepEqual(same(await s.result), same(solve(tiny())))
 })
