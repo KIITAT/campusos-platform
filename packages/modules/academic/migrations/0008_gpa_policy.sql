@@ -12,9 +12,12 @@
 -- they did. An institution with no results gets no row: the corrected rule.
 --
 -- Pre-flight: none needed (a new table; the seed reads completions only).
--- Rollback: DROP TABLE "academic_gpa_policies"; with academic 0.6.0, whose
--- code reads none of it. To keep today's rule on later terms instead, delete
--- the corrected row: delete from academic_gpa_policies where failed_credits = 'zero';
+-- Rollback: to go back to the old figures, delete only the row this migration
+-- added: delete from academic_gpa_policies where failed_credits = 'zero' and
+-- repeats = 'latest' and effective_from = '<upgrade day>'; (the legacy row then
+-- applies to every term). Drop the table only after academic, examinations,
+-- placement, fees, ceremonies, mentoring and parents are all back at their
+-- pre-P0-09 versions: each of them reads it.
 
 CREATE TABLE "academic_gpa_policies" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
