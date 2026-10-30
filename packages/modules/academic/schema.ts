@@ -734,3 +734,29 @@ export const classChanges = pgTable(
     tenantPolicy('academic_class_changes'),
   ],
 )
+
+// --- grade point average rules ----------------------------------------------
+
+/**
+ * Whether a failed course counts its credits at zero points, and which attempt
+ * of a repeated course counts, from a date (decisions 214, 215). The rule for
+ * an attempt is the one in force on its term's first day, so a new rule never
+ * reaches back into a term that has started. No rows: the corrected rule.
+ */
+export const gpaPolicies = pgTable(
+  'academic_gpa_policies',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    effectiveFrom: date('effective_from').notNull(),
+    failedCredits: text('failed_credits').notNull(),
+    repeats: text().notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('academic_gpa_policies_from').on(t.institutionId, t.effectiveFrom),
+    check('academic_gpa_policies_failed', sql`failed_credits in ('exclude', 'zero')`),
+    check('academic_gpa_policies_repeats', sql`repeats in ('all', 'latest', 'best')`),
+    tenantPolicy('academic_gpa_policies'),
+  ],
+)

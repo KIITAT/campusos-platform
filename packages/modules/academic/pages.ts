@@ -9,6 +9,7 @@ import {
   listCompletions,
   listCurricula,
   listOfferings,
+  listGpaPolicy,
   listPrerequisites,
   listSections,
   listStructure,
@@ -520,11 +521,12 @@ export const pages: PluginPage[] = [
     async load(actor) {
       const a = actor as Actor
       const registrar = a.role === 'institution_admin' || a.role === 'super_admin'
-      const [structure, curricula, chains, waivers] = await Promise.all([
+      const [structure, curricula, chains, waivers, gpaRules] = await Promise.all([
         listStructure(a),
         listCurricula(a),
         listPrerequisites(a),
         registrar ? listWaivers(a) : Promise.resolve([]),
+        registrar ? listGpaPolicy(a) : Promise.resolve([]),
       ])
 
       return {
@@ -547,6 +549,11 @@ export const pages: PluginPage[] = [
         waivers: waivers.map((w) => ({
           ...w,
           scope: w.requiresCode ?? 'every prerequisite',
+        })),
+        gpaRules: gpaRules.map((r) => ({
+          ...r,
+          failedCredits: r.failedCredits === 'zero' ? 'Counted at zero points' : 'Left out',
+          repeats: ({ latest: 'Latest attempt', best: 'Best attempt', all: 'Every attempt' } as Record<string, string>)[r.repeats] ?? r.repeats,
         })),
         programOptions: structure.programs.map((p) => ({
           value: p.id,
@@ -618,6 +625,48 @@ export const pages: PluginPage[] = [
           { key: 'scope', label: 'Waived' },
           { key: 'reason', label: 'Reason' },
           { key: 'createdAt', label: 'When', kind: 'date' },
+        ],
+      },
+      {
+        kind: 'table',
+        title: 'GPA rules',
+        rows: 'gpaRules',
+        empty: 'None set: failed courses count at zero points and the latest attempt of a repeated course counts.',
+        roles: [...REGISTRAR],
+        columns: [
+          { key: 'effectiveFrom', label: 'From', kind: 'date' },
+          { key: 'failedCredits', label: 'Failed courses' },
+          { key: 'repeats', label: 'Repeated courses' },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Set a GPA rule',
+        note: 'Applies to terms starting on or after the date. Past terms keep the rule they were published under.',
+        submit: 'Set',
+        path: '/gpa-policy',
+        roles: [...REGISTRAR],
+        fields: [
+          { name: 'effectiveFrom', label: 'From', kind: 'date' },
+          {
+            name: 'failedCredits',
+            label: 'Failed courses',
+            kind: 'select',
+            options: [
+              { value: 'zero', label: 'Count their credits at zero points' },
+              { value: 'exclude', label: 'Leave them out' },
+            ],
+          },
+          {
+            name: 'repeats',
+            label: 'Repeated courses',
+            kind: 'select',
+            options: [
+              { value: 'latest', label: 'Latest attempt' },
+              { value: 'best', label: 'Best attempt' },
+              { value: 'all', label: 'Every attempt' },
+            ],
+          },
         ],
       },
       {

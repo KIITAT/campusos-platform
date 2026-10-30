@@ -3,6 +3,7 @@ import {
   changeClass,
   weekView,
   withdrawChange,
+  setGpaPolicy,
   setStudentProfile,
   studentProfile,
   addEquivalence,
@@ -28,6 +29,7 @@ import {
   getTimetable,
   listCompletions,
   listCurricula,
+  listGpaPolicy,
   listPrerequisites,
   listStudentPrograms,
   listWaivers,
@@ -64,6 +66,7 @@ export const routes: PluginRoute[] = [
   // what a named student has actually done.
   post('/terms/calendar', setTermCalendar),
   post('/curricula', createCurriculum),
+  post('/gpa-policy', setGpaPolicy),
   post('/requirements', createRequirement),
   post('/prerequisites', addPrerequisite),
   post('/prerequisites/waivers', waivePrerequisite),
@@ -85,6 +88,7 @@ export const routes: PluginRoute[] = [
   },
 
   { method: 'GET', path: '/curricula', handler: (actor) => listCurricula(actor as Actor) },
+  { method: 'GET', path: '/gpa-policy', handler: (actor) => listGpaPolicy(actor as Actor) },
   {
     method: 'GET',
     path: '/prerequisites',

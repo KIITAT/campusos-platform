@@ -1,11 +1,12 @@
 import { assertCanAccessStudent } from '@campusos/module-framework'
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import { audit, users, withTenant } from '@campusos/db'
 import {
   courseCompletions,
   courseEquivalences,
   courses,
   curricula,
+  gpaPolicies,
   prerequisiteWaivers,
   programs,
   requirementCourses,
@@ -18,6 +19,7 @@ import { AcademicError, requireReader, requireWriter, type Actor } from './opera
 import {
   correctCompletionSchema,
   degreeAuditQuerySchema,
+  gpaPolicySchema,
   type DegreeAudit,
 } from './schemas'
 
@@ -47,7 +49,66 @@ export interface CompletionPost {
 
 /** The institution's grade point average rules, by the date they take effect. */
 export async function gpaPolicyVersions(tx: Tx): Promise<GpaPolicyVersion[]> {
-  return [] // filled from academic_gpa_policies in step 6
+  const rows = await tx
+    .select({
+      effectiveFrom: gpaPolicies.effectiveFrom,
+      failedCredits: gpaPolicies.failedCredits,
+      repeats: gpaPolicies.repeats,
+    })
+    .from(gpaPolicies)
+  return rows as GpaPolicyVersion[]
+}
+
+/** The grade point average rules, oldest first. */
+export async function listGpaPolicy(actor: Actor) {
+  const tenant = requireReader(actor)
+  return withTenant(tenant, (tx) => tx.select().from(gpaPolicies).orderBy(asc(gpaPolicies.effectiveFrom)))
+}
+
+/**
+ * Set the grade point average rule from a date. Forward only: a rule is a
+ * regulation, and results already published keep the rule they were published
+ * under, so a date before today is refused.
+ */
+export async function setGpaPolicy(actor: Actor, input: unknown) {
+  const tenant = requireWriter(actor)
+  const data = gpaPolicySchema.parse(input)
+  return withTenant(tenant, async (tx) => {
+    const today = ((await tx.execute(sql`select current_date::text as today`)).rows[0] as { today: string }).today
+    if (data.effectiveFrom < today) {
+      throw new AcademicError(
+        409,
+        'policy_backdated',
+        'a grading rule takes effect from today or later; results already published keep the rule they were published under',
+      )
+    }
+    const [existing] = await tx.select().from(gpaPolicies).where(eq(gpaPolicies.effectiveFrom, data.effectiveFrom))
+    const [row] = await tx
+      .insert(gpaPolicies)
+      .values({ institutionId: tenant, ...data })
+      .onConflictDoUpdate({
+        target: [gpaPolicies.institutionId, gpaPolicies.effectiveFrom],
+        set: { failedCredits: data.failedCredits, repeats: data.repeats },
+      })
+      .returning()
+    await audit(tx, {
+      institutionId: tenant,
+      actorId: actor.id,
+      actorEmail: null,
+      moduleId: MODULE,
+      action: 'academic.gpa_policy_set',
+      entity: 'academic_gpa_policies',
+      entityId: row!.id,
+      reason: `GPA rule from ${data.effectiveFrom}: failed credits ${data.failedCredits}, repeats ${data.repeats}`,
+      detail: {
+        from: existing
+          ? { effectiveFrom: existing.effectiveFrom, failedCredits: existing.failedCredits, repeats: existing.repeats }
+          : null,
+        to: { effectiveFrom: data.effectiveFrom, failedCredits: data.failedCredits, repeats: data.repeats },
+      },
+    })
+    return { notice: `Grading rule saved. It applies to terms starting on or after ${data.effectiveFrom}.` }
+  })
 }
 
 /**

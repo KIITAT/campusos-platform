@@ -36,6 +36,7 @@ const NEW_FILES = new Set([
   'hr/0011_payroll_runs_whole.sql',
   'library/0002_loans_outlive_the_borrower.sql',
   'academic/0007_student_relations.sql',
+  'academic/0008_gpa_policy.sql',
   'enrollment/0001_student_relations.sql',
   'mentoring/0001_student_relations.sql',
 ])
@@ -259,5 +260,16 @@ test('hr 0011 applies as an upgrade: arrears and settings under RLS, a payslip n
     assert.deepEqual(rows[0], {
       arrears_rls: true, arrears_policies: 1, settings_rls: true, settings_policies: 1, net_check: 1, failures: 1,
     })
+  })
+})
+
+test('academic 0008 applies as an upgrade: GPA rules under RLS (FUNC-03)', { skip: !url && 'MIGRATION_DATABASE_URL is not set' }, async () => {
+  await withClient(at(DB), async (c) => {
+    const { rows } = await c.query(`
+      select
+        (select relrowsecurity from pg_class where oid = to_regclass('public.academic_gpa_policies')) as rls,
+        (select count(*)::int from pg_policy where polrelid = to_regclass('public.academic_gpa_policies')) as policies,
+        (select count(*)::int from pg_indexes where indexname = 'academic_gpa_policies_from') as idx`)
+    assert.deepEqual(rows[0], { rls: true, policies: 1, idx: 1 })
   })
 })

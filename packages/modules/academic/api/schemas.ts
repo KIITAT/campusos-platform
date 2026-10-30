@@ -346,6 +346,14 @@ export const correctCompletionSchema = z
   })
   .meta({ id: 'AcademicCorrectCompletion' })
 
+export const gpaPolicySchema = z
+  .object({
+    effectiveFrom: z.iso.date(),
+    failedCredits: z.enum(['exclude', 'zero']),
+    repeats: z.enum(['all', 'latest', 'best']),
+  })
+  .meta({ id: 'AcademicGpaPolicy' })
+
 export const degreeAuditQuerySchema = z
   .object({
     studentId: z.string().min(1),

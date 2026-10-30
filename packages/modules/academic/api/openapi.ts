@@ -19,6 +19,7 @@ import {
   createTermSchema,
   declareProgramSchema,
   degreeAuditQuerySchema,
+  gpaPolicySchema,
   degreeAuditSchema,
   eligibilityResultSchema,
   eligibilitySchema,
@@ -120,6 +121,10 @@ export const paths = {
   [`${base}/curricula`]: {
     ...post('Create a curriculum for a catalogue year', createCurriculumSchema),
     ...list('Every curriculum, with its requirements'),
+  },
+  [`${base}/gpa-policy`]: {
+    ...post('Set a grade point average rule from a date', gpaPolicySchema),
+    ...list('The grade point average rules, oldest first'),
   },
   [`${base}/requirements`]: post(
     'Add a degree requirement and the courses that satisfy it',
