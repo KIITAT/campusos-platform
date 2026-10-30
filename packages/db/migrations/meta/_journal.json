@@ -92,6 +92,13 @@
       "when": 1793387646548,
       "tag": "0012_dpdp_subject",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1793394799227,
+      "tag": "0013_ops_readiness",
+      "breakpoints": true
     }
   ]
 }
