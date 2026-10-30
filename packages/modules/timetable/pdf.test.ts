@@ -1,7 +1,7 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { like } from 'drizzle-orm'
-import { authDb, institutions, users } from '@campusos/db'
+import { authDb, institutionModules, institutions, users } from '@campusos/db'
 import {
   addSectionMember,
   createCourse,
@@ -14,7 +14,7 @@ import {
   type Actor as Academic,
 } from '@campusos/module-academic/api'
 import { printedText } from '@campusos/module-framework/pdf'
-import { addEligibility, defaultNeeds, generatePeriods, generateRun, runPdf, type Actor } from './api'
+import { addEligibility, defaultNeeds, generatePeriods, generateRun, runPdf, solveSettled, type Actor } from './api'
 
 const SLUG = 'tt-pdf-'
 
@@ -29,6 +29,8 @@ test('a timetable prints a Kannada teacher’s name (UX-01)', async () => {
     .values({ slug: tag, name: 'Timetable PDF College', allowedEmailDomains: [`${tag}.test`] })
     .returning({ id: institutions.id })
   const id = i!.id
+  // A finished solve is re-checked as a job's actor is, which wants the module on.
+  await authDb.insert(institutionModules).values({ institutionId: id, moduleId: 'timetable', enabled: true })
   const people = await authDb
     .insert(users)
     .values([
@@ -53,6 +55,7 @@ test('a timetable prints a Kannada teacher’s name (UX-01)', async () => {
   void room
 
   const draft = await generateRun(admin, { termId: term.id, seed: '5', iterations: '3000' })
+  await solveSettled(draft.id)
   const paper = await runPdf(admin, { runId: draft.id, all: 'teachers' })
   assert.ok((await printedText(paper.bytes)).includes('ಅಭಿಷೇಕ್'))
 })
