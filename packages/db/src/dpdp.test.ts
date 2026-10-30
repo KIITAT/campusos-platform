@@ -1,5 +1,7 @@
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
+import pg from 'pg'
 import { eq, sql } from 'drizzle-orm'
 import { authDb, db, withTenant } from './client'
 import { claimPairing, startPairing } from './device-tokens'
@@ -9,6 +11,7 @@ import {
   consentCurrent,
   eraseSubject,
   exportSubject,
+  LastAdministratorError,
   recordConsent,
 } from './dpdp'
 import { auditLog } from './audit'
@@ -229,4 +232,130 @@ test('erasing twice does not collide on the replacement address', async () => {
     .where(eq(users.institutionId, inst))
   const erased = rows.filter((r) => r.email?.endsWith('@invalid'))
   assert.equal(new Set(erased.map((r) => r.email)).size, erased.length)
+})
+
+async function owner<T>(run: (c: pg.Client) => Promise<T>): Promise<T> {
+  const c = new pg.Client({ connectionString: process.env.MIGRATION_DATABASE_URL })
+  await c.connect()
+  try {
+    return await run(c)
+  } finally {
+    await c.end()
+  }
+}
+
+/** drizzle wraps a database error: the database's own message is its cause. */
+const rejectsWith = (run: () => Promise<unknown>, pattern: RegExp) =>
+  assert.rejects(run, (e: Error) => pattern.test(`${e.message} ${(e.cause as Error | undefined)?.message ?? ''}`))
+
+async function freshStudent(): Promise<string> {
+  const [u] = await authDb
+    .insert(users)
+    .values({ email: `s-${randomUUID()}@dpdp.test`, institutionId: inst, role: 'student', name: 'Fresh' })
+    .returning({ id: users.id })
+  return u!.id
+}
+
+test('an erasure removes the person’s sessions, sign-in accounts and phones (NEW-02)', async () => {
+  const u = await freshStudent()
+  await owner(async (c) => {
+    await c.query(
+      `insert into accounts ("userId", type, provider, "providerAccountId") values ($1, 'oidc', 'google', $2)`,
+      [u, randomUUID()],
+    )
+    await c.query(`insert into sessions ("sessionToken", "userId", expires) values ($1, $2, now() + interval '1 day')`, [randomUUID(), u])
+    await c.query(`insert into device_tokens (institution_id, user_id, token_hash) values ($1, $2, $3)`, [inst, u, randomUUID()])
+  })
+  const result = await eraseSubject(inst, u, { actorId: admin, reason: 'test erasure' })
+  await owner(async (c) => {
+    for (const [table, col] of [['accounts', '"userId"'], ['sessions', '"userId"'], ['device_tokens', 'user_id']]) {
+      const { rows } = await c.query(`select count(*)::int as n from ${table} where ${col} = $1`, [u])
+      assert.equal(rows[0].n, 0, `${table} rows left`)
+    }
+  })
+  assert.deepEqual((result as { credentials?: unknown }).credentials, { sessions: 1, accounts: 1, device_tokens: 1, invitations: 0 })
+})
+
+test('two administrators erasing each other leave one (NEW-14)', async () => {
+  const [other] = await authDb
+    .insert(institutions)
+    .values({ slug: `dpdp-admins-${randomUUID()}`, name: 'Two Admins', allowedEmailDomains: ['dpdp.test'] })
+    .returning({ id: institutions.id })
+  const iid = other!.id
+  try {
+    const pair = await authDb
+      .insert(users)
+      .values([
+        { email: `a-${randomUUID()}@dpdp.test`, institutionId: iid, role: 'institution_admin', name: 'A' },
+        { email: `b-${randomUUID()}@dpdp.test`, institutionId: iid, role: 'institution_admin', name: 'B' },
+      ])
+      .returning({ id: users.id })
+    const [a, b] = [pair[0]!.id, pair[1]!.id]
+    await owner(async (c) => {
+      await c.query('begin')
+      await c.query('select id from users where id in ($1, $2) order by id for no key update', [a, b])
+      const p1 = eraseSubject(iid, b, { actorId: a, reason: 'test erasure' })
+      const p2 = eraseSubject(iid, a, { actorId: b, reason: 'test erasure' })
+      p1.catch(() => {})
+      p2.catch(() => {})
+      let waiting = 0
+      for (let i = 0; i < 200 && waiting < 2; i++) {
+        await new Promise((r) => setTimeout(r, 50))
+        const { rows } = await c.query(
+          `select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()`,
+        )
+        waiting = rows[0].n
+      }
+      assert.equal(waiting, 2, 'both erasures should be waiting on the administrators')
+      await c.query('commit')
+      const settled = await Promise.allSettled([p1, p2])
+      assert.equal(settled.filter((r) => r.status === 'fulfilled').length, 1)
+      const failed = settled.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+      assert.equal(failed.length, 1)
+      assert.ok(failed[0]!.reason instanceof LastAdministratorError)
+      assert.equal((failed[0]!.reason as LastAdministratorError).code, 'last_admin')
+      const { rows } = await c.query(
+        `select count(*)::int as n from users where institution_id = $1 and role = 'institution_admin' and erased_at is null`,
+        [iid],
+      )
+      assert.equal(rows[0].n, 1)
+    })
+  } finally {
+    await authDb.delete(institutions).where(eq(institutions.id, iid))
+  }
+})
+
+test('a definer function in dpdp_subject stops every erasure', async () => {
+  const u = await freshStudent()
+  await owner((c) =>
+    c.query(`create function dpdp_subject.erase_zz_test(who text) returns jsonb language sql security definer as $$ select '{}'::jsonb $$;
+      grant execute on function dpdp_subject.erase_zz_test(text) to campusos_app`),
+  )
+  try {
+    await rejectsWith(() => eraseSubject(inst, u, { actorId: admin, reason: 'test erasure' }), /must be SECURITY INVOKER/)
+    const [row] = await withTenant(inst, (tx) => tx.select({ at: users.erasedAt }).from(users).where(eq(users.id, u)))
+    assert.equal(row!.at, null)
+  } finally {
+    await owner((c) => c.query('drop function if exists dpdp_subject.erase_zz_test(text)'))
+  }
+})
+
+test('a view in dpdp_subject without security_invoker stops every export', async () => {
+  await owner((c) =>
+    c.query(`create view dpdp_subject.zz_bad as select ''::text as subject_id, ''::text as source, '{}'::jsonb as row_data;
+      grant select on dpdp_subject.zz_bad to campusos_app`),
+  )
+  try {
+    await rejectsWith(() => exportSubject(inst, subject), /must be a security_invoker view/)
+  } finally {
+    await owner((c) => c.query('drop view if exists dpdp_subject.zz_bad'))
+  }
+})
+
+test('credentials are removed only for a person already erased', async () => {
+  const u = await freshStudent()
+  await rejectsWith(
+    () => withTenant(inst, (tx) => tx.execute(sql`select public.campusos_forget_credentials(${u})`)),
+    /credentials are removed only for a person erased in this institution/,
+  )
 })

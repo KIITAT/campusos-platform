@@ -40,6 +40,21 @@ const NEW_FILES = new Set([
   'enrollment/0001_student_relations.sql',
   'mentoring/0001_student_relations.sql',
   'timetable/0001_solves_off_the_request.sql',
+  'hr/0012_dpdp_subject.sql',
+  'hr/0013_hr_about_anonymous_feedback.sql',
+  'enrollment/0002_dpdp_subject.sql',
+  'notices/0002_dpdp_subject.sql',
+  'parents/0002_dpdp_subject.sql',
+  'academic/0009_dpdp_subject.sql',
+  'admissions/0001_dpdp_subject.sql',
+  'helpdesk/0001_dpdp_subject.sql',
+  'placement/0001_dpdp_subject.sql',
+  'alumni/0001_dpdp_subject.sql',
+  'skills/0001_dpdp_subject.sql',
+  'hostel/0002_dpdp_subject.sql',
+  'attendance/0003_dpdp_subject.sql',
+  'mentoring/0002_dpdp_subject.sql',
+  'care/0001_dpdp_subject.sql',
 ])
 const NEW_CORE_FROM = 5
 
@@ -244,6 +259,31 @@ test('P0-04 applies as an upgrade: the counter table and its definer function, c
         has_function_privilege('public', 'public.campusos_rate_limit(text,text,integer,integer)', 'EXECUTE') as pub,
         has_table_privilege('campusos_app', 'public.rate_limit_counters', 'SELECT') as app_reads`)
     assert.deepEqual(rows[0], { t: true, rls: true, app: false, pub: false, app_reads: false })
+  })
+})
+
+test('core 0012 applies as an upgrade: the subject schema and four functions, executable by the app role only (AUD-03, NEW-02)', { skip: !url && 'MIGRATION_DATABASE_URL is not set' }, async () => {
+  await withClient(at(DB), async (c) => {
+    const sigs = [
+      'public.campusos_erasure_allows(text, jsonb, jsonb, text[])',
+      'public.campusos_erase_subject(text)',
+      'public.campusos_subject_about(text)',
+      'public.campusos_forget_credentials(text)',
+    ]
+    const { rows } = await c.query(`
+      select
+        to_regnamespace('dpdp_subject') is not null as schema,
+        has_schema_privilege('campusos_app', 'dpdp_subject', 'USAGE') as app_uses,
+        has_schema_privilege('public', 'dpdp_subject', 'USAGE') as public_uses,
+        (select array_agg(has_function_privilege('campusos_app', s, 'EXECUTE') order by s) from unnest($1::text[]) s) as app,
+        (select array_agg(has_function_privilege('campusos_auth', s, 'EXECUTE') order by s) from unnest($1::text[]) s) as auth,
+        (select array_agg(p.prosecdef order by s) from unnest($1::text[]) s join pg_proc p on p.oid = s::regprocedure) as definer`, [sigs])
+    assert.deepEqual(rows[0], {
+      schema: true, app_uses: true, public_uses: false,
+      app: [true, true, true, true], auth: [false, false, false, false],
+      // sorted by signature: erase_subject, erasure_allows, forget_credentials, subject_about
+      definer: [false, false, true, false],
+    })
   })
 })
 

@@ -1,7 +1,7 @@
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, isNull, sql } from 'drizzle-orm'
 import { audit } from './audit'
 import { authDb, db, withTenant } from './client'
-import { EXPORT_POLICY, exportableRow, type ExportRule } from './dpdp-policy'
+import { EXPORT_POLICY, exportableRow, retentionBasis, type ExportRule } from './dpdp-policy'
 import { users } from './schema'
 
 /**
@@ -129,10 +129,23 @@ export async function exportSubject(
       if (throughAuth(rule)) continue
       const rows = await tx.execute<Record<string, unknown>>(
         sql`select ${select(rule)} from ${sql.identifier(table_name)}
-             where ${sql.identifier(column_name)} = ${userId}
-             limit 5000`,
+             where ${sql.identifier(column_name)} = ${userId}`,
       )
       keep(table_name, column_name, rows.rows)
+    }
+    // Rows about the person that no foreign key to users reaches: each module
+    // that has any declares a view in schema dpdp_subject (decision 220).
+    const about = await tx.execute<{ view_name: string; source: string; row_data: Record<string, unknown> }>(
+      sql`select view_name, source, row_data from public.campusos_subject_about(${userId})`,
+    )
+    for (const { view_name, source, row_data } of about.rows) {
+      const rule = EXPORT_POLICY[source] ?? 'exclude'
+      if (rule === 'exclude' || throughAuth(rule)) continue
+      const row =
+        typeof rule === 'object' && 'only' in rule
+          ? Object.fromEntries(rule.only.map((c) => [c, row_data[c]]))
+          : row_data
+      ;(records[`about.${view_name}.${source}`] ??= []).push(exportableRow(source, row))
     }
   })
   // Tables with no row-level security, which only the auth role may read
@@ -143,8 +156,7 @@ export async function exportSubject(
     const rows = await authDb.execute<Record<string, unknown>>(
       sql`select ${select(rule)} from ${sql.identifier(table_name)}
            where ${sql.identifier(column_name)} = ${userId}
-             and institution_id = ${institutionId}
-           limit 5000`,
+             and institution_id = ${institutionId}`,
     )
     keep(table_name, column_name, rows.rows)
   }
@@ -169,6 +181,21 @@ export interface ErasureResult {
   erasedAt: string
   /** Rows left in place, unattributable. Reported so the subject can be told. */
   retained: Record<string, number>
+  /** Rows whose free text or contact data were overwritten (or deleted), by table. */
+  redacted: Record<string, number>
+  /** Sign-in material removed: sessions, accounts, phones, invitations. */
+  credentials: Record<string, number>
+  /** Why each retained table was kept (decision 221). */
+  retainedBecause: Record<string, string>
+}
+
+/** Thrown when erasing a person would leave the institution with no administrator. */
+export class LastAdministratorError extends Error {
+  readonly status = 409
+  readonly code = 'last_admin'
+  constructor() {
+    super('that is the only administrator; appoint another first')
+  }
 }
 
 /**
@@ -177,7 +204,10 @@ export interface ErasureResult {
  * The email is replaced rather than nulled, because it is unique and a second
  * erasure would otherwise collide; the replacement is derived from the id, so
  * it is stable and obviously not an address. `emailVerified` is cleared so the
- * account cannot be signed into again.
+ * account cannot be signed into again. Then every module overwrites the
+ * person's free text and contact data (schema dpdp_subject), and their
+ * sign-in material goes, in the same transaction as the audit row that
+ * records the counts (decisions 220 to 223).
  */
 export async function eraseSubject(
   institutionId: string,
@@ -192,22 +222,33 @@ export async function eraseSubject(
   const retained = Object.fromEntries(
     Object.entries(bundle.records).map(([k, v]) => [k, v.length]),
   )
+  const retainedBecause = Object.fromEntries(
+    Object.keys(retained).map((key) => {
+      const parts = key.split('.')
+      const table = parts[0] === 'about' ? parts[parts.length - 1]! : parts[0]!
+      return [table, retentionBasis(table)]
+    }),
+  )
 
   const erasedAt = new Date()
+  let redacted: Record<string, number> = {}
+  let credentials: Record<string, number> = {}
   await withTenant(institutionId, async (tx) => {
-    // The audit row names the subject id, never the erased identity: it has to
-    // prove the erasure happened without re-storing what was erased.
-    await audit(tx, {
-      institutionId,
-      actorId: by.actorId,
-      actorEmail: by.actorEmail ?? null,
-      moduleId: 'core',
-      action: 'dpdp.erased',
-      entity: 'users',
-      entityId: userId,
-      reason: by.reason,
-      detail: { retained },
-    })
+    const [target] = await tx.select({ role: users.role }).from(users).where(eq(users.id, userId))
+    if (!target) throw new Error('no such user in this institution')
+    if (target.role === 'institution_admin') {
+      // The check and the erasure under the same locks, administrators in id
+      // order before anything else (NEW-14, as keepAnAdministrator).
+      const admins = await tx
+        .select({ id: users.id })
+        .from(users)
+        .where(and(eq(users.institutionId, institutionId), eq(users.role, 'institution_admin'), isNull(users.erasedAt)))
+        .orderBy(users.id)
+        .for('no key update')
+      if (admins.length === 1 && admins[0]!.id === userId) throw new LastAdministratorError()
+    } else {
+      await tx.select({ id: users.id }).from(users).where(eq(users.id, userId)).for('no key update')
+    }
 
     await tx
       .update(users)
@@ -219,7 +260,30 @@ export async function eraseSubject(
         erasedAt,
       })
       .where(eq(users.id, userId))
+
+    const r = await tx.execute<{ redacted: Record<string, number> }>(
+      sql`select public.campusos_erase_subject(${userId}) as redacted`,
+    )
+    const c = await tx.execute<{ credentials: Record<string, number> }>(
+      sql`select public.campusos_forget_credentials(${userId}) as credentials`,
+    )
+    redacted = r.rows[0]!.redacted
+    credentials = c.rows[0]!.credentials
+
+    // The audit row names the subject id, never the erased identity: it has to
+    // prove the erasure happened without re-storing what was erased.
+    await audit(tx, {
+      institutionId,
+      actorId: by.actorId,
+      actorEmail: by.actorEmail ?? null,
+      moduleId: 'core',
+      action: 'dpdp.erased',
+      entity: 'users',
+      entityId: userId,
+      reason: by.reason,
+      detail: { retained, redacted, credentials },
+    })
   })
 
-  return { userId, erasedAt: erasedAt.toISOString(), retained }
+  return { userId, erasedAt: erasedAt.toISOString(), retained, redacted, credentials, retainedBecause }
 }
