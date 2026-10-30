@@ -1,3 +1,5 @@
+import { round2 } from '@campusos/module-academic/gpa'
+
 /**
  * Grade computation, kept pure so it is testable without a database and
  * identical wherever it runs.
@@ -23,29 +25,7 @@ export interface ExamResult {
   absent: boolean
 }
 
-/**
- * Two decimal places, half away from zero, the way a person would.
- *
- * Two separate corrections, both load-bearing:
- *
- * `toFixed(6)` first, to shed the representation noise. 79.99/200*100 is
- * exactly 39.995 in decimal but 39.994999999999997 as a double, and rounding
- * that directly gives 39.99 -- a fail the student can see, on their own
- * arithmetic, is a 40. Six places is far coarser than the error and far finer
- * than any real mark, so it cannot move a genuine value.
- *
- * Then scaling through a decimal string rather than by multiplying: `39.995 *
- * 100` is 3999.4999999999995, whereas `Number('39.995e2')` is exactly 3999.5,
- * because the literal parser works in decimal.
- */
-export function round2(n: number): number {
-  if (!Number.isFinite(n)) return 0
-  const settled = Number(n.toFixed(6))
-  const scaled = Number(`${settled}e2`)
-  if (!Number.isFinite(scaled)) return settled
-  const rounded = scaled < 0 ? -Math.round(-scaled) : Math.round(scaled)
-  return Number(`${rounded}e-2`)
-}
+export { round2 }
 
 export type CoursePercent =
   | { kind: 'complete'; percent: number }
