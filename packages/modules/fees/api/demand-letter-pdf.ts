@@ -1,11 +1,12 @@
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib'
+import { PDFDocument, rgb, type PDFPage } from 'pdf-lib'
+import { pdfText, type Weight } from '@campusos/module-framework/pdf'
 import type { DemandLetterView } from './transfers'
 
 /**
  * A demand letter: on the institution's letterhead, numbered and dated,
  * addressed to the bank or body that asked for it, with the term's fees, what
- * was taken off, and what is due, in figures and words. Standard fonts, so the
- * rupee sign is written "Rs".
+ * was taken off, and what is due, in figures and words. The rupee sign is
+ * written "Rs", as a bank reads it.
  */
 
 const A4 = { w: 595.28, h: 841.89 }
@@ -13,11 +14,10 @@ const M = 56
 const ink = rgb(0.1, 0.1, 0.12)
 const faint = rgb(0.45, 0.45, 0.5)
 const rule = rgb(0.8, 0.8, 0.83)
-const safe = (s: string) => s.replace(/[‘’]/g, "'").replace(/[–—]/g, '-').replace(/[^\x20-\x7E]/g, '?')
 /**
  * Indian grouping (2,97,345.00), as a bank reads it -- written out here rather
  * than taken from the locale, so a document of record does not change shape
- * with the server. The rupee sign is not in the standard fonts.
+ * with the server.
  */
 export const rs = (paise: number) => {
   const a = Math.abs(paise)
@@ -33,29 +33,30 @@ export async function demandLetterPdf(v: DemandLetterView): Promise<Uint8Array> 
   doc.setTitle(`Demand letter ${v.number}`)
   doc.setProducer('CampusOS')
   doc.setCreationDate(new Date())
-  const font = await doc.embedFont(StandardFonts.Helvetica)
-  const bold = await doc.embedFont(StandardFonts.HelveticaBold)
+  const t = await pdfText(doc, JSON.stringify(v))
+  const font: Weight = 'regular'
+  const bold: Weight = 'bold'
   const page: PDFPage = doc.addPage([A4.w, A4.h])
   let y = A4.h - M
 
-  const text = (s: string, x: number, size = 10, f: PDFFont = font, color = ink) =>
-    page.drawText(safe(s), { x, y, size, font: f, color })
-  const right = (s: string, xRight: number, size = 10, f: PDFFont = font) =>
-    page.drawText(safe(s), { x: xRight - f.widthOfTextAtSize(safe(s), size), y, size, font: f, color: ink })
+  const text = (s: string, x: number, size = 10, f: Weight = font, color = ink) =>
+    t.draw(page, s, { x, y, size, weight: f, color })
+  const right = (s: string, xRight: number, size = 10, f: Weight = font) =>
+    t.draw(page, s, { x: xRight - t.width(s, size, f), y, size, weight: f, color: ink })
   /** As much of a label as fits before the amount column, ending in an ellipsis if cut. */
   const fit = (s: string, width: number, size = 10) => {
-    let out = safe(s)
-    if (font.widthOfTextAtSize(out, size) <= width) return out
-    while (out.length > 1 && font.widthOfTextAtSize(`${out}...`, size) > width) out = out.slice(0, -1)
+    let out = s
+    if (t.width(out, size) <= width) return out
+    while (out.length > 1 && t.width(`${out}...`, size) > width) out = out.slice(0, -1)
     return `${out.trimEnd()}...`
   }
   const line = () => page.drawLine({ start: { x: M, y: y + 4 }, end: { x: A4.w - M, y: y + 4 }, thickness: 0.5, color: rule })
   const para = (s: string, size = 10, color = ink) => {
     const width = A4.w - 2 * M
     let cur = ''
-    for (const word of safe(s).split(/\s+/)) {
+    for (const word of s.split(/\s+/)) {
       const next = cur ? `${cur} ${word}` : word
-      if (font.widthOfTextAtSize(next, size) > width) {
+      if (t.width(next, size) > width) {
         text(cur, M, size, font, color)
         y -= size + 5
         cur = word

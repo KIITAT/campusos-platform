@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm'
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib'
+import { PDFDocument, rgb, type PDFPage } from 'pdf-lib'
+import { pdfText, type PdfText, type Weight } from '@campusos/module-framework/pdf'
 import { db, institutions, withTenant } from '@campusos/db'
 import { accounts, invoiceLines, invoices, invoiceTaxes, orderLines, orders, parties, payments, paymentAllocations } from '../schema'
 import { FinanceError, requireRead, type Actor } from './core'
@@ -9,8 +10,8 @@ import { settingsWithin } from './years'
 
 /**
  * Documents of record, printed: a tax invoice (or credit or debit note), a
- * receipt or payment voucher, and a purchase order. A4, standard fonts -- so
- * the rupee sign is written "Rs" -- and the amount in words, the way they are
+ * receipt or payment voucher, and a purchase order. A4, in Noto Sans, with the
+ * rupee sign written "Rs" and the amount in words, the way they are
  * filed and signed.
  */
 
@@ -19,14 +20,6 @@ const M = 42
 const ink = rgb(0.1, 0.1, 0.12)
 const faint = rgb(0.42, 0.42, 0.48)
 const rule = rgb(0.78, 0.78, 0.82)
-const safe = (s: string) =>
-  s
-    .replace(/[‘’]/g, "'")
-    .replace(/[“”]/g, '"')
-    .replace(/[–—]/g, '-')
-    .replace(/₹/g, 'Rs ')
-    .replace(/[^\x20-\x7E]/g, '?')
-
 /** Money in a currency's own units, grouped the Indian way for rupees. */
 export function money(minor: number, currency = 'INR', minorUnits = 2): string {
   const neg = minor < 0
@@ -44,31 +37,31 @@ export function money(minor: number, currency = 'INR', minorUnits = 2): string {
 class Sheet {
   page: PDFPage
   y = A4.h - M
+  readonly font: Weight = 'regular'
+  readonly bold: Weight = 'bold'
   constructor(
     readonly doc: PDFDocument,
-    readonly font: PDFFont,
-    readonly bold: PDFFont,
+    readonly t: PdfText,
   ) {
     this.page = doc.addPage([A4.w, A4.h])
   }
-  text(s: string, x: number, size = 9, f: PDFFont = this.font, color = ink) {
-    this.page.drawText(safe(s), { x, y: this.y, size, font: f, color })
+  text(s: string, x: number, size = 9, f: Weight = this.font, color = ink) {
+    this.t.draw(this.page, s, { x, y: this.y, size, weight: f, color })
   }
-  right(s: string, xRight: number, size = 9, f: PDFFont = this.font, color = ink) {
-    const t = safe(s)
-    this.page.drawText(t, { x: xRight - f.widthOfTextAtSize(t, size), y: this.y, size, font: f, color })
+  right(s: string, xRight: number, size = 9, f: Weight = this.font, color = ink) {
+    this.t.draw(this.page, s, { x: xRight - this.t.width(s, size, f), y: this.y, size, weight: f, color })
   }
   fit(s: string, width: number, size = 9) {
-    let out = safe(s)
-    if (this.font.widthOfTextAtSize(out, size) <= width) return out
-    while (out.length > 1 && this.font.widthOfTextAtSize(`${out}...`, size) > width) out = out.slice(0, -1)
+    let out = s
+    if (this.t.width(out, size) <= width) return out
+    while (out.length > 1 && this.t.width(`${out}...`, size) > width) out = out.slice(0, -1)
     return `${out.trimEnd()}...`
   }
-  wrap(s: string, x: number, width: number, size = 9, f: PDFFont = this.font, color = ink) {
+  wrap(s: string, x: number, width: number, size = 9, f: Weight = this.font, color = ink) {
     let cur = ''
-    for (const word of safe(s).split(/\s+/)) {
+    for (const word of s.split(/\s+/)) {
       const next = cur ? `${cur} ${word}` : word
-      if (f.widthOfTextAtSize(next, size) > width && cur) {
+      if (this.t.width(next, size, f) > width && cur) {
         this.text(cur, x, size, f, color)
         this.y -= size + 3
         cur = word
@@ -91,14 +84,13 @@ class Sheet {
   }
 }
 
-async function start(title: string) {
+/** `content` is everything the document will draw: its fonts are chosen from it. */
+async function start(title: string, content: unknown) {
   const doc = await PDFDocument.create()
   doc.setTitle(title)
   doc.setProducer('CampusOS')
   doc.setCreationDate(new Date())
-  const font = await doc.embedFont(StandardFonts.Helvetica)
-  const bold = await doc.embedFont(StandardFonts.HelveticaBold)
-  return new Sheet(doc, font, bold)
+  return new Sheet(doc, await pdfText(doc, JSON.stringify(content)))
 }
 
 interface Letterhead {
@@ -167,7 +159,7 @@ export async function invoicePdf(actor: Actor, invoiceId: string): Promise<{ byt
       : inv.isReturn
         ? 'DEBIT NOTE'
         : 'PURCHASE BILL'
-  const sh = await start(`${title} ${inv.number}`)
+  const sh = await start(`${title} ${inv.number}`, [lh, inv, ls, ts, party, orig])
   const m = (v: number) => money(v, inv.currency, minor)
   head(sh, lh, title)
 
@@ -257,7 +249,7 @@ export async function invoicePdf(actor: Actor, invoiceId: string): Promise<{ byt
     sh.wrap(inv.terms, M, A4.w - 2 * M, 8)
   }
   if (inv.docstatus === 'cancelled') {
-    sh.page.drawText('CANCELLED', { x: 150, y: 400, size: 64, font: sh.bold, color: rgb(0.85, 0.2, 0.2), opacity: 0.25 })
+    sh.t.draw(sh.page, 'CANCELLED', { x: 150, y: 400, size: 64, weight: 'bold', color: rgb(0.85, 0.2, 0.2), opacity: 0.25 })
   }
   signature(sh, lh)
   return { bytes: await sh.doc.save(), fileName: `${(inv.number ?? 'invoice').replace(/[^a-zA-Z0-9._-]/g, '_')}.pdf` }
@@ -285,7 +277,7 @@ export async function paymentPdf(actor: Actor, paymentId: string): Promise<{ byt
   const { p, party, acct, to, allocs, s, minor } = data
   const lh = await letterheadOf(tenant, s)
   const title = p.kind === 'receive' ? 'RECEIPT' : p.kind === 'pay' ? 'PAYMENT VOUCHER' : 'CONTRA VOUCHER'
-  const sh = await start(`${title} ${p.number}`)
+  const sh = await start(`${title} ${p.number}`, [lh, p, party, acct, to, allocs])
   const m = (v: number) => money(v, p.currency, minor)
   head(sh, lh, title)
   const facts: [string, string][] = [
@@ -336,7 +328,7 @@ export async function paymentPdf(actor: Actor, paymentId: string): Promise<{ byt
     sh.wrap(p.memo, M, A4.w - 2 * M, 9, sh.font, faint)
   }
   if (p.docstatus === 'cancelled') {
-    sh.page.drawText('CANCELLED', { x: 150, y: 400, size: 64, font: sh.bold, color: rgb(0.85, 0.2, 0.2), opacity: 0.25 })
+    sh.t.draw(sh.page, 'CANCELLED', { x: 150, y: 400, size: 64, weight: 'bold', color: rgb(0.85, 0.2, 0.2), opacity: 0.25 })
   }
   signature(sh, lh)
   return { bytes: await sh.doc.save(), fileName: `${(p.number ?? 'voucher').replace(/[^a-zA-Z0-9._-]/g, '_')}.pdf` }
@@ -358,7 +350,7 @@ export async function orderPdf(actor: Actor, orderId: string): Promise<{ bytes: 
   const { o, party, ls, s, minor } = data
   const lh = await letterheadOf(tenant, s)
   const title = o.kind === 'purchase_order' ? 'PURCHASE ORDER' : o.kind === 'sales_order' ? 'SALES ORDER' : 'QUOTATION'
-  const sh = await start(`${title} ${o.number}`)
+  const sh = await start(`${title} ${o.number}`, [lh, o, party, ls])
   const m = (v: number) => money(v, o.currency, minor)
   head(sh, lh, title)
   sh.text(o.kind === 'purchase_order' ? 'To' : 'For', M, 8, sh.bold, faint)

@@ -1,4 +1,5 @@
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
+import { PDFDocument, rgb } from 'pdf-lib'
+import { pdfText, type Weight } from '@campusos/module-framework/pdf'
 import { plainPaise } from '@campusos/money'
 
 export interface ReceiptData {
@@ -23,7 +24,6 @@ export interface ReceiptData {
  * document of record, and its figures should not change shape with the server's
  * locale.
  */
-const safe = (s: string) => s.replace(/[^\x20-\x7E]/g, '?')
 
 export async function receiptPdf(d: ReceiptData): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
@@ -32,21 +32,22 @@ export async function receiptPdf(d: ReceiptData): Promise<Uint8Array> {
 
   // A5 landscape: a receipt, not a report.
   const page = doc.addPage([595.28, 420])
-  const font = await doc.embedFont(StandardFonts.Helvetica)
-  const bold = await doc.embedFont(StandardFonts.HelveticaBold)
+  const t = await pdfText(doc, JSON.stringify(d))
+  const font: Weight = 'regular'
+  const bold: Weight = 'bold'
 
   const ink = rgb(0.1, 0.1, 0.12)
   const faint = rgb(0.45, 0.45, 0.5)
   const M = 40
   let y = 420 - M
 
-  const text = (s: string, x: number, size = 10, f = font, color = ink) =>
-    page.drawText(safe(s), { x, y, size, font: f, color })
+  const text = (s: string, x: number, size = 10, f: Weight = font, color = ink) =>
+    t.draw(page, s, { x, y, size, weight: f, color })
 
   text(d.institutionName || 'Institution', M, 15, bold)
   y -= 18
   text('Fee Receipt', M, 10, font, faint)
-  text(d.receiptNo, 595.28 - M - font.widthOfTextAtSize(d.receiptNo, 12) - 4, 12, bold)
+  text(d.receiptNo, 595.28 - M - t.width(d.receiptNo, 12) - 4, 12, bold)
   y -= 24
 
   page.drawLine({

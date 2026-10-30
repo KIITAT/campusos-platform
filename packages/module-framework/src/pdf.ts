@@ -142,7 +142,7 @@ export function unprintable(text: string): string | null {
 
 export interface PdfText {
   width(text: string, size: number, weight?: Weight): number
-  draw(page: PDFPage, text: string, at: { x: number; y: number; size: number; weight?: Weight; color?: RGB }): void
+  draw(page: PDFPage, text: string, at: { x: number; y: number; size: number; weight?: Weight; color?: RGB; opacity?: number }): void
 }
 
 /**
@@ -170,7 +170,7 @@ export async function pdfText(doc: PDFDocument, content: string): Promise<PdfTex
     width(text, size, weight = 'regular') {
       return runsOf(text).reduce((n, r) => n + fontFor(r.script, weight).widthOfTextAtSize(r.text, size), 0)
     },
-    draw(page, text, { x, y, size, weight = 'regular', color }) {
+    draw(page, text, { x, y, size, weight = 'regular', color, opacity }) {
       const bad = unprintable(text)
       if (bad) throw new MissingGlyphError(bad)
       let at = x
@@ -186,7 +186,7 @@ export async function pdfText(doc: PDFDocument, content: string): Promise<PdfTex
             doc.context.obj({ ActualText: PDFHexString.fromText(run.text) }) as never,
           ]),
         )
-        page.drawText(run.text, { x: at, y, size, font, color })
+        page.drawText(run.text, { x: at, y, size, font, color, opacity })
         page.pushOperators(PDFOperator.of(PDFOperatorNames.EndMarkedContent))
         at += font.widthOfTextAtSize(run.text, size)
       }
