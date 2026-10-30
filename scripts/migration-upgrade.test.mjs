@@ -39,6 +39,7 @@ const NEW_FILES = new Set([
   'academic/0008_gpa_policy.sql',
   'enrollment/0001_student_relations.sql',
   'mentoring/0001_student_relations.sql',
+  'timetable/0001_solves_off_the_request.sql',
 ])
 const NEW_CORE_FROM = 5
 
@@ -271,5 +272,16 @@ test('academic 0008 applies as an upgrade: GPA rules under RLS (FUNC-03)', { ski
         (select count(*)::int from pg_policy where polrelid = to_regclass('public.academic_gpa_policies')) as policies,
         (select count(*)::int from pg_indexes where indexname = 'academic_gpa_policies_from') as idx`)
     assert.deepEqual(rows[0], { rls: true, policies: 1, idx: 1 })
+  })
+})
+
+test('timetable 0001 applies as an upgrade: one solve per institution, a 120-second cap (REL-01)', { skip: !url && 'MIGRATION_DATABASE_URL is not set' }, async () => {
+  await withClient(at(DB), async (c) => {
+    const { rows } = await c.query(`
+      select
+        (select count(*)::int from pg_indexes where indexname = 'timetable_runs_one_solving') as idx,
+        (select pg_get_constraintdef(oid) from pg_constraint where conname = 'timetable_settings_time') as cap`)
+    assert.equal(rows[0].idx, 1)
+    assert.match(rows[0].cap, /120/)
   })
 })

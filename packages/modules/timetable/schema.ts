@@ -53,7 +53,7 @@ export const settings = pgTable(
   () => [
     check('timetable_settings_limits', sql`max_per_day between 1 and 16 and max_per_week between 1 and 80 and max_consecutive between 1 and 16`),
     check('timetable_settings_month', sql`year_starts_month between 1 and 12`),
-    check('timetable_settings_time', sql`time_limit_seconds between 1 and 600`),
+    check('timetable_settings_time', sql`time_limit_seconds between 1 and 120`),
     tenantPolicy('timetable_settings'),
   ],
 )
@@ -281,12 +281,20 @@ export const runs = pgTable(
     appliedAt: timestamp('applied_at', { withTimezone: true }),
     appliedBy: text('applied_by'),
     closedAt: timestamp('closed_at', { withTimezone: true }),
+    /** While `solving`: when the database may call the solve abandoned (a stopped server leaves it behind). */
+    solveDeadline: timestamp('solve_deadline', { withTimezone: true }),
+    /** Why a run is `failed` or `cancelled`. */
+    error: text(),
   },
   (t) => [
     index('timetable_runs_term').on(t.institutionId, t.termId, t.createdAt),
     // The live timetable came from at most one run.
     uniqueIndex('timetable_runs_one_applied').on(t.termId).where(sql`status = 'applied'`),
-    check('timetable_runs_status', sql`status in ('draft', 'applied', 'discarded', 'superseded')`),
+    // One solve at a time per institution.
+    uniqueIndex('timetable_runs_one_solving').on(t.institutionId).where(sql`status = 'solving'`),
+    check('timetable_runs_status', sql`status in ('solving', 'draft', 'applied', 'discarded', 'superseded', 'failed', 'cancelled')`),
+    check('timetable_runs_error', sql`error is null or error in ('interrupted', 'timed_out', 'out_of_memory', 'crashed', 'cancelled', 'not_permitted')`),
+    check('timetable_runs_solving_deadline', sql`(status = 'solving') = (solve_deadline is not null)`),
     tenantPolicy('timetable_runs'),
   ],
 )
