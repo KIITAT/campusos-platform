@@ -15,6 +15,7 @@ import {
   declareProgram,
   degreeAudit,
   listCompletions,
+  postCompletionWithin,
   recordCompletion,
   waivePrerequisite,
   type Actor,
@@ -509,4 +510,24 @@ test('a course wrongly credited is corrected to a fail, not removed', async () =
   assert.equal(after.requirements[0]!.outstanding.length, 1)
   // The attempt is still on the record, where a registrar can explain it.
   assert.equal((await listCompletions(c.admin, { studentId: c.student.id })).length, 1)
+})
+
+test('the degree audit counts a failed course at zero once the corrected rule applies (FUNC-03)', async () => {
+  const c = await campus()
+  const cur = await createCurriculum(c.admin, { programId: c.programId, catalogYear: 2025, totalCredits: 8 })
+  const a = await course(c, 'Algorithms', 4)
+  const b = await course(c, 'Databases', 4)
+  await declareProgram(c.admin, { studentId: c.student.id, programId: c.programId, curriculumId: cur.id })
+
+  await withTenant(c.id, async (tx) => {
+    await postCompletionWithin(tx, c.id, c.admin.id, {
+      studentId: c.student.id, courseId: a.id, termId: c.termId, credits: 4, gradePoints: '10.00', gradeLabel: 'O', passed: true,
+    }, 'test')
+    await postCompletionWithin(tx, c.id, c.admin.id, {
+      studentId: c.student.id, courseId: b.id, termId: c.termId, credits: 4, gradePoints: '0.00', gradeLabel: 'F', passed: false,
+    }, 'test')
+  })
+
+  // A fresh institution has no rule rows: the corrected rule applies to every term.
+  assert.equal((await degreeAudit(c.admin, { studentId: c.student.id })).cgpa, 5)
 })

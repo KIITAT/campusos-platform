@@ -74,13 +74,13 @@ export function gradePointAverage(
   let credits = 0
   for (const group of byCourse.values()) {
     group.sort((x, y) => (x.termStartsOn ?? EARLIEST).localeCompare(y.termStartsOn ?? EARLIEST))
-    const latest = group[group.length - 1]
+    const latest = group[group.length - 1]!
     const rule = rulesOn(versions, latest.termStartsOn)
     let counted: Attempt[]
     if (rule.repeats === 'all') counted = group
     else if (rule.repeats === 'latest') counted = [latest]
     else {
-      let top = group[0]
+      let top = group[0]!
       for (const at of group) if (at.points !== null && (top.points === null || at.points >= top.points)) top = at
       counted = [top]
     }

@@ -4,8 +4,9 @@ import {
   DEFAULT_GPA_BANDS,
   bandFor,
   coursePercent,
-  gpa,
+  UNIVERSITY_GRADE_POINTS,
   gradeCourse,
+  gradingPolicyFor,
   round2,
   type ExamResult,
 } from './api/grading'
@@ -117,37 +118,19 @@ test('bands need not be given in order', () => {
   assert.equal(bandFor(shuffled, 85)?.label, 'A+')
 })
 
-// --- gpa -------------------------------------------------------------------
+// --- grading policy --------------------------------------------------------
 
-test('gpa is credit-weighted, not a flat mean', () => {
-  const grades = [
-    gradeCourse(DEFAULT_GPA_BANDS, 4, [ex({ obtained: 95 })]), // O, 10 pts, 4 cr
-    gradeCourse(DEFAULT_GPA_BANDS, 1, [ex({ obtained: 45 })]), // C, 5 pts, 1 cr
-  ]
-  // (10*4 + 5*1) / 5 = 9
-  assert.deepEqual(gpa(grades), { value: 9, credits: 5 })
-})
-
-test('a failed course contributes neither points nor credits', () => {
-  const grades = [
-    gradeCourse(DEFAULT_GPA_BANDS, 4, [ex({ obtained: 95 })]),
-    gradeCourse(DEFAULT_GPA_BANDS, 4, [ex({ obtained: 10 })]), // F
-  ]
-  assert.deepEqual(gpa(grades), { value: 10, credits: 4 })
-})
-
-test('an incomplete course does not drag the average down', () => {
-  const grades = [
-    gradeCourse(DEFAULT_GPA_BANDS, 4, [ex({ obtained: 95 })]),
-    gradeCourse(DEFAULT_GPA_BANDS, 4, [ex({ obtained: null })]),
-  ]
-  assert.deepEqual(gpa(grades), { value: 10, credits: 4 })
-})
-
-test('no gradeable course gives no gpa rather than zero', () => {
-  assert.deepEqual(gpa([]), { value: null, credits: 0 })
-  const failed = [gradeCourse(DEFAULT_GPA_BANDS, 4, [ex({ obtained: 5 })])]
-  assert.deepEqual(gpa(failed), { value: null, credits: 0 })
+test('every scheme kind is graded by the university grade-point policy until school grading exists (FUNC-03)', () => {
+  for (const k of ['percentage', 'gpa', 'custom'] as const) {
+    assert.equal(gradingPolicyFor(k).id, 'university-grade-points')
+  }
+  assert.deepEqual(
+    UNIVERSITY_GRADE_POINTS.average(
+      [{ courseId: 'x', termStartsOn: '2026-01-05', credits: 4, points: 0, passed: false }],
+      [],
+    ),
+    { value: 0, credits: 4 },
+  )
 })
 
 test('the default scale covers every percentage from 0 to 100', () => {

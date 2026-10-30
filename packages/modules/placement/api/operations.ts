@@ -1,6 +1,8 @@
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { users, withTenant } from '@campusos/db'
-import { courseCompletions, programs, studentPrograms } from '@campusos/module-academic/schema'
+import { gpaPolicyVersions } from '@campusos/module-academic/api'
+import { gradePointAverage } from '@campusos/module-academic/gpa'
+import { courseCompletions, programs, studentPrograms, terms } from '@campusos/module-academic/schema'
 import { applications, companies, drives, offers, officers, results, rounds } from '../schema'
 import { ADMIN, DomainError, log, person, tenant, type Actor, type Tx } from './core'
 import * as schemas from './schemas'
@@ -96,12 +98,29 @@ async function eligibility(tx: Tx, studentId: string, drive: typeof drives.$infe
   if (!declarations.some((declaration) => !drive.programId || declaration.programId === drive.programId)) {
     throw new DomainError(409, 'wrong_program', 'An active or completed eligible programme is required.')
   }
-  const record = await tx.select().from(courseCompletions).where(eq(courseCompletions.studentId, studentId))
+  const record = await tx
+    .select({
+      courseId: courseCompletions.courseId,
+      credits: courseCompletions.credits,
+      gradePoints: courseCompletions.gradePoints,
+      passed: courseCompletions.passed,
+      termStartsOn: terms.startsOn,
+    })
+    .from(courseCompletions)
+    .leftJoin(terms, eq(terms.id, courseCompletions.termId))
+    .where(eq(courseCompletions.studentId, studentId))
   const passes = new Set(record.filter((completion) => completion.passed).map((completion) => completion.courseId))
   const backlogs = new Set(record.filter((completion) => !completion.passed && !passes.has(completion.courseId)).map((completion) => completion.courseId)).size
-  const graded = record.filter((completion) => completion.passed && completion.gradePoints !== null)
-  const credits = graded.reduce((total, completion) => total + completion.credits, 0)
-  const cgpa = credits ? Math.round(graded.reduce((total, completion) => total + Number(completion.gradePoints) * completion.credits, 0) / credits * 100) / 100 : null
+  const cgpa = gradePointAverage(
+    record.map((completion) => ({
+      courseId: completion.courseId,
+      termStartsOn: completion.termStartsOn,
+      credits: completion.credits,
+      points: completion.gradePoints === null ? null : Number(completion.gradePoints),
+      passed: completion.passed,
+    })),
+    await gpaPolicyVersions(tx),
+  ).value
   if (Number(drive.minCgpa) > 0 && (cgpa === null || cgpa < Number(drive.minCgpa))) throw new DomainError(409, 'grades_below_threshold', 'Published academic grades do not meet this drive threshold.')
   if (backlogs > drive.maxBacklogs) throw new DomainError(409, 'backlogs_above_threshold', 'Uncleared academic backlogs exceed this drive threshold.')
   return { cgpa, backlogs, checkedAt: new Date().toISOString() }

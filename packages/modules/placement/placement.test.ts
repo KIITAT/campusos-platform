@@ -145,7 +145,7 @@ test('eligibility uses published academic grades and uncleared distinct backlogs
     ])
     return failed!
   })
-  const drive = await placement.createDrive(campusData.admin, { companyId: campusData.company.id, title: 'Verified grades', closesAt: '2099-01-01T00:00:00Z', minCgpa: 8, maxBacklogs: 0 })
+  const drive = await placement.createDrive(campusData.admin, { companyId: campusData.company.id, title: 'Verified grades', closesAt: '2099-01-01T00:00:00Z', minCgpa: 4, maxBacklogs: 0 })
   await placement.changeDrive(campusData.admin, { driveId: drive.id, status: 'open' })
   await assert.rejects(placement.apply(campusData.student, { driveId: drive.id }), /backlog/i)
   await withTenant(campusData.institutionId, (tx) => tx.insert(courseCompletions).values({ institutionId: campusData.institutionId, studentId: campusData.student.id, courseId: record.id, credits: 4, gradePoints: '8', passed: true, source: 'transfer', note: 'Verified resit pass' }))

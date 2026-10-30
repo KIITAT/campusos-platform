@@ -543,15 +543,15 @@ test('a partly-published course is marked provisional, not presented as final', 
   assert.equal(t.terms[0]!.grades.length, 1)
 })
 
-test('a failing student earns no credits towards the gpa', async () => {
+test('a failing student earns no credits, and the failed course counts at zero points (FUNC-03)', async () => {
   await fullyGradedCourse()
   // s2: 40% at 40 weight, 30% at 60 -> 16 + 18 = 34 -> F
   const t = await transcript(A({}), ids.s2)
   const g = t.terms[0]!.grades[0]!
   assert.equal(g.label, 'F')
   assert.equal(g.passed, false)
-  assert.equal(t.cumulativeGpa, null)
-  assert.equal(t.totalCredits, 0)
+  assert.equal(t.cumulativeGpa, 0)
+  assert.equal(t.totalCredits, 4)
 })
 
 test('a student may read their own transcript and no one else’s', async () => {

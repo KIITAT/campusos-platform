@@ -1,7 +1,8 @@
 import { and, asc, eq, inArray, isNotNull } from 'drizzle-orm'
 import { audit, withTenant } from '@campusos/db'
 import { assertCanAccessStudent } from '@campusos/module-framework'
-import { postCompletionWithin } from '@campusos/module-academic/api'
+import { gpaPolicyVersions, postCompletionWithin } from '@campusos/module-academic/api'
+import type { Attempt } from '@campusos/module-academic/gpa'
 import {
   courseCompletions,
   courses,
@@ -16,7 +17,7 @@ import {
 import { examMarks, exams } from '../schema'
 import { ExamError, schemeInForce, type Actor } from './operations'
 import { finaliseCourseSchema, type Transcript } from './schemas'
-import { gpa, gradeCourse } from './grading'
+import { gradeCourse, gradingPolicyFor } from './grading'
 
 /**
  * Where marks stop being this module's business and become the record.
@@ -241,6 +242,7 @@ export async function officialTranscript(
 
     const rows = await tx
       .select({
+        courseId: courseCompletions.courseId,
         courseCode: courses.code,
         courseTitle: courses.title,
         credits: courseCompletions.credits,
@@ -258,6 +260,10 @@ export async function officialTranscript(
       .where(eq(courseCompletions.studentId, studentId))
       .orderBy(asc(terms.startsOn), asc(courses.code))
 
+    const versions = await gpaPolicyVersions(tx)
+    const policy = gradingPolicyFor(scheme.kind)
+    const attemptsByTerm = new Map<string, Attempt[]>()
+    const everyAttempt: Attempt[] = []
     const byTerm = new Map<string, Transcript['terms'][number]>()
     for (const r of rows) {
       // Transfer credit was not earned in one of our terms, and saying so is
@@ -286,34 +292,23 @@ export async function officialTranscript(
         passed: r.passed,
       })
       byTerm.set(code, term)
+      const attempt: Attempt = {
+        courseId: r.courseId,
+        termStartsOn: r.termStarts,
+        credits: r.credits,
+        points: r.gradePoints === null ? null : Number(r.gradePoints),
+        passed: r.passed,
+      }
+      attemptsByTerm.set(code, [...(attemptsByTerm.get(code) ?? []), attempt])
+      everyAttempt.push(attempt)
     }
 
     const shaped = [...byTerm.values()].map((t) => {
-      const g = gpa(
-        t.grades.map((x) => ({
-          percent: x.percent,
-          complete: true,
-          label: x.label,
-          points: x.points,
-          passed: x.passed,
-          credits: x.credits,
-        })),
-      )
+      const g = policy.average(attemptsByTerm.get(t.termCode) ?? [], versions)
       return { ...t, gpa: g.value, credits: g.credits }
     })
 
-    const cumulative = gpa(
-      shaped.flatMap((t) =>
-        t.grades.map((x) => ({
-          percent: x.percent,
-          complete: true,
-          label: x.label,
-          points: x.points,
-          passed: x.passed,
-          credits: x.credits,
-        })),
-      ),
-    )
+    const cumulative = policy.average(everyAttempt, versions)
 
     return {
       studentName: student.name,

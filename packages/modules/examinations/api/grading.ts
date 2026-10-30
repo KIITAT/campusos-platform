@@ -1,4 +1,4 @@
-import { round2 } from '@campusos/module-academic/gpa'
+import { gradePointAverage, round2, type Attempt, type GpaPolicyVersion } from '@campusos/module-academic/gpa'
 
 /**
  * Grade computation, kept pure so it is testable without a database and
@@ -111,22 +111,26 @@ export function gradeCourse(
 }
 
 /**
- * Credit-weighted average of points. Only courses that yielded points count:
- * a failed or pending course contributes neither points nor credits, which is
- * the usual convention and the only one that does not silently drag an average
- * down for work not yet marked.
+ * How an institution grades a course and averages the results. One
+ * implementation today, the university grade-point policy; school grading
+ * (marks, percentage, board grade points) adds a second and a branch in
+ * `gradingPolicyFor` without touching its callers.
  */
-export function gpa(grades: CourseGrade[]): { value: number | null; credits: number } {
-  let weighted = 0
-  let credits = 0
-  for (const g of grades) {
-    if (g.points === null || !g.passed || !g.complete) continue
-    weighted += g.points * g.credits
-    credits += g.credits
-  }
-  return credits === 0
-    ? { value: null, credits: 0 }
-    : { value: round2(weighted / credits), credits }
+export interface GradingPolicy {
+  readonly id: 'university-grade-points'
+  gradeCourse(bands: Band[], credits: number, results: ExamResult[]): CourseGrade
+  average(attempts: Attempt[], versions: GpaPolicyVersion[]): { value: number | null; credits: number }
+}
+
+export const UNIVERSITY_GRADE_POINTS: GradingPolicy = {
+  id: 'university-grade-points',
+  gradeCourse,
+  average: gradePointAverage,
+}
+
+export function gradingPolicyFor(kind: 'percentage' | 'gpa' | 'custom'): GradingPolicy {
+  void kind
+  return UNIVERSITY_GRADE_POINTS
 }
 
 /** A sane default an institution can adopt or replace. Indian 10-point scale. */

@@ -1,7 +1,8 @@
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm'
 import { audit, withTenant } from '@campusos/db'
 import { assertCanAccessStudent, moduleEnabled, readUpload, UploadError, type StudentPurpose } from '@campusos/module-framework'
-import { studentProfile, type Actor as AcademicActor } from '@campusos/module-academic/api'
+import { gpaPolicyVersions, studentProfile, type Actor as AcademicActor } from '@campusos/module-academic/api'
+import { gradePointAverage, type Attempt } from '@campusos/module-academic/gpa'
 import { completion, type Actor as FeedbackActor } from '@campusos/module-feedback/api'
 import { manifest as feedbackManifest } from '@campusos/module-feedback/manifest'
 import { cancelChargeForSourceWithin, chargeStudentWithin } from '@campusos/module-fees/api'
@@ -30,7 +31,6 @@ import {
   setWindowSchema,
   uploadPaperSchema,
 } from './cycle-schemas'
-import { gpa } from './grading'
 import { assertZone, instant, wallClock, ZoneError } from './time'
 
 /**
@@ -654,6 +654,7 @@ export async function gradeReport(actor: Actor, studentId: string, termId: strin
     const rows = await tx
       .select({
         termId: courseCompletions.termId,
+        courseId: courseCompletions.courseId,
         startsOn: terms.startsOn,
         code: courses.code,
         title: courses.title,
@@ -667,16 +668,16 @@ export async function gradeReport(actor: Actor, studentId: string, termId: strin
       .innerJoin(terms, eq(terms.id, courseCompletions.termId))
       .where(and(eq(courseCompletions.studentId, studentId), sql`${terms.startsOn} <= ${t.startsOn}`))
       .orderBy(asc(courses.code))
-    const shape = (r: (typeof rows)[number]) => ({
-      percent: 0,
-      complete: true,
-      label: r.grade,
+    const shape = (r: (typeof rows)[number]): Attempt => ({
+      courseId: r.courseId,
+      termStartsOn: r.startsOn,
       points: r.points === null ? null : Number(r.points),
       passed: r.passed,
       credits: r.credits,
     })
     const these = rows.filter((r) => r.termId === termId)
     if (!these.length) throw new ExamError(409, 'no_results', 'no finalised results for that term yet')
+    const versions = await gpaPolicyVersions(tx)
     return {
       institution: inst?.name ?? '',
       term: { code: t.code, name: t.name },
@@ -689,8 +690,8 @@ export async function gradeReport(actor: Actor, studentId: string, termId: strin
         points: r.points === null ? null : Number(r.points),
         passed: r.passed,
       })),
-      sgpa: gpa(these.map(shape)).value,
-      cgpa: gpa(rows.map(shape)).value,
+      sgpa: gradePointAverage(these.map(shape), versions).value,
+      cgpa: gradePointAverage(rows.map(shape), versions).value,
       creditsEarned: these.filter((r) => r.passed).reduce((n, r) => n + r.credits, 0),
       creditsEarnedTotal: rows.filter((r) => r.passed).reduce((n, r) => n + r.credits, 0),
     }

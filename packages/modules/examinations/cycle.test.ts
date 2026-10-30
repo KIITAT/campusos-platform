@@ -231,9 +231,9 @@ test('the semester grade report is the official record for the term, held for fe
   const g = await gradeReport(c.asha, c.asha.id, c.termId)
   assert.deepEqual(g.courses.map((x) => [x.code, x.grade]), [[`DS${n}`, 'A']])
   assert.equal(g.sgpa, 9)
-  // A failed paper is left out of the averages, as the transcript already does;
-  // whether an F counts is the university's rule, and this is the product's existing one.
-  assert.equal(g.cgpa, 9)
+  // A failed paper counts its credits at zero points (FUNC-03, the corrected
+  // rule: a fresh institution has no rule rows), 4 credits at 9 and 4 at 0.
+  assert.equal(g.cgpa, 4.5)
   assert.equal(g.creditsEarnedTotal, 4, 'and earns no credit')
   assert.equal(Buffer.from(await gradeReportPdf(g)).subarray(0, 5).toString(), '%PDF-')
 

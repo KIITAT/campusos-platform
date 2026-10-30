@@ -21,7 +21,9 @@ import {
   unpublishExamSchema,
   type Transcript,
 } from './schemas'
-import { DEFAULT_GPA_BANDS, gradeCourse, gpa, type Band } from './grading'
+import { gpaPolicyVersions } from '@campusos/module-academic/api'
+import type { Attempt } from '@campusos/module-academic/gpa'
+import { DEFAULT_GPA_BANDS, gradingPolicyFor, type Band } from './grading'
 import { assertZone, instant } from './time'
 
 const MODULE = 'examinations'
@@ -580,6 +582,7 @@ export async function transcript(actor: Actor, studentId: string): Promise<Trans
     const rows = await tx
       .select({
         offeringId: offerings.id,
+        courseId: courses.id,
         courseCode: courses.code,
         courseTitle: courses.title,
         credits: courses.credits,
@@ -623,6 +626,10 @@ export async function transcript(actor: Actor, studentId: string): Promise<Trans
           )
       : []
 
+    const policy = gradingPolicyFor(scheme.kind)
+    const versions = await gpaPolicyVersions(tx)
+    const attemptsByTerm = new Map<string, Attempt[]>()
+    const everyAttempt: Attempt[] = []
     const byTerm = new Map<string, Transcript['terms'][number]>()
     let provisional = false
 
@@ -643,7 +650,7 @@ export async function transcript(actor: Actor, studentId: string): Promise<Trans
         continue
       }
 
-      const g = gradeCourse(scheme.bands, r.credits, results)
+      const g = policy.gradeCourse(scheme.bands, r.credits, results)
       if (!g.complete) provisional = true
 
       const term =
@@ -660,32 +667,25 @@ export async function transcript(actor: Actor, studentId: string): Promise<Trans
         passed: g.passed,
       })
       byTerm.set(r.termCode, term)
+      // An incomplete course stays out of every average.
+      if (g.complete) {
+        const attempt: Attempt = {
+          courseId: r.courseId,
+          termStartsOn: r.termStarts,
+          credits: r.credits,
+          points: g.points,
+          passed: g.passed,
+        }
+        attemptsByTerm.set(r.termCode, [...(attemptsByTerm.get(r.termCode) ?? []), attempt])
+        everyAttempt.push(attempt)
+      }
     }
 
     const termList = [...byTerm.values()].map((t) => {
-      const grades = t.grades.map((x) => ({
-        percent: x.percent,
-        complete: x.complete,
-        label: x.label,
-        points: x.points,
-        passed: x.passed,
-        credits: x.credits,
-      }))
-      const g = gpa(grades)
+      const g = policy.average(attemptsByTerm.get(t.termCode) ?? [], versions)
       return { ...t, gpa: g.value, credits: g.credits }
     })
-
-    const all = termList.flatMap((t) =>
-      t.grades.map((x) => ({
-        percent: x.percent,
-        complete: x.complete,
-        label: x.label,
-        points: x.points,
-        passed: x.passed,
-        credits: x.credits,
-      })),
-    )
-    const cumulative = gpa(all)
+    const cumulative = policy.average(everyAttempt, versions)
 
     return {
       studentName: student.name,

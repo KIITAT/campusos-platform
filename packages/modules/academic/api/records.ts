@@ -11,7 +11,9 @@ import {
   requirementCourses,
   requirements,
   studentPrograms,
+  terms,
 } from '../schema'
+import { gradePointAverage, type Attempt, type GpaPolicyVersion } from './gpa'
 import { AcademicError, requireReader, requireWriter, type Actor } from './operations'
 import {
   correctCompletionSchema,
@@ -41,6 +43,11 @@ export interface CompletionPost {
   gradeLabel: string | null
   passed: boolean
   note?: string | null
+}
+
+/** The institution's grade point average rules, by the date they take effect. */
+export async function gpaPolicyVersions(tx: Tx): Promise<GpaPolicyVersion[]> {
+  return [] // filled from academic_gpa_policies in step 6
 }
 
 /**
@@ -248,17 +255,28 @@ export async function degreeAudit(actor: Actor, input: unknown): Promise<DegreeA
         ),
       )
 
-    // Credit-weighted, over graded passes only. A transfer credit with no
-    // grade counts towards the degree and not towards the average, which is
-    // what a transcript that prints both has to mean.
-    let weighted = 0
-    let gradedCredits = 0
-    for (const p of passes) {
-      if (p.gradePoints === null) continue
-      weighted += Number(p.gradePoints) * p.credits
-      gradedCredits += p.credits
-    }
-    const cgpa = gradedCredits === 0 ? null : Math.round((weighted / gradedCredits) * 100) / 100
+    // One rule for every average (api/gpa.ts), under the rules the institution
+    // had in force when each term started. A transfer credit with no grade
+    // counts towards the degree and not towards the average.
+    const everyAttempt = await tx
+      .select({
+        courseId: courseCompletions.courseId,
+        credits: courseCompletions.credits,
+        gradePoints: courseCompletions.gradePoints,
+        passed: courseCompletions.passed,
+        termStartsOn: terms.startsOn,
+      })
+      .from(courseCompletions)
+      .leftJoin(terms, eq(terms.id, courseCompletions.termId))
+      .where(eq(courseCompletions.studentId, studentId))
+    const attempts: Attempt[] = everyAttempt.map((r) => ({
+      courseId: r.courseId,
+      termStartsOn: r.termStartsOn,
+      credits: r.credits,
+      points: r.gradePoints === null ? null : Number(r.gradePoints),
+      passed: r.passed,
+    }))
+    const cgpa = gradePointAverage(attempts, await gpaPolicyVersions(tx)).value
     const creditsEarned = passes.reduce((n, p) => n + p.credits, 0)
 
     const overrides = await tx
