@@ -40,6 +40,9 @@ const NEW_FILES = new Set([
   'enrollment/0001_student_relations.sql',
   'mentoring/0001_student_relations.sql',
   'timetable/0001_solves_off_the_request.sql',
+  'skills/0001_dpdp_subject.sql',
+  'hostel/0002_dpdp_subject.sql',
+  'attendance/0003_dpdp_subject.sql',
   'mentoring/0002_dpdp_subject.sql',
   'care/0001_dpdp_subject.sql',
 ])
