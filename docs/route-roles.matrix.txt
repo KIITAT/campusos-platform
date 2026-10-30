@@ -609,7 +609,7 @@ GET /api/v1/modules/library/imports                                      SI...L.
 GET /api/v1/modules/library/imports/template                             SI...L.... gate
 POST /api/v1/modules/library/imports/run                                 SI...L.... gate
 
-## mentoring 0.3.0
+## mentoring 0.4.0
 GET /api/v1/modules/mentoring/assignments                                SIH....... op
 POST /api/v1/modules/mentoring/assign                                    SIH....... op
 POST /api/v1/modules/mentoring/assignments/end                           SIH....... op
@@ -643,7 +643,7 @@ GET /api/v1/modules/notices/board/attachment                             SIHFALO
 GET /api/v1/modules/notices/inbox                                        SIHFALOsp. gate
 POST /api/v1/modules/notices/inbox                                       SIHFALOsp. gate
 
-## parents 0.3.0
+## parents 0.4.0
 GET /api/v1/modules/parents/links                                        SI........ op
 POST /api/v1/modules/parents/links                                       SI......p. gate
 POST /api/v1/modules/parents/links/decide                                SI........ op
