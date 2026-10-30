@@ -14,7 +14,7 @@ export const manifest: ModuleManifest = {
   name: 'Timetable',
   description:
     'Builds the whole week locally: who teaches each class (by course, programme and year, with preferences) and when and where every period meets, around pins, unavailability and labs, with each cohort’s and each teacher’s timetable to read and print.',
-  version: '0.4.0',
+  version: '0.5.0',
   alwaysEnabled: false,
   dependsOn: ['academic'],
   softDependsOn: ['attendance'],

@@ -709,7 +709,7 @@ POST /api/v1/modules/skills/assess                                       SIHF...
 POST /api/v1/modules/skills/self-assess                                  .......s.. op
 GET /api/v1/modules/skills/coverage                                      SIHF...... op
 
-## timetable 0.4.0
+## timetable 0.5.0
 GET /api/v1/modules/timetable/settings                                   SIHF...... op
 POST /api/v1/modules/timetable/settings                                  SI........ op
 GET /api/v1/modules/timetable/periods                                    SIHF...... op
