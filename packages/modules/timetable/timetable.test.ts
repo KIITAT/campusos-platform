@@ -1,6 +1,6 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { eq, inArray, like } from 'drizzle-orm'
+import { eq, inArray, like, sql } from 'drizzle-orm'
 import { authDb, institutions, users, withTenant } from '@campusos/db'
 import {
   addSectionMember,
@@ -23,9 +23,11 @@ import {
   addPin,
   addUnavailable,
   applyRun,
+  cancelRun,
   checkTerm,
   defaultNeeds,
   discardRun,
+  finishSolve,
   generatePeriods,
   generateRun,
   importEligibility,
@@ -44,9 +46,11 @@ import {
   setSection,
   setTeacher,
   solveSettled,
+  updateSettings,
   workload,
   yearOfStudy,
   type Actor,
+  type SolverResult,
 } from './api'
 import { runEntries, runs } from './schema'
 import { pages } from './pages'
@@ -181,7 +185,7 @@ test('a college is set up, drafted, checked against every rule, applied and prin
   assert.equal(check.periodsPerWeek, 35)
 
   const draft = await generateRun(admin, { termId: term.id, seed: '5', iterations: '3000' })
-  assert.equal(draft.unplaced, 0, draft.notice)
+  await solveSettled(draft.id)
   assert.match(draft.next, /^\/m\/timetable\/run\?id=/)
 
   const detail = await runDetail(admin, { runId: draft.id })
@@ -252,7 +256,8 @@ test('a college is set up, drafted, checked against every rule, applied and prin
   while (new Date(`${on}T00:00:00Z`).getUTCDay() !== slot!.dayOfWeek % 7) on = addDays(on, 1)
   await changeClass(admin, { slotId: slot!.id, onDate: on, kind: 'cancelled', reason: 'the teacher is at a conference' })
   const second = await generateRun(admin, { termId: term.id, seed: '9', iterations: '2000', keepTeachers: 'true' })
-  assert.equal(second.unplaced, 0)
+  await solveSettled(second.id)
+  assert.deepEqual((await runDetail(admin, { runId: second.id })).unplaced, [])
   const kept = await withTenant(k.id, (tx) => tx.select().from(runEntries).where(eq(runEntries.runId, second.id)))
   assert.ok(kept.some((e) => e.locked && e.offeringId === O.bDs && e.dayOfWeek === slot!.dayOfWeek && e.startsAt.startsWith(slot!.startsAt.slice(0, 5))))
   await applyRun(admin, { runId: second.id })
@@ -265,6 +270,7 @@ test('a college is set up, drafted, checked against every rule, applied and prin
 
   // A draft's meeting kept for the next run, and a draft thrown away.
   const third = await generateRun(admin, { termId: term.id, seed: '3', iterations: '500' })
+  await solveSettled(third.id)
   const [one] = await withTenant(k.id, (tx) => tx.select().from(runEntries).where(eq(runEntries.runId, third.id)).limit(1))
   await pinEntry(admin, { entryId: one!.id, keep: 'both' })
   await discardRun(admin, { runId: third.id })
@@ -315,6 +321,93 @@ test('drafting returns before the solver has run (REL-01)', async () => {
   assert.equal(detail.run.status, 'draft')
 })
 
+const emptyResult = (): SolverResult => ({
+  placements: [],
+  unplaced: [],
+  teachers: {},
+  issues: [],
+  cost: { total: 0, preference: 0, sameDay: 0, sectionGaps: 0, teacherGaps: 0, consecutive: 0, balance: 0, unstaffed: 0 },
+  stats: { blocks: 0, placed: 0, iterations: 0, ms: 0, seed: 1, moves: { place: [0, 0], move: [0, 0], swap: [0, 0], teacher: [0, 0] } },
+})
+
+/** A run that is being drafted, as `generateRun` leaves it before the thread answers. */
+async function solvingRun(k: Awaited<ReturnType<typeof college>>, deadline = sql`now() + interval '5 minutes'`) {
+  const [run] = await withTenant(k.id, (tx) =>
+    tx
+      .insert(runs)
+      .values({ institutionId: k.id, termId: k.term.id, status: 'solving', seed: 1, options: { offeringIds: [] }, teachers: {}, cost: {}, stats: {}, issues: [], unplaced: [], createdBy: k.admin.id, solveDeadline: deadline })
+      .returning(),
+  )
+  return run!
+}
+const runOf = async (k: Awaited<ReturnType<typeof college>>, id: string) => (await withTenant(k.id, (tx) => tx.select().from(runs).where(eq(runs.id, id))))[0]!
+const entriesOf = (k: Awaited<ReturnType<typeof college>>, id: string) => withTenant(k.id, (tx) => tx.select().from(runEntries).where(eq(runEntries.runId, id)))
+
+test('one solve at a time per institution (REL-01)', async () => {
+  const k = await college()
+  await solvingRun(k)
+  await assert.rejects(() => generateRun(k.admin, { termId: k.term.id }), (e: unknown) => e instanceof TimetableError && e.status === 409 && e.code === 'solve_running')
+})
+
+test('a solve left behind by a stopped server is failed after its deadline (REL-01)', async () => {
+  const k = await college()
+  await generatePeriods(k.admin, { days: ['1', '2'], startsAt: '09:00', minutes: '60', count: '3' })
+  await addEligibility(k.admin, { userId: k.u.rao, courseId: k.C.ds })
+  await setNeed(k.admin, { offeringId: k.O.aDs, periodsPerWeek: '2' })
+  const old = await solvingRun(k, sql`now() - interval '1 second'`)
+  const next = await generateRun(k.admin, { termId: k.term.id, seed: '5', iterations: '200' })
+  await solveSettled(next.id)
+  const after = await runOf(k, old.id)
+  assert.equal(after.status, 'failed')
+  assert.equal(after.error, 'interrupted')
+})
+
+test('a cancelled solve saves nothing (REL-01)', async () => {
+  const k = await college()
+  const run = await solvingRun(k)
+  await cancelRun(k.admin, { runId: run.id })
+  assert.equal((await runOf(k, run.id)).status, 'cancelled')
+  assert.equal(await finishSolve(k.id, k.admin.id, run.id, emptyResult(), new Map()), 'gone')
+  assert.equal((await entriesOf(k, run.id)).length, 0)
+  assert.equal((await runOf(k, run.id)).status, 'cancelled')
+  await assert.rejects(() => cancelRun(k.admin, { runId: run.id }), (e: unknown) => e instanceof TimetableError && e.status === 409 && e.code === 'not_solving')
+})
+
+test('a solve finishes only in its own institution (REL-01)', async () => {
+  const a = await college()
+  const b = await college()
+  const run = await solvingRun(a)
+  assert.equal(await finishSolve(b.id, b.admin.id, run.id, emptyResult(), new Map()), 'gone')
+  assert.equal((await runOf(a, run.id)).status, 'solving')
+  assert.equal((await entriesOf(a, run.id)).length, 0)
+  await assert.rejects(() => cancelRun(b.admin, { runId: run.id }), (e: unknown) => e instanceof TimetableError && e.status === 404)
+  await assert.rejects(() => finishSolve('', a.admin.id, run.id, emptyResult(), new Map()), /no institution/)
+  assert.equal((await runOf(a, run.id)).status, 'solving')
+})
+
+test('a solve is not saved for someone who lost the right to draft (REL-01)', async () => {
+  const k = await college()
+  const run = await solvingRun(k)
+  await authDb.update(users).set({ role: 'faculty' }).where(eq(users.id, k.admin.id))
+  assert.equal(await finishSolve(k.id, k.admin.id, run.id, emptyResult(), new Map()), 'refused')
+  const after = await runOf(k, run.id)
+  assert.equal(after.status, 'failed')
+  assert.equal(after.error, 'not_permitted')
+})
+
+test('the solver limit is capped at 120 seconds (REL-01)', async () => {
+  const k = await college()
+  await assert.rejects(() => updateSettings(k.admin, { timeLimitSeconds: '121' }))
+  const saved = await updateSettings(k.admin, { timeLimitSeconds: '120' })
+  assert.equal(saved.timeLimitSeconds, 120)
+})
+
+test('only the office cancels', async () => {
+  const k = await college()
+  const run = await solvingRun(k)
+  await assert.rejects(() => cancelRun(k.faculty('rao'), { runId: run.id }), (e: unknown) => e instanceof TimetableError && e.status === 403)
+})
+
 test('declared pages load real timetable data and keep faculty views personal', async () => {
   const collegeData = await college()
   const { admin, term } = collegeData
@@ -324,6 +417,7 @@ test('declared pages load real timetable data and keep faculty views personal', 
   const unavailable = await addUnavailable(collegeData.faculty('rao'), { dayOfWeek: '5', reason: 'Research' })
   await addUnavailable(collegeData.faculty('sen'), { dayOfWeek: '6', reason: 'Other teacher' })
   const draft = await generateRun(admin, { termId: term.id, seed: '42', iterations: '50' })
+  await solveSettled(draft.id)
   const loadPage = async (path: string, actor: Actor = admin, query = '') => {
     const page = pages.find(candidate => candidate.path === path)!
     const data = await page.load(actor, new Request(`https://college.test/m/timetable${path}?${query}`))
