@@ -11,9 +11,9 @@ import {
   consentCurrent,
   eraseSubject,
   exportSubject,
+  LastAdministratorError,
   recordConsent,
 } from './dpdp'
-import * as dpdp from './dpdp'
 import { auditLog } from './audit'
 import { institutions, users } from './schema'
 
@@ -244,6 +244,10 @@ async function owner<T>(run: (c: pg.Client) => Promise<T>): Promise<T> {
   }
 }
 
+/** drizzle wraps a database error: the database's own message is its cause. */
+const rejectsWith = (run: () => Promise<unknown>, pattern: RegExp) =>
+  assert.rejects(run, (e: Error) => pattern.test(`${e.message} ${(e.cause as Error | undefined)?.message ?? ''}`))
+
 async function freshStudent(): Promise<string> {
   const [u] = await authDb
     .insert(users)
@@ -298,7 +302,7 @@ test('two administrators erasing each other leave one (NEW-14)', async () => {
       for (let i = 0; i < 200 && waiting < 2; i++) {
         await new Promise((r) => setTimeout(r, 50))
         const { rows } = await c.query(
-          `select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database() and query ilike '%users%'`,
+          `select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()`,
         )
         waiting = rows[0].n
       }
@@ -308,8 +312,8 @@ test('two administrators erasing each other leave one (NEW-14)', async () => {
       assert.equal(settled.filter((r) => r.status === 'fulfilled').length, 1)
       const failed = settled.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
       assert.equal(failed.length, 1)
-      assert.ok(failed[0]!.reason instanceof (dpdp as { LastAdministratorError: new () => Error }).LastAdministratorError)
-      assert.equal((failed[0]!.reason as { code: string }).code, 'last_admin')
+      assert.ok(failed[0]!.reason instanceof LastAdministratorError)
+      assert.equal((failed[0]!.reason as LastAdministratorError).code, 'last_admin')
       const { rows } = await c.query(
         `select count(*)::int as n from users where institution_id = $1 and role = 'institution_admin' and erased_at is null`,
         [iid],
@@ -328,7 +332,7 @@ test('a definer function in dpdp_subject stops every erasure', async () => {
       grant execute on function dpdp_subject.erase_zz_test(text) to campusos_app`),
   )
   try {
-    await assert.rejects(() => eraseSubject(inst, u, { actorId: admin, reason: 'test erasure' }), /must be SECURITY INVOKER/)
+    await rejectsWith(() => eraseSubject(inst, u, { actorId: admin, reason: 'test erasure' }), /must be SECURITY INVOKER/)
     const [row] = await withTenant(inst, (tx) => tx.select({ at: users.erasedAt }).from(users).where(eq(users.id, u)))
     assert.equal(row!.at, null)
   } finally {
@@ -342,7 +346,7 @@ test('a view in dpdp_subject without security_invoker stops every export', async
       grant select on dpdp_subject.zz_bad to campusos_app`),
   )
   try {
-    await assert.rejects(() => exportSubject(inst, subject), /must be a security_invoker view/)
+    await rejectsWith(() => exportSubject(inst, subject), /must be a security_invoker view/)
   } finally {
     await owner((c) => c.query('drop view if exists dpdp_subject.zz_bad'))
   }
@@ -350,7 +354,7 @@ test('a view in dpdp_subject without security_invoker stops every export', async
 
 test('credentials are removed only for a person already erased', async () => {
   const u = await freshStudent()
-  await assert.rejects(
+  await rejectsWith(
     () => withTenant(inst, (tx) => tx.execute(sql`select public.campusos_forget_credentials(${u})`)),
     /credentials are removed only for a person erased in this institution/,
   )

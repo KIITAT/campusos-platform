@@ -19,8 +19,11 @@
  *     it is listed in SAFE_COLUMNS after review. CI fails on a new one, so the
  *     review happens rather than the redaction silently standing in for it.
  *
- * ponytail: core naming module tables is a layering shortcut for the hotfix.
- * Each module should declare its own export and erasure rules (P1-08, AUD-03).
+ * Erasure rules and rows about a person keyed by someone else live in each
+ * module's own migration (schema dpdp_subject, decision 220). This
+ * classification of what an export hands over is still core's:
+ * ponytail: one list for every module, move it into the modules if a third
+ * party ever ships one.
  */
 
 export type ExportRule =
@@ -87,7 +90,9 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   academic_student_programs: 'export',
 
   admissions_applications: 'export',
+  admissions_enquiries: 'export',
   alumni_profiles: 'export',
+  alumni_registrations: 'export',
 
   // attendance. The QR signing secrets are the teacher's credential for the
   // class: anybody holding one can mint scans for it (NEW-01).
@@ -97,14 +102,15 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   attendance_records: 'export',
   attendance_sessions: { omit: ['token_secret'] },
 
-  // care (counselling). Confidential notes are exported as before; whether a
-  // subject access request should include them is a P1-08 decision.
+  // care (counselling). Notes about a student's case are in that student's
+  // export (decision 221); counsel confirms (P1-08).
   care_appointments: 'export',
   care_counsellors: 'export',
   care_instruments: 'export',
   care_notes: 'export',
   care_requests: 'export',
   care_results: 'export',
+  care_shared_results: 'export',
   care_settings: 'export',
 
   // ceremony
@@ -177,10 +183,12 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
 
   // hr
   hr_appraisal_feedback: 'export',
+  hr_appraisal_kras: 'export',
   hr_appraisals: 'export',
   hr_comp_off_requests: 'export',
   hr_employee_advances: 'export',
   hr_employment_changes: 'export',
+  hr_expense_claim_lines: 'export',
   hr_expense_claims: 'export',
   hr_goals: 'export',
   hr_gratuity_payouts: 'export',
@@ -191,6 +199,7 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   hr_leave_encashments: 'export',
   hr_leave_requests: 'export',
   hr_onboarding_activities: 'export',
+  hr_onboardings: 'export',
   hr_payroll_runs: 'export',
   hr_payslips: 'export',
   hr_salary_payments: 'export',
@@ -221,6 +230,7 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   placement_applications: 'export',
   placement_offers: 'export',
   placement_officers: 'export',
+  placement_results: 'export',
 
   // quiz
   quiz_attempts: 'export',
@@ -252,4 +262,19 @@ export function exportableRow(table: string, row: Record<string, unknown>): Reco
       SECRET_LIKE.test(column) && !SAFE_COLUMNS.includes(`${table}.${column}`) ? '[redacted]' : value
   }
   return out
+}
+
+/**
+ * Why a table's rows stay when their subject is erased (decision 221): four
+ * texts, so a receipt can say what was kept and on what footing.
+ */
+export function retentionBasis(table: string): string {
+  if (table === 'audit_log') return 'the audit trail, kept under the law that requires it (decision 181)'
+  if (table.startsWith('fee_') || table.startsWith('finance_')) {
+    return 'a financial record, kept for the period tax and accounting law requires'
+  }
+  if (table.startsWith('hr_')) {
+    return 'an employment and payroll record, kept for the period labour and tax law requires'
+  }
+  return "the institution's own record, kept with the person's name and contact details removed"
 }
