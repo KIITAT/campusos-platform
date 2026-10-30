@@ -79,8 +79,7 @@ test('a real solve in a thread returns what the solver returns', async () => {
   // Everything but the wall-clock time the solver reports about itself.
   const same = (r: unknown) => {
     const { stats, ...rest } = r as ReturnType<typeof solve>
-    const { ms: _ms, ...counts } = stats
-    return { ...rest, stats: counts }
+    return { ...rest, stats: { ...stats, ms: 0 } }
   }
   assert.deepEqual(same(await s.result), same(solve(tiny())))
 })
