@@ -1,9 +1,10 @@
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib'
+import { PDFDocument, rgb, type PDFPage } from 'pdf-lib'
+import { pdfText, type PdfText, type Weight } from '@campusos/module-framework/pdf'
 import type { AdmitCard, GradeReport } from './cycle'
 
 /**
  * The admit card and the semester grade report, laid out by hand with pdf-lib
- * like the transcript: no browser to install, standard fonts only.
+ * like the transcript: no browser to install, text in Noto Sans.
  */
 
 const A4 = { w: 595.28, h: 841.89 }
@@ -12,21 +13,19 @@ const ink = rgb(0.1, 0.1, 0.12)
 const faint = rgb(0.45, 0.45, 0.5)
 const rule = rgb(0.8, 0.8, 0.83)
 
-/** WinAnsi cannot encode everything; folding beats refusing to draw. */
-const safe = (s: string) => s.replace(/[–—]/g, '-').replace(/[^\x20-\x7E]/g, '?')
-
 class Sheet {
   page: PDFPage
   y = A4.h - M
+  readonly font: Weight = 'regular'
+  readonly bold: Weight = 'bold'
   constructor(
     private doc: PDFDocument,
-    readonly font: PDFFont,
-    readonly bold: PDFFont,
+    readonly t: PdfText,
   ) {
     this.page = doc.addPage([A4.w, A4.h])
   }
-  text(s: string, x: number, size = 10, f = this.font, color = ink) {
-    this.page.drawText(safe(s), { x, y: this.y, size, font: f, color })
+  text(s: string, x: number, size = 10, f: Weight = this.font, color = ink) {
+    this.t.draw(this.page, s, { x, y: this.y, size, weight: f, color })
   }
   line() {
     this.page.drawLine({ start: { x: M, y: this.y + 4 }, end: { x: A4.w - M, y: this.y + 4 }, thickness: 0.5, color: rule })
@@ -42,9 +41,9 @@ class Sheet {
   para(s: string, size = 9, color = faint) {
     const width = A4.w - 2 * M
     let lineText = ''
-    for (const word of safe(s).split(/\s+/)) {
+    for (const word of s.split(/\s+/)) {
       const next = lineText ? `${lineText} ${word}` : word
-      if (this.font.widthOfTextAtSize(next, size) > width) {
+      if (this.t.width(next, size) > width) {
         this.text(lineText, M, size, this.font, color)
         this.down(size + 4)
         lineText = word
@@ -57,17 +56,18 @@ class Sheet {
   }
 }
 
-async function start(title: string) {
+/** `content` is everything the document will draw: its fonts are chosen from it. */
+async function start(title: string, content: unknown) {
   const doc = await PDFDocument.create()
   doc.setTitle(title)
   doc.setProducer('CampusOS')
   doc.setCreationDate(new Date())
-  const s = new Sheet(doc, await doc.embedFont(StandardFonts.Helvetica), await doc.embedFont(StandardFonts.HelveticaBold))
+  const s = new Sheet(doc, await pdfText(doc, JSON.stringify(content)))
   return { doc, s }
 }
 
 export async function admitCardPdf(a: AdmitCard): Promise<Uint8Array> {
-  const { doc, s } = await start(`Admit card ${a.ticketNo}`)
+  const { doc, s } = await start(`Admit card ${a.ticketNo}`, a)
   s.text(a.institution || 'Institution', M, 16, s.bold)
   s.down(18)
   s.text(`Admit card - ${a.term.name} (${a.term.code})`, M, 11, s.font, faint)
@@ -76,7 +76,7 @@ export async function admitCardPdf(a: AdmitCard): Promise<Uint8Array> {
   // A box for the photograph and the signatures, which the hall checks against the student.
   const box = { x: A4.w - M - 100, y: s.y - 110, w: 100, h: 120 }
   s.page.drawRectangle({ x: box.x, y: box.y, width: box.w, height: box.h, borderColor: rule, borderWidth: 1 })
-  s.page.drawText('Affix photograph', { x: box.x + 12, y: box.y + box.h / 2, size: 8, font: s.font, color: faint })
+  s.t.draw(s.page, 'Affix photograph', { x: box.x + 12, y: box.y + box.h / 2, size: 8, weight: s.font, color: faint })
 
   const row = (k: string, v: string | null | undefined) => {
     s.text(k, M, 9, s.font, faint)
@@ -127,7 +127,7 @@ export async function admitCardPdf(a: AdmitCard): Promise<Uint8Array> {
 }
 
 export async function gradeReportPdf(g: GradeReport): Promise<Uint8Array> {
-  const { doc, s } = await start(`Grade report ${g.term.code} ${g.student.name}`)
+  const { doc, s } = await start(`Grade report ${g.term.code} ${g.student.name}`, g)
   s.text(g.institution || 'Institution', M, 16, s.bold)
   s.down(18)
   s.text(`Semester grade report - ${g.term.name} (${g.term.code})`, M, 11, s.font, faint)
@@ -164,7 +164,7 @@ export async function gradeReportPdf(g: GradeReport): Promise<Uint8Array> {
   s.down(16)
   const fig = (k: string, v: string, x: number) => {
     s.text(k, x, 8, s.font, faint)
-    s.page.drawText(safe(v), { x, y: s.y - 14, size: 13, font: s.bold, color: ink })
+    s.t.draw(s.page, v, { x, y: s.y - 14, size: 13, weight: s.bold, color: ink })
   }
   fig('SGPA', g.sgpa === null ? '-' : g.sgpa.toFixed(2), M)
   fig('CGPA', g.cgpa === null ? '-' : g.cgpa.toFixed(2), M + 110)

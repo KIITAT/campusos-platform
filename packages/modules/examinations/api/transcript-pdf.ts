@@ -1,4 +1,5 @@
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
+import { PDFDocument, rgb } from 'pdf-lib'
+import { pdfText, type Weight } from '@campusos/module-framework/pdf'
 import type { Transcript } from './schemas'
 
 /**
@@ -9,17 +10,12 @@ import type { Transcript } from './schemas'
  * either becoming a special case. The cost is laying out by hand, which for a
  * table of grades is a fair trade.
  *
- * Standard fonts only, so the output embeds no font data and stays small. That
- * limits us to WinAnsi, which is fine for the Latin course codes and names this
- * prints; a transcript needing Devanagari will need an embedded font, and that
- * is a deliberate later decision rather than an accident.
+ * Text goes through @campusos/module-framework/pdf: Noto Sans for Latin and nine
+ * Indian scripts, and a character no font has is refused, not printed as `?`.
  */
 
 const A4 = { w: 595.28, h: 841.89 }
 const M = 48 // margin
-
-/** WinAnsi cannot encode everything; refusing to draw is worse than folding. */
-const safe = (s: string) => s.replace(/[^\x20-\x7E]/g, '?')
 
 export async function transcriptPdf(t: Transcript): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
@@ -27,8 +23,9 @@ export async function transcriptPdf(t: Transcript): Promise<Uint8Array> {
   doc.setProducer('CampusOS')
   doc.setCreationDate(new Date())
 
-  const font = await doc.embedFont(StandardFonts.Helvetica)
-  const bold = await doc.embedFont(StandardFonts.HelveticaBold)
+  const t_ = await pdfText(doc, JSON.stringify(t))
+  const font: Weight = 'regular'
+  const bold: Weight = 'bold'
 
   let page = doc.addPage([A4.w, A4.h])
   let y = A4.h - M
@@ -41,9 +38,9 @@ export async function transcriptPdf(t: Transcript): Promise<Uint8Array> {
     s: string,
     x: number,
     size = 10,
-    f = font,
+    f: Weight = font,
     color = ink,
-  ) => page.drawText(safe(s), { x, y, size, font: f, color })
+  ) => t_.draw(page, s, { x, y, size, weight: f, color })
 
   const line = () => {
     page.drawLine({

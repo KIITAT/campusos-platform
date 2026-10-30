@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm'
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib'
+import { PDFDocument, rgb, type PDFPage } from 'pdf-lib'
+import { pdfText, type PdfText } from '@campusos/module-framework/pdf'
 import { institutions, withTenant } from '@campusos/db'
 import { terms } from '@campusos/module-academic/schema'
 import { termWithin } from './classes'
@@ -10,7 +11,7 @@ import { gridOf, index, lensOf, liveMeetings, runMeetings, runWithin, type Grid,
 /**
  * Timetables printed: one page per cohort, teacher or room, A4 landscape,
  * periods down the side and days across -- the sheet pinned outside a
- * classroom and handed to a teacher. Standard fonts, so nothing to install.
+ * classroom and handed to a teacher. Text in Noto Sans, so every name prints.
  */
 
 const PAGE = { w: 841.89, h: 595.28 }
@@ -19,22 +20,15 @@ const ink = rgb(0.1, 0.1, 0.12)
 const faint = rgb(0.45, 0.45, 0.5)
 const rule = rgb(0.75, 0.75, 0.8)
 const shade = rgb(0.94, 0.95, 0.97)
-const safe = (s: string) =>
-  s
-    .replace(/[‘’]/g, "'")
-    .replace(/[“”]/g, '"')
-    .replace(/[–—]/g, '-')
-    .replace(/·/g, '|')
-    .replace(/[^\x20-\x7E]/g, '?')
 
 /** Words of a cell broken into lines that fit a width. */
-function wrap(text: string, font: PDFFont, size: number, width: number): string[] {
+function wrap(text: string, t: PdfText, size: number, width: number): string[] {
   const out: string[] = []
   for (const part of text.split(' / ')) {
     let line = ''
-    for (const word of safe(part).split(' ')) {
+    for (const word of part.split(' ')) {
       const next = line ? `${line} ${word}` : word
-      if (font.widthOfTextAtSize(next, size) <= width) line = next
+      if (t.width(next, size) <= width) line = next
       else {
         if (line) out.push(line)
         line = word
@@ -45,13 +39,13 @@ function wrap(text: string, font: PDFFont, size: number, width: number): string[
   return out
 }
 
-function drawGrid(page: PDFPage, grid: Grid, header: string, font: PDFFont, bold: PDFFont) {
+function drawGrid(page: PDFPage, grid: Grid, header: string, t: PdfText) {
   let y = PAGE.h - M
-  page.drawText(safe(header), { x: M, y, size: 9, font, color: faint })
+  t.draw(page, header, { x: M, y, size: 9, color: faint })
   y -= 20
-  page.drawText(safe(grid.title), { x: M, y, size: 16, font: bold, color: ink })
+  t.draw(page, grid.title, { x: M, y, size: 16, weight: 'bold', color: ink })
   y -= 14
-  page.drawText(safe(grid.subtitle), { x: M, y, size: 9, font, color: faint })
+  t.draw(page, grid.subtitle, { x: M, y, size: 9, color: faint })
   y -= 16
 
   const first = 72
@@ -63,7 +57,7 @@ function drawGrid(page: PDFPage, grid: Grid, header: string, font: PDFFont, bold
   let heights: number[] = []
   for (; size >= 5; size -= 0.5) {
     heights = grid.rows.map((r) =>
-      Math.max(2, ...grid.days.map((d) => wrap(r[`d${d.day}`] ?? '', font, size, colW - 6).length)) * lineH(size) + 6,
+      Math.max(2, ...grid.days.map((d) => wrap(r[`d${d.day}`] ?? '', t, size, colW - 6).length)) * lineH(size) + 6,
     )
     if (heights.reduce((a, b) => a + b, 0) + 18 <= y - M) break
   }
@@ -71,19 +65,19 @@ function drawGrid(page: PDFPage, grid: Grid, header: string, font: PDFFont, bold
   // Header row.
   const top = y
   page.drawRectangle({ x: M, y: y - 16, width: PAGE.w - 2 * M, height: 16, color: shade })
-  page.drawText('Period', { x: M + 4, y: y - 11, size: 8, font: bold, color: ink })
-  grid.days.forEach((d, i) => page.drawText(d.label, { x: M + first + i * colW + 4, y: y - 11, size: 8, font: bold, color: ink }))
+  t.draw(page, 'Period', { x: M + 4, y: y - 11, size: 8, weight: 'bold', color: ink })
+  grid.days.forEach((d, i) => t.draw(page, d.label, { x: M + first + i * colW + 4, y: y - 11, size: 8, weight: 'bold', color: ink }))
   y -= 16
 
   grid.rows.forEach((r, ri) => {
     const h = heights[ri]!
     page.drawLine({ start: { x: M, y }, end: { x: PAGE.w - M, y }, thickness: 0.5, color: rule })
-    page.drawText(safe(r.period ? `P${r.period}` : ''), { x: M + 4, y: y - 10, size: 8, font: bold, color: ink })
-    page.drawText(safe(r.time ?? ''), { x: M + 4, y: y - 20, size: 7, font, color: faint })
+    t.draw(page, r.period ? `P${r.period}` : '', { x: M + 4, y: y - 10, size: 8, weight: 'bold', color: ink })
+    t.draw(page, r.time ?? '', { x: M + 4, y: y - 20, size: 7, color: faint })
     grid.days.forEach((d, i) => {
-      const lines = wrap(r[`d${d.day}`] ?? '', font, size, colW - 6)
+      const lines = wrap(r[`d${d.day}`] ?? '', t, size, colW - 6)
       lines.forEach((line, li) => {
-        page.drawText(line, { x: M + first + i * colW + 3, y: y - 4 - lineH(size) * (li + 1) + 2, size, font: li === 0 ? bold : font, color: ink })
+        t.draw(page, line, { x: M + first + i * colW + 3, y: y - 4 - lineH(size) * (li + 1) + 2, size, weight: li === 0 ? 'bold' : 'regular', color: ink })
       })
     })
     y -= h
@@ -95,19 +89,18 @@ function drawGrid(page: PDFPage, grid: Grid, header: string, font: PDFFont, bold
     page.drawLine({ start: { x, y: top }, end: { x, y }, thickness: 0.5, color: rule })
   }
   page.drawLine({ start: { x: M, y: top }, end: { x: M, y }, thickness: 0.5, color: rule })
-  if (grid.rows.length === 0) page.drawText('Nothing timetabled.', { x: M, y: y - 20, size: 10, font, color: faint })
+  if (grid.rows.length === 0) t.draw(page, 'Nothing timetabled.', { x: M, y: y - 20, size: 10, color: faint })
 }
 
 async function render(grids: Grid[], header: string) {
   const doc = await PDFDocument.create()
   doc.setTitle(grids.length === 1 ? grids[0]!.title : 'Timetables')
   doc.setCreator('CampusOS')
-  const font = await doc.embedFont(StandardFonts.Helvetica)
-  const bold = await doc.embedFont(StandardFonts.HelveticaBold)
-  for (const g of grids) drawGrid(doc.addPage([PAGE.w, PAGE.h]), g, header, font, bold)
+  const t = await pdfText(doc, JSON.stringify([grids, header]))
+  for (const g of grids) drawGrid(doc.addPage([PAGE.w, PAGE.h]), g, header, t)
   if (grids.length === 0) {
     const page = doc.addPage([PAGE.w, PAGE.h])
-    page.drawText('Nothing to print.', { x: M, y: PAGE.h - M - 20, size: 12, font, color: faint })
+    t.draw(page, 'Nothing to print.', { x: M, y: PAGE.h - M - 20, size: 12, color: faint })
   }
   return doc.save({ useObjectStreams: false })
 }
