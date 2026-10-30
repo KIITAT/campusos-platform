@@ -407,6 +407,20 @@ test('the solver limit is capped at 120 seconds (REL-01)', async () => {
   assert.equal(saved.timeLimitSeconds, 120)
 })
 
+test('a server drafts at most two timetables at once, even when requests arrive together (REL-01)', async () => {
+  const ks = [await college(), await college(), await college()]
+  for (const k of ks) {
+    await generatePeriods(k.admin, { days: ['1', '2'], startsAt: '09:00', minutes: '60', count: '3' })
+    await addEligibility(k.admin, { userId: k.u.rao, courseId: k.C.ds })
+    await setNeed(k.admin, { offeringId: k.O.aDs, periodsPerWeek: '2' })
+  }
+  const outcomes = await Promise.allSettled(ks.map((k) => generateRun(k.admin, { termId: k.term.id, seed: '5', iterations: '200' })))
+  for (const o of outcomes) if (o.status === 'fulfilled') await solveSettled(o.value.id)
+  const busy = outcomes.filter((o) => o.status === 'rejected' && o.reason instanceof TimetableError && o.reason.code === 'solver_busy')
+  assert.equal(busy.length, 1, JSON.stringify(outcomes.map((o) => o.status)))
+  assert.equal(outcomes.filter((o) => o.status === 'fulfilled').length, 2)
+})
+
 test('only the office cancels', async () => {
   const k = await college()
   const run = await solvingRun(k)
