@@ -247,6 +247,31 @@ test('P0-04 applies as an upgrade: the counter table and its definer function, c
   })
 })
 
+test('core 0012 applies as an upgrade: the subject schema and four functions, executable by the app role only (AUD-03, NEW-02)', { skip: !url && 'MIGRATION_DATABASE_URL is not set' }, async () => {
+  await withClient(at(DB), async (c) => {
+    const sigs = [
+      'public.campusos_erasure_allows(text, jsonb, jsonb, text[])',
+      'public.campusos_erase_subject(text)',
+      'public.campusos_subject_about(text)',
+      'public.campusos_forget_credentials(text)',
+    ]
+    const { rows } = await c.query(`
+      select
+        to_regnamespace('dpdp_subject') is not null as schema,
+        has_schema_privilege('campusos_app', 'dpdp_subject', 'USAGE') as app_uses,
+        has_schema_privilege('public', 'dpdp_subject', 'USAGE') as public_uses,
+        (select array_agg(has_function_privilege('campusos_app', s, 'EXECUTE') order by s) from unnest($1::text[]) s) as app,
+        (select array_agg(has_function_privilege('campusos_auth', s, 'EXECUTE') order by s) from unnest($1::text[]) s) as auth,
+        (select array_agg(p.prosecdef order by s) from unnest($1::text[]) s join pg_proc p on p.oid = s::regprocedure) as definer`, [sigs])
+    assert.deepEqual(rows[0], {
+      schema: true, app_uses: true, public_uses: false,
+      app: [true, true, true, true], auth: [false, false, false, false],
+      // sorted by signature: erase_subject, erasure_allows, forget_credentials, subject_about
+      definer: [false, false, true, false],
+    })
+  })
+})
+
 test('hr 0011 applies as an upgrade: arrears and settings under RLS, a payslip never negative (ACC-14, ACC-15)', { skip: !url && 'MIGRATION_DATABASE_URL is not set' }, async () => {
   await withClient(at(DB), async (c) => {
     const { rows } = await c.query(`
