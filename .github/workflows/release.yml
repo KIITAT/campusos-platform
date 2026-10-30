@@ -22,15 +22,23 @@ on:
         default: 'false'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  # A release is built only from a commit whose CI passes (OPS-03).
+  ci:
+    uses: ./.github/workflows/ci.yml
+
   publish:
+    needs: ci
+    environment: release
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 24
           cache: pnpm
@@ -38,12 +46,15 @@ jobs:
 
       - name: work out the version
         id: v
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [ -n "${{ inputs.version }}" ]; then
-            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          v="${INPUT_VERSION:-${GITHUB_REF_NAME#v}}"
+          if ! [[ "$v" =~ ^[0-9]+[.][0-9]+[.][0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::the version must be a semantic version, without the leading v"
+            exit 1
           fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
 
       # The previous index is fetched and merged, so publishing 0.2.0 does not
       # strip 0.1.0 out from under a host that pinned it.
@@ -51,30 +62,36 @@ jobs:
       # Through the API, not the browser URL: a private repository answers 404
       # at releases/latest/download/... even with a token, and a merge that
       # quietly fetched nothing would drop every older version without failing.
+      # A failed download must fail the release: merging nothing would drop every
+      # older version from the index (NEW-26). Only "no release yet" (404) passes.
       - name: fetch the published index
-        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p dist
-          gh release download --repo "$GITHUB_REPOSITORY" --pattern registry.json --output dist/previous-registry.json || true
-          gh release download --repo "$GITHUB_REPOSITORY" --pattern registry.json.sig --output dist/previous-registry.json.sig || true
-          if [ -f dist/previous-registry.json ]; then
-            echo "merging $(jq '[.packages[].versions | length] | add' dist/previous-registry.json) existing versions"
-          else
-            echo "no published index yet; this will be the first"
+          if ! out=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" 2>&1 >/dev/null); then
+            if printf '%s' "$out" | grep -q 'HTTP 404'; then
+              echo "no published release yet; this will be the first"
+              exit 0
+            fi
+            echo "::error::could not read the latest release: $out"
+            exit 1
           fi
+          gh release download --repo "$GITHUB_REPOSITORY" --pattern registry.json --output dist/previous-registry.json
+          gh release download --repo "$GITHUB_REPOSITORY" --pattern registry.json.sig --output dist/previous-registry.json.sig || echo "the published index has no signature"
+          echo "merging $(jq '[.packages[].versions | length] | add' dist/previous-registry.json) existing versions"
 
       # The previous index is re-signed by this release, so it is verified
       # first: merging an index nobody checked would sign whatever was put there.
       - name: verify the published index
         env:
           CAMPUSOS_REGISTRY_SIGNING_KEY: ${{ secrets.CAMPUSOS_REGISTRY_SIGNING_KEY }}
+          FIRST_SIGNED_RELEASE: ${{ inputs.first_signed_release }}
         run: |
           if [ ! -f dist/previous-registry.json ]; then exit 0; fi
           if [ -f dist/previous-registry.json.sig ]; then
             node scripts/registry-sign.mjs verify dist/previous-registry.json
-          elif [ "${{ inputs.first_signed_release }}" = "true" ]; then
+          elif [ "$FIRST_SIGNED_RELEASE" = "true" ]; then
             echo "merging the unsigned published index once, as asked"
           else
             echo "::error::the published registry.json is unsigned; run this workflow by hand with first_signed_release=true once"
@@ -109,7 +126,7 @@ jobs:
           node scripts/registry-sign.mjs verify dist/registry/registry.json
 
       - name: publish
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: v${{ steps.v.outputs.version }}
           name: CampusOS ${{ steps.v.outputs.version }}

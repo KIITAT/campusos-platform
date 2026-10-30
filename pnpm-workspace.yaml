@@ -3,3 +3,10 @@ packages:
   - packages/modules/*
 allowBuilds:
   esbuild: true
+# GHSA-mrhx-c7xc-m3w5 (zod < 4.6.6 can exhaust memory on an oversized
+# constrained collection). Every plugin archive bundles zod, so the fix ships
+# with the next release that bumps every module; request bodies are size-capped
+# before zod sees them. See the register (P0-11's zod finding). Remove then.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-mrhx-c7xc-m3w5
