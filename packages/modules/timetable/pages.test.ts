@@ -89,3 +89,24 @@ test('row removals carry scalar identifiers and never use array-only bulk payloa
     '/needs/delete': [['needId', 'need-1']], '/pins/delete': [['pinId', 'pin-1']],
   })
 })
+
+test('a run being drafted shows its deadline and a cancel button', () => {
+  const solving = { ...fixtures, run: { ...fixtures.run, status: 'solving', solveDeadline: new Date('2026-10-05T09:02:00Z'), error: null, stats: {}, cost: {} } }
+  const sections = page('/run').sections(solving)
+  assert.ok(sections.some(section => section.kind === 'note' && /Drafting since .*stopped by/.test(section.text)))
+  assert.ok(sections.some(section => section.kind === 'form' && section.path === '/runs/cancel'))
+  assert.ok(!sections.some(section => section.kind === 'form' && ['/runs/apply', '/runs/discard', '/runs/pin'].includes(section.path)))
+  assert.equal(page('/run').record!(solving).status.tone, 'blue')
+})
+
+test('a failed run says why', () => {
+  const failed = (error: string, status = 'failed') => ({ ...fixtures, run: { ...fixtures.run, status, error, stats: {}, cost: {} } })
+  const says = (data: ReturnType<typeof failed>) => page('/run').sections(data).filter(section => section.kind === 'note').map(section => section.text).join(' ')
+  assert.match(says(failed('interrupted')), /The server stopped while drafting\. Draft again\./)
+  assert.match(says(failed('timed_out')), /ran past its time limit/)
+  assert.match(says(failed('out_of_memory')), /ran out of memory/)
+  assert.match(says(failed('not_permitted')), /may no longer draft timetables/)
+  assert.match(says(failed('cancelled', 'cancelled')), /Cancelled\./)
+  assert.equal(page('/run').record!(failed('crashed')).status.tone, 'red')
+  assert.equal(page('/run').record!(failed('cancelled', 'cancelled')).status.tone, 'gray')
+})
