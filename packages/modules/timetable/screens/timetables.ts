@@ -6,7 +6,18 @@ const draftForm = (termId: string) => form('Draft a timetable', '/runs', [
   hidden('termId', termId), number('seed', 'Seed', true), number('iterations', 'Iterations (up to 300000)', true),
   { name: 'keepTeachers', label: 'Keep existing teachers', kind: 'checkbox', value: 'true' },
   { name: 'keepLive', label: 'Keep live meetings', kind: 'checkbox' },
-], { note: 'Runs locally on this server. Review the draft before applying it. Unplaced meetings are reported with a reason.' })
+], { note: 'Runs on this server in the background, up to the solver limit (120 seconds at most). Review the draft before applying it. Unplaced meetings are reported with a reason.' })
+
+const whyFailed: Record<string, string> = {
+  interrupted: 'The server stopped while drafting. Draft again.',
+  timed_out: 'Drafting ran past its time limit and was stopped. Draft again with fewer iterations, or raise the limit (up to 120 seconds).',
+  out_of_memory: 'Drafting ran out of memory and was stopped.',
+  crashed: 'Drafting failed. Draft again; if it fails twice, report it.',
+  cancelled: 'Cancelled.',
+  not_permitted: 'The person who started this draft may no longer draft timetables, so it was not saved.',
+}
+const runTone = { solving: 'blue', failed: 'red', cancelled: 'gray', applied: 'green' } as const
+const when = (d: Date) => `${d.toISOString().slice(0, 16).replace('T', ' ')} UTC`
 
 const runTable = () => table('Timetable drafts', 'runs', [
   { key: 'createdAt', label: 'Created', kind: 'when', href: `${ROOT}/run?id={id}` }, { key: 'createdBy', label: 'By' }, { key: 'status', label: 'Status', kind: 'status' },
@@ -87,17 +98,27 @@ export const timetablePages = [
     async load(actor, request) {
       const query = queryOf(request)
       if (!query.id) throw new TimetableError(400, 'run_required', 'Choose a draft from Timetable → Drafts.')
-      const [detail, view, load] = await Promise.all([runDetail(actor, { runId: query.id }), runGrid(actor, { runId: query.id, sectionId: query.sectionId, teacherId: query.teacherId, roomId: query.roomId }), workload(actor, { runId: query.id })])
+      const detail = await runDetail(actor, { runId: query.id })
+      // A run still being drafted, or closed without a draft, has no grid to show.
+      if (['solving', 'failed', 'cancelled'].includes(detail.run.status)) {
+        return { ...detail, grid: null, gridRows: [], index: { sections: [], teachers: [], rooms: [] }, workload: [], unstaffed: 0, office: officeOf(actor), query, meetingOptions: [] }
+      }
+      const [view, load] = await Promise.all([runGrid(actor, { runId: query.id, sectionId: query.sectionId, teacherId: query.teacherId, roomId: query.roomId }), workload(actor, { runId: query.id })])
       return { ...detail, ...view, office: officeOf(actor), query, gridRows: view.grid?.rows ?? [], workload: workloadRows(load.rows), unstaffed: load.unstaffed,
         meetingOptions: choices(view.grid?.meetings ?? [], meeting => meeting.entryId, meeting => `${meeting.course} · ${meeting.section} · day ${meeting.dayOfWeek} ${meeting.startsAt} · ${meeting.room}`),
       }
     },
-    record: data => ({ title: `Draft timetable, ${data.term.name}`, status: { label: data.run.status, tone: data.run.status === 'applied' ? 'green' : 'gray' }, createdAt: data.run.createdAt.toISOString(), fields: [
+    record: data => ({ title: `Draft timetable, ${data.term.name}`, status: { label: data.run.status, tone: runTone[data.run.status as keyof typeof runTone] ?? 'gray' }, createdAt: data.run.createdAt.toISOString(), fields: [
       { label: 'Seed', value: data.run.seed }, { label: 'Placed / blocks', value: `${data.run.stats.placed ?? 0} / ${data.run.stats.blocks ?? 0}` },
       { label: 'Seconds', value: Math.round(Number(data.run.stats.ms ?? 0) / 100) / 10 }, { label: 'Cost', value: data.run.cost.total ?? 0 },
     ] }),
     sections: data => [
       { kind: 'links', links: [{ label: 'All drafts', href: termHref('/runs', data.run.termId) }, { label: 'Live timetable', href: termHref('/live', data.run.termId) }] },
+      ...(data.run.status === 'solving' ? [
+        { kind: 'note' as const, tone: 'info' as const, text: `Drafting since ${when(data.run.createdAt)}; stopped by ${when(data.run.solveDeadline ?? data.run.createdAt)} at the latest. Refresh this page to see the draft.` },
+        form('Cancel drafting', '/runs/cancel', [hidden('runId', data.run.id)], { placement: 'inline' }),
+      ] : []),
+      ...(data.run.status === 'failed' || data.run.status === 'cancelled' ? [{ kind: 'note' as const, tone: 'danger' as const, text: whyFailed[data.run.error ?? ''] ?? 'Drafting did not finish.' }] : []),
       ...data.unplaced.map(row => ({ kind: 'note' as const, tone: 'danger' as const, text: `${row.class} — ${row.count} block(s): ${row.reason}` })),
       ...data.issues.map(row => ({ kind: 'note' as const, tone: 'warn' as const, text: `${row.class}: ${row.message}` })),
       table('Teacher changes on apply', 'teacherChanges', [{ key: 'class', label: 'Class' }, { key: 'from', label: 'From' }, { key: 'to', label: 'To' }], { empty: 'No teacher changes.' }),
