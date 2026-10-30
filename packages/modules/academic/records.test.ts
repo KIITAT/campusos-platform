@@ -1,6 +1,6 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { and, eq, like } from 'drizzle-orm'
+import { and, eq, like, sql } from 'drizzle-orm'
 import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
 import {
   AcademicError,
@@ -15,8 +15,10 @@ import {
   declareProgram,
   degreeAudit,
   listCompletions,
+  listGpaPolicy,
   postCompletionWithin,
   recordCompletion,
+  setGpaPolicy,
   waivePrerequisite,
   type Actor,
 } from './api'
@@ -530,4 +532,79 @@ test('the degree audit counts a failed course at zero once the corrected rule ap
 
   // A fresh institution has no rule rows: the corrected rule applies to every term.
   assert.equal((await degreeAudit(c.admin, { studentId: c.student.id })).cgpa, 5)
+})
+
+// --- the grade point average rule, by date ---------------------------------
+
+const dbDay = async (plus: number) => {
+  const r = await authDb.execute(sql`select (current_date + ${plus}::int)::text as d`)
+  return (r.rows[0] as { d: string }).d
+}
+
+/** A declared student with one pass (10 points) and one fail (0 points), 4 credits each, in the term. */
+async function passAndFail(c: Campus, termId: string) {
+  const cur = await createCurriculum(c.admin, { programId: c.programId, catalogYear: 2025, totalCredits: 8 })
+  const a = await course(c, 'Algorithms', 4)
+  const b = await course(c, 'Databases', 4)
+  await declareProgram(c.admin, { studentId: c.student.id, programId: c.programId, curriculumId: cur.id })
+  await withTenant(c.id, async (tx) => {
+    await postCompletionWithin(tx, c.id, c.admin.id, {
+      studentId: c.student.id, courseId: a.id, termId, credits: 4, gradePoints: '10.00', gradeLabel: 'O', passed: true,
+    }, 'test')
+    await postCompletionWithin(tx, c.id, c.admin.id, {
+      studentId: c.student.id, courseId: b.id, termId, credits: 4, gradePoints: '0.00', gradeLabel: 'F', passed: false,
+    }, 'test')
+  })
+}
+
+test('a GPA rule cannot be set for a past date (FUNC-03)', async () => {
+  const c = await campus()
+  await assert.rejects(
+    async () => setGpaPolicy(c.admin, { effectiveFrom: await dbDay(-1), failedCredits: 'zero', repeats: 'latest' }),
+    (e: unknown) => errorCode(e) === 'policy_backdated' && (e as AcademicError).status === 409,
+  )
+})
+
+test('a GPA rule applies from its date and is audited (FUNC-03)', async () => {
+  const c = await campus()
+  const today = await dbDay(0)
+  await setGpaPolicy(c.admin, { effectiveFrom: today, failedCredits: 'exclude', repeats: 'all' })
+  const rows = await listGpaPolicy(c.admin)
+  assert.equal(rows.length, 1)
+
+  const trail = await withTenant(c.id, (tx) =>
+    tx.select().from(auditLog).where(and(eq(auditLog.entityId, rows[0]!.id), eq(auditLog.action, 'academic.gpa_policy_set'))),
+  )
+  assert.equal(trail.length, 1)
+  assert.match(String(trail[0]!.reason), /failed credits exclude, repeats all/)
+
+  const future = await createTerm(c.admin, { code: `T${++n}`, name: 'Next', startsOn: await dbDay(30), endsOn: await dbDay(150) })
+  await passAndFail(c, future.id)
+  assert.equal((await degreeAudit(c.admin, { studentId: c.student.id })).cgpa, 10)
+
+  await setGpaPolicy(c.admin, { effectiveFrom: today, failedCredits: 'zero', repeats: 'latest' })
+  assert.equal((await listGpaPolicy(c.admin)).length, 1)
+  assert.equal((await degreeAudit(c.admin, { studentId: c.student.id })).cgpa, 5)
+})
+
+test('only an administrator sets the rule (FUNC-03)', async () => {
+  const c = await campus()
+  const [fac] = await authDb
+    .insert(users)
+    .values({ email: `fac@${SLUG}${n}.test`, institutionId: c.id, role: 'faculty', name: 'Fac' })
+    .returning({ id: users.id })
+  const faculty: Actor = { id: fac!.id, role: 'faculty', institutionId: c.id }
+  await assert.rejects(
+    async () => setGpaPolicy(faculty, { effectiveFrom: await dbDay(0), failedCredits: 'zero', repeats: 'latest' }),
+    (e: unknown) => (e as AcademicError).status === 403,
+  )
+})
+
+test('GPA rules are per institution (FUNC-03)', async () => {
+  const a = await campus()
+  const b = await campus()
+  await setGpaPolicy(a.admin, { effectiveFrom: await dbDay(0), failedCredits: 'exclude', repeats: 'all' })
+  assert.equal((await listGpaPolicy(b.admin)).length, 0)
+  await passAndFail(b, b.termId)
+  assert.equal((await degreeAudit(b.admin, { studentId: b.student.id })).cgpa, 5)
 })
