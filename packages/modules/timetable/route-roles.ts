@@ -41,6 +41,7 @@ export const routeRoles: Record<string, readonly Role[]> = {
   'GET /runs/workload': [...ADMIN, 'hod'],
   'POST /runs/apply': ADMIN,
   'POST /runs/discard': ADMIN,
+  'POST /runs/cancel': ADMIN,
   'POST /runs/pin': ADMIN,
   'GET /runs/pdf': [...ADMIN, 'hod'],
   'GET /live': TEACHING,

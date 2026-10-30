@@ -744,6 +744,7 @@ GET /api/v1/modules/timetable/runs/grid                                  SIH....
 GET /api/v1/modules/timetable/runs/workload                              SIH....... gate
 POST /api/v1/modules/timetable/runs/apply                                SI........ op
 POST /api/v1/modules/timetable/runs/discard                              SI........ op
+POST /api/v1/modules/timetable/runs/cancel                               SI........ op
 POST /api/v1/modules/timetable/runs/pin                                  SI........ op
 GET /api/v1/modules/timetable/runs/pdf                                   SIH....... gate
 GET /api/v1/modules/timetable/live                                       SIHF...... op

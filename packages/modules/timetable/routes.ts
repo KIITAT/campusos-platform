@@ -93,6 +93,7 @@ export const specs: RouteSpec[] = [
   get('runs', '/runs/workload', "Each teacher's load in a draft, against their limits", (a, q) => api.workload(a, { runId: required(q, 'runId') })),
   post('runs', '/runs/apply', 'Make a draft the live timetable: slots replaced and teachers assigned in one go', api.applyRun),
   post('runs', '/runs/discard', 'Discard a draft', api.discardRun),
+  post('runs', '/runs/cancel', 'Stop a timetable being drafted', api.cancelRun),
   post('runs', '/runs/pin', "Keep one of a draft's meetings -- time, teacher or both -- for the next run", api.pinEntry, api.pinEntrySchema),
   pdf('runs', '/runs/pdf', 'A draft printed: one cohort, teacher or room, or every one (all=sections|teachers|rooms)', (a, q) =>
     api.runPdf(a, { runId: required(q, 'runId'), sectionId: q.sectionId, teacherId: q.teacherId, roomId: q.roomId, all: q.all })),

@@ -1,13 +1,14 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import * as z from 'zod'
-import { audit, users, withTenant } from '@campusos/db'
+import { audit, jobActor, users, withTenant } from '@campusos/db'
 import { ticked } from '@campusos/module-framework'
 import { courses, offerings, sections, slots } from '@campusos/module-academic/schema'
 import { pins, runEntries, runs, unavailable } from '../schema'
 import { sectionConflicts, termClasses, termWithin, type TermClass } from './classes'
-import { TimetableError, hm, named, requireOffice, requireReader, toMinutes, type Actor, type Tx } from './core'
+import { OFFICE, TimetableError, hm, named, requireOffice, requireReader, toMinutes, type Actor, type Tx } from './core'
 import { periodsFor, roomsWithin, settingsWithin, teachersWithin } from './setup'
-import { solve, type SolverBusy, type SolverFixed, type SolverInput, type SolverIssue, type SolverResult } from './solver'
+import { SolveFailed, solveInThread, type SolveHandle } from './solve-thread'
+import type { SolverBusy, SolverFixed, SolverInput, SolverIssue, SolverResult } from './solver'
 import { runWithin } from './views'
 
 /**
@@ -211,71 +212,200 @@ export const runSchema = z
   })
   .meta({ id: 'TimetableRun' })
 
+/**
+ * The solver runs in a worker thread (REL-01), so no transaction is held while
+ * it works: `generateRun` records the run as `solving` and answers at once; the
+ * thread's answer is written in a second short transaction (`finishSolve`).
+ * A solve is stopped at its limit plus a grace period for the greedy phase the
+ * solver does not time.
+ */
+const GRACE_SECONDS = 15
+const DEADLINE_SECONDS = 30
+/** Solves a process runs at once; each can take a core for up to the limit. */
+const MAX_SOLVES = 2
+
+const running = new Map<string, { handle: SolveHandle; done: Promise<void> }>()
+
+/** A solve whose server stopped under it is failed after its deadline, freeing the institution's slot. */
+async function sweepStale(tx: Tx) {
+  await tx.execute(sql`
+    update timetable_runs set status = 'failed', error = 'interrupted', solve_deadline = null, closed_at = now()
+     where status = 'solving' and solve_deadline < now()`)
+}
+
+export type SolveFailure = 'interrupted' | 'timed_out' | 'out_of_memory' | 'crashed' | 'cancelled' | 'not_permitted'
+
 /** Draft a timetable for a term. Nothing live changes. */
 export async function generateRun(actor: Actor, input: unknown) {
   const tenant = requireOffice(actor)
   const data = runSchema.parse(input)
-  return withTenant(tenant, (tx) =>
-    named(async () => {
-      const built = await buildInput(tx, tenant, data.termId, { keepTeachers: data.keepTeachers, keepLive: data.keepLive })
-      const seed = data.seed ?? (Math.floor(Math.random() * 2 ** 31) >>> 0)
-      const result: SolverResult = solve({
-        ...built.input,
-        options: { ...built.input.options, seed, ...(data.iterations !== undefined ? { iterations: data.iterations } : {}) },
-      })
-      const kindOf = new Map(built.input.needs.map((n) => [n.id, n.kind]))
-      const [run] = await tx
-        .insert(runs)
-        .values({
-          institutionId: tenant,
-          termId: data.termId,
-          seed,
-          options: { keepTeachers: data.keepTeachers, keepLive: data.keepLive, iterations: data.iterations ?? null, offeringIds: built.scope.map((c) => c.offeringId) },
-          teachers: result.teachers,
-          cost: result.cost,
-          stats: result.stats,
-          issues: [...built.issues, ...result.issues],
-          unplaced: result.unplaced,
-          createdBy: actor.id,
-        })
-        .returning()
-      if (result.placements.length) {
-        await tx.insert(runEntries).values(
-          result.placements.map((p) => ({
+  if (running.size >= MAX_SOLVES) {
+    throw new TimetableError(409, 'solver_busy', 'This server is drafting two timetables already. Try again in a minute.')
+  }
+  let started
+  try {
+    started = await withTenant(tenant, (tx) =>
+      named(async () => {
+        await sweepStale(tx)
+        const built = await buildInput(tx, tenant, data.termId, { keepTeachers: data.keepTeachers, keepLive: data.keepLive })
+        const seed = data.seed ?? (Math.floor(Math.random() * 2 ** 31) >>> 0)
+        const limit = Math.round((built.input.options?.timeLimitMs ?? 20_000) / 1000)
+        const solverInput: SolverInput = {
+          ...built.input,
+          options: { ...built.input.options, seed, ...(data.iterations !== undefined ? { iterations: data.iterations } : {}) },
+        }
+        const [run] = await tx
+          .insert(runs)
+          .values({
             institutionId: tenant,
-            runId: run!.id,
-            offeringId: p.offeringId,
-            needKind: kindOf.get(p.needId) ?? 'lecture',
-            facultyUserId: p.teacherId,
-            roomId: p.roomId,
-            dayOfWeek: p.day,
-            period: p.index,
-            length: p.length,
-            startsAt: p.startsAt,
-            endsAt: p.endsAt,
-            fixed: p.fixed,
-            locked: p.locked,
-          })),
-        )
-      }
-      const left = result.unplaced.reduce((n, u) => n + u.count, 0)
-      return {
-        id: run!.id,
-        placed: result.stats.placed,
-        blocks: result.stats.blocks,
-        unplaced: left,
-        notice: left
-          ? `Drafted: ${result.stats.placed} of ${result.stats.blocks} blocks placed; ${left} could not be -- see why.`
-          : `Drafted: all ${result.stats.blocks} blocks placed. Review it, then apply.`,
-        next: `/m/timetable/run?id=${run!.id}`,
-      }
-    }),
+            termId: data.termId,
+            status: 'solving',
+            seed,
+            options: { keepTeachers: data.keepTeachers, keepLive: data.keepLive, iterations: data.iterations ?? null, offeringIds: built.scope.map((c) => c.offeringId) },
+            teachers: {},
+            cost: {},
+            stats: {},
+            issues: built.issues,
+            unplaced: [],
+            createdBy: actor.id,
+            solveDeadline: sql`now() + make_interval(secs => ${limit + DEADLINE_SECONDS})`,
+          })
+          .returning({ id: runs.id })
+        return { id: run!.id, limit, solverInput, kindOf: new Map(built.input.needs.map((n) => [n.id, n.kind])) }
+      }),
+    )
+  } catch (e) {
+    if ((e as { cause?: { constraint?: string } }).cause?.constraint === 'timetable_runs_one_solving') {
+      throw new TimetableError(409, 'solve_running', 'A timetable is already being drafted for this institution. Wait for it, or cancel it from its page.')
+    }
+    throw e
+  }
+  startSolve(tenant, actor.id, started.id, started.solverInput, started.kindOf, (started.limit + GRACE_SECONDS) * 1000)
+  return {
+    id: started.id,
+    status: 'solving' as const,
+    notice: `Drafting the timetable. This page shows the draft when it is ready, within ${started.limit + GRACE_SECONDS} seconds.`,
+    next: `/m/timetable/run?id=${started.id}`,
+  }
+}
+
+function startSolve(tenant: string, actorId: string, runId: string, input: SolverInput, kindOf: Map<string, string>, hardLimitMs: number) {
+  const handle = solveInThread({ kind: 'solve', input }, hardLimitMs)
+  const done = handle.result
+    .then(
+      (r) => finishSolve(tenant, actorId, runId, r as SolverResult, kindOf),
+      (e) => failSolve(tenant, runId, e instanceof SolveFailed ? e.code : 'crashed'),
+    )
+    .then(
+      () => undefined,
+      () => undefined,
+    )
+    .finally(() => running.delete(runId))
+  running.set(runId, { handle, done })
+}
+
+/** Resolves when this process has written the result or failure of a run (tests wait on it). */
+export function solveSettled(runId: string): Promise<void> {
+  return running.get(runId)?.done ?? Promise.resolve()
+}
+
+/**
+ * Write a thread's answer: the run becomes a draft with its entries, in one
+ * short transaction, only if it is still `solving` (a cancel or a sweep may
+ * have closed it). The actor is re-checked as a job's is: the institution
+ * active, the module on, the person still in the office. A run of another
+ * institution is invisible under RLS, so nothing is written.
+ */
+export async function finishSolve(
+  tenant: string,
+  actorId: string,
+  runId: string,
+  result: SolverResult,
+  kindOf: Map<string, string>,
+): Promise<'saved' | 'gone' | 'refused'> {
+  if (!tenant) throw new Error('finishSolve: no institution')
+  const outcome = await withTenant(tenant, async (tx) => {
+    try {
+      await jobActor(tx, tenant, actorId, 'timetable', OFFICE, false)
+    } catch {
+      return 'refused' as const
+    }
+    const updated = await tx
+      .update(runs)
+      .set({
+        status: 'draft',
+        teachers: result.teachers,
+        cost: result.cost,
+        stats: result.stats,
+        issues: sql`${runs.issues} || ${JSON.stringify(result.issues)}::jsonb`,
+        unplaced: result.unplaced,
+        solveDeadline: null,
+      })
+      .where(and(eq(runs.id, runId), eq(runs.status, 'solving')))
+      .returning({ id: runs.id })
+    if (updated.length === 0) return 'gone' as const
+    if (result.placements.length) {
+      await tx.insert(runEntries).values(
+        result.placements.map((p) => ({
+          institutionId: tenant,
+          runId,
+          offeringId: p.offeringId,
+          needKind: kindOf.get(p.needId) ?? 'lecture',
+          facultyUserId: p.teacherId,
+          roomId: p.roomId,
+          dayOfWeek: p.day,
+          period: p.index,
+          length: p.length,
+          startsAt: p.startsAt,
+          endsAt: p.endsAt,
+          fixed: p.fixed,
+          locked: p.locked,
+        })),
+      )
+    }
+    return 'saved' as const
+  })
+  if (outcome === 'refused') await failSolve(tenant, runId, 'not_permitted')
+  return outcome
+}
+
+/** Close a run that was being drafted as failed. Nothing of the solve is kept but the row and its code. */
+async function failSolve(tenant: string, runId: string, code: SolveFailure) {
+  const closed = await withTenant(tenant, (tx) =>
+    tx
+      .update(runs)
+      .set({ status: 'failed', error: code, solveDeadline: null, closedAt: new Date() })
+      .where(and(eq(runs.id, runId), eq(runs.status, 'solving')))
+      .returning({ id: runs.id }),
   )
+  // A cancelled run was closed by its cancel; nothing is left to report.
+  if (closed.length) console.error(JSON.stringify({ event: 'timetable.solve_failed', runId, code }))
+}
+
+/** Stop a timetable that is being drafted. What the thread was working on is thrown away. */
+export async function cancelRun(actor: Actor, input: unknown) {
+  const tenant = requireOffice(actor)
+  const { runId } = z.object({ runId: z.uuid() }).parse(input)
+  const run = await withTenant(tenant, async (tx) => {
+    const existing = await runWithin(tx, runId)
+    if (existing.status !== 'solving') throw new TimetableError(409, 'not_solving', 'only a timetable being drafted can be cancelled')
+    const [closed] = await tx
+      .update(runs)
+      .set({ status: 'cancelled', error: 'cancelled', solveDeadline: null, closedAt: new Date() })
+      .where(and(eq(runs.id, runId), eq(runs.status, 'solving')))
+      .returning({ termId: runs.termId })
+    if (!closed) throw new TimetableError(409, 'not_solving', 'only a timetable being drafted can be cancelled')
+    return closed
+  })
+  // A thread in another process finishes, finds the run closed, and its answer is dropped.
+  running.get(runId)?.handle.cancel()
+  return { notice: 'Cancelled.', next: `/m/timetable/runs?termId=${run.termId}` }
 }
 
 export async function listRuns(actor: Actor, input: { termId?: string } = {}) {
   const tenant = requireReader(actor)
   return withTenant(tenant, async (tx) => {
+    await sweepStale(tx)
     const rows = await tx
       .select({
         id: runs.id,
@@ -289,6 +419,8 @@ export async function listRuns(actor: Actor, input: { termId?: string } = {}) {
         createdAt: runs.createdAt,
         createdBy: users.name,
         appliedAt: runs.appliedAt,
+        error: runs.error,
+        solveDeadline: runs.solveDeadline,
       })
       .from(runs)
       .leftJoin(users, eq(users.id, runs.createdBy))
@@ -311,6 +443,7 @@ export async function listRuns(actor: Actor, input: { termId?: string } = {}) {
 export async function runDetail(actor: Actor, input: { runId: string }) {
   const tenant = requireReader(actor)
   return withTenant(tenant, async (tx) => {
+    await sweepStale(tx)
     const run = await runWithin(tx, input.runId)
     const term = await termWithin(tx, run.termId)
     const ids = (run.options.offeringIds as string[] | undefined) ?? []

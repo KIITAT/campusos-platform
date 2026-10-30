@@ -1,7 +1,7 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { eq, inArray, like, sql } from 'drizzle-orm'
-import { authDb, institutions, users, withTenant } from '@campusos/db'
+import { authDb, institutionModules, institutions, users, withTenant } from '@campusos/db'
 import {
   addSectionMember,
   changeClass,
@@ -78,6 +78,8 @@ async function college() {
     .values({ slug: tag, name: 'Timetable College', allowedEmailDomains: [`${tag}.test`] })
     .returning({ id: institutions.id })
   const id = i!.id
+  // A finished solve is re-checked as a job's actor is, which wants the module on.
+  await authDb.insert(institutionModules).values({ institutionId: id, moduleId: 'timetable', enabled: true })
   const names = ['adm', 'rao', 'sen', 'das', 'iyer', 'kaur', 'asha', 'bilal']
   const roles = ['institution_admin', 'faculty', 'faculty', 'faculty', 'faculty', 'faculty', 'student', 'student'] as const
   const people = await authDb
@@ -345,6 +347,9 @@ const entriesOf = (k: Awaited<ReturnType<typeof college>>, id: string) => withTe
 
 test('one solve at a time per institution (REL-01)', async () => {
   const k = await college()
+  await generatePeriods(k.admin, { days: ['1', '2'], startsAt: '09:00', minutes: '60', count: '3' })
+  await addEligibility(k.admin, { userId: k.u.rao, courseId: k.C.ds })
+  await setNeed(k.admin, { offeringId: k.O.aDs, periodsPerWeek: '2' })
   await solvingRun(k)
   await assert.rejects(() => generateRun(k.admin, { termId: k.term.id }), (e: unknown) => e instanceof TimetableError && e.status === 409 && e.code === 'solve_running')
 })

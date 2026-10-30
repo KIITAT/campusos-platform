@@ -53,7 +53,7 @@ export const settingsSchema = z
     maxPerWeek: optionalInt(1, 80),
     maxConsecutive: optionalInt(1, 16),
     yearStartsMonth: optionalInt(1, 12),
-    timeLimitSeconds: optionalInt(1, 600),
+    timeLimitSeconds: optionalInt(1, 120),
   })
   .meta({ id: 'TimetableSettings' })
 
