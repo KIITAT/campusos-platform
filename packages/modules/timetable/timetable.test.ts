@@ -43,6 +43,7 @@ import {
   setRoom,
   setSection,
   setTeacher,
+  solveSettled,
   workload,
   yearOfStudy,
   type Actor,
@@ -300,6 +301,18 @@ test('eligibility comes in from a spreadsheet, all of it or none', async () => {
   // Importing the same file again changes nothing but the preferences.
   const again = await importEligibility(k.admin, csv(good.replace(',5\n', ',4\n')))
   assert.equal(again.imported, 3)
+})
+
+test('drafting returns before the solver has run (REL-01)', async () => {
+  const k = await college()
+  await generatePeriods(k.admin, { days: ['1', '2'], startsAt: '09:00', minutes: '60', count: '3' })
+  await addEligibility(k.admin, { userId: k.u.rao, courseId: k.C.ds })
+  await setNeed(k.admin, { offeringId: k.O.aDs, periodsPerWeek: '2' })
+  const r = await generateRun(k.admin, { termId: k.term.id, seed: '5', iterations: '3000' })
+  assert.equal((r as { status?: string }).status, 'solving')
+  await solveSettled(r.id)
+  const detail = await runDetail(k.admin, { runId: r.id })
+  assert.equal(detail.run.status, 'draft')
 })
 
 test('declared pages load real timetable data and keep faculty views personal', async () => {
