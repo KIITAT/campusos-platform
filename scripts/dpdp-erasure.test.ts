@@ -140,10 +140,17 @@ before(async () => {
     [I, S, X],
   )
   const application = uid()
-  await q(`insert into placement_applications (id, institution_id, drive_id, student_id, eligibility) values ($1, $2, $3, $4, '{}')`, [application, I, uid(), S])
+  const company = uid()
+  const drive = uid()
+  const round = uid()
+  // real rows: the placement guard re-checks the round against the drive when erasure updates the note
+  await q(`insert into placement_companies (id, institution_id, name) values ($1, $2, 'Acme')`, [company, I])
+  await q(`insert into placement_drives (id, institution_id, company_id, title, closes_at) values ($1, $2, $3, 'Drive', now() + interval '7 days')`, [drive, I, company])
+  await q(`insert into placement_rounds (id, institution_id, drive_id, name, position) values ($1, $2, $3, 'Round 1', 1)`, [round, I, drive])
+  await q(`insert into placement_applications (id, institution_id, drive_id, student_id, eligibility) values ($1, $2, $3, $4, '{}')`, [application, I, drive, S])
   await q(
     `insert into placement_results (institution_id, application_id, round_id, outcome, note) values ($1, $2, $3, 'passed', $4)`,
-    [I, application, uid(), X],
+    [I, application, round, X],
   )
   const kase = uid()
   await q(
