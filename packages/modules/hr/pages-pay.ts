@@ -41,6 +41,8 @@ export const payPages: PluginPage[] = [
       return {
         basis: settings.prorationBasis,
         statutoryFrom: settings.statutoryFrom ? settings.statutoryFrom.slice(0, 7) : '',
+        pfRegistered: settings.pfRegistered,
+        esiRegistered: settings.esiRegistered,
         ptSlabs: slabs.map((p) => ({ ...p, month: p.effectiveFrom.slice(0, 7) })),
         structures: structures.map((s) => ({
           ...s,
@@ -113,8 +115,8 @@ export const payPages: PluginPage[] = [
             ],
           },
           { name: 'statutoryFrom', label: 'Statutory pay from (YYYY-MM)', optional: true, value: String(data.statutoryFrom) },
-          { name: 'pfRegistered', label: 'Registered with EPFO', kind: 'checkbox', optional: true },
-          { name: 'esiRegistered', label: 'Registered with ESIC', kind: 'checkbox', optional: true },
+          { name: 'pfRegistered', label: 'Registered with EPFO', kind: 'checkbox', optional: true, value: String(data.pfRegistered) },
+          { name: 'esiRegistered', label: 'Registered with ESIC', kind: 'checkbox', optional: true, value: String(data.esiRegistered) },
         ],
       },
       {
