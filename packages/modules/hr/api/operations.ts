@@ -51,6 +51,7 @@ import { shiftAllowances } from './shifts'
 import { advanceDeductions, recordPayrollRecoveries } from './expenses'
 import { isWithheld, payableComponents, payrollBasis, taxDeduction } from './pay'
 import { leaveEncashments } from '../schema'
+import { checkOtherPerson } from '@campusos/module-finance/api'
 
 // --- staff -----------------------------------------------------------------
 
@@ -680,6 +681,14 @@ export async function paySalaries(actor: Actor, input: unknown) {
 
   return withTenant(tenant, async (tx) => {
     await lockPayrollPeriod(tx, tenant, d.period)
+    const [ranIt] = await tx
+      .select({ id: payrollRuns.id })
+      .from(payrollRuns)
+      .where(and(eq(payrollRuns.period, d.period), eq(payrollRuns.runBy, actor.id)))
+      .limit(1)
+    if (ranIt && (await checkOtherPerson(tx, actor, tenant, { creatorId: actor.id, act: 'pay_payroll', moduleId: 'hr', entity: 'hr_payroll_runs', entityId: ranIt.id })) === 'refused') {
+      throw new HrError(403, 'separation_of_duties', 'you ran this month’s payroll, so someone else must pay it')
+    }
     const [owed] = await tx
       .select({ total: sql<number>`coalesce(sum(${payslips.netPaise}), 0)::bigint` })
       .from(payslips)

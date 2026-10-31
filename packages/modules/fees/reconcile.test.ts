@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { eq, inArray, sql } from 'drizzle-orm'
 import { authDb, institutions, users } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
+import { setSingleOfficer } from '@campusos/module-finance/api'
 import { addBankAccount, claimTransfer, reconcilePayment, recordPayment, verifyClaim, type Actor } from './api'
 
 /**
@@ -48,6 +49,7 @@ before(async () => {
   ids.clerk = people[0]!.id
   ids.adm = people[1]!.id
   ids.s1 = people[2]!.id
+  await setSingleOfficer(adm(), { enabled: true, reason: 'test fixture: one officer' })
   ids.term = (await academic.createTerm(adm(), { code: 't1', name: 'Autumn', startsOn: '2026-07-01', endsOn: '2026-12-01' })).id
   ids.account = (
     await addBankAccount(adm(), {

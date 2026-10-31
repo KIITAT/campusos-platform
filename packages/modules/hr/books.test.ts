@@ -2,7 +2,7 @@ import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { like } from 'drizzle-orm'
 import { authDb, institutions, users, withTenant } from '@campusos/db'
-import { entryLines, listEntries, trialBalance, type Actor as Books } from '@campusos/module-finance/api'
+import { entryLines, listEntries, setSingleOfficer, trialBalance, type Actor as Books } from '@campusos/module-finance/api'
 import {
   HrError,
   createStaff,
@@ -45,6 +45,7 @@ async function payrollFor(): Promise<Payroll> {
       { email: `clerk@${tag}.test`, institutionId: id, role: 'accounts_staff', name: 'Clerk' },
     ])
     .returning({ id: users.id })
+  await setSingleOfficer({ id: people[0]!.id, email: null, role: 'institution_admin', institutionId: id }, { enabled: true, reason: 'test fixture: one officer' })
 
   return {
     id,

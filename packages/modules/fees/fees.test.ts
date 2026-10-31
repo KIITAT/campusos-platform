@@ -18,6 +18,7 @@ import {
   studentLedger,
   type Actor,
 } from './api'
+import { setSingleOfficer } from '@campusos/module-finance/api'
 import { feeItems, feePayments, feeWaivers, receiptCounters } from './schema'
 
 // The audit trail is append-only (AUD-01): a reset cannot empty it, so each
@@ -105,6 +106,7 @@ before(async () => {
   ids.s1 = people[3]!.id
   ids.s2 = people[4]!.id
   ids.s3 = people[5]!.id
+  await setSingleOfficer(admin(), { enabled: true, reason: 'test fixture: one officer' })
 
   const st = admin()
   const dept = await academic.createDepartment(st, { code: 'cse', name: 'CSE' })

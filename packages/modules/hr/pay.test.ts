@@ -2,7 +2,7 @@ import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { sql } from 'drizzle-orm'
 import { authDb, institutions, users } from '@campusos/db'
-import { trialBalance } from '@campusos/module-finance/api'
+import { setSingleOfficer, trialBalance } from '@campusos/module-finance/api'
 import {
   HrError,
   annualTax,
@@ -139,6 +139,7 @@ async function college() {
     .returning({ id: users.id })
   const admin: Actor = { id: u!.id, email: null, role: 'institution_admin', institutionId: i!.id }
   const lecturer: Actor = { id: p!.id, email: null, role: 'faculty', institutionId: i!.id }
+  await setSingleOfficer(admin, { enabled: true, reason: 'test fixture: one officer' })
   const person = await createStaff(admin, {
     employeeCode: 'F-1', name: 'Dr Salaried', designation: 'Assistant Professor',
     department: 'Chemistry', joinedOn: '2019-06-01', userId: lecturer.id,

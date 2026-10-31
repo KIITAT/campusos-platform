@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, notLike, sql } from 'drizzle-orm'
 import { audit, auditLog, users, withIdempotencyKey, withTenant } from '@campusos/db'
 import { assertCanAccessStudent, viewsOnBehalf, type Role, type ViewerScope } from '@campusos/module-framework'
 import { programs, terms } from '@campusos/module-academic/schema'
@@ -28,6 +28,7 @@ import {
 import { ledger, overpaidPaise, type LedgerLine } from './ledger'
 import { postInvoice, postPayment, postRefund, postWaiverChange } from './posting'
 import { duesRoster, enrolledPrograms, notEnrolled, termRoster } from './enrolment'
+import { checkOtherPerson } from '@campusos/module-finance/api'
 
 const MODULE = 'fees'
 
@@ -677,6 +678,9 @@ async function refundWithin(tx: Tx, tenant: string, actor: Actor, data: RefundIn
     .from(feePayments)
     .where(eq(feePayments.id, data.paymentId))
   if (!payment) throw new FeeError(404, 'no_such_payment', 'no such payment')
+  if ((await checkOtherPerson(tx, actor, tenant, { creatorId: payment.recordedBy, act: 'refund', moduleId: MODULE, entity: 'fee_payments', entityId: payment.id })) === 'refused') {
+    throw new FeeError(403, 'separation_of_duties', 'you recorded this payment, so someone else must refund it')
+  }
 
   const [sums] = await tx
     .select({ back: sql<number>`coalesce(sum(${feeRefunds.amountPaise}), 0)::bigint` })
@@ -752,6 +756,9 @@ export async function reconcilePayment(actor: Actor, input: unknown) {
     if (row.reconciledAt) {
       throw new FeeError(409, 'already_reconciled', 'that payment is already reconciled')
     }
+    if ((await checkOtherPerson(tx, actor, tenant, { creatorId: row.recordedBy, act: 'reconcile', moduleId: MODULE, entity: 'fee_payments', entityId: row.id })) === 'refused') {
+      throw new FeeError(403, 'separation_of_duties', 'you recorded this payment, so someone else must confirm it')
+    }
 
     await audit(tx, {
       institutionId: tenant,
@@ -767,8 +774,7 @@ export async function reconcilePayment(actor: Actor, input: unknown) {
         amountPaise: row.amountPaise,
         method: row.method,
         reference: row.reference,
-        // LOW-05: the clerk who took the money confirming it themselves is
-        // findable in the trail; P0-07 decides whether to refuse it.
+        // LOW-05: refused unless single-officer mode is on (P0-07).
         recordedBy: row.recordedBy,
         selfReconciled: row.recordedBy === actor.id,
       },
@@ -792,7 +798,7 @@ export async function paymentTrail(actor: Actor, paymentId: string) {
         actorEmail: auditLog.actorEmail,
       })
       .from(auditLog)
-      .where(and(eq(auditLog.entity, 'fee_payments'), eq(auditLog.entityId, paymentId)))
+      .where(and(eq(auditLog.entity, 'fee_payments'), eq(auditLog.entityId, paymentId), notLike(auditLog.action, 'sod.%')))
       .orderBy(asc(auditLog.at)),
   )
 }

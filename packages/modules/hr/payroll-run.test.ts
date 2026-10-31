@@ -8,6 +8,7 @@ import {
   generatePayroll, getPayrollSettings, listArrears, listRuns, paySalaries, requestEncashment, setComponent,
   setPayrollSettings, type Actor,
 } from './api'
+import { setSingleOfficer } from '@campusos/module-finance/api'
 import { payrollArrears, payrollSettings } from './schema'
 
 /**
@@ -34,6 +35,7 @@ async function college(): Promise<College> {
       { email: `clerk@${tag}.test`, institutionId: i!.id, role: 'accounts_staff', name: 'Clerk' },
     ])
     .returning({ id: users.id })
+  await setSingleOfficer({ id: people[0]!.id, email: null, role: 'institution_admin', institutionId: i!.id }, { enabled: true, reason: 'test fixture: one officer' })
   return {
     id: i!.id,
     admin: { id: people[0]!.id, email: `adm@${tag}.test`, role: 'institution_admin', institutionId: i!.id },

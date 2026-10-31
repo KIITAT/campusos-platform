@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { eq, like, sql } from 'drizzle-orm'
 import { authDb, institutions, users, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
-import { listEntries, trialBalance, type Actor as Books } from '@campusos/module-finance/api'
+import { listEntries, setSingleOfficer, trialBalance, type Actor as Books } from '@campusos/module-finance/api'
 import { feePayments, feeRefunds } from './schema'
 import {
   FeeError,
@@ -89,6 +89,8 @@ async function campus(): Promise<Campus> {
   })
   await academic.addSectionMember(admin, { sectionId: section.id, userId: people[2]!.id })
   await academic.declareProgram(admin, { studentId: people[2]!.id, programId: program.id, declaredOn: '2025-07-01' })
+
+  await setSingleOfficer(admin, { enabled: true, reason: 'test fixture: one officer' })
 
   return {
     id,

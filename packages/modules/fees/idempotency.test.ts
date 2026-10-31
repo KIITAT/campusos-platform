@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { eq, inArray, sql } from 'drizzle-orm'
 import { authDb, institutions, users, verifyChains, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
+import { setSingleOfficer } from '@campusos/module-finance/api'
 import { cancelStudentCharge, chargeStudent, recordPayment, refundPayment, type Actor } from './api'
 
 /**
@@ -101,6 +102,7 @@ before(async () => {
   ids.s1 = people[3]!.id
   ids.otherClerk = people[4]!.id
   ids.otherStudent = people[6]!.id
+  await setSingleOfficer(as(ids.adm, 'institution_admin', inst), { enabled: true, reason: 'test fixture: one officer' })
 
   ids.term = (
     await academic.createTerm(as(people[2]!.id, 'institution_admin', inst), {

@@ -1,6 +1,6 @@
 import { resolve } from 'node:path'
 import { authDb, corePool, institutionModules, institutions, users } from '../packages/db/src/index'
-import { balanceSheet, createItem, createParty, incomeAndExpenditure, invoiceDetail, listAccounts, listEntries, saveInvoice, saveJournal, savePayment, trialBalance, updateSettings, type Actor } from '../packages/modules/finance/api/index'
+import { balanceSheet, createItem, createParty, incomeAndExpenditure, invoiceDetail, listAccounts, listEntries, saveInvoice, saveJournal, savePayment, setSingleOfficer, trialBalance, updateSettings, type Actor } from '../packages/modules/finance/api/index'
 
 export const CONFIRMATION = 'CREATE_SYNTHETIC_FINANCE_DEMO'
 export const DEMO_SLUG = 'campusos-finance-demo-v1'
@@ -62,6 +62,7 @@ export async function createDemoTenant(): Promise<DemoTenant> {
 export async function populateDemoBooks(tenant: DemoTenant) {
   if ((await listEntries(tenant.accounts)).length) throw new DemoSafetyError('Demo books already contain postings; refusing duplicate financial effects.')
   await updateSettings(tenant.admin, { legalName: 'CampusOS Finance Demo — Synthetic', baseCurrency: 'INR', fiscalYearStartMonth: 4, timeZone: 'Asia/Kolkata', roundInvoices: true })
+  await setSingleOfficer(tenant.admin, { enabled: true, reason: 'demo institution has one officer' })
   const chart = await listAccounts(tenant.admin)
   const bank = chart.find(account => account.purpose === 'bank')!
   const expense = chart.find(account => account.purpose === 'purchase_expense')!
