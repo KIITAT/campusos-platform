@@ -15,6 +15,7 @@ import {
   recordConsent,
 } from './dpdp'
 import { auditLog } from './audit'
+import { recordGuardianConsent } from './minors'
 import { institutions, users } from './schema'
 
 const SLUG = 'dpdp-test'
@@ -32,7 +33,8 @@ before(async () => {
   const people = await authDb
     .insert(users)
     .values([
-      { email: 'subject@dpdp.test', institutionId: inst, role: 'student', name: 'A Subject' },
+      // An adult: a minor's own consent to the notice is refused (P1-08b).
+      { email: 'subject@dpdp.test', institutionId: inst, role: 'student', name: 'A Subject', dateOfBirth: '1990-01-01' },
       { email: 'adm@dpdp.test', institutionId: inst, role: 'institution_admin', name: 'Adm' },
     ])
     .returning({ id: users.id })
@@ -358,4 +360,39 @@ test('credentials are removed only for a person already erased', async () => {
     () => withTenant(inst, (tx) => tx.execute(sql`select public.campusos_forget_credentials(${u})`)),
     /credentials are removed only for a person erased in this institution/,
   )
+})
+
+test('an export carries the date of birth and the consent records', async () => {
+  const u = await freshStudent()
+  await owner((c) => c.query(`update users set date_of_birth = '2010-05-01' where id = $1`, [u]))
+  await withTenant(inst, (tx) =>
+    recordGuardianConsent(tx, {
+      institutionId: inst, studentId: u, purpose: 'apaar', decision: 'given',
+      basis: 'office_record', guardianId: null, recordedBy: admin, note: 'form 12',
+    }),
+  )
+  const bundle = await exportSubject(inst, u)
+  assert.equal(bundle.subject.dateOfBirth, '2010-05-01')
+  const key = Object.keys(bundle.records).find((k) => k.startsWith('guardian_consents.'))
+  assert.ok(key, `guardian_consents missing from ${Object.keys(bundle.records).join(', ')}`)
+})
+
+test('an erasure clears the date of birth and keeps the consent records', async () => {
+  const u = await freshStudent()
+  await owner((c) => c.query(`update users set date_of_birth = '2010-05-01' where id = $1`, [u]))
+  await withTenant(inst, (tx) =>
+    recordGuardianConsent(tx, {
+      institutionId: inst, studentId: u, purpose: 'apaar', decision: 'given',
+      basis: 'office_record', guardianId: null, recordedBy: admin, note: 'form 12',
+    }),
+  )
+  const result = await eraseSubject(inst, u, { actorId: admin, reason: 'test erasure' })
+  const [row] = await withTenant(inst, (tx) => tx.select().from(users).where(eq(users.id, u)))
+  assert.equal(row!.dateOfBirth, null)
+  assert.equal(
+    result.retainedBecause.guardian_consents,
+    'consent records are evidence the institution must produce (DPDP Act s.6(10))',
+  )
+  const kept = await owner((c) => c.query(`select 1 from guardian_consents where student_id = $1`, [u]))
+  assert.equal(kept.rows.length, 1)
 })

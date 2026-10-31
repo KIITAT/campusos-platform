@@ -76,6 +76,8 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   // The salt is the chain's, not the person's (P0-02).
   audit_log: { omit: ['salt'] },
   installed_plugins: { only: ['module_id', 'version', 'installed_at'] },
+  // The subject's own recorded choices (P1-08b).
+  guardian_consents: 'export',
 
   // academic
   academic_class_changes: 'export',
@@ -275,6 +277,7 @@ export function exportableRow(table: string, row: Record<string, unknown>): Reco
  */
 export function retentionBasis(table: string): string {
   if (table === 'audit_log') return 'the audit trail, kept under the law that requires it (decision 181)'
+  if (table === 'guardian_consents') return 'consent records are evidence the institution must produce (DPDP Act s.6(10))'
   if (table.startsWith('fee_') || table.startsWith('finance_')) {
     return 'a financial record, kept for the period tax and accounting law requires'
   }
