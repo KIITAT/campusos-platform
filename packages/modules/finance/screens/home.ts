@@ -1,6 +1,6 @@
 import type { PluginPage } from '@campusos/module-framework'
 import { formatPaise } from '@campusos/money'
-import { dashboard } from '../api'
+import { dashboard, sodStatus } from '../api'
 import { as, OFFICE, STAFF } from './kit'
 
 /**
@@ -15,12 +15,15 @@ export const homePages: PluginPage[] = [
     roles: [...OFFICE],
     async load(actor) {
       const d = await dashboard(as(actor))
-      return { ...d, ...Object.fromEntries(Object.entries(d.counts).map(([k, v]) => [k, String(v)])) }
+      return { ...d, ...Object.fromEntries(Object.entries(d.counts).map(([k, v]) => [k, String(v)])), singleOfficer: String((await sodStatus(as(actor))).enabled) }
     },
     sections: (data) => {
       const n = (k: string) => Number(data[k] ?? 0)
       const tone = (k: string) => (n(k) > 0 ? ('orange' as const) : ('gray' as const))
       return [
+        ...(data.singleOfficer === 'true'
+          ? [{ kind: 'note' as const, tone: 'warn' as const, text: 'Single-officer mode is on: one person can approve and submit their own documents.' }]
+          : []),
         {
           kind: 'figures',
           title: `Fiscal year ${String(data.fiscalYear)}, to ${String(data.on)}`,

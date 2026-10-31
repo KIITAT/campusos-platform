@@ -65,6 +65,17 @@ export const setupPages: PluginPage[] = [
       form('Retire or restore template', '/taxes/archive', [select('id', 'templateOptions', { optional: false }), ...checks('archived')], {}, ADMIN),
       form('Add TDS section', '/tds-sections', [...textFields('code', 'name'), field('ratePercent', 'number', { step: 'any', optional: false }), field('rateNoPanPercent', 'number', { step: 'any', optional: false }), ...moneyFields('thresholdSingle', 'thresholdAnnual'), select('payableAccountCode', 'accountCodes')], {}, ADMIN)],
   }),
+  page({ path: '/segregation', title: 'Segregation of duties', menu: 'Setup', roles: OFFICE,
+    async load(actor) {
+      const status = object(await read(actor, '/sod'))
+      return { enabled: status.enabled ? 'on' : 'off', uses: rows(await read(actor, '/sod/uses')) }
+    },
+    sections: () => [
+      { kind: 'note', text: 'Approvals and submissions of supplier bills, supplier payments and vouchers need a second person. Single-officer mode lifts that for an institution with one accountant; every use is on the audit trail and listed below.' },
+      table('Acts allowed by single-officer mode', 'uses', [col('at', 'when'), col('actorEmail'), col('act'), col('docType')]),
+      form('Single-officer mode', '/sod/single-officer', [...checks('enabled'), field('reason')], {}, ADMIN),
+    ],
+  }),
   page({ path: '/approvals', title: 'Approvals waiting', menu: 'Approvals', roles: STAFF,
     async load(actor) { return { rows: rows(await read(actor, '/approvals/pending')).map(row => ({ ...display(row), docType: label(str(row.docType)), target: str(row.href).replace(/^\/m\/finance/, '') })) } },
     sections: () => [table('Waiting for your approval', 'rows', [col('docType'), col('number'), ...moneyCols('amountPaise'), col('approver'), col('refused', 'bool', { alertWhen: 'refused' }), col('createdAt', 'when')])],
