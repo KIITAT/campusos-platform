@@ -12,10 +12,11 @@ export const manifest: ModuleManifest = {
   softDependsOn: ['attendance', 'examinations', 'fees', 'library', 'hostel'],
   pricing: { model: 'not_priced_yet', priceINR: null },
 
-  rolesWithAccess: ['super_admin', 'institution_admin', 'parent'],
+  rolesWithAccess: ['super_admin', 'institution_admin', 'parent', 'student'],
 
   navEntries: [
     { label: 'My children', href: '/m/parents', roles: ['parent'] },
+    { label: 'Guardian access', href: '/m/parents/access', roles: ['student'] },
     { label: 'Parent links', href: '/m/parents/links', roles: ['institution_admin', 'super_admin'] },
     { label: 'Guardians', href: '/m/parents/guardians', roles: ['institution_admin', 'super_admin'] },
   ],
