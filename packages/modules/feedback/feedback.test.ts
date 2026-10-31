@@ -51,6 +51,7 @@ interface Campus {
   bilal: Actor
   outsider: Actor
   termId: string
+  sectionAId: string
   offeringId: string
   otherOfferingId: string
 }
@@ -97,6 +98,7 @@ async function campus(): Promise<Campus> {
     bilal: { id: bilal, role: 'student', institutionId: id },
     outsider: { id: out, role: 'student', institutionId: id },
     termId: term.id,
+    sectionAId: secA.id,
     offeringId: off.id,
     otherOfferingId: off2.id,
   }
@@ -130,7 +132,7 @@ async function openWindow(c: Campus, formId: string, over: Record<string, unknow
     title: 'End-semester feedback',
     opensAt: iso(-H),
     closesAt: iso(48 * H),
-    minResponses: 2,
+    minResponses: 3,
     ...over,
   })
   await publishWindow(c.admin, { windowId: w.id })
@@ -267,7 +269,7 @@ test('who answered and what they said cannot be joined, and neither is changed',
 test('results: nothing while open, nothing below the threshold, and a teacher sees only their own classes', async () => {
   const c = await campus()
   const { formId, q } = await teachingForm(c)
-  const windowId = await openWindow(c, formId, { minResponses: 2 })
+  const windowId = await openWindow(c, formId, { minResponses: 3 })
   await give(c.asha, { windowId, offeringId: c.offeringId, ...answersFor(q, [4, 5, 3], 'Too fast', 'More worked examples') })
 
   assert.equal((await classResults(c.teacher, windowId, c.offeringId)).open, true, 'nothing while it is open')
@@ -275,30 +277,66 @@ test('results: nothing while open, nothing below the threshold, and a teacher se
 
   await give(c.asha, { windowId, offeringId: c.otherOfferingId, ...answersFor(q, [2, 2, 2]) })
   await give(c.bilal, { windowId, offeringId: c.offeringId, ...answersFor(q, [2, 3, 3], 'About right', 'Clear notes') })
+  const [dev] = await authDb
+    .insert(users)
+    .values({ email: `dev@${SLUG}${n}.test`, institutionId: c.id, role: 'student', name: 'Dev' })
+    .returning({ id: users.id })
+  await addSectionMember(c.admin as AcademicActor, { sectionId: c.sectionAId, userId: dev!.id })
+  await give({ id: dev!.id, role: 'student', institutionId: c.id }, { windowId, offeringId: c.offeringId, ...answersFor(q, [3, 4, 3], 'About right', 'Good pace') })
   await close(windowId)
 
   const mine = await classResults(c.teacher, windowId, c.offeringId)
   assert.equal(mine.open, false)
   const r = mine.result!
   assert.equal(r.shown, true)
-  assert.equal(r.responses, 2)
-  assert.equal(r.questions[0]!.mean, 3) // (4 + 2) / 2
+  assert.equal(r.responses, 3)
+  assert.equal(r.questions[0]!.mean, 3) // (4 + 2 + 3) / 3
   assert.equal(r.questions[1]!.mean, 4)
-  assert.deepEqual(r.questions[3]!.spread.map((s) => s.count), [0, 1, 1])
-  assert.deepEqual(r.questions[4]!.comments, ['Clear notes', 'More worked examples'], 'alphabetical, not in the order given')
+  assert.deepEqual(r.questions[3]!.spread.map((s) => s.count), [0, 2, 1])
+  assert.deepEqual(r.questions[4]!.comments, ['Clear notes', 'Good pace', 'More worked examples'], 'alphabetical, not in the order given')
 
-  // One answer for Probability: below the threshold of two, so nothing shows.
+  // One answer for Probability: below the threshold of three, so nothing shows.
   const thin = await classResults(c.otherTeacher, windowId, c.otherOfferingId)
   assert.equal(thin.result!.shown, false)
   assert.equal(thin.result!.questions.length, 0)
 
   const list = await myClassResults(c.teacher)
-  assert.equal(list.find((x) => x.offeringId === c.offeringId)!.responses, 2)
+  assert.equal(list.find((x) => x.offeringId === c.offeringId)!.responses, 3)
 
   const w = await windowView(c.admin, windowId)
-  assert.equal(w.summary.owed, 5, 'Asha and Bilal for two classes, Chen for one')
-  assert.equal(w.summary.given, 3)
-  assert.deepEqual(w.pending.map((p) => p.name).sort(), ['Bilal', 'Chen'])
+  assert.equal(w.summary.owed, 7, 'Asha, Bilal and Dev for two classes, Chen for one')
+  assert.equal(w.summary.given, 4)
+  assert.deepEqual(w.pending.map((p) => p.name).sort(), ['Bilal', 'Chen', 'Dev'])
+})
+
+test('a window cannot publish results from fewer than three (AUD-10)', async () => {
+  const c = await campus()
+  const { formId } = await teachingForm(c)
+  const base = { formId, termId: c.termId, title: 'Too few', opensAt: iso(-H), closesAt: iso(48 * H) }
+  await assert.rejects(createWindow(c.admin, { ...base, minResponses: 2 }))
+  const draft = await createWindow(c.admin, { ...base, minResponses: 3 })
+  await assert.rejects(
+    withTenant(c.id, (tx) => tx.update(windows).set({ minResponses: 2 }).where(eq(windows.id, draft.id))),
+    refusedBy('feedback_windows_min'),
+  )
+})
+
+test('a question answered by too few is withheld, whatever the class count (AUD-10)', async () => {
+  const c = await campus()
+  const f = await createForm(c.admin, { name: 'Facilities', audience: 'general' })
+  await addScaleQuestions(c.admin, { formId: f.id, prompts: 'The classrooms are clean' })
+  await addQuestion(c.admin, { formId: f.id, kind: 'text', prompt: 'Anything about the canteen?', required: false })
+  await publishForm(c.admin, { formId: f.id })
+  const windowId = await openWindow(c, f.id, { title: 'Facilities', minResponses: 3 })
+  const [scale, text] = (await formView(c.admin, f.id)).questions
+  await give(c.asha, { windowId, [`q_${scale!.id}`]: '4', [`q_${text!.id}`]: 'More choice' })
+  await give(c.bilal, { windowId, [`q_${scale!.id}`]: '3', [`q_${text!.id}`]: '' })
+  await give(c.outsider, { windowId, [`q_${scale!.id}`]: '5', [`q_${text!.id}`]: '' })
+  await close(windowId)
+  const o = (await windowView(c.admin, windowId)).overall!
+  assert.equal(o.shown, true)
+  assert.deepEqual([o.questions[0]!.mean, o.questions[0]!.withheld], [4, false])
+  assert.deepEqual([o.questions[1]!.withheld, o.questions[1]!.comments], [true, []])
 })
 
 test('a general window is answered once per student, and finishing the term is a question others can ask', async () => {
