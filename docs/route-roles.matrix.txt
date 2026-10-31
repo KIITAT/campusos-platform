@@ -101,7 +101,7 @@ POST /api/v1/modules/attendance/devices/approve                          SI.....
 POST /api/v1/modules/attendance/geofences                                SI........ op
 GET /api/v1/modules/attendance/me                                        .......s.. gate
 
-## care 0.4.0
+## care 0.5.0
 GET /api/v1/modules/care/home                                            .......s.. op
 GET /api/v1/modules/care/instruments                                     .......s.. gate
 GET /api/v1/modules/care/check                                           .......s.. gate
@@ -157,7 +157,7 @@ GET /api/v1/modules/enrollment/registrations                             SIHF...
 GET /api/v1/modules/enrollment/credit-load                               SIHF...s.. gate
 GET /api/v1/modules/enrollment/events                                    SIH....s.. gate
 
-## examinations 0.7.0
+## examinations 0.8.0
 GET /api/v1/modules/examinations/exams                                   SIHF...... gate
 POST /api/v1/modules/examinations/exams                                  SIHF...... op
 POST /api/v1/modules/examinations/exams/publish                          SIHF...... op
@@ -195,7 +195,7 @@ GET /api/v1/modules/examinations/imports                                 SIHF...
 GET /api/v1/modules/examinations/imports/template                        SIHF...... gate
 POST /api/v1/modules/examinations/imports/run                            SIHF...... gate
 
-## feedback 0.3.0
+## feedback 0.4.0
 GET /api/v1/modules/feedback/forms                                       SIH....... op
 POST /api/v1/modules/feedback/forms                                      SIH....... op
 GET /api/v1/modules/feedback/form                                        SIH....... gate
@@ -614,7 +614,7 @@ GET /api/v1/modules/library/imports                                      SI...L.
 GET /api/v1/modules/library/imports/template                             SI...L.... gate
 POST /api/v1/modules/library/imports/run                                 SI...L.... gate
 
-## mentoring 0.7.0
+## mentoring 0.8.0
 GET /api/v1/modules/mentoring/assignments                                SIH....... op
 POST /api/v1/modules/mentoring/assign                                    SIH....... op
 POST /api/v1/modules/mentoring/assignments/end                           SIH....... op
@@ -648,7 +648,7 @@ GET /api/v1/modules/notices/board/attachment                             SIHFALO
 GET /api/v1/modules/notices/inbox                                        SIHFALOsp. gate
 POST /api/v1/modules/notices/inbox                                       SIHFALOsp. gate
 
-## parents 0.7.0
+## parents 0.8.0
 GET /api/v1/modules/parents/links                                        SI........ op
 POST /api/v1/modules/parents/links                                       SI......p. gate
 POST /api/v1/modules/parents/links/decide                                SI........ op
