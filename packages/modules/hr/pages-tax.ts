@@ -33,7 +33,8 @@ export const taxPages: PluginPage[] = [
     async load(actor, req) {
       const a = actor as Actor
       const q = new URL(req.url).searchParams
-      const staff = await listStaff(a)
+      // Leavers too: their last payslip trues up the year's tax.
+      const staff = await listStaff(a, true)
       const asked = Number(q.get('taxYear'))
       const taxYear = Number.isInteger(asked) && asked >= 2000 && asked <= 2100
         ? asked
