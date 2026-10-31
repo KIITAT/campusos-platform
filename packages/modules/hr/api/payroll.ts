@@ -19,6 +19,8 @@ export interface Component {
   amountPaise: number
   /** How an earning counts toward the statutory bases (P1-06a). */
   wageClass?: WageClass
+  /** Whether an earning is income for tax; absent counts as taxable (P1-06b). */
+  taxable?: boolean
 }
 
 export interface PayslipLine extends Component {

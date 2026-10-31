@@ -52,7 +52,8 @@ import { balancesFor } from './balances'
 import { assertBalance, encashmentsDue } from './leave'
 import { shiftAllowances } from './shifts'
 import { advanceDeductions, recordPayrollRecoveries } from './expenses'
-import { isWithheld, payableComponents, payrollBasis, statutorySettings, taxDeduction } from './pay'
+import { isWithheld, payableComponents, payrollBasis, statutorySettings, taxDeduction, tdsDeduction } from './pay'
+import type { TaxRecord } from './tds'
 import { leaveEncashments } from '../schema'
 import { checkOtherPerson } from '@campusos/module-finance/api'
 
@@ -542,7 +543,8 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
           // components taking precedence, and tax on the taxable part if they have
           // chosen a regime for the year.
           const payable = await payableComponents(sp, person.id, period)
-          const tax = await taxDeduction(sp, person.id, period, payable.taxablePaise)
+          // Once statutory pay is on, tax comes from the estimator below (P1-06b).
+          const tax = stat ? null : await taxDeduction(sp, person.id, period, payable.taxablePaise)
 
           const unpaid = await sp
             .select({ fromOn: leaveRequests.fromOn, toOn: leaveRequests.toOn })
@@ -575,9 +577,10 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
             kind: 'earning',
             amountPaise: e.amountPaise,
             wageClass: 'outside',
+            taxable: true,
           }))
           // Shift allowances ride alongside, for the days actually worked on a shift.
-          extras.push(...(await shiftAllowances(sp, person, period)).map((x) => ({ ...x, wageClass: 'wage' as const })))
+          extras.push(...(await shiftAllowances(sp, person, period)).map((x) => ({ ...x, wageClass: 'wage' as const, taxable: true })))
 
           // Advances come back out of what is left after everything else: the room
           // is worked out first so a recovery never pushes the payslip below zero.
@@ -619,14 +622,30 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
             })
           }
           const fixed: Component[] = s ? s.deductions : []
-          const before = s ? payslipFor([...fixed, ...inForceComponents], { ...days, extras }) : pre
+          let taxRecord: TaxRecord | null = null
+          const taxComp: Component[] = []
+          let before = pre
+          if (s) {
+            // Tax needs the applied earnings and this month's PF and PT (P1-06b D16).
+            const base = payslipFor([...fixed, ...payable.components], { ...days, extras })
+            const tds = await tdsDeduction(sp, {
+              person: { id: person.id, pan: person.pan, leftOn: person.leftOn },
+              period,
+              base,
+              extraCodes: new Set(extras.map((x) => x.code)),
+              contracted: payable.components,
+            })
+            taxRecord = tds.record
+            if (tds.component) taxComp.push(tds.component)
+            before = payslipFor([...fixed, ...inForceComponents, ...taxComp], { ...days, extras })
+          }
           const recoveries = await advanceDeductions(
             sp,
             person.id,
             before.grossPaise - before.deductionsPaise,
           )
           const slip = recoveries.length
-            ? payslipFor([...fixed, ...inForceComponents, ...recoveries], { ...days, extras })
+            ? payslipFor([...fixed, ...inForceComponents, ...taxComp, ...recoveries], { ...days, extras })
             : before
 
           const [row] = await sp
@@ -643,6 +662,7 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
               lines: slip.lines,
               statutory: s?.record ?? null,
               employerCostPaise: s?.employerCostPaise ?? 0,
+              tax: taxRecord,
               runId: run!.id,
               withheld: await isWithheld(sp, person.id, period),
               generatedBy: actor.id,

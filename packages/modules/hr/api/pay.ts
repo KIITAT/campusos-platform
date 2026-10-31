@@ -43,9 +43,11 @@ import {
   structureAmounts,
   taxYearOf,
   type Component,
+  type Payslip,
   type ProrationBasis,
   type StructureLine,
 } from './payroll'
+import { estimateTds, figuresOf, type TaxHead, type TaxRecord } from './tds'
 import {
   assignStructureSchema,
   createGratuityRuleSchema,
@@ -209,7 +211,7 @@ export async function payableComponents(
   const all = [...byCode.values()]
 
   return {
-    components: all.map((c) => ({ code: c.code, label: c.label, kind: c.kind, amountPaise: c.amountPaise, wageClass: c.wageClass })),
+    components: all.map((c) => ({ code: c.code, label: c.label, kind: c.kind, amountPaise: c.amountPaise, wageClass: c.wageClass, taxable: c.taxable })),
     taxablePaise: all.filter((c) => c.kind === 'earning' && c.taxable).reduce((n, c) => n + c.amountPaise, 0),
   }
 }
@@ -909,4 +911,102 @@ export async function taxDetails(actor: Actor, staffId: string, taxYear: number)
       .where(and(eq(taxPreviousEmployment.staffId, staffId), eq(taxPreviousEmployment.taxYear, taxYear)))
     return { identity: identityOf(person), declarations, previous: previous ?? null }
   })
+}
+
+/** Months after `period` up to and including `leftOn`'s month: 0 when they leave this month. */
+function monthsUntil(period: string, leftOn: string): number {
+  const p = Number(period.slice(0, 4)) * 12 + Number(period.slice(5, 7))
+  const l = Number(leftOn.slice(0, 4)) * 12 + Number(leftOn.slice(5, 7))
+  return Math.max(0, l - p)
+}
+
+/**
+ * This month's TDS once statutory pay is on (P1-06b, ACC-17): the year from
+ * what was actually paid, an earlier employer, this month and the months
+ * still to come, under the person's regime or the institution's default.
+ * Null component and record when there is no regime to use.
+ */
+export async function tdsDeduction(
+  tx: Tx,
+  a: {
+    person: { id: string; pan: string | null; leftOn: string | null }
+    period: string
+    base: Payslip
+    extraCodes: Set<string>
+    contracted: Component[]
+  },
+): Promise<{ component: Component | null; record: TaxRecord | null }> {
+  const elections = await tx
+    .select({ regime: taxRegimes, taxYear: taxElections.taxYear })
+    .from(taxElections)
+    .innerJoin(taxRegimes, eq(taxRegimes.id, taxElections.regimeId))
+    .where(eq(taxElections.staffId, a.person.id))
+  let r = elections.find((e) => e.taxYear === taxYearOf(a.period, e.regime.yearStartsMonth))?.regime
+  if (!r) {
+    const [settings] = await tx.select({ id: payrollSettings.defaultRegimeId }).from(payrollSettings)
+    if (settings?.id) [r] = await tx.select().from(taxRegimes).where(eq(taxRegimes.id, settings.id))
+  }
+  if (!r) return { component: null, record: null }
+
+  const taxYear = taxYearOf(a.period, r.yearStartsMonth)
+  const start = `${taxYear}-${String(r.yearStartsMonth).padStart(2, '0')}-01`
+  const slabs = await tx.select().from(taxSlabs).where(eq(taxSlabs.regimeId, r.id))
+  const surcharges = await tx.select().from(taxSurcharges).where(eq(taxSurcharges.regimeId, r.id))
+
+  const earlierSlips = await tx
+    .select({ lines: payslips.lines })
+    .from(payslips)
+    .where(and(eq(payslips.staffId, a.person.id), gte(payslips.period, start), sql`${payslips.period} < ${a.period}`))
+  const earlierLines = earlierSlips.flatMap((p) => p.lines as { code: string; kind: string; appliedPaise: number; taxable?: boolean }[])
+  const earlierTdsPaise = earlierLines.filter((l) => l.code === 'income_tax').reduce((n, l) => n + l.appliedPaise, 0)
+
+  const [previous] = await tx
+    .select()
+    .from(taxPreviousEmployment)
+    .where(and(eq(taxPreviousEmployment.staffId, a.person.id), eq(taxPreviousEmployment.taxYear, taxYear)))
+  const declarations = await tx
+    .select()
+    .from(taxDeclarations)
+    .where(and(eq(taxDeclarations.staffId, a.person.id), eq(taxDeclarations.taxYear, taxYear)))
+
+  const regular = a.base.lines.filter((l) => !a.extraCodes.has(l.code))
+  const thisMonth = figuresOf(regular)
+  const oneOffPaise = a.base.lines
+    .filter((l) => a.extraCodes.has(l.code) && l.taxable !== false)
+    .reduce((n, l) => n + l.appliedPaise, 0)
+  // ponytail: PT projected flat, February's higher PT not foreseen.
+  const projected = {
+    ...figuresOf(a.contracted.map((c) => ({ ...c, appliedPaise: c.amountPaise }))),
+    pfPaise: thisMonth.pfPaise,
+    ptPaise: thisMonth.ptPaise,
+  }
+  let projectedMonths = monthsLeftInTaxYear(a.period, r.yearStartsMonth) - 1
+  if (a.person.leftOn !== null) projectedMonths = Math.min(projectedMonths, monthsUntil(a.period, a.person.leftOn))
+
+  const est = estimateTds({
+    regime: {
+      standardDeductionPaise: r.standardDeductionPaise,
+      cessBp: r.cessBp,
+      rebateUpToPaise: r.rebateUpToPaise,
+      rebateMaxPaise: r.rebateMaxPaise,
+      rebateMarginalRelief: r.rebateMarginalRelief,
+      allowsDeductions: r.allowsDeductions,
+      slabs: slabs.map((s) => ({ fromPaise: s.fromPaise, toPaise: s.toPaise, rateBp: s.rateBp })),
+      surcharges: surcharges.map((s) => ({ abovePaise: s.abovePaise, rateBp: s.rateBp })),
+    },
+    hasPan: a.person.pan !== null,
+    projectedMonths,
+    earlier: figuresOf(earlierLines),
+    earlierTdsPaise,
+    previous: { incomePaise: previous?.incomePaise ?? 0, tdsPaise: previous?.tdsPaise ?? 0 },
+    thisMonth: { ...thisMonth, oneOffPaise },
+    projected,
+    declarations: declarations.map((d) => ({ head: d.head as TaxHead, declaredPaise: d.declaredPaise, provedPaise: d.provedPaise, metro: d.metro })),
+  })
+  return {
+    component: est.monthPaise > 0
+      ? { code: 'income_tax', label: `Income tax (${r.code})`, kind: 'deduction', amountPaise: est.monthPaise }
+      : null,
+    record: { regimeCode: r.code, taxYear, ...est.record },
+  }
 }
