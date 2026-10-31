@@ -2,7 +2,8 @@ import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { and, eq, like } from 'drizzle-orm'
 import { authDb, institutions, users, withTenant } from '@campusos/db'
-import { createStaff, generatePayroll, setComponent, type Actor } from './api'
+import { trialBalance, type Actor as Books } from '@campusos/module-finance/api'
+import { createStaff, createTaxRegime, electRegime, generatePayroll, setComponent, type Actor } from './api'
 import { payComponents, payrollSettings, payslips, ptSlabs, staff } from './schema'
 
 /**
@@ -145,4 +146,32 @@ test('ESI coverage holds for the period', async () => {
   assert.equal((nov.statutory as { esiCovered: boolean }).esiCovered, true)
   const lines = nov.lines as { code: string; appliedPaise: number }[]
   assert.equal(lines.find((l) => l.code === 'esi_employee')!.appliedPaise, 17_300)
+})
+
+// --- posting (Step 5)
+
+test('a statutory payslip posts each head to its own payable', async () => {
+  const c = await college()
+  const s = await hire(c)
+  await turnOn(c, { statutoryFrom: '2026-04-01' })
+  await member(c, s.id)
+  await pay(c, s.id, 'basic', 'earning', '40000')
+  await pay(c, s.id, 'hra', 'earning', '16000', 'excluded')
+  const regime = await createTaxRegime(c.admin, {
+    code: 'TEST', name: 'Test regime', yearStartsMonth: 4, standardDeduction: '50000', cessBp: 400, rebateUpTo: '500000',
+    slabs: [{ from: '0', to: '300000', rateBp: 0 }, { from: '300000', to: '600000', rateBp: 500 }, { from: '600000', rateBp: 1000 }],
+  })
+  await electRegime(c.admin, { staffId: s.id, regimeId: regime.id, taxYear: 2026 })
+  const run = await generatePayroll(c.admin, { period: '2026-04' })
+  assert.deepEqual(run.failed, [])
+  const lines = run.payslips[0]!.lines as { code: string; appliedPaise: number }[]
+  const tds = lines.find((l) => l.code === 'income_tax')!.appliedPaise
+  assert.ok(tds > 0)
+  const tb = await trialBalance(c.admin as unknown as Books, {})
+  const bal = (code: string) => tb.rows.find((r) => r.code === code)?.balancePaise ?? 0
+  assert.equal(bal('2210'), 375_000)
+  assert.equal(bal('5110'), 195_000)
+  assert.equal(bal('2240'), tds)
+  assert.equal(bal('2200'), 0)
+  assert.equal(tb.differencePaise, 0)
 })
