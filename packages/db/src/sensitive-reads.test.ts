@@ -1,7 +1,7 @@
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
 import pg from 'pg'
-import { like, sql } from 'drizzle-orm'
+import { eq, like, sql } from 'drizzle-orm'
 import { authDb, withTenant } from './client'
 import { genesis, rowHash, type ChainRow } from './audit-chain'
 import { institutions, users } from './schema'
@@ -176,6 +176,15 @@ test('the privacy officer is a member of staff (AUD-07)', async () => {
   )
   await withTenant(I, (tx) => tx.execute(sql`insert into privacy_officers (institution_id, user_id, named_by) values (${I}, ${reader}, ${office})`))
   assert.equal(await withTenant(I, (tx) => privacyOfficerOf(tx, I)), reader)
+})
+
+test('an officer who stops being staff is no longer the officer (NEW-48)', async () => {
+  await authDb.update(users).set({ role: 'student' }).where(eq(users.id, reader))
+  try {
+    assert.equal(await withTenant(I, (tx) => privacyOfficerOf(tx, I)), null)
+  } finally {
+    await authDb.update(users).set({ role: 'faculty' }).where(eq(users.id, reader))
+  }
 })
 
 test('readSensitiveLog filters by subject and dates (AUD-07)', async () => {

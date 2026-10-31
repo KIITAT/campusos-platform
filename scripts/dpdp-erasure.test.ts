@@ -287,6 +287,12 @@ test('the receipt says what was overwritten and why the rest was kept (AUD-03)',
   )
 })
 
+test('the receipt lists nothing as kept that the erasure overwrote or deleted (NEW-32)', () => {
+  assert.ok(receipt.redacted.notifications! >= 1)
+  assert.deepEqual(Object.keys(receipt.retained).filter((k) => k.startsWith('notifications.')), [])
+  assert.equal(receipt.retainedBecause.notifications, undefined)
+})
+
 test('a second erasure changes nothing', async () => {
   const again = await eraseSubject(inst, id.S, { actorId: id.A, reason: 'test erasure again' })
   assert.deepEqual(Object.values(again.redacted).filter((n) => n !== 0), [])
