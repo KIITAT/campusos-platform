@@ -257,3 +257,14 @@ test('the settings table is tenant-isolated', async () => {
     withTenant(other.id, (tx) => tx.insert(sodSettings).values({ institutionId: a.id, singleOfficer: true })),
   )
 })
+
+test('a draft approved, then rejected, can be approved again and submitted', async () => {
+  const b = await books()
+  await setApprovalRule(b.admin, { docType: 'journal', minAmount: '1', approver: 'institution_admin' })
+  const j = await draftJournal(b.clerk, b)
+  await decideApproval(b.admin, { docType: 'journal', docId: j.id, decision: 'approved' })
+  await decideApproval(b.admin2, { docType: 'journal', docId: j.id, decision: 'rejected', note: 'wrong account' })
+  await refused(submitJournal(b.clerk2, { journalId: j.id }), 'needs_approval', undefined, 409)
+  await decideApproval(b.admin2, { docType: 'journal', docId: j.id, decision: 'approved' })
+  await submitJournal(b.clerk2, { journalId: j.id })
+})
