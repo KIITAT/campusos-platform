@@ -14,8 +14,8 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { eq, sql } from '../packages/db/node_modules/drizzle-orm/index.js'
-import { authDb, eraseSubject, institutions, users, verifyChains, withTenant } from '../packages/db/src/index'
-import { purgeExpired } from '../packages/db/src/retention'
+import { audit, authDb, eraseSubject, institutions, users, verifyChains, withTenant } from '../packages/db/src/index'
+import { purgeExpired, recordOffboarding, trailExport } from '../packages/db/src/retention'
 
 const pg = createRequire(import.meta.url)('../packages/db/node_modules/pg') as typeof import('pg')
 
@@ -199,4 +199,40 @@ test('a purge is on the trail and a dry run changes nothing (AUD-08)', async () 
 test('only the owner runs a purge', async () => {
   await rejectsWith(() => withTenant(I, (tx) => tx.execute(sql`select public.campusos_purge_expired(${I})`)), /permission denied/)
   await rejectsWith(() => withTenant(I, (tx) => tx.execute(sql`select public.campusos_purge_platform()`)), /permission denied/)
+})
+
+test('a purge reports the run id it put on the platform chain (review of P1-08d)', async () => {
+  const report = await purgeExpired({ institutionId: I })
+  const run = await q(`select count(*)::int as n from platform_audit_log where action = 'dpdp.retention_run' and entity_id = $1`, [report.runId])
+  assert.equal(run.rows[0].n, 1)
+})
+
+test('offboarding refuses to delete when the trail moved after the export (review of P1-08d)', async () => {
+  const [o] = await authDb
+    .insert(institutions)
+    .values({ slug: `${SLUG}-off`, name: 'Offboard College', allowedEmailDomains: [] })
+    .returning({ id: institutions.id })
+  const row = (n: number) =>
+    authDb.transaction((tx) =>
+      audit(tx, { institutionId: o!.id, actorId: null, moduleId: 'core', action: `retention-test.${n}`, entity: 'x', entityId: String(n), reason: 'retention test' }),
+    )
+  try {
+    await row(1)
+    let auditSeq = 0
+    let readSeq = 0
+    for await (const line of trailExport(o!.id)) {
+      if (line.kind === 'audit') auditSeq = Number(line.seq)
+      if (line.kind === 'read') readSeq = Number(line.seq)
+    }
+    assert.equal(auditSeq, 1)
+    await row(2)
+    await rejectsWith(
+      () => recordOffboarding(o!.id, { name: 'x.ndjson', sha256: '0', lines: 2, auditSeq, readSeq }, { delete: true }),
+      /trail changed after the export/,
+    )
+    assert.equal(await count('institutions', 'id = $1', o!.id), 1)
+    assert.equal(await count('platform_audit_log', `action = 'institution.trail_exported' and entity_id = $1`, o!.id), 0)
+  } finally {
+    await authDb.delete(institutions).where(eq(institutions.id, o!.id))
+  }
 })
