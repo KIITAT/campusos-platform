@@ -130,3 +130,13 @@ test('esiPeriodStart: contribution periods start 1 April and 1 October', () => {
   assert.equal(esiPeriodStart('2026-09-01'), '2026-04-01')
   assert.equal(esiPeriodStart('2026-12-01'), '2026-10-01')
 })
+
+test('L: a base with paise between two whole-rupee slabs takes the lower slab (review finding 4)', () => {
+  const slabs: PtSlab[] = [
+    { fromPaise: 0, toPaise: 1_000_000, amountPaise: 0, februaryPaise: null },
+    { fromPaise: 1_000_100, toPaise: 1_500_000, amountPaise: 15_000, februaryPaise: null },
+    { fromPaise: 1_500_100, toPaise: null, amountPaise: 20_000, februaryPaise: 30_000 },
+  ]
+  const r = run([e(1_500_050)], { ptSlabs: slabs })
+  assert.equal(amounts(r).professional_tax, 15_000)
+})

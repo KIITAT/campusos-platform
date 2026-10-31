@@ -1,10 +1,11 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { and, eq, like } from 'drizzle-orm'
+import { and, eq, like, sql } from 'drizzle-orm'
 import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
 import { trialBalance, type Actor as Books } from '@campusos/module-finance/api'
 import { HrError, createStaff, createTaxRegime, electRegime, generatePayroll, getStatutoryIdentity, listPtSlabs, listStaff, setComponent, setPayrollSettings, setPtSlabs, setStatutoryIdentity, type Actor } from './api'
 import { payslips, ptSlabs, staff } from './schema'
+import { payPages } from './pages-pay'
 
 /**
  * Statutory pay (P1-06a): the schema, then the run, the posting and the
@@ -249,4 +250,93 @@ test('statutory settings are saved together and audited when they change', async
     (await authDb.select({ id: auditLog.id }).from(auditLog).where(and(eq(auditLog.institutionId, c.id), eq(auditLog.action, 'hr.statutory_settings_set')))).length,
     1,
   )
+})
+
+// --- review findings (P1-06a REVIEW)
+
+const esiOf = (slip: { statutory: unknown } | undefined) => (slip!.statutory as { esiCovered: boolean | null }).esiCovered
+
+test('a person decided out of ESI stays out for the period after a month without ESI (review finding 1)', async () => {
+  const c = await college()
+  const s = await hire(c)
+  await turnOn(c, { statutoryFrom: '2026-10', esiRegistered: false })
+  await member(c, s.id)
+  await pay(c, s.id, 'basic', 'earning', '23000')
+  await generatePayroll(c.admin, { period: '2026-10' })
+  assert.equal(esiOf(await slipOf(c, s.id, '2026-10-01')), null)
+  await turnOn(c, { statutoryFrom: '2026-10', esiRegistered: true })
+  await generatePayroll(c.admin, { period: '2026-11' })
+  assert.equal(esiOf(await slipOf(c, s.id, '2026-11-01')), false)
+  await pay(c, s.id, 'basic', 'earning', '20000', 'wage', '2026-12-01')
+  await generatePayroll(c.admin, { period: '2026-12' })
+  const dec = await slipOf(c, s.id, '2026-12-01')
+  assert.equal(esiOf(dec), false)
+  assert.ok(!(dec!.lines as { code: string }[]).some((l) => l.code === 'esi_employee'))
+})
+
+test('an earlier month run after a later one follows the later month’s ESI decision (review finding 2)', async () => {
+  const c = await college()
+  const s = await hire(c)
+  await turnOn(c, { statutoryFrom: '2026-10' })
+  await member(c, s.id)
+  await pay(c, s.id, 'basic', 'earning', '20000')
+  await pay(c, s.id, 'basic', 'earning', '23000', 'wage', '2026-11-01')
+  await generatePayroll(c.admin, { period: '2026-11' })
+  assert.equal(esiOf(await slipOf(c, s.id, '2026-11-01')), false)
+  await generatePayroll(c.admin, { period: '2026-10' })
+  assert.equal(esiOf(await slipOf(c, s.id, '2026-10-01')), false)
+})
+
+async function waiting(pattern: string): Promise<number> {
+  const r = await authDb.execute<{ n: number }>(
+    sql`select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and query ilike ${pattern}`,
+  )
+  return r.rows[0]!.n
+}
+
+async function until(check: () => Promise<boolean>) {
+  const deadline = Date.now() + 10_000
+  while (!(await check())) {
+    if (Date.now() > deadline) throw new Error('timed out waiting')
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+}
+
+test('a run waits for another month of the same ESI contribution period (review finding 2)', async () => {
+  const c = await college()
+  const s = await hire(c)
+  await turnOn(c, { statutoryFrom: '2026-10' })
+  await member(c, s.id)
+  await pay(c, s.id, 'basic', 'earning', '20000')
+  // Hold the contribution period's lock as another month's run would.
+  let release!: () => void
+  const held = new Promise<void>((resolve) => (release = resolve))
+  let holding!: () => void
+  const locked = new Promise<void>((resolve) => (holding = resolve))
+  const holder = authDb.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(1213354066, hashtext(${`${c.id}:esi:2026-10-01`}::text))`)
+    holding()
+    await held
+  })
+  await locked
+  let settled = false
+  const run = generatePayroll(c.admin, { period: '2026-11' }).finally(() => (settled = true))
+  try {
+    await until(async () => settled || (await waiting('%pg_advisory_xact_lock(1213354066%')) >= 1)
+    assert.equal(settled, false, 'the run went ahead while another month of its contribution period held the lock')
+  } finally {
+    release()
+    await holder
+  }
+  assert.deepEqual((await run).failed, [])
+})
+
+test('the pay setup form shows the PF and ESI registration it saves (review finding 3)', async () => {
+  const c = await college()
+  await turnOn(c)
+  const page = payPages.find((p) => p.path === '/payroll/setup')!
+  const data = await page.load(c.admin, new Request('http://localhost/payroll/setup'))
+  const form = page.sections(data).find((x) => x.kind === 'form' && x.title === 'Pay basis and statutory pay') as unknown as { fields: { name: string; value?: string }[] }
+  assert.equal(form.fields.find((f) => f.name === 'pfRegistered')!.value, 'true')
+  assert.equal(form.fields.find((f) => f.name === 'esiRegistered')!.value, 'true')
 })
