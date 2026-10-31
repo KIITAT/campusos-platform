@@ -490,11 +490,14 @@ export async function decide(
   if (decision === 'approved') {
     const solo = await singleOfficerOn(tx, institutionId)
     const creator = await creatorOf(tx, docType, docId)
-    const given = await tx
-      .select({ decidedBy: approvals.decidedBy })
+    // The latest decision at this fingerprint, as assertApproved reads it: a later refusal lets it be approved again.
+    const [last] = await tx
+      .select({ decision: approvals.decision, decidedBy: approvals.decidedBy })
       .from(approvals)
-      .where(and(eq(approvals.docType, docType), eq(approvals.docId, docId), eq(approvals.fingerprint, fingerprint(doc)), eq(approvals.decision, 'approved')))
-    if (given.some((a) => countsAsApproval(a.decidedBy, creator, solo))) {
+      .where(and(eq(approvals.docType, docType), eq(approvals.docId, docId), eq(approvals.fingerprint, fingerprint(doc))))
+      .orderBy(desc(approvals.createdAt))
+      .limit(1)
+    if (last && last.decision === 'approved' && countsAsApproval(last.decidedBy, creator, solo)) {
       throw new FinanceError(409, 'already_approved', 'this is already approved as it stands')
     }
     const verdict = await checkOtherPerson(tx, actor, institutionId, {
