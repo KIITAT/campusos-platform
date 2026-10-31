@@ -1,9 +1,9 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { eq, like } from 'drizzle-orm'
+import { and, eq, like } from 'drizzle-orm'
 import { authDb, institutions, users, withTenant } from '@campusos/db'
-import { createStaff, type Actor } from './api'
-import { ptSlabs, staff } from './schema'
+import { createStaff, generatePayroll, setComponent, type Actor } from './api'
+import { payComponents, payrollSettings, payslips, ptSlabs, staff } from './schema'
 
 /**
  * Statutory pay (P1-06a): the schema, then the run, the posting and the
@@ -63,4 +63,86 @@ test('the database refuses a malformed PAN', async () => {
     () => withTenant(c.id, (tx) => tx.update(staff).set({ pan: 'ABCDE1234' }).where(eq(staff.id, s.id))),
     saysDb(/hr_staff_pan/),
   )
+})
+
+// --- the run (Step 4). Settings and classes are set as the owner until Step 6 gives operations for them.
+
+const turnOn = (c: College, over: Record<string, unknown> = {}) =>
+  withTenant(c.id, (tx) =>
+    tx.insert(payrollSettings).values({ institutionId: c.id, prorationBasis: 'calendar', statutoryFrom: '2026-03-01', pfRegistered: true, esiRegistered: true, ...over }),
+  )
+
+const member = (c: College, staffId: string) =>
+  withTenant(c.id, (tx) => tx.update(staff).set({ pfMember: true }).where(eq(staff.id, staffId)))
+
+async function pay(c: College, staffId: string, code: string, kind: 'earning' | 'deduction', amount: string, wageClass: 'wage' | 'excluded' | 'outside' = 'wage', from = '2026-01-01') {
+  await setComponent(c.admin, { staffId, code, label: code, kind, amount, effectiveFrom: from })
+  await withTenant(c.id, (tx) => tx.update(payComponents).set({ wageClass }).where(and(eq(payComponents.staffId, staffId), eq(payComponents.code, code))))
+}
+
+const slipOf = (c: College, staffId: string, period: string) =>
+  withTenant(c.id, async (tx) => (await tx.select().from(payslips).where(and(eq(payslips.staffId, staffId), eq(payslips.period, period))))[0])
+
+test('a statutory month deducts PF first and stores the record', async () => {
+  const c = await college()
+  const s = await hire(c)
+  await turnOn(c)
+  await member(c, s.id)
+  await pay(c, s.id, 'basic', 'earning', '40000')
+  await pay(c, s.id, 'hra', 'earning', '16000', 'excluded')
+  const run = await generatePayroll(c.admin, { period: '2026-03' })
+  assert.deepEqual(run.failed, [])
+  const slip = (await slipOf(c, s.id, '2026-03-01'))!
+  const lines = slip.lines as { code: string; appliedPaise: number }[]
+  assert.equal(lines.find((l) => l.code === 'pf_employee')!.appliedPaise, 180_000)
+  assert.equal((slip.statutory as { employer: { epsPaise: number } }).employer.epsPaise, 125_000)
+  assert.equal(slip.employerCostPaise, 195_000)
+  assert.equal(slip.netPaise, 5_600_000 - 180_000)
+})
+
+test('a manual pf deduction stops that person, not the run', async () => {
+  const c = await college()
+  const a = await hire(c, { employeeCode: 'A-1', name: 'Clean' })
+  const b = await hire(c, { employeeCode: 'B-1', name: 'Manual Pf' })
+  await turnOn(c)
+  for (const p of [a, b]) {
+    await member(c, p.id)
+    await pay(c, p.id, 'basic', 'earning', '40000')
+  }
+  await pay(c, b.id, 'pf', 'deduction', '4800')
+  const run = await generatePayroll(c.admin, { period: '2026-03' })
+  assert.equal(run.failed.length, 1)
+  assert.equal(run.failed[0]!.staffId, b.id)
+  assert.equal(run.failed[0]!.message, 'remove the manual pf deduction: statutory pay computes it')
+  assert.ok(await slipOf(c, a.id, '2026-03-01'))
+  assert.equal(await slipOf(c, b.id, '2026-03-01'), undefined)
+})
+
+test('a month before statutory_from is unchanged', async () => {
+  const c = await college()
+  const b = await hire(c, { employeeCode: 'B-1' })
+  await turnOn(c)
+  await member(c, b.id)
+  await pay(c, b.id, 'basic', 'earning', '40000')
+  await pay(c, b.id, 'pf', 'deduction', '4800')
+  const run = await generatePayroll(c.admin, { period: '2026-02' })
+  assert.deepEqual(run.failed, [])
+  const slip = (await slipOf(c, b.id, '2026-02-01'))!
+  assert.equal(slip.statutory, null)
+  assert.equal(slip.employerCostPaise, 0)
+  assert.equal(slip.deductionsPaise, 480_000)
+})
+
+test('ESI coverage holds for the period', async () => {
+  const c = await college()
+  const s = await hire(c)
+  await turnOn(c, { statutoryFrom: '2026-10-01', pfRegistered: false })
+  await pay(c, s.id, 'basic', 'earning', '20000', 'wage', '2026-01-01')
+  assert.deepEqual((await generatePayroll(c.admin, { period: '2026-10' })).failed, [])
+  await pay(c, s.id, 'basic', 'earning', '23000', 'wage', '2026-11-01')
+  assert.deepEqual((await generatePayroll(c.admin, { period: '2026-11' })).failed, [])
+  const nov = (await slipOf(c, s.id, '2026-11-01'))!
+  assert.equal((nov.statutory as { esiCovered: boolean }).esiCovered, true)
+  const lines = nov.lines as { code: string; appliedPaise: number }[]
+  assert.equal(lines.find((l) => l.code === 'esi_employee')!.appliedPaise, 17_300)
 })
