@@ -162,3 +162,45 @@ test('dates of birth are imported, and a rerun changes nothing', async () => {
   const again = await run()
   assert.deepEqual([again.created, again.skipped], [0, 2])
 })
+
+/** Until `n` sessions are waiting on a lock in a statement that matches. */
+async function waitingOn(pattern: string, n = 1) {
+  const deadline = Date.now() + 10_000
+  for (;;) {
+    const r = await authDb.execute<{ n: number }>(sql`
+      select count(*)::int as n from pg_stat_activity
+       where wait_event_type = 'Lock' and query ilike ${pattern}`)
+    if (r.rows[0]!.n >= n) return
+    if (Date.now() > deadline) throw new Error(`nobody is waiting on ${pattern}`)
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+}
+
+test('a refusal cannot lose to a first save of the ID: both wait on the student, then one wins whole', async () => {
+  const c = await campus()
+  await recordStudentConsent(c.kidParent, { studentId: c.kid.id, purpose: 'apaar', decision: 'given' })
+  // The student has no profile row yet, so locking the profile would lock nothing.
+  let release!: () => void
+  const held = new Promise<void>((resolve) => (release = resolve))
+  let holding!: () => void
+  const locked = new Promise<void>((resolve) => (holding = resolve))
+  const holder = authDb.transaction(async (tx) => {
+    await tx.execute(sql`select 1 from users where id = ${c.kid.id} for no key update`)
+    holding()
+    await held
+  })
+  await locked
+  const save = setStudentProfile(c.admin, { studentId: c.kid.id, apaarId: APAAR })
+  const refuse = recordStudentConsent(c.kidParent, { studentId: c.kid.id, purpose: 'apaar', decision: 'refused' })
+  try {
+    await waitingOn('%"users"%no key update%', 2)
+  } finally {
+    release()
+    await holder
+  }
+  await Promise.allSettled([save, refuse])
+  // Whatever the order, the refusal stands and the ID does not.
+  const [now] = (await studentConsents(c.kidParent, c.kid.id)).filter((x) => x.purpose === 'apaar')
+  assert.equal(now!.decision, 'refused')
+  assert.equal((await studentProfile(c.admin, c.kid.id)).apaarId, null)
+})
