@@ -64,6 +64,8 @@ test('the application role holds exactly the planned privileges on core control 
     institution_modules: ['SELECT'],
     audit_log: ['INSERT', 'SELECT'],
     audit_chain: ['SELECT'],
+    sensitive_reads: ['INSERT', 'SELECT'],
+    privacy_officers: ['INSERT', 'SELECT', 'UPDATE'],
     platform_audit_log: [],
     users: ['INSERT', 'SELECT', 'UPDATE'],
   }

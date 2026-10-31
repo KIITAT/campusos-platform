@@ -396,3 +396,20 @@ test('an erasure clears the date of birth and keeps the consent records', async 
   const kept = await owner((c) => c.query(`select 1 from guardian_consents where student_id = $1`, [u]))
   assert.equal(kept.rows.length, 1)
 })
+
+test('an export carries the reads of my records, without the chain columns (AUD-07)', async () => {
+  const { logSensitiveRead } = await import('./sensitive-reads')
+  const u = await freshStudent()
+  await withTenant(inst, (tx) =>
+    logSensitiveRead(tx, {
+      institutionId: inst, readerId: admin, subjectId: u, moduleId: 'care', kind: 'care.case',
+      entity: 'care_requests', entityId: 'r1', purpose: 'counselling',
+    }),
+  )
+  const bundle = await exportSubject(inst, u)
+  const key = Object.keys(bundle.records).find((k) => k.startsWith('sensitive_reads.'))
+  assert.ok(key, `sensitive_reads missing from ${Object.keys(bundle.records).join(', ')}`)
+  const rows = bundle.records[key!] as Record<string, unknown>[]
+  assert.equal(rows.length, 1)
+  for (const col of ['salt', 'prev_hash', 'hash']) assert.ok(!(col in rows[0]!), `${col} was exported`)
+})

@@ -586,3 +586,24 @@ test('the database, not the caller, says when an audit row was written (AUD-01)'
   assert.deepEqual(rows.rows.map((r) => [r.action, r.recent]), [['clock.infinite', true], ['clock.past', true]])
   assert.deepEqual((await verifyChains({ institutionId: t })).problems, [])
 })
+
+test('an edited read is reported altered (AUD-07)', async () => {
+  const { verifyChains } = await import('./audit-chain')
+  const { logSensitiveRead } = await import('./sensitive-reads')
+  const t = await tenant('reads')
+  const [u] = await authDb.insert(users).values({ email: 'r@chain-reads.test', institutionId: t, role: 'faculty', name: 'R' }).returning({ id: users.id })
+  await withTenant(t, (tx) =>
+    logSensitiveRead(tx, {
+      institutionId: t, readerId: u!.id, subjectId: u!.id, moduleId: 'care', kind: 'care.case',
+      entity: 'care_requests', entityId: 'r1', purpose: 'counselling',
+    }),
+  )
+  assert.deepEqual((await verifyChains({ institutionId: t })).problems.filter((p) => p.chain === `reads:${t}`), [])
+  await asOwner(
+    'alter table sensitive_reads disable trigger sensitive_reads_append_only',
+    `update sensitive_reads set purpose = 'tampered' where institution_id = '${t}'`,
+    'alter table sensitive_reads enable trigger sensitive_reads_append_only',
+  )
+  const problems = (await verifyChains({ institutionId: t })).problems.filter((p) => p.chain === `reads:${t}`)
+  assert.deepEqual(problems.map((p) => p.kind), ['altered'])
+})
