@@ -78,6 +78,8 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   // Who opened this person's records (P1-08c); the chain columns are not theirs.
   sensitive_reads: { omit: ['salt', 'prev_hash', 'hash'] },
   privacy_officers: 'export',
+  // The institution's record of an incident, not about the person who recorded it (P1-08d).
+  breach_incidents: 'exclude',
   installed_plugins: { only: ['module_id', 'version', 'installed_at'] },
   // The subject's own recorded choices (P1-08b).
   guardian_consents: 'export',

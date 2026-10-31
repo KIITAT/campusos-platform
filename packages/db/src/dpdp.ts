@@ -225,16 +225,10 @@ export async function eraseSubject(
   }
 
   const bundle = await exportSubject(institutionId, userId)
-  const retained = Object.fromEntries(
+  let retained: Record<string, number> = Object.fromEntries(
     Object.entries(bundle.records).map(([k, v]) => [k, v.length]),
   )
-  const retainedBecause = Object.fromEntries(
-    Object.keys(retained).map((key) => {
-      const parts = key.split('.')
-      const table = parts[0] === 'about' ? parts[parts.length - 1]! : parts[0]!
-      return [table, retentionBasis(table)]
-    }),
-  )
+  let retainedBecause: Record<string, string> = {}
 
   const erasedAt = new Date()
   let redacted: Record<string, number> = {}
@@ -276,6 +270,14 @@ export async function eraseSubject(
     )
     redacted = r.rows[0]!.redacted
     credentials = c.rows[0]!.credentials
+
+    // A table the erasure overwrote or deleted is not "kept" (NEW-32).
+    const tableOf = (key: string) => {
+      const parts = key.split('.')
+      return parts[0] === 'about' ? parts[parts.length - 1]! : parts[0]!
+    }
+    retained = Object.fromEntries(Object.entries(retained).filter(([k]) => !(redacted[tableOf(k)]! > 0)))
+    retainedBecause = Object.fromEntries(Object.keys(retained).map((k) => [tableOf(k), retentionBasis(tableOf(k))]))
 
     // The audit row names the subject id, never the erased identity: it has to
     // prove the erasure happened without re-storing what was erased.

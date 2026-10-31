@@ -60,7 +60,11 @@ export async function logSensitiveRead(tx: Executor, r: SensitiveRead): Promise<
 
 /** The user who reads the log for this institution, or null until one is named. */
 export async function privacyOfficerOf(tx: Executor, institutionId: string): Promise<string | null> {
-  const r = (await tx.execute(sql`select user_id from privacy_officers where institution_id = ${institutionId}`)) as Rows<{ user_id: string }>
+  // Still staff and not erased (NEW-48): a person who left, or became a student, is no longer the officer.
+  const r = (await tx.execute(sql`
+    select p.user_id from privacy_officers p
+      join users u on u.id = p.user_id and u.institution_id = p.institution_id
+     where p.institution_id = ${institutionId} and u.erased_at is null and u.role not in ('student', 'parent', 'pending')`)) as Rows<{ user_id: string }>
   return r.rows[0]?.user_id ?? null
 }
 

@@ -127,7 +127,7 @@ const COLUMNS = sql.raw(`
   a.actor_email, a.reason, a.detail::text as detail, a.salt`)
 
 /** A tenant chain's links with their audit rows, in seq order, one batch after `after`. */
-const tenantBatch = (institutionId: string, after: number) =>
+export const tenantBatch = (institutionId: string, after: number) =>
   authDb.execute<ChainRow>(sql`
     select c.seq::text as seq, c.prev_hash, c.hash, ${COLUMNS}
       from audit_chain c left join audit_log a on a.id = c.audit_id
@@ -141,7 +141,7 @@ const tenantBatch = (institutionId: string, after: number) =>
  * must checkpoint them before it purges them, or this verifier reports
  * `missing`.
  */
-const readsBatch = (institutionId: string, after: number) =>
+export const readsBatch = (institutionId: string, after: number) =>
   authDb.execute<ChainRow>(sql`
     select r.seq::text as seq, r.prev_hash, r.hash, r.id::text as id,
            to_char(r.at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as at_text,
