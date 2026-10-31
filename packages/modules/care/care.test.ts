@@ -36,6 +36,7 @@ import {
   withdraw,
   type Actor,
 } from './api'
+import { pages } from './pages'
 import { instruments, notes, requests, results, shared } from './schema'
 
 /**
@@ -68,6 +69,7 @@ async function campus() {
     .insert(users)
     .values([
       { email: `office@${tag}.test`, institutionId: id, role: 'institution_admin', name: 'Office' },
+      { email: `office2@${tag}.test`, institutionId: id, role: 'institution_admin', name: 'Second Office' },
       { email: `meena@${tag}.test`, institutionId: id, role: 'faculty', name: 'Ms Meena Das' },
       { email: `arjun@${tag}.test`, institutionId: id, role: 'hostel_staff', name: 'Mr Arjun Rao' },
       { email: `teacher@${tag}.test`, institutionId: id, role: 'faculty', name: 'Dr Teacher' },
@@ -76,11 +78,12 @@ async function campus() {
       { email: `mum@${tag}.test`, institutionId: id, role: 'parent', name: 'A Parent' },
     ])
     .returning({ id: users.id })
-  const [office, meena, arjun, teacher, asha, bilal, parent] = rows.map((r) => r.id) as string[]
+  const [office, office2, meena, arjun, teacher, asha, bilal, parent] = rows.map((r) => r.id) as string[]
   const as = (uid: string, role: Actor['role']): Actor => ({ id: uid, email: null, role, institutionId: id })
   const c = {
     id,
     office: as(office!, 'institution_admin'),
+    office2: as(office2!, 'institution_admin'),
     meena: as(meena!, 'faculty'),
     arjun: as(arjun!, 'hostel_staff'),
     teacher: as(teacher!, 'faculty'),
@@ -94,6 +97,9 @@ async function campus() {
   await saveSettings(c.office, { crisisLine: 'Tele-MANAS 14416', contact: 'Student Care Centre, ground floor', timeZone: 'Asia/Kolkata' })
   await addCounsellor(c.office, { userId: c.meena.id, title: 'Counsellor' })
   await addCounsellor(c.office, { userId: c.arjun.id, title: 'Counsellor' })
+  // Named by one administrator, made active by the other (P1-08c).
+  await setCounsellorActive(c.office2, { userId: c.meena.id, active: true })
+  await setCounsellorActive(c.office2, { userId: c.arjun.id, active: true })
   return c
 }
 
@@ -471,4 +477,118 @@ test('a minor can still ask for counselling, and the home page says a guardian h
   assert.deepEqual(home.checks, [])
   await agree(c)
   assert.equal((await careHome(c.asha)).selfChecks, 'open')
+})
+
+// --- two people make a counsellor; reads of cases are logged (AUD-07) --------------------
+
+const reads = (tenant: string, since: string) =>
+  authDb
+    .execute<{ reader_id: string; subject_id: string; kind: string; entity: string; entity_id: string; purpose: string }>(
+      sql`select reader_id, subject_id, kind, entity, entity_id, purpose from sensitive_reads
+          where institution_id = ${tenant} and at > ${since}::timestamptz order by seq`,
+    )
+    .then((r) => r.rows)
+const clock = () => authDb.execute<{ t: string }>(sql`select clock_timestamp()::text as t`).then((r) => r.rows[0]!.t)
+const trail = (tenant: string, action: string, since: string) =>
+  authDb
+    .execute<{ actor_id: string; detail: Record<string, unknown> | null }>(
+      sql`select actor_id, detail from audit_log where institution_id = ${tenant} and action = ${action} and at > ${since}::timestamptz`,
+    )
+    .then((r) => r.rows)
+
+test('nobody names themselves a counsellor', async () => {
+  const c = await campus()
+  await assert.rejects(addCounsellor(c.office, { userId: c.office.id, title: 'Counsellor' }), (e) => code(e) === 'care_counsellor_self' && status(e) === 403)
+})
+
+test('a counsellor is made active by a second administrator', async () => {
+  const c = await campus()
+  await addCounsellor(c.office, { userId: c.teacher.id, title: 'Counsellor' })
+  assert.deepEqual(await queue(c.teacher), { counsellor: false })
+  await assert.rejects(setCounsellorActive(c.office, { userId: c.teacher.id, active: true }), (e) => code(e) === 'care_counsellor_second' && status(e) === 403)
+  await assert.rejects(setCounsellorActive(c.teacher, { userId: c.teacher.id, active: true }), (e) => code(e) === 'forbidden')
+  const since = await clock()
+  await setCounsellorActive(c.office2, { userId: c.teacher.id, active: true })
+  assert.equal((await queue(c.teacher)).counsellor, true)
+  const rows = await trail(c.id, 'care.counsellor_active', since)
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0]!.actor_id, c.office2.id)
+  assert.equal(rows[0]!.detail?.namedBy, c.office.id)
+})
+
+test('an administrator does not make themselves active', async () => {
+  const c = await campus()
+  await addCounsellor(c.office2, { userId: c.office.id, title: 'Counsellor' })
+  await assert.rejects(setCounsellorActive(c.office, { userId: c.office.id, active: true }), (e) => code(e) === 'care_counsellor_self')
+})
+
+test('with one administrator, the namer makes them active, and the trail says so', async () => {
+  const tag = `${SLUG}solo-${++n}`
+  const [i] = await authDb.insert(institutions).values({ slug: tag, name: 'Solo College', allowedEmailDomains: [`${tag}.test`] }).returning({ id: institutions.id })
+  const rows = await authDb
+    .insert(users)
+    .values([
+      { email: `solo@${tag}.test`, institutionId: i!.id, role: 'institution_admin', name: 'Solo' },
+      { email: `ravi@${tag}.test`, institutionId: i!.id, role: 'faculty', name: 'Ravi' },
+    ])
+    .returning({ id: users.id })
+  const as = (uid: string, role: Actor['role']): Actor => ({ id: uid, email: null, role, institutionId: i!.id })
+  const solo = as(rows[0]!.id, 'institution_admin')
+  await addCounsellor(solo, { userId: rows[1]!.id, title: 'Counsellor' })
+  const since = await clock()
+  await setCounsellorActive(solo, { userId: rows[1]!.id, active: true })
+  const t = await trail(i!.id, 'care.counsellor_confirmed_alone', since)
+  assert.equal(t.length, 1)
+  assert.equal(t[0]!.actor_id, solo.id)
+})
+
+test('the database refuses an active insert and a confirmation by the namer', async () => {
+  const c = await campus()
+  await assert.rejects(
+    withTenant(c.id, (tx) =>
+      tx.execute(sql`insert into care_counsellors (institution_id, user_id, title, added_by, active) values (${c.id}, ${c.teacher.id}, 'Counsellor', ${c.office.id}, true)`),
+    ),
+    db('care_counsellor_unconfirmed'),
+  )
+  await addCounsellor(c.office, { userId: c.teacher.id, title: 'Counsellor' })
+  await assert.rejects(
+    withTenant(c.id, (tx) => tx.execute(sql`update care_counsellors set active = true, confirmed_by = ${c.office.id} where user_id = ${c.teacher.id}`)),
+    db('care_counsellor_second'),
+  )
+})
+
+test('making a counsellor inactive clears the confirmation', async () => {
+  const c = await campus()
+  await setCounsellorActive(c.office, { userId: c.arjun.id, active: false })
+  const row = async () => (await authDb.execute<{ confirmed_by: string | null; confirmed_at: string | null }>(sql`select confirmed_by, confirmed_at from care_counsellors where user_id = ${c.arjun.id}`)).rows[0]!
+  assert.deepEqual(await row(), { confirmed_by: null, confirmed_at: null })
+  await setCounsellorActive(c.office2, { userId: c.arjun.id, active: true })
+  await setCounsellorActive(c.office, { userId: c.arjun.id, active: false })
+  await assert.rejects(setCounsellorActive(c.office, { userId: c.arjun.id, active: true }), (e) => code(e) === 'care_counsellor_second')
+})
+
+test('opening a case and a shared result is logged; the student’s own view is not', async () => {
+  const c = await campus()
+  const r = await takeCheck(c.asha, phq([2, 2, 2, 2, 1, 1, 1, 1, 0]))
+  const req = await ask(c.asha, { topic: 'studies', urgency: 'soon', mode: 'in_person', message: 'Exams', resultIds: [r.id] })
+  const since = await clock()
+  await caseView(c.meena, req.id)
+  await resultView(c.meena, r.id)
+  const got = await reads(c.id, since)
+  assert.deepEqual(got.map((x) => [x.kind, x.entity, x.entity_id, x.reader_id, x.subject_id, x.purpose]), [
+    ['care.case', 'care_requests', req.id, c.meena.id, c.asha.id, 'counselling'],
+    ['care.result', 'care_results', r.id, c.meena.id, c.asha.id, 'counselling'],
+  ])
+  await resultView(c.asha, r.id)
+  await assert.rejects(caseView(c.teacher, req.id), (e) => code(e) === 'not_a_counsellor')
+  assert.equal((await reads(c.id, since)).length, 2)
+})
+
+test('students are told who can see that their case was opened', async () => {
+  const c = await campus()
+  const home = pages.find((p) => p.path === '/')!
+  const sections = home.sections(await home.load(c.asha, new Request('http://x.test/m/care')))
+  const TEXT =
+    'What you do here is yours. Your answers are seen by nobody — not your teachers, your mentor, your parents or the office — unless you share them with a counsellor when you ask for help. The office sees only counts. When a counsellor opens your request or a result you shared, their name and the time are recorded, and only the institution’s privacy officer can read that record.'
+  assert.ok(sections.some((x) => x.kind === 'note' && x.text === TEXT))
 })
