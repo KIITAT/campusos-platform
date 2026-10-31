@@ -2,6 +2,9 @@ import { sql } from 'drizzle-orm'
 import { tenantPolicy } from './rls'
 import {
   boolean,
+  check,
+  date,
+  index,
   integer,
   pgEnum,
   pgTable,
@@ -100,10 +103,54 @@ export const users = pgTable(
      * unattributable. The row survives so the foreign keys do.
      */
     erasedAt: timestamp('erased_at', { withTimezone: true }),
+    /**
+     * Age decides who may consent (DPDP Act s.9) and who may see the record.
+     * The range is a trigger, not a CHECK: current_date is not immutable.
+     * Read it through `ageStatus`; nothing else computes an age.
+     */
+    dateOfBirth: date('date_of_birth', { mode: 'string' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   () => [tenantPolicy('users')],
 )
+
+/**
+ * A guardian's, an adult student's or the office's recorded choice, one row per
+ * decision. Append-only: the current decision is the latest row for the
+ * student and purpose, and the history is the evidence (DPDP Act s.6(10)).
+ */
+export const guardianConsents = pgTable(
+  'guardian_consents',
+  {
+    id: uuid().primaryKey().defaultRandom(),
+    institutionId: uuid('institution_id')
+      .notNull()
+      .references(() => institutions.id, { onDelete: 'cascade' }),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    purpose: text().notNull(),
+    decision: text().notNull(),
+    basis: text().notNull(),
+    guardianId: text('guardian_id').references(() => users.id, { onDelete: 'set null' }),
+    recordedBy: text('recorded_by').references(() => users.id, { onDelete: 'set null' }),
+    note: text(),
+    noticeVersion: text('notice_version').notNull(),
+    recordedAt: timestamp('recorded_at', { withTimezone: true })
+      .notNull()
+      .default(sql`clock_timestamp()`),
+  },
+  (t) => [
+    tenantPolicy('guardian_consents'),
+    index('guardian_consents_latest').on(t.institutionId, t.studentId, t.purpose, t.recordedAt.desc()),
+    check('guardian_consents_purpose', sql`purpose in ('privacy_notice', 'care_self_checks', 'apaar')`),
+    check('guardian_consents_decision', sql`decision in ('given', 'refused', 'withdrawn')`),
+    check('guardian_consents_basis', sql`basis in ('guardian', 'office_record', 'student')`),
+    check('guardian_consents_basis_guardian', sql`(basis = 'guardian') = (guardian_id is not null)`),
+    check('guardian_consents_office_note', sql`basis <> 'office_record' or note is not null`),
+    check('guardian_consents_note', sql`note is null or length(note) between 1 and 300`),
+  ],
+).enableRLS()
 
 // ---------------------------------------------------------------------------
 // Auth.js tables. Column names and types are dictated by the adapter; do not

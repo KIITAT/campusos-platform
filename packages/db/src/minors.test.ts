@@ -128,7 +128,7 @@ test('a consent row cannot be changed or removed by the app role', async () => {
 
 test('recording a consent writes one audit row', async () => {
   const s = await student(15)
-  const [{ mark }] = (await owner((c) => c.query(`select clock_timestamp() as mark`))).rows as { mark: Date }[]
+  const mark = (await owner((c) => c.query(`select clock_timestamp() as mark`))).rows[0].mark as Date
   const { id } = await record(s, 'given')
   const rows = await withTenant(inst, (tx) =>
     tx

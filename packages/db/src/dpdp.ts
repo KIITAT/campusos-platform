@@ -2,6 +2,7 @@ import { and, eq, isNull, sql } from 'drizzle-orm'
 import { audit } from './audit'
 import { authDb, db, withTenant } from './client'
 import { EXPORT_POLICY, exportableRow, retentionBasis, type ExportRule } from './dpdp-policy'
+import { consentGiven, GuardianConsentRequiredError, ageStatus } from './minors'
 import { users } from './schema'
 
 /**
@@ -31,11 +32,13 @@ export async function recordConsent(
 ): Promise<void> {
   await withTenant(institutionId, async (tx) => {
     const [before] = await tx
-      .select({ version: users.consentVersion })
+      .select({ version: users.consentVersion, role: users.role })
       .from(users)
       .where(eq(users.id, userId))
       .for('no key update')
     if (!before) return
+    // A student under 18 cannot give this consent; a guardian records it (DPDP Act s.9).
+    if (before.role === 'student' && (await ageStatus(tx, userId)) !== 'adult') throw new GuardianConsentRequiredError()
     await tx
       .update(users)
       .set({ consentedAt: new Date(), consentVersion: version })
@@ -56,9 +59,10 @@ export async function consentCurrent(
 ): Promise<boolean> {
   return withTenant(institutionId, async (tx) => {
     const [row] = await tx
-      .select({ at: users.consentedAt, version: users.consentVersion })
+      .select({ at: users.consentedAt, version: users.consentVersion, role: users.role })
       .from(users)
       .where(eq(users.id, userId))
+    if (row?.role === 'student' && (await ageStatus(tx, userId)) !== 'adult') return consentGiven(tx, userId, 'privacy_notice')
     return row?.at !== null && row?.version === CONSENT_VERSION
   })
 }
@@ -73,6 +77,7 @@ export interface ExportBundle {
     joinedAt: string
     consentedAt: string | null
     consentVersion: string | null
+    dateOfBirth: string | null
   }
   /** table -> rows, everything in this institution that names them. */
   records: Record<string, unknown[]>
@@ -171,6 +176,7 @@ export async function exportSubject(
       joinedAt: subject.createdAt.toISOString(),
       consentedAt: subject.consentedAt?.toISOString() ?? null,
       consentVersion: subject.consentVersion,
+      dateOfBirth: subject.dateOfBirth,
     },
     records,
   }
@@ -257,6 +263,7 @@ export async function eraseSubject(
         email: `erased+${userId}@invalid`,
         emailVerified: null,
         image: null,
+        dateOfBirth: null,
         erasedAt,
       })
       .where(eq(users.id, userId))
