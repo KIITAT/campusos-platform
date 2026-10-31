@@ -78,8 +78,11 @@ export const counsellors = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     /** How students know them: "Counsellor, Student Care Centre". */
     title: text().notNull(),
-    active: boolean().notNull().default(true),
+    /** Named, then made active by a second administrator (P1-08c). */
+    active: boolean().notNull().default(false),
     addedBy: text('added_by').references(() => users.id, { onDelete: 'set null' }),
+    confirmedBy: text('confirmed_by').references(() => users.id, { onDelete: 'set null' }),
+    confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [

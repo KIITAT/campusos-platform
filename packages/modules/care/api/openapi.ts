@@ -99,8 +99,8 @@ export const paths = {
     ...get('The helpline, the counselling centre, the counsellors and the checks'),
     ...post('Set the helpline, the counselling centre and the time zone', settingsSchema),
   },
-  [`${base}/counsellors`]: post('Name a member of staff a counsellor', counsellorSchema),
-  [`${base}/counsellors/active`]: post('Make a counsellor inactive, or active again', counsellorActiveSchema),
+  [`${base}/counsellors`]: post('Name a member of staff a counsellor; another administrator makes them active', counsellorSchema),
+  [`${base}/counsellors/active`]: post('Make a counsellor inactive, or active (a second administrator’s confirmation)', counsellorActiveSchema),
   [`${base}/instruments`]: {
     ...get('The self-checks offered: questions, answers, bands and where each comes from'),
     ...post('Write a check of the institution’s own, with its source', instrumentSchema),

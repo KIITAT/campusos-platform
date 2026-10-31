@@ -2,6 +2,7 @@ import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
 import { ageStatus, audit, consentGiven, users, withTenant } from '@campusos/db'
 import type { Role } from '@campusos/module-framework'
 import { studentProfiles } from '@campusos/module-academic/schema'
+import { logSensitiveRead } from '@campusos/db/sensitive-reads'
 import { notify } from '@campusos/module-notices/api'
 import { appointments, counsellors, instruments, notes, requests, results, settings, shared } from '../schema'
 import {
@@ -93,6 +94,9 @@ const REFUSALS: Record<string, [400 | 403 | 409, string]> = {
   care_counsellor_fixed: [409, 'a counsellor is a person; name another rather than changing this one'],
   care_counsellor_staff: [400, 'a counsellor is a member of staff'],
   care_counsellor_cases: [409, 'hand their open cases to another counsellor first'],
+  care_counsellor_self: [403, 'nobody names or confirms themselves as a counsellor'],
+  care_counsellor_second: [403, 'another administrator makes a counsellor active'],
+  care_counsellor_unconfirmed: [409, 'a counsellor is named first, then made active by another administrator'],
   care_instrument_kept: [409, 'a check is retired, not deleted'],
   care_instrument_fixed: [409, 'a check is fixed once written; write a new one'],
   care_instruments_code: [409, 'there is already a check with that code'],
@@ -320,6 +324,7 @@ export async function resultView(actor: Actor, resultId: string) {
           and(eq(shared.resultId, resultId), sql`(${requests.status} = 'waiting' or ${requests.counsellorId} = ${actor.id})`),
         )
       if (!seen) throw new CareError(404, 'no_such_result', 'no such result')
+      await logSensitiveRead(tx, { institutionId: tenant, readerId: actor.id, subjectId: r.studentId, moduleId: MODULE, kind: 'care.result', entity: 'care_results', entityId: r.id, purpose: 'counselling' })
     }
     const all = await checksOf(tx, true)
     const check = checkFor(all, r.instrumentCode, r.instrumentId)
@@ -712,6 +717,7 @@ export async function caseView(actor: Actor, requestId: string) {
   const tenant = tenantOf(actor)
   return withTenant(tenant, async (tx) => {
     const r = await caseFor(tx, actor, requestId)
+    await logSensitiveRead(tx, { institutionId: tenant, readerId: actor.id, subjectId: r.studentId, moduleId: MODULE, kind: 'care.case', entity: 'care_requests', entityId: r.id, purpose: 'counselling' })
     const s = await settingsOf(tx, tenant)
     const [student] = await studentWho(tx).where(eq(users.id, r.studentId))
     const [counsellor] = r.counsellorId
@@ -982,8 +988,9 @@ export async function careSettings(actor: Actor) {
     const s = await settingsOf(tx, tenant)
     const openCases = sql<number>`(select count(*) from care_requests q
                                     where q.counsellor_id = care_counsellors.user_id and q.status = 'accepted')`.mapWith(Number)
+    const namedBy = sql<string | null>`(select u.name from users u where u.id = care_counsellors.added_by)`
     const team = await tx
-      .select({ c: counsellors, name: users.name, email: users.email, role: users.role, openCases })
+      .select({ c: counsellors, name: users.name, email: users.email, role: users.role, openCases, namedBy })
       .from(counsellors)
       .innerJoin(users, eq(users.id, counsellors.userId))
       .orderBy(desc(counsellors.active), asc(users.name))
@@ -994,6 +1001,7 @@ export async function careSettings(actor: Actor) {
         and(
           eq(users.institutionId, tenant),
           sql`${users.role} not in ('student', 'parent', 'pending')`,
+          sql`${users.id} <> ${actor.id}`,
           sql`not exists (select 1 from care_counsellors c where c.user_id = users.id)`,
         ),
       )
@@ -1010,6 +1018,7 @@ export async function careSettings(actor: Actor) {
         userId: t.c.userId,
         name: t.name ?? t.email ?? t.c.userId,
         title: t.c.title,
+        namedBy: t.namedBy ?? '',
         role: t.role,
         state: t.c.active ? 'active' : 'inactive',
         openCases: t.openCases,
@@ -1055,36 +1064,81 @@ export async function saveSettings(actor: Actor, input: unknown) {
   })
 }
 
-/** Name a member of staff a counsellor, or make an inactive one active again. */
+/** Administrators of the institution who are still there: the people who can name and confirm. */
+async function administrators(tx: Tx, tenant: string) {
+  const [r] = await tx
+    .select({ n: sql<number>`count(*)`.mapWith(Number) })
+    .from(users)
+    .where(and(eq(users.institutionId, tenant), sql`${users.role} in ('institution_admin', 'super_admin')`, sql`${users.erasedAt} is null`))
+  return r!.n
+}
+
+/**
+ * Name a member of staff a counsellor. A new or inactive one is only proposed:
+ * another administrator makes them active (P1-08c). Naming someone already
+ * active changes only their title.
+ */
 export async function addCounsellor(actor: Actor, input: unknown) {
   const tenant = requireAdmin(actor)
   const d = counsellorSchema.parse(input)
   return named(() =>
     withTenant(tenant, async (tx) => {
+      if (d.userId === actor.id) throw new CareError(403, 'care_counsellor_self', REFUSALS.care_counsellor_self![1])
+      const [had] = await tx.select({ id: counsellors.id, active: counsellors.active }).from(counsellors).where(eq(counsellors.userId, d.userId))
+      if (had?.active) {
+        await tx.update(counsellors).set({ title: d.title }).where(eq(counsellors.id, had.id))
+        await audit(tx, { ...who(actor, tenant), action: 'care.counsellor_named', entity: 'care_counsellors', entityId: had.id, reason: `retitled ${d.title}`, detail: { userId: d.userId, title: d.title } })
+        return { notice: 'Saved. Their title is changed.' }
+      }
       const [row] = await tx
         .insert(counsellors)
-        .values({ institutionId: tenant, userId: d.userId, title: d.title, addedBy: actor.id })
-        .onConflictDoUpdate({ target: [counsellors.institutionId, counsellors.userId], set: { title: d.title, active: true } })
+        .values({ institutionId: tenant, userId: d.userId, title: d.title, addedBy: actor.id, active: false })
+        .onConflictDoUpdate({
+          target: [counsellors.institutionId, counsellors.userId],
+          set: { title: d.title, addedBy: actor.id, active: false, confirmedBy: null, confirmedAt: null },
+        })
         .returning({ id: counsellors.id })
       await audit(tx, { ...who(actor, tenant), action: 'care.counsellor_named', entity: 'care_counsellors', entityId: row!.id, reason: `named ${d.title}`, detail: { userId: d.userId, title: d.title } })
-      return { notice: 'Named. They now see the requests waiting for a counsellor.' }
+      return { notice: 'Named. Another administrator makes them active; if you are the only administrator, you do.' }
     }),
   )
 }
 
+/**
+ * Make a counsellor inactive (one administrator's act), or active: confirmed
+ * by an administrator other than the one who named them, never by the
+ * counsellor, unless the institution has only one administrator.
+ */
 export async function setCounsellorActive(actor: Actor, input: unknown) {
   const tenant = requireAdmin(actor)
   const d = counsellorActiveSchema.parse(input)
   return named(() =>
     withTenant(tenant, async (tx) => {
-      const rows = await tx
-        .update(counsellors)
-        .set({ active: d.active })
+      const [row] = await tx
+        .select({ id: counsellors.id, active: counsellors.active, addedBy: counsellors.addedBy })
+        .from(counsellors)
         .where(eq(counsellors.userId, d.userId))
-        .returning({ id: counsellors.id })
-      if (!rows.length) throw new CareError(404, 'no_such_counsellor', 'no such counsellor')
-      await audit(tx, { ...who(actor, tenant), action: d.active ? 'care.counsellor_active' : 'care.counsellor_inactive', entity: 'care_counsellors', entityId: rows[0]!.id, reason: d.active ? 'made active' : 'made inactive' })
-      return { notice: d.active ? 'Active again.' : 'Inactive. Their closed cases stay as they were.' }
+      if (!row) throw new CareError(404, 'no_such_counsellor', 'no such counsellor')
+      if (!d.active) {
+        // The trigger clears the confirmation.
+        await tx.update(counsellors).set({ active: false }).where(eq(counsellors.id, row.id))
+        await audit(tx, { ...who(actor, tenant), action: 'care.counsellor_inactive', entity: 'care_counsellors', entityId: row.id, reason: 'made inactive' })
+        return { notice: 'Inactive. Their closed cases stay as they were.' }
+      }
+      if (row.active) return { notice: 'Already active.' }
+      if (d.userId === actor.id) throw new CareError(403, 'care_counsellor_self', REFUSALS.care_counsellor_self![1])
+      const namer = row.addedBy === actor.id
+      if (namer && (await administrators(tx, tenant)) > 1) throw new CareError(403, 'care_counsellor_second', REFUSALS.care_counsellor_second![1])
+      await tx.update(counsellors).set({ active: true, confirmedBy: actor.id }).where(eq(counsellors.id, row.id))
+      await audit(tx, {
+        ...who(actor, tenant),
+        action: namer ? 'care.counsellor_confirmed_alone' : 'care.counsellor_active',
+        entity: 'care_counsellors',
+        entityId: row.id,
+        reason: namer ? 'made active by the only administrator' : 'made active',
+        detail: { userId: d.userId, namedBy: row.addedBy },
+      })
+      return { notice: 'Active. They now see the requests waiting for a counsellor.' }
     }),
   )
 }

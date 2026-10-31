@@ -24,7 +24,7 @@ const MODE = choices(words.modes)
 const OUTCOME = choices(words.outcomes)
 
 const PRIVATE =
-  'What you do here is yours. Your answers are seen by nobody — not your teachers, your mentor, your parents or the office — unless you share them with a counsellor when you ask for help. The office sees only counts.'
+  'What you do here is yours. Your answers are seen by nobody — not your teachers, your mentor, your parents or the office — unless you share them with a counsellor when you ask for help. The office sees only counts. When a counsellor opens your request or a result you shared, their name and the time are recorded, and only the institution’s privacy officer can read that record.'
 const NOT_A_DIAGNOSIS = 'This is a screening questionnaire, not a diagnosis: only a conversation with a professional can tell you more.'
 
 const crisisNote = (crisisLine: string | undefined): PluginSection => ({
@@ -780,6 +780,7 @@ export const pages: PluginPage[] = [
           columns: [
             { key: 'name', label: 'Name' },
             { key: 'title', label: 'Title' },
+            { key: 'namedBy', label: 'Named by' },
             { key: 'role', label: 'Role', kind: 'code' },
             { key: 'state', label: 'State', kind: 'status' },
             { key: 'openCases', label: 'Open cases' },
@@ -835,7 +836,7 @@ export const pages: PluginPage[] = [
         {
           kind: 'form',
           title: 'A counsellor active or not',
-          note: 'An inactive counsellor sees no requests. Their open cases are handed on first.',
+          note: 'Making a counsellor active confirms them. The administrator who named them cannot, unless they are the only administrator, and nobody confirms themselves. An inactive counsellor sees no requests; their open cases are handed on first.',
           submit: 'Save',
           path: '/counsellors/active',
           fields: [
