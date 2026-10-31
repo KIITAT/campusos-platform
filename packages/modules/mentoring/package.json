@@ -27,11 +27,11 @@
     "@campusos/module-framework": "workspace:*",
     "@campusos/module-hostel": "workspace:*",
     "@campusos/money": "workspace:*",
-    "drizzle-orm": "^0.45.2",
-    "zod": "^4.4.3"
+    "drizzle-orm": "^0.45.4",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
-    "tsx": "^4.23.12"
+    "tsx": "^4.23.15"
   }
 }
