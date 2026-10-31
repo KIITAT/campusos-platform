@@ -11,6 +11,7 @@ import {
   withTenant,
   withdrawInvitation,
 } from '@campusos/db'
+import { logSensitiveRead } from '@campusos/db/sensitive-reads'
 import { moduleEnabled, type Role } from '@campusos/module-framework'
 import { manifest as academicManifest } from '@campusos/module-academic/manifest'
 import { manifest as attendanceManifest } from '@campusos/module-attendance/manifest'
@@ -670,12 +671,17 @@ export async function childOverview(
   // student it has been cleared to read. Nothing wider.
   const viewer = { ...actor, viewerOf: [studentId] }
 
-  const [student] = await withTenant(tenant, (tx) =>
-    tx
+  const [student] = await withTenant(tenant, async (tx) => {
+    const rows = await tx
       .select({ name: users.name, email: users.email })
       .from(users)
-      .where(eq(users.id, studentId)),
-  )
+      .where(eq(users.id, studentId))
+    // The office opening a child it is not a guardian of is written down (AUD-07).
+    if (rows[0] && !verified.includes(studentId)) {
+      await logSensitiveRead(tx, { institutionId: tenant, readerId: actor.id, subjectId: studentId, moduleId: MODULE, kind: 'parents.child_overview', entity: 'users', entityId: studentId, purpose: 'office_view' })
+    }
+    return rows
+  })
   if (!student) throw new ParentError(404, 'no_such_student', 'no such student')
 
   const [attendanceOn, examsOn, feesOn, libraryOn, hostelOn] = await Promise.all([

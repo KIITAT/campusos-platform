@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm'
 import { audit, users, withTenant } from '@campusos/db'
+import { logSensitiveRead } from '@campusos/db/sensitive-reads'
 import { assertCanAccessStudent, canAccessStudent, moduleEnabled, readUpload, UploadError, type Role } from '@campusos/module-framework'
 import { sectionMembers, sections, programs, terms } from '@campusos/module-academic/schema'
 import { studentProfile } from '@campusos/module-academic/api'
@@ -316,7 +317,10 @@ export async function myMentees(actor: Actor) {
 export async function menteeView(actor: Actor, studentId: string) {
   const tenant = tenantOf(actor)
   if (!isStaff(actor.role)) throw new MentorError(403, 'forbidden', 'not permitted')
-  await withTenant(tenant, (tx) => assertMentorOf(tx, actor, studentId))
+  await withTenant(tenant, async (tx) => {
+    await assertMentorOf(tx, actor, studentId)
+    await logSensitiveRead(tx, { institutionId: tenant, readerId: actor.id, subjectId: studentId, moduleId: MODULE, kind: 'mentoring.mentee', entity: 'users', entityId: studentId, purpose: 'mentoring' })
+  })
   const [attendanceOn, examsOn, feesOn, hostelOn] = await Promise.all(
     ['attendance', 'examinations', 'fees', 'hostel'].map((m) => moduleEnabled(KNOWN, m, tenant)),
   )
@@ -672,6 +676,7 @@ export async function leaveDocument(actor: Actor, applicationId: string) {
     if (actor.id !== l.studentId) {
       if (!isStaff(actor.role)) throw new MentorError(403, 'forbidden', 'not permitted')
       await assertMentorOf(tx, actor, l.studentId)
+      await logSensitiveRead(tx, { institutionId: tenant, readerId: actor.id, subjectId: l.studentId, moduleId: MODULE, kind: 'mentoring.leave_document', entity: 'mentor_leave_applications', entityId: l.id, purpose: 'mentoring' })
     }
     return { name: l.documentName ?? 'document.pdf', content: l.document }
   })
