@@ -7,7 +7,7 @@ import { after, before, test } from 'node:test'
 import { URL } from 'node:url'
 
 /**
- * The P0-01, P0-02, P0-03, P0-04, P0-06 and P0-08 migrations applied as an upgrade, not only on a
+ * The P0-01, P0-02, P0-03, P0-04, P0-06, P0-08 and P1-08b migrations applied as an upgrade, not only on a
  * fresh database.
  *
  * CI's fresh path runs core first and every module after it. An institution
@@ -56,6 +56,9 @@ const NEW_FILES = new Set([
   'attendance/0003_dpdp_subject.sql',
   'mentoring/0002_dpdp_subject.sql',
   'care/0001_dpdp_subject.sql',
+  'academic/0010_apaar_and_consent.sql',
+  'parents/0003_adult_confirmation.sql',
+  'care/0002_minor_basis.sql',
 ])
 const NEW_CORE_FROM = 5
 
