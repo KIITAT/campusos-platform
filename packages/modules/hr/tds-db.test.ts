@@ -4,7 +4,7 @@ import { and, eq, like } from 'drizzle-orm'
 import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
 import { HrError, annualTax, createLeaveType, createStaff, createTaxRegime, decideEncashment, electRegime, generatePayroll, getPayrollSettings, listTaxRegimes, monthlyTax, requestEncashment, setComponent, setPayrollSettings, setPreviousEmployment, setStatutoryIdentity, setTaxDeclarations, type Actor } from './api'
 import { pages } from './pages'
-import { payslips, taxDeclarations, taxPreviousEmployment, taxRegimes, taxSurcharges } from './schema'
+import { payComponents, payslips, staff, taxDeclarations, taxPreviousEmployment, taxRegimes, taxSurcharges } from './schema'
 
 /**
  * The TDS estimator (P1-06b): the tables, the operations, the run and the
@@ -339,4 +339,23 @@ test('the setup page no longer has a per-person statutory form', async () => {
   const c = await college()
   const { sections } = await load('/payroll/setup', c)
   assert.ok(!sections.some((x) => x.kind === 'form' && x.path === '/staff/statutory'))
+})
+
+// --- review findings (P1-06b REVIEW)
+
+test('a component that ends this month is not projected over the rest of the year (review finding 1)', async () => {
+  const { c, s } = await taxed()
+  await pay(c, s.id, 'bonus', 'earning', '100000', 'wage', '2026-04-01')
+  await withTenant(c.id, (tx) => tx.update(payComponents).set({ effectiveTo: '2026-04-30' }).where(and(eq(payComponents.staffId, s.id), eq(payComponents.code, 'bonus'))))
+  await generatePayroll(c.admin, { period: '2026-04' })
+  // 2,50,000 in April and 1,50,000 a month after: 19,00,000; less 75,000; 1,71,600 over 12.
+  assert.equal(taxLine(await slipOf(c, s.id, '2026-04-01')), 1_430_000)
+})
+
+test('the tax page reaches somebody who is leaving (review finding 2)', async () => {
+  const c = await college()
+  const s = await hire(c)
+  await withTenant(c.id, (tx) => tx.update(staff).set({ leftOn: '2026-12-31' }).where(eq(staff.id, s.id)))
+  const { sections } = await load('/payroll/tax', c, `?staffId=${s.id}&taxYear=2026`)
+  assert.ok(sections.some((x) => x.kind === 'form' && x.path === '/payroll/tax/declarations'))
 })
