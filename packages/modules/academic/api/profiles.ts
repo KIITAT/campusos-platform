@@ -98,6 +98,8 @@ export async function setStudentProfile(actor: Actor, input: unknown) {
   const tenant = requireWriter(actor)
   const d = studentProfileSchema.parse(input)
   return withTenant(tenant, async (tx) => {
+    // Serialises a first save of the ID against a refusal (recordStudentConsent locks the same row).
+    await tx.select({ id: users.id }).from(users).where(eq(users.id, d.studentId)).for('no key update')
     const [before] = await tx.select().from(studentProfiles).where(eq(studentProfiles.studentId, d.studentId))
     // A field left out is kept; an explicit null clears it. An API caller
     // correcting a phone number must not wipe the roll number by omission.

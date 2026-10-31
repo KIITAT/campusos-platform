@@ -47,7 +47,10 @@ export async function recordStudentConsent(actor: Actor, input: unknown) {
   const tenant = requireReader(actor)
   const d = recordConsentSchema.parse(input)
   return withTenant(tenant, async (tx) => {
-    const [u] = await tx.select({ role: users.role }).from(users).where(eq(users.id, d.studentId))
+    // Lock the student first, as setStudentProfile does: with no profile row yet
+    // there is nothing else to serialise a refusal against a first save of the ID.
+    // NO KEY UPDATE, because audit rows hold a key share on this row.
+    const [u] = await tx.select({ role: users.role }).from(users).where(eq(users.id, d.studentId)).for('no key update')
     if (!u || u.role !== 'student') throw new AcademicError(404, 'no_such_student', 'no such student')
     const adult = (await ageStatus(tx, d.studentId)) === 'adult'
 
@@ -67,9 +70,6 @@ export async function recordStudentConsent(actor: Actor, input: unknown) {
       throw new AcademicError(403, 'not_permitted_consent', 'you may not record this choice for this student')
     }
 
-    // The profile row is not audited by anything else, so locking it is safe;
-    // it keeps a save of the ID from racing a refusal.
-    await tx.select({ id: studentProfiles.studentId }).from(studentProfiles).where(eq(studentProfiles.studentId, d.studentId)).for('update')
     const { id } = await recordGuardianConsent(tx, {
       institutionId: tenant,
       studentId: d.studentId,
