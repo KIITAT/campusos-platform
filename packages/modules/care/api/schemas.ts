@@ -72,6 +72,8 @@ export const settingsSchema = z
     crisisLine: z.preprocess((v) => v ?? '', z.string().trim().max(300)),
     contact: z.preprocess((v) => v ?? '', z.string().trim().max(500)),
     timeZone: z.string().trim().min(1).max(64).default('Asia/Kolkata'),
+    minorBasis: z.enum(['guardian_consent', 'educational_exemption']).default('guardian_consent'),
+    minorBasisNote: z.preprocess((v) => (typeof v === 'string' && v.trim() === '' ? null : v), z.string().trim().max(500).nullable().optional()),
   })
   .meta({ id: 'CareSettings' })
 

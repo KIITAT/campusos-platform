@@ -48,11 +48,21 @@ export const settings = pgTable(
     contact: text().notNull().default(''),
     /** The zone appointment times are read and shown in. */
     timeZone: text('time_zone').notNull().default('Asia/Kolkata'),
+    /**
+     * What lets a student under 18 take a self-check: a guardian's recorded
+     * consent, or the institution's documented educational exemption (P1-08b).
+     */
+    minorBasis: text('minor_basis').notNull().default('guardian_consent'),
+    minorBasisNote: text('minor_basis_note'),
     updatedBy: text('updated_by').references(() => users.id, { onDelete: 'set null' }),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   () => [
     check('care_settings_lengths', sql`length(crisis_line) <= 300 and length(contact) <= 500`),
+    check(
+      'care_settings_minor_basis',
+      sql`minor_basis in ('guardian_consent', 'educational_exemption') and (minor_basis = 'guardian_consent' or length(trim(minor_basis_note)) between 20 and 500)`,
+    ),
     tenantPolicy('care_settings'),
   ],
 )

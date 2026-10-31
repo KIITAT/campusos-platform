@@ -62,15 +62,17 @@ export const pages: PluginPage[] = [
       const out: PluginSection[] = [
         crisisNote(s.crisisLine),
         { kind: 'note', text: PRIVATE },
-        {
-          kind: 'shortcuts',
-          title: 'Self-checks',
-          items: checks.map((c) => ({
-            label: c.name,
-            href: `/m/care/check?code=${encodeURIComponent(c.code)}`,
-            description: c.last ? `${c.about} Last: ${c.last}.` : c.about,
-          })),
-        },
+        data.selfChecks === 'needs_guardian'
+          ? { kind: 'note', text: 'A parent or guardian has to agree before you can take a self-check. You can still ask to see a counsellor.' }
+          : {
+              kind: 'shortcuts',
+              title: 'Self-checks',
+              items: checks.map((c) => ({
+                label: c.name,
+                href: `/m/care/check?code=${encodeURIComponent(c.code)}`,
+                description: c.last ? `${c.about} Last: ${c.last}.` : c.about,
+              })),
+            },
         {
           kind: 'table',
           title: 'Your appointments',
@@ -763,7 +765,7 @@ export const pages: PluginPage[] = [
       }
     },
     sections: (data) => {
-      const s = data.settings as { crisisLine: string; contact: string; timeZone: string } | undefined
+      const s = data.settings as { crisisLine: string; contact: string; timeZone: string; minorBasis: string; minorBasisNote: string } | undefined
       if (typeof s?.timeZone !== 'string') return []
       return [
         {
@@ -807,6 +809,17 @@ export const pages: PluginPage[] = [
             { name: 'crisisLine', label: 'Crisis helpline', value: s.crisisLine, hint: 'As students should read it, with the number', optional: true },
             { name: 'contact', label: 'The counselling centre', kind: 'textarea', rows: 3, value: s.contact, hint: 'Where it is and when it is open', optional: true },
             { name: 'timeZone', label: 'Time zone', value: s.timeZone },
+            {
+              name: 'minorBasis',
+              label: 'Self-checks for students under 18',
+              kind: 'radio',
+              value: s.minorBasis,
+              options: [
+                { value: 'guardian_consent', label: 'A parent or guardian must agree first' },
+                { value: 'educational_exemption', label: 'Open under our documented educational exemption' },
+              ],
+            },
+            { name: 'minorBasisNote', label: 'The exemption and where it is documented', kind: 'textarea', rows: 3, value: s.minorBasisNote, hint: 'Required for the exemption: 20 to 500 characters', optional: true },
           ],
         },
         {

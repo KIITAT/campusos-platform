@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
-import { audit, users, withTenant } from '@campusos/db'
+import { ageStatus, audit, consentGiven, users, withTenant } from '@campusos/db'
 import type { Role } from '@campusos/module-framework'
 import { studentProfiles } from '@campusos/module-academic/schema'
 import { notify } from '@campusos/module-notices/api'
@@ -99,6 +99,8 @@ const REFUSALS: Record<string, [400 | 403 | 409, string]> = {
   care_instruments_builtin: [409, 'that code is a built-in check'],
   care_result_fixed: [409, 'a result is kept as it was taken'],
   care_result_student: [403, 'a self-check is taken by a student'],
+  care_result_minor: [403, 'a parent or guardian must agree before you can take a self-check here'],
+  care_settings_minor_basis: [400, 'an educational exemption needs its reason, 20 to 500 characters'],
   care_result_instrument: [409, 'that check is no longer offered'],
   care_request_kept: [409, 'a request for counselling is kept'],
   care_request_student: [403, 'counselling is asked for by a student'],
@@ -153,7 +155,30 @@ export const words = { topics: TOPICS, urgency: URGENCY, modes: MODES, outcomes:
 
 async function settingsOf(tx: Tx, tenant: string) {
   const [s] = await tx.select().from(settings).where(eq(settings.institutionId, tenant))
-  return { crisisLine: s?.crisisLine ?? '', contact: s?.contact ?? '', timeZone: s?.timeZone ?? 'Asia/Kolkata' }
+  return {
+    crisisLine: s?.crisisLine ?? '',
+    contact: s?.contact ?? '',
+    timeZone: s?.timeZone ?? 'Asia/Kolkata',
+    minorBasis: s?.minorBasis ?? 'guardian_consent',
+    minorBasisNote: s?.minorBasisNote ?? '',
+  }
+}
+
+/**
+ * Whether this student may open or take a self-check: an adult always; a
+ * student under 18 (or of unknown age) only under the institution's
+ * exemption or with a guardian's recorded consent. The database refuses too.
+ */
+async function mayTakeChecks(tx: Tx, tenant: string, studentId: string): Promise<boolean> {
+  if ((await ageStatus(tx, studentId)) === 'adult') return true
+  if ((await settingsOf(tx, tenant)).minorBasis === 'educational_exemption') return true
+  return consentGiven(tx, studentId, 'care_self_checks')
+}
+
+async function assertMayTakeChecks(tx: Tx, tenant: string, studentId: string) {
+  if (!(await mayTakeChecks(tx, tenant, studentId))) {
+    throw new CareError(403, 'guardian_consent_needed', 'a parent or guardian must agree before you can take a self-check here')
+  }
 }
 
 /** What a student is told when they may be in danger: the institution's helpline, or the general rule. */
@@ -211,6 +236,7 @@ const checkFor = (all: Check[], code: string, id?: string | null) =>
 export async function checkToTake(actor: Actor, code: string) {
   const tenant = requireStudent(actor)
   return withTenant(tenant, async (tx) => {
+    await assertMayTakeChecks(tx, tenant, actor.id)
     const all = await checksOf(tx)
     const check = all.find((c) => c.code.toUpperCase() === code.toUpperCase())
     if (!check) throw new CareError(404, 'no_such_check', 'no such check')
@@ -229,6 +255,7 @@ export async function takeCheck(actor: Actor, input: unknown) {
   const d = takeCheckSchema.parse({ code: raw.code, answers: Array.isArray(raw.answers) ? raw.answers : [] })
   return named(() =>
     withTenant(tenant, async (tx) => {
+      await assertMayTakeChecks(tx, tenant, actor.id)
       const check = (await checksOf(tx)).find((c) => c.code.toUpperCase() === d.code.toUpperCase())
       if (!check) throw new CareError(404, 'no_such_check', 'no such check')
       // A form sends a0, a1, ...; an API caller sends the list.
@@ -366,7 +393,8 @@ export async function careHome(actor: Actor) {
   const tenant = requireStudent(actor)
   return withTenant(tenant, async (tx) => {
     const s = await settingsOf(tx, tenant)
-    const offered = await checksOf(tx)
+    const selfChecks = (await mayTakeChecks(tx, tenant, actor.id)) ? ('open' as const) : ('needs_guardian' as const)
+    const offered = selfChecks === 'open' ? await checksOf(tx) : []
     const all = await checksOf(tx, true)
     const mine = await tx.select().from(results).where(eq(results.studentId, actor.id)).orderBy(desc(results.takenAt))
     const asked = await tx
@@ -392,6 +420,7 @@ export async function careHome(actor: Actor) {
     const now = Date.now()
     return {
       settings: s,
+      selfChecks,
       counsellors: team,
       checks: offered.map((c) => {
         const last = mine.find((r) => r.instrumentCode.toUpperCase() === c.code.toUpperCase())
@@ -1007,12 +1036,20 @@ export async function saveSettings(actor: Actor, input: unknown) {
   return named(async () => {
     assertZone(d.timeZone)
     return withTenant(tenant, async (tx) => {
-      const values = { crisisLine: d.crisisLine, contact: d.contact, timeZone: d.timeZone, updatedBy: actor.id, updatedAt: new Date() }
+      const values = {
+        crisisLine: d.crisisLine,
+        contact: d.contact,
+        timeZone: d.timeZone,
+        minorBasis: d.minorBasis,
+        minorBasisNote: d.minorBasis === 'guardian_consent' ? null : (d.minorBasisNote ?? null),
+        updatedBy: actor.id,
+        updatedAt: new Date(),
+      }
       await tx
         .insert(settings)
         .values({ institutionId: tenant, ...values })
         .onConflictDoUpdate({ target: settings.institutionId, set: values })
-      await audit(tx, { ...who(actor, tenant), action: 'care.settings', entity: 'care_settings', entityId: tenant, reason: 'the helpline, the centre or the time zone changed', detail: values })
+      await audit(tx, { ...who(actor, tenant), action: 'care.settings', entity: 'care_settings', entityId: tenant, reason: 'the helpline, the centre, the time zone or the basis for students under 18 changed', detail: values })
       return { notice: 'Saved. Students see the helpline and the centre on every page of Student care.' }
     })
   })

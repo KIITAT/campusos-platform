@@ -1,7 +1,7 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { and, eq, like } from 'drizzle-orm'
-import { authDb, institutions, users, withTenant } from '@campusos/db'
+import { and, eq, like, sql } from 'drizzle-orm'
+import { authDb, institutions, recordGuardianConsent, users, withTenant } from '@campusos/db'
 import { notifications } from '@campusos/module-notices/schema'
 import {
   CareError,
@@ -17,6 +17,7 @@ import {
   careHome,
   careSettings,
   caseView,
+  checkToTake,
   closeCase,
   deleteResult,
   handover,
@@ -45,6 +46,16 @@ import { instruments, notes, requests, results, shared } from './schema'
 
 const SLUG = 'care-test-'
 let n = 0
+
+/** A student's age in whole years, in India; null clears the date of birth. */
+const setAge = (tenant: string, uid: string, years: number | null) =>
+  withTenant(tenant, (tx) =>
+    tx.execute(
+      years === null
+        ? sql`update users set date_of_birth = null where id = ${uid}`
+        : sql`update users set date_of_birth = ((now() at time zone 'Asia/Kolkata')::date - make_interval(years => ${years}))::date where id = ${uid}`,
+    ),
+  )
 
 async function campus() {
   const tag = `${SLUG}${++n}`
@@ -77,6 +88,9 @@ async function campus() {
     bilal: as(bilal!, 'student'),
     parent: as(parent!, 'parent'),
   }
+  // Adults: a student under 18 needs a guardian's consent for a self-check (P1-08b); the tests below say so.
+  await setAge(id, asha!, 20)
+  await setAge(id, bilal!, 20)
   await saveSettings(c.office, { crisisLine: 'Tele-MANAS 14416', contact: 'Student Care Centre, ground floor', timeZone: 'Asia/Kolkata' })
   await addCounsellor(c.office, { userId: c.meena.id, title: 'Counsellor' })
   await addCounsellor(c.office, { userId: c.arjun.id, title: 'Counsellor' })
@@ -386,4 +400,75 @@ test('a counsellor who is not staff, or a parent at all, is refused by the datab
   assert.equal(u!.role, 'parent')
   await assert.rejects(addCounsellor(c.office, { userId: c.parent.id, title: 'Helper' }), (e) => code(e) === 'care_counsellor_staff')
   await assert.rejects(careHome(c.parent), (e) => status(e) === 403)
+})
+
+// --- minors need a guardian's consent for self-checks (AUD-04) ----------------------
+
+const NEEDS_GUARDIAN = 'a parent or guardian must agree before you can take a self-check here'
+const agree = (c: Awaited<ReturnType<typeof campus>>, decision: 'given' | 'withdrawn' = 'given') =>
+  withTenant(c.id, (tx) =>
+    recordGuardianConsent(tx, {
+      institutionId: c.id, studentId: c.asha.id, purpose: 'care_self_checks', decision,
+      basis: 'office_record', guardianId: null, recordedBy: c.office.id, note: 'form 12',
+    }),
+  )
+
+test('a minor without consent cannot take a self-check', async () => {
+  const c = await campus()
+  await setAge(c.id, c.asha.id, 15)
+  await assert.rejects(takeCheck(c.asha, phq([1, 1, 0, 0, 0, 0, 0, 0, 0])), (e) => code(e) === 'guardian_consent_needed' && status(e) === 403 && (e as Error).message === NEEDS_GUARDIAN)
+  await assert.rejects(checkToTake(c.asha, 'PHQ-9'), (e) => code(e) === 'guardian_consent_needed')
+})
+
+test('the database refuses it too', async () => {
+  const c = await campus()
+  await setAge(c.id, c.asha.id, 15)
+  await assert.rejects(
+    withTenant(c.id, (tx) =>
+      tx.insert(results).values({ institutionId: c.id, studentId: c.asha.id, instrumentCode: 'PHQ-9', answers: [0], score: 0, maxScore: 27, band: 'Minimal', bandRank: 0, safety: false }),
+    ),
+    db('care_result_minor'),
+  )
+})
+
+test('guardian consent opens self-checks, and withdrawing closes them again', async () => {
+  const c = await campus()
+  await setAge(c.id, c.asha.id, 15)
+  await agree(c)
+  assert.ok((await takeCheck(c.asha, phq([1, 1, 0, 0, 0, 0, 0, 0, 0]))).id)
+  await agree(c, 'withdrawn')
+  await assert.rejects(takeCheck(c.asha, phq([1, 1, 0, 0, 0, 0, 0, 0, 0])), (e) => code(e) === 'guardian_consent_needed')
+})
+
+test('the educational exemption opens them, with its reason', async () => {
+  const c = await campus()
+  await setAge(c.id, c.asha.id, 15)
+  await saveSettings(c.office, { crisisLine: 'x', contact: 'y', timeZone: 'Asia/Kolkata', minorBasis: 'educational_exemption', minorBasisNote: 'Counselling is part of the school day under policy 7.' })
+  assert.ok((await takeCheck(c.asha, phq([1, 1, 0, 0, 0, 0, 0, 0, 0]))).id)
+})
+
+test('an exemption needs its reason', async () => {
+  const c = await campus()
+  await assert.rejects(
+    saveSettings(c.office, { crisisLine: 'x', contact: 'y', timeZone: 'Asia/Kolkata', minorBasis: 'educational_exemption', minorBasisNote: 'short' }),
+    db('care_settings_minor_basis'),
+  )
+})
+
+test('an adult needs nothing, and an unknown date of birth counts as a minor', async () => {
+  const c = await campus()
+  assert.ok((await takeCheck(c.asha, phq([1, 1, 0, 0, 0, 0, 0, 0, 0]))).id)
+  await setAge(c.id, c.asha.id, null)
+  await assert.rejects(takeCheck(c.asha, phq([1, 1, 0, 0, 0, 0, 0, 0, 0])), (e) => code(e) === 'guardian_consent_needed')
+})
+
+test('a minor can still ask for counselling, and the home page says a guardian has to agree', async () => {
+  const c = await campus()
+  await setAge(c.id, c.asha.id, 15)
+  assert.ok(await ask(c.asha, { urgency: 'routine', topic: 'mood' }))
+  const home = await careHome(c.asha)
+  assert.equal(home.selfChecks, 'needs_guardian')
+  assert.deepEqual(home.checks, [])
+  await agree(c)
+  assert.equal((await careHome(c.asha)).selfChecks, 'open')
 })
