@@ -579,6 +579,8 @@ POST /api/v1/modules/hr/pay/structures/assign                            SI.....
 GET /api/v1/modules/hr/pay/tax                                           SIHFALO... gate
 POST /api/v1/modules/hr/pay/tax                                          SI........ op
 POST /api/v1/modules/hr/pay/tax/elect                                    SIHFALO... gate
+POST /api/v1/modules/hr/payroll/tax/declarations                         SI........ op
+POST /api/v1/modules/hr/payroll/tax/previous                             SI........ op
 GET /api/v1/modules/hr/pay/gratuity                                      SI..A..... op
 POST /api/v1/modules/hr/pay/gratuity                                     SI........ op
 GET /api/v1/modules/hr/pay/gratuity/quote                                SI..A..... gate

@@ -15,9 +15,12 @@ import {
   salaryStructures,
   salaryWithholdings,
   staff,
+  taxDeclarations,
   taxElections,
+  taxPreviousEmployment,
   taxRegimes,
   taxSlabs,
+  taxSurcharges,
 } from '../schema'
 import {
   HrError,
@@ -53,8 +56,10 @@ import {
   payGratuitySchema,
   payrollSettingsSchema,
   releasePayslipSchema,
+  setPreviousEmploymentSchema,
   setPtSlabsSchema,
   setStatutoryIdentitySchema,
+  setTaxDeclarationsSchema,
   withholdSalarySchema,
 } from './schemas'
 
@@ -225,6 +230,9 @@ export async function createTaxRegime(actor: Actor, input: unknown) {
         standardDeductionPaise: d.standardDeduction,
         cessBp: d.cessBp,
         rebateUpToPaise: d.rebateUpTo ?? null,
+        rebateMaxPaise: d.rebateMax,
+        rebateMarginalRelief: d.rebateMarginalRelief,
+        allowsDeductions: d.allowsDeductions,
       })
       .onConflictDoNothing()
       .returning()
@@ -245,6 +253,14 @@ export async function createTaxRegime(actor: Actor, input: unknown) {
       }
       throw e
     }
+    if (d.surcharges.length > 0) {
+      if (new Set(d.surcharges.map((s) => s.above)).size !== d.surcharges.length) {
+        throw new HrError(400, 'bad_surcharges', 'two surcharge bands start at the same income')
+      }
+      await tx.insert(taxSurcharges).values(
+        d.surcharges.map((s) => ({ institutionId: tenant, regimeId: row.id, abovePaise: s.above, rateBp: s.rateBp })),
+      )
+    }
     return { ...row, slabs: d.slabs.length }
   })
 }
@@ -254,7 +270,12 @@ export async function listTaxRegimes(actor: Actor) {
   return withTenant(tenant, async (tx) => {
     const rows = await tx.select().from(taxRegimes).orderBy(asc(taxRegimes.code))
     const slabs = await tx.select().from(taxSlabs).orderBy(asc(taxSlabs.fromPaise))
-    return rows.map((r) => ({ ...r, slabs: slabs.filter((s) => s.regimeId === r.id) }))
+    const surcharges = await tx.select().from(taxSurcharges).orderBy(asc(taxSurcharges.abovePaise))
+    return rows.map((r) => ({
+      ...r,
+      slabs: slabs.filter((s) => s.regimeId === r.id),
+      surcharges: surcharges.filter((s) => s.regimeId === r.id),
+    }))
   })
 }
 
@@ -603,6 +624,7 @@ async function readSettings(tx: Tx) {
     statutoryFrom: row?.statutoryFrom ?? null,
     pfRegistered: row?.pfRegistered ?? false,
     esiRegistered: row?.esiRegistered ?? false,
+    defaultRegimeId: row?.defaultRegimeId ?? null,
   }
 }
 
@@ -629,8 +651,12 @@ export async function setPayrollSettings(actor: Actor, input: unknown) {
       reason: `part months paid on the ${d.prorationBasis} basis`,
       detail: { from, to: d.prorationBasis },
     })
-    const to = { statutoryFrom: d.statutoryFrom, pfRegistered: d.pfRegistered, esiRegistered: d.esiRegistered }
-    const was = { statutoryFrom: before.statutoryFrom, pfRegistered: before.pfRegistered, esiRegistered: before.esiRegistered }
+    if (d.defaultRegimeId !== null) {
+      const [regime] = await tx.select({ id: taxRegimes.id }).from(taxRegimes).where(eq(taxRegimes.id, d.defaultRegimeId))
+      if (!regime) throw new HrError(404, 'not_found', 'no such tax regime')
+    }
+    const to = { statutoryFrom: d.statutoryFrom, pfRegistered: d.pfRegistered, esiRegistered: d.esiRegistered, defaultRegimeId: d.defaultRegimeId }
+    const was = { statutoryFrom: before.statutoryFrom, pfRegistered: before.pfRegistered, esiRegistered: before.esiRegistered, defaultRegimeId: before.defaultRegimeId }
     if (JSON.stringify(was) !== JSON.stringify(to)) {
       await audit(tx, {
         institutionId: tenant,
@@ -791,4 +817,96 @@ export async function listRuns(actor: Actor) {
   return withTenant(tenant, (tx) =>
     tx.select().from(payrollRuns).orderBy(desc(payrollRuns.createdAt)).limit(120),
   )
+}
+
+// --- tax declarations and previous employment (P1-06b) -----------------------
+
+/** `2026` → `2026-27`. */
+const yearName = (y: number) => `${y}-${String((y + 1) % 100).padStart(2, '0')}`
+
+async function staffOrThrow(tx: Tx, staffId: string) {
+  const [row] = await tx.select().from(staff).where(eq(staff.id, staffId))
+  if (!row) throw new HrError(404, 'not_found', 'no such member of staff')
+  return row
+}
+
+/** Replaces a person's declarations for a year. Audited by head, never by amount. */
+export async function setTaxDeclarations(actor: Actor, input: unknown) {
+  const tenant = requireAdmin(actor)
+  const d = setTaxDeclarationsSchema.parse(input)
+  const heads = d.rows.map((r) => r.head)
+  if (new Set(heads).size !== heads.length) throw new HrError(400, 'duplicate_head', 'each head may appear once')
+  return withTenant(tenant, async (tx) => {
+    await staffOrThrow(tx, d.staffId)
+    await tx.delete(taxDeclarations).where(and(eq(taxDeclarations.staffId, d.staffId), eq(taxDeclarations.taxYear, d.taxYear)))
+    const rows = d.rows.length
+      ? await tx
+          .insert(taxDeclarations)
+          .values(
+            d.rows.map((r) => ({
+              institutionId: tenant, staffId: d.staffId, taxYear: d.taxYear, head: r.head,
+              declaredPaise: r.declared, provedPaise: r.proved, metro: r.metro,
+            })),
+          )
+          .returning()
+      : []
+    await audit(tx, {
+      institutionId: tenant,
+      actorId: actor.id,
+      actorEmail: actor.email ?? null,
+      moduleId: MODULE,
+      action: 'hr.tax_declarations_set',
+      entity: 'hr_staff',
+      entityId: d.staffId,
+      reason: `tax declarations for ${yearName(d.taxYear)}`,
+      detail: { heads },
+    })
+    return rows
+  })
+}
+
+/** Salary and tax from an earlier employer in the year: one row per year, replaced. Audited. */
+export async function setPreviousEmployment(actor: Actor, input: unknown) {
+  const tenant = requireAdmin(actor)
+  const d = setPreviousEmploymentSchema.parse(input)
+  return withTenant(tenant, async (tx) => {
+    await staffOrThrow(tx, d.staffId)
+    const [row] = await tx
+      .insert(taxPreviousEmployment)
+      .values({ institutionId: tenant, staffId: d.staffId, taxYear: d.taxYear, incomePaise: d.income, tdsPaise: d.tds })
+      .onConflictDoUpdate({
+        target: [taxPreviousEmployment.staffId, taxPreviousEmployment.taxYear],
+        set: { incomePaise: d.income, tdsPaise: d.tds, updatedAt: new Date() },
+      })
+      .returning()
+    await audit(tx, {
+      institutionId: tenant,
+      actorId: actor.id,
+      actorEmail: actor.email ?? null,
+      moduleId: MODULE,
+      action: 'hr.tax_previous_set',
+      entity: 'hr_staff',
+      entityId: d.staffId,
+      reason: `previous employment for ${yearName(d.taxYear)}`,
+      detail: {},
+    })
+    return row!
+  })
+}
+
+/** A person's tax inputs for a year, for the tax page. Admin only: it shows the PAN. */
+export async function taxDetails(actor: Actor, staffId: string, taxYear: number) {
+  const tenant = requireAdmin(actor)
+  return withTenant(tenant, async (tx) => {
+    const person = await staffOrThrow(tx, staffId)
+    const declarations = await tx
+      .select()
+      .from(taxDeclarations)
+      .where(and(eq(taxDeclarations.staffId, staffId), eq(taxDeclarations.taxYear, taxYear)))
+    const [previous] = await tx
+      .select()
+      .from(taxPreviousEmployment)
+      .where(and(eq(taxPreviousEmployment.staffId, staffId), eq(taxPreviousEmployment.taxYear, taxYear)))
+    return { identity: identityOf(person), declarations, previous: previous ?? null }
+  })
 }

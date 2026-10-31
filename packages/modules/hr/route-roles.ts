@@ -123,4 +123,6 @@ export const routeRoles: Record<string, readonly Role[]> = {
   'POST /staff/statutory': ADMIN,
   'GET /payroll/pt-slabs': OFFICE,
   'POST /payroll/pt-slabs': ADMIN,
+  'POST /payroll/tax/declarations': ADMIN,
+  'POST /payroll/tax/previous': ADMIN,
 }

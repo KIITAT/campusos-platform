@@ -10,7 +10,9 @@ import {
   payGratuitySchema,
   payrollSettingsSchema,
   releasePayslipSchema,
+  setPreviousEmploymentSchema,
   setPtSlabsSchema,
+  setTaxDeclarationsSchema,
   setStatutoryIdentitySchema,
   withholdSalarySchema,
 } from './schemas'
@@ -120,6 +122,20 @@ export const payPaths = {
       "Set a state's professional tax slabs",
       setPtSlabsSchema,
       'Replaces the slabs for that state from that month. The slab set in force for a month is the latest one not after it. Audited.',
+    ),
+  },
+  [`${base}/payroll/tax/declarations`]: {
+    ...post(
+      "Replace a person's tax declarations for a year",
+      setTaxDeclarationsSchema,
+      'Every row for that person and year is replaced. A declared amount counts until the last three months of the tax year; then only a proved one. Administrators only. Audited by head.',
+    ),
+  },
+  [`${base}/payroll/tax/previous`]: {
+    ...post(
+      'Record previous employment for a year',
+      setPreviousEmploymentSchema,
+      'Taxable salary and tax deducted by an earlier employer in the same tax year (Form 12B). One row per person and year. Administrators only. Audited.',
     ),
   },
 }

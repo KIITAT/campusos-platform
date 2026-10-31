@@ -5,6 +5,8 @@ import {
   createStructure,
   createTaxRegime,
   electRegime,
+  setPreviousEmployment,
+  setTaxDeclarations,
   getPayrollSettings,
   getStatutoryIdentity,
   gratuityQuote,
@@ -38,6 +40,8 @@ export const payRoutes: PluginRoute[] = [
   { method: 'GET', path: '/pay/tax', handler: (a) => listTaxRegimes(a as Actor) },
   post('/pay/tax', createTaxRegime),
   post('/pay/tax/elect', electRegime),
+  post('/payroll/tax/declarations', setTaxDeclarations),
+  post('/payroll/tax/previous', setPreviousEmployment),
   { method: 'GET', path: '/pay/gratuity', handler: (a) => listGratuityRules(a as Actor) },
   post('/pay/gratuity', createGratuityRule),
   {

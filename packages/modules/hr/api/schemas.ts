@@ -238,8 +238,36 @@ export const payrollSettingsSchema = z
     statutoryFrom: z.preprocess(blankToNull, period.nullable()).default(null),
     pfRegistered: z.preprocess(ticked, z.boolean()).default(false),
     esiRegistered: z.preprocess(ticked, z.boolean()).default(false),
+    /** The regime for anybody who has not chosen one (P1-06b). */
+    defaultRegimeId: z.preprocess(blankToNull, uuid.nullable()).default(null),
   })
   .meta({ id: 'HrPayrollSettings' })
+
+const taxYear = z.coerce.number().int().min(2000).max(2100)
+
+/** A person's declarations for a tax year (Form 12BB): every row is replaced (P1-06b). */
+export const setTaxDeclarationsSchema = z
+  .object({
+    staffId: uuid,
+    taxYear,
+    rows: z
+      .array(
+        z.object({
+          head: z.enum(['80c', '80ccd_1b', '80d', '24b', 'other', 'rent']),
+          declared: rupees,
+          proved: z.preprocess(blankToNull, rupees.nullable()).default(null),
+          metro: z.preprocess(ticked, z.boolean()).default(false),
+        }),
+      )
+      .max(6)
+      .default([]),
+  })
+  .meta({ id: 'HrTaxDeclarations' })
+
+/** Salary and tax from an earlier employer in the same tax year (Form 12B) (P1-06b). */
+export const setPreviousEmploymentSchema = z
+  .object({ staffId: uuid, taxYear, income: rupees, tds: rupees })
+  .meta({ id: 'HrTaxPrevious' })
 
 /** A person's statutory details (P1-06a): every field is replaced. */
 export const setStatutoryIdentitySchema = z
@@ -946,6 +974,15 @@ export const createTaxRegimeSchema = z
     standardDeduction: rupees.default(0),
     cessBp: z.coerce.number().int().min(0).max(5000).default(0),
     rebateUpTo: rupees.nullish(),
+    /** The most the rebate takes off (P1-06b). Blank: all of it. */
+    rebateMax: z.preprocess(blankToNull, rupees.nullable()).default(null),
+    rebateMarginalRelief: z.preprocess(ticked, z.boolean()).default(false),
+    /** Chapter VI-A, HRA and professional tax count (the old regime). */
+    allowsDeductions: z.preprocess(ticked, z.boolean()).default(false),
+    surcharges: z
+      .array(z.object({ above: rupees, rateBp: z.coerce.number().int().min(0).max(10_000) }))
+      .max(10)
+      .default([]),
     slabs: z
       .array(z.object({ from: rupees, to: rupees.nullish(), rateBp: z.coerce.number().int().min(0).max(10_000) }))
       .min(1)

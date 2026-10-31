@@ -138,7 +138,7 @@ test('one person whose pay cannot be worked out is rolled back alone and reporte
 
 test('the basis is calendar until set, and the 30- and 26-day bases pay a 20 March joiner by the day (ACC-15)', async () => {
   const c = await college()
-  const off = { statutoryFrom: null, pfRegistered: false, esiRegistered: false }
+  const off = { statutoryFrom: null, pfRegistered: false, esiRegistered: false, defaultRegimeId: null }
   assert.deepEqual(await getPayrollSettings(c.admin), { prorationBasis: 'calendar', ...off })
   assert.deepEqual(await setPayrollSettings(c.admin, { prorationBasis: 'days_30' }), { prorationBasis: 'days_30', ...off })
   const j = await hire(c, { employeeCode: 'J-1', joinedOn: '2026-03-20' })
