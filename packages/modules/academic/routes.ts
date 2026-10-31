@@ -4,7 +4,9 @@ import {
   weekView,
   withdrawChange,
   setGpaPolicy,
+  recordStudentConsent,
   setStudentProfile,
+  studentConsents,
   studentProfile,
   addEquivalence,
   addPrerequisite,
@@ -78,6 +80,7 @@ export const routes: PluginRoute[] = [
   post('/completions/correct', correctCompletion),
   post('/degree-audit', degreeAudit),
   post('/profile', setStudentProfile),
+  post('/consents', recordStudentConsent),
   post('/classes/change', changeClass),
   post('/classes/change/withdraw', withdrawChange),
   { method: 'GET', path: '/week', handler: (actor, req) => weekView(actor as Actor, param(req, 'date')) },
@@ -85,6 +88,12 @@ export const routes: PluginRoute[] = [
     method: 'GET',
     path: '/profile',
     handler: (actor, req) => studentProfile(actor as Actor, param(req, 'studentId') || (actor as Actor).id),
+  },
+
+  {
+    method: 'GET',
+    path: '/consents',
+    handler: (actor, req) => studentConsents(actor as Actor, param(req, 'studentId') || (actor as Actor).id),
   },
 
   { method: 'GET', path: '/curricula', handler: (actor) => listCurricula(actor as Actor) },

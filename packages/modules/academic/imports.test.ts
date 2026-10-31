@@ -80,7 +80,7 @@ test('only the office imports, and the page lists what the reader may import', a
   const page = plugin.pages!.find((p) => p.path === '/import')!
   assert.equal(page.roles.includes('faculty'), false)
   const listed = (await plugin.routes.find((r) => r.path === '/imports')!.handler(admin, new Request('http://x'))) as { id: string }[]
-  assert.deepEqual(listed.map((i) => i.id), ['departments', 'programs', 'courses', 'terms', 'rooms', 'sections', 'section-members', 'student-programs', 'offerings'])
+  assert.deepEqual(listed.map((i) => i.id), ['departments', 'programs', 'courses', 'terms', 'rooms', 'sections', 'section-members', 'student-programs', 'student-dates-of-birth', 'offerings'])
   const [dept] = await withTenant(tenant, (tx) => tx.select().from(departments).where(eq(departments.code, 'MA')))
   assert.equal(dept!.name, 'Mathematics, Pure and Applied')
   assert.equal((await withTenant(tenant, (tx) => tx.select().from(sections))).length, 1)

@@ -30,10 +30,12 @@ POST /api/v1/modules/academic/eligibility                                SIHF...
 POST /api/v1/modules/academic/completions/correct                        SI........ op
 POST /api/v1/modules/academic/degree-audit                               SIHF...s.. gate
 POST /api/v1/modules/academic/profile                                    SI........ op
+POST /api/v1/modules/academic/consents                                   SI.....sp. gate
 POST /api/v1/modules/academic/classes/change                             SIHF...... gate
 POST /api/v1/modules/academic/classes/change/withdraw                    SIHF...... gate
 GET /api/v1/modules/academic/week                                        SIHF...s.. gate
 GET /api/v1/modules/academic/profile                                     SIHF...s.. gate
+GET /api/v1/modules/academic/consents                                    SI.....sp. gate
 GET /api/v1/modules/academic/curricula                                   SIH....... gate
 GET /api/v1/modules/academic/gpa-policy                                  SI........ gate
 GET /api/v1/modules/academic/prerequisites                               SIH....... gate

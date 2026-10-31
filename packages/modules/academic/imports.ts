@@ -13,6 +13,7 @@ import {
   setClassTeacher,
   createTerm,
   declareProgram,
+  setStudentProfile,
 } from './api'
 
 /**
@@ -223,6 +224,23 @@ export const imports: ImportSpec[] = [
       if (active) return 'skipped'
       const primary = v.primary ? ['yes', 'y', 'true', '1'].includes(v.primary.toLowerCase()) : true
       await declareProgram(actor, { studentId: person.id, programId: pid, isPrimary: primary, declaredOn: blank(v.declared_on) })
+      return 'created'
+    },
+  },
+  {
+    id: 'student-dates-of-birth',
+    title: 'Students’ dates of birth',
+    note: 'Sets each student’s date of birth: it decides whether a guardian consents for them and whether a guardian may still see their record at 18.',
+    roles: [...ADMIN],
+    columns: [
+      { name: 'email', required: true, note: 'The student’s email address', example: 'aarav@college.edu' },
+      { name: 'date_of_birth', required: true, note: 'YYYY-MM-DD', example: '2008-03-14' },
+    ],
+    row: async (actor, { values: v }) => {
+      const person = await personByEmail(actor, v.email!)
+      const same = await one(actor, (tx) => tx.select({ id: users.id }).from(users).where(and(eq(users.id, person.id), sql`${users.dateOfBirth} = ${v.date_of_birth!}::date`)))
+      if (same) return 'skipped'
+      await setStudentProfile(actor, { studentId: person.id, dateOfBirth: v.date_of_birth })
       return 'created'
     },
   },

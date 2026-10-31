@@ -1,6 +1,6 @@
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import { users, withTenant } from '@campusos/db'
-import type { Role } from '@campusos/module-framework'
+import type { Role, ViewerScope } from '@campusos/module-framework'
 import {
   courses,
   departments,
@@ -35,7 +35,7 @@ import {
  * these could forget.
  */
 
-export interface Actor {
+export interface Actor extends ViewerScope {
   id: string
   role: Role
   institutionId: string | null

@@ -1,7 +1,7 @@
-import { assertCanAccessStudent, type StudentPurpose } from '@campusos/module-framework'
+import { assertCanAccessStudent, viewsOnBehalf, type StudentPurpose } from '@campusos/module-framework'
 import { eq } from 'drizzle-orm'
 import * as z from 'zod'
-import { audit, users, withTenant } from '@campusos/db'
+import { audit, consentGiven, users, withTenant } from '@campusos/db'
 import { studentProfiles } from '../schema'
 import { AcademicError, requireReader, requireWriter, type Actor } from './operations'
 
@@ -28,6 +28,8 @@ export const studentProfileSchema = z
     state: opt(80),
     postalCode: opt(12),
     emergencyContact: opt(120),
+    dateOfBirth: z.preprocess(blankToNull, z.iso.date().nullable().optional()),
+    apaarId: z.preprocess(blankToNull, z.string().trim().regex(/^[0-9]{12}$/, 'twelve digits').nullable().optional()),
   })
   .meta({ id: 'AcademicStudentProfile' })
 
@@ -43,6 +45,10 @@ export interface StudentProfile {
   state: string | null
   postalCode: string | null
   emergencyContact: string | null
+  /** YYYY-MM-DD, set by the office. */
+  dateOfBirth: string | null
+  /** As given, not verified with APAAR. Null for everyone but the student, a guardian and the office (D16). */
+  apaarId: string | null
   /** One line, as an envelope or an admit card prints it. */
   address: string | null
   updatedAt: Date | null
@@ -59,7 +65,7 @@ export async function studentProfile(actor: Actor, studentId: string, purpose: S
   return withTenant(tenant, async (tx) => {
     await assertCanAccessStudent(tx, actor, studentId, purpose)
     const [u] = await tx
-      .select({ id: users.id, name: users.name, email: users.email, role: users.role })
+      .select({ id: users.id, name: users.name, email: users.email, role: users.role, dateOfBirth: users.dateOfBirth })
       .from(users)
       .where(eq(users.id, studentId))
     if (!u || u.role !== 'student') throw new AcademicError(404, 'no_such_student', 'no such student')
@@ -79,6 +85,9 @@ export async function studentProfile(actor: Actor, studentId: string, purpose: S
       state: p?.state ?? null,
       postalCode: p?.postalCode ?? null,
       emergencyContact: p?.emergencyContact ?? null,
+      dateOfBirth: u.dateOfBirth,
+      // The ID is not for staff who read the profile for their own purpose (Supreme Court direction, D16).
+      apaarId: actor.id === studentId || viewsOnBehalf(actor, studentId) || actor.role === 'institution_admin' || actor.role === 'super_admin' ? (p?.apaarId ?? null) : null,
       address,
       updatedAt: p?.updatedAt ?? null,
     }
@@ -93,8 +102,14 @@ export async function setStudentProfile(actor: Actor, input: unknown) {
     // A field left out is kept; an explicit null clears it. An API caller
     // correcting a phone number must not wipe the roll number by omission.
     const fields = ['rollNo', 'registrationNo', 'phone', 'addressLine', 'city', 'state', 'postalCode', 'emergencyContact'] as const
-    const values: Partial<Record<(typeof fields)[number], string | null>> & { updatedBy: string } = { updatedBy: actor.id }
+    const values: Partial<Record<(typeof fields)[number] | 'apaarId', string | null>> & { updatedBy: string } = { updatedBy: actor.id }
     for (const f of fields) if (d[f] !== undefined) values[f] = d[f] ?? null
+    if (d.apaarId !== undefined) {
+      values.apaarId = d.apaarId ?? null
+      if (d.apaarId && !(await consentGiven(tx, d.studentId, 'apaar'))) {
+        throw new AcademicError(409, 'apaar_needs_consent', 'record the parent’s or student’s consent to APAAR before saving the ID')
+      }
+    }
     try {
       await tx
         .insert(studentProfiles)
@@ -105,9 +120,25 @@ export async function setStudentProfile(actor: Actor, input: unknown) {
       if (c === 'academic_student_profile_student') throw new AcademicError(400, c, 'a profile is kept for a student')
       if (c === 'academic_student_profiles_roll') throw new AcademicError(409, c, 'that roll number is already somebody else’s')
       if (c === 'academic_student_profiles_registration') throw new AcademicError(409, c, 'that registration number is already somebody else’s')
+      if (c === 'academic_student_profiles_apaar_unique') throw new AcademicError(409, c, 'that APAAR ID is already somebody else’s')
+      if (c === 'academic_apaar_needs_consent') throw new AcademicError(409, 'apaar_needs_consent', 'record the parent’s or student’s consent to APAAR before saving the ID')
       throw e
     }
-    const changed = fields.filter((k) => k in values && (before?.[k] ?? null) !== values[k])
+    const changed: string[] = [...fields, 'apaarId' as const].filter((k) => k in values && (before?.[k] ?? null) !== values[k])
+    if (d.dateOfBirth !== undefined) {
+      const [u] = await tx.select({ dob: users.dateOfBirth }).from(users).where(eq(users.id, d.studentId))
+      if ((u?.dob ?? null) !== (d.dateOfBirth ?? null)) {
+        try {
+          await tx.update(users).set({ dateOfBirth: d.dateOfBirth ?? null }).where(eq(users.id, d.studentId))
+        } catch (e) {
+          if ((e as { cause?: { constraint?: string } }).cause?.constraint === 'users_date_of_birth_range') {
+            throw new AcademicError(400, 'users_date_of_birth_range', 'a date of birth is in the past')
+          }
+          throw e
+        }
+        changed.push('dateOfBirth')
+      }
+    }
     await audit(tx, {
       institutionId: tenant,
       actorId: actor.id,

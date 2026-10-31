@@ -146,8 +146,9 @@ test('the APAAR ID is shown to the student, a guardian and the office only', asy
 
 test('dates of birth are imported, and a rerun changes nothing', async () => {
   const c = await campus()
-  const [{ email }] = await withTenant(c.id, (tx) => tx.select({ email: users.email }).from(users).where(eq(users.id, c.kid.id)))
-  const [{ email: grownEmail }] = await withTenant(c.id, (tx) => tx.select({ email: users.email }).from(users).where(eq(users.id, c.grown.id)))
+  const emailOf = async (id: string) => (await withTenant(c.id, (tx) => tx.select({ email: users.email }).from(users).where(eq(users.id, id))))[0]!.email
+  const email = await emailOf(c.kid.id)
+  const grownEmail = await emailOf(c.grown.id)
   const csv = `email,date_of_birth\n${email},2010-05-01\n${grownEmail},2005-02-03\n`
   const run = () =>
     plugin.routes

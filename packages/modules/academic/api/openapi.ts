@@ -31,6 +31,7 @@ import {
   waivePrerequisiteSchema,
 } from './schemas'
 import { studentProfileSchema } from './profiles'
+import { recordConsentSchema } from './consents'
 import { changeClassSchema, withdrawChangeSchema } from './changes'
 
 /**
@@ -83,6 +84,10 @@ export const paths = {
   [`${base}/profile`]: {
     ...list("A student's roll and registration numbers, phone and address: their own, or any for staff (studentId)"),
     ...post("Set a student's roll and registration numbers, phone and address (the office)", studentProfileSchema),
+  },
+  [`${base}/consents`]: {
+    ...list("A student's recorded choices (studentId): the privacy notice, counselling self-checks and the APAAR ID"),
+    ...post("Record a choice for a student: a guardian for a minor, the student once adult, or the office from a form", recordConsentSchema),
   },
   [`${base}/timetable`]: {
     get: {

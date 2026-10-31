@@ -3,6 +3,7 @@ import {
   changeableSlots,
   teacherChoices,
   weekView,
+  studentConsents,
   studentProfile,
   degreeAudit,
   getTimetable,
@@ -26,6 +27,8 @@ const EVERYONE = [
   'faculty',
   'student',
 ] as const
+
+const PURPOSE_LABEL: Record<string, string> = { privacy_notice: 'Privacy notice', care_self_checks: 'Counselling self-checks', apaar: 'APAAR ID' }
 
 const DAYS = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
@@ -819,6 +822,7 @@ export const pages: PluginPage[] = [
 
       const passed = completions.filter((c) => c.passed)
       const profile = await studentProfile(a, studentId).catch(() => null)
+      const consents = await studentConsents(a, studentId).catch(() => null)
       return {
         studentId,
         mine: studentId === a.id,
@@ -831,8 +835,17 @@ export const pages: PluginPage[] = [
               { what: 'Phone', value: profile.phone ?? 'not recorded' },
               { what: 'Address', value: profile.address ?? 'not recorded' },
               { what: 'Emergency contact', value: profile.emergencyContact ?? 'not recorded' },
+              { what: 'Date of birth', value: profile.dateOfBirth ?? 'not recorded' },
+              { what: 'APAAR ID (as given; not verified with APAAR)', value: profile.apaarId ?? 'not recorded' },
             ]
           : [],
+        consentRows: (consents ?? []).map((c) => ({
+          purpose: PURPOSE_LABEL[c.purpose] ?? c.purpose,
+          decision: c.decision,
+          basis: c.basis ? c.basis.replace(/_/g, ' ') : '',
+          on: c.recordedAt ? c.recordedAt.toISOString().slice(0, 10) : '',
+        })),
+        showConsents: consents !== null,
         cgpa: outstanding?.cgpa === null || outstanding === null ? '--' : String(outstanding.cgpa),
         creditsRemaining:
           outstanding?.creditsRemaining === null || outstanding === null
@@ -947,6 +960,56 @@ export const pages: PluginPage[] = [
                   optional: true,
                   value: (data.profile as { emergencyContact: string | null }).emergencyContact ?? '',
                 },
+                { name: 'dateOfBirth', label: 'Date of birth (YYYY-MM-DD)', optional: true, value: (data.profile as { dateOfBirth: string | null }).dateOfBirth ?? '' },
+                { name: 'apaarId', label: 'APAAR ID (12 digits, as given)', optional: true, value: (data.profile as { apaarId: string | null }).apaarId ?? '' },
+              ],
+            },
+          ]
+        : []),
+      ...(data.showConsents
+        ? [
+            {
+              kind: 'table' as const,
+              title: 'Consents',
+              note: 'A parent or guardian gives these for a student under 18; the student does once they are 18.',
+              rows: 'consentRows',
+              columns: [
+                { key: 'purpose', label: 'For' },
+                { key: 'decision', label: 'Decision' },
+                { key: 'basis', label: 'Recorded as' },
+                { key: 'on', label: 'On' },
+              ],
+            },
+          ]
+        : []),
+      ...(data.registrar
+        ? [
+            {
+              kind: 'form' as const,
+              title: 'Record a choice from a form',
+              submit: 'Record',
+              path: '/consents',
+              fields: [
+                { name: 'studentId', label: '', kind: 'hidden' as const, value: String(data.studentId) },
+                {
+                  name: 'purpose',
+                  label: 'For',
+                  kind: 'radio' as const,
+                  value: 'apaar',
+                  options: Object.entries(PURPOSE_LABEL).map(([value, label]) => ({ value, label })),
+                },
+                {
+                  name: 'decision',
+                  label: 'Decision',
+                  kind: 'radio' as const,
+                  value: 'given',
+                  options: [
+                    { value: 'given', label: 'Given' },
+                    { value: 'refused', label: 'Refused' },
+                    { value: 'withdrawn', label: 'Withdrawn' },
+                  ],
+                },
+                { name: 'note', label: 'Which form or letter', hint: 'for example its reference' },
               ],
             },
           ]

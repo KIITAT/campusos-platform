@@ -678,6 +678,8 @@ export const studentProfiles = pgTable(
     postalCode: text('postal_code'),
     /** Somebody to call: a name and a number, as written. */
     emergencyContact: text('emergency_contact'),
+    /** Stored as given, only while consent to it stands (P1-08b). Not verified with APAAR. */
+    apaarId: text('apaar_id'),
     updatedBy: text('updated_by').references(() => users.id, { onDelete: 'set null' }),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -685,6 +687,8 @@ export const studentProfiles = pgTable(
     uniqueIndex('academic_student_profiles_roll').on(t.institutionId, t.rollNo),
     uniqueIndex('academic_student_profiles_registration').on(t.institutionId, t.registrationNo),
     check('academic_student_profiles_phone', sql`phone is null or phone ~ '^[0-9+() -]{7,20}$'`),
+    uniqueIndex('academic_student_profiles_apaar_unique').on(t.institutionId, t.apaarId),
+    check('academic_student_profiles_apaar', sql`apaar_id is null or apaar_id ~ '^[0-9]{12}$'`),
     tenantPolicy('academic_student_profiles'),
   ],
 )
