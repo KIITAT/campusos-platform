@@ -29,6 +29,8 @@ export const RETENTION_SCHEDULE: readonly { table: string; module: string; rule:
 ]
 
 export interface PurgeReport {
+  /** The `dpdp.retention_run` entity id on the platform chain, so the log line and the chain match. */
+  runId: string
   dryRun: boolean
   institutions: { id: string; slug: string; purged: Record<string, number> }[]
   platform: Record<string, number>
@@ -59,7 +61,7 @@ export async function purgeExpired(opts: { dryRun?: boolean; institutionId?: str
     .from(institutions)
     .where(opts.institutionId ? eq(institutions.id, opts.institutionId) : undefined)
     .orderBy(institutions.id)
-  const report: PurgeReport = { dryRun, institutions: [], platform: {} }
+  const report: PurgeReport = { runId: randomUUID(), dryRun, institutions: [], platform: {} }
   for (const inst of all) {
     const purged = await inTransaction(dryRun, async (tx) => {
       const r = await tx.execute<{ purged: Record<string, number> }>(sql`select public.campusos_purge_expired(${inst.id}) as purged`)
@@ -81,7 +83,7 @@ export async function purgeExpired(opts: { dryRun?: boolean; institutionId?: str
     const counts = r.rows[0]!.purged
     await platformAudit(tx, {
       actorId: null, actorEmail: 'retention purge', moduleId: 'core', action: 'dpdp.retention_run',
-      entity: 'institutions', entityId: randomUUID(), reason: 'the retention schedule',
+      entity: 'institutions', entityId: report.runId, reason: 'the retention schedule',
       detail: { institutions: touched, platform: counts },
     })
     return counts
@@ -117,13 +119,31 @@ export async function* trailExport(institutionId: string): AsyncGenerator<Record
   }
 }
 
-/** Notes the export on the platform trail and, with `delete`, removes the institution (the cascade follows). */
+/**
+ * Notes the export on the platform trail and, with `delete`, removes the
+ * institution (the cascade follows). `auditSeq` and `readSeq` are the last
+ * audit link and sensitive read the file holds (0 for none): the delete is
+ * refused when either chain moved after the export, since the cascade would
+ * take rows the file does not have (review of P1-08d).
+ */
 export async function recordOffboarding(
   institutionId: string,
-  file: { name: string; sha256: string; lines: number },
+  file: { name: string; sha256: string; lines: number; auditSeq: number; readSeq: number },
   opts: { delete: boolean },
 ): Promise<void> {
   await authDb.transaction(async (tx) => {
+    if (opts.delete) {
+      // FOR UPDATE conflicts with the key-share lock every new chain row takes
+      // on its institution, so nothing is appended between this check and the delete.
+      await tx.execute(sql`select id from institutions where id = ${institutionId} for update`)
+      const heads = await tx.execute<{ audit: string; reads: string }>(sql`
+        select (select coalesce(max(seq), 0) from audit_chain where institution_id = ${institutionId})::text as audit,
+               (select coalesce(max(seq), 0) from sensitive_reads where institution_id = ${institutionId})::text as reads`)
+      const h = heads.rows[0]!
+      if (Number(h.audit) !== file.auditSeq || Number(h.reads) !== file.readSeq) {
+        throw new Error('the trail changed after the export; run offboard again')
+      }
+    }
     await platformAudit(tx, {
       institutionId, actorId: null, actorEmail: 'offboarding', moduleId: 'core',
       action: 'institution.trail_exported', entity: 'institutions', entityId: institutionId,
