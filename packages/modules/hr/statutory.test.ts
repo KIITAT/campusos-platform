@@ -10,7 +10,7 @@ const KA: PtSlab[] = [
 
 const e = (appliedPaise: number, wageClass: WageClass = 'wage') => ({ appliedPaise, wageClass })
 
-function run(earnings: StatutoryInput['earnings'], over: Partial<StatutoryInput> & { person?: Partial<StatutoryInput['person']> } = {}) {
+function run(earnings: StatutoryInput['earnings'], over: Partial<Omit<StatutoryInput, 'person'>> & { person?: Partial<StatutoryInput['person']> } = {}) {
   const { person, ...rest } = over
   return statutoryFor({
     period: '2026-03-01',
