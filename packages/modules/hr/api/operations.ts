@@ -471,6 +471,8 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
   return withTenant(tenant, async (tx): Promise<PayrollRun> => {
     // One run or payment per month at a time (ACC-25).
     await lockPayrollPeriod(tx, tenant, period)
+    // And one run per ESI contribution period, so the months of a period decide coverage one after another (P1-06a review).
+    await lockPayrollPeriod(tx, tenant, `esi:${esiPeriodStart(period)}`)
     const people = await tx
       .select()
       .from(staff)
@@ -594,7 +596,8 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
             )
             const paidDays = Math.max(0, calEmployed - calUnpaid)
             const prior = await sp.execute<{ v: string | null }>(sql`select statutory->>'esiCovered' as v from hr_payslips
-              where staff_id = ${person.id} and period >= ${esiPeriodStart(period)}::date and period < ${period}::date and statutory is not null
+              where staff_id = ${person.id} and period >= ${esiPeriodStart(period)}::date and period < ${esiPeriodStart(period)}::date + interval '6 months'
+                and period <> ${period}::date and statutory->>'esiCovered' is not null
               order by period asc limit 1`)
             const v = prior.rows[0]?.v
             const wageClassOf = new Map(payable.components.map((c) => [c.code, c.wageClass ?? 'wage']))
