@@ -28,7 +28,7 @@ const pg = require('pg')
 const { drizzle } = require('drizzle-orm/node-postgres')
 const { migrate } = require('drizzle-orm/node-postgres/migrator')
 
-/** The module files P0-01, P0-06 and P0-08 added. Everything else is the previous level. */
+/** The module files P0-01, P0-06, P0-07 and P0-08 added. Everything else is the previous level. */
 const NEW_FILES = new Set([
   'fees/0006_money_outlives_the_person.sql',
   'fees/0007_idempotency_and_references.sql',
@@ -42,6 +42,7 @@ const NEW_FILES = new Set([
   'timetable/0001_solves_off_the_request.sql',
   'hr/0012_dpdp_subject.sql',
   'hr/0013_hr_about_anonymous_feedback.sql',
+  'finance/0011_segregation_of_duties.sql',
   'enrollment/0002_dpdp_subject.sql',
   'notices/0002_dpdp_subject.sql',
   'parents/0002_dpdp_subject.sql',
@@ -334,5 +335,22 @@ test('timetable 0001 applies as an upgrade: one solve per institution, a 120-sec
         (select pg_get_constraintdef(oid) from pg_constraint where conname = 'timetable_settings_time') as cap`)
     assert.equal(rows[0].idx, 1)
     assert.match(rows[0].cap, /120/)
+  })
+})
+
+test('finance 0011 applies as an upgrade: settings under RLS, two triggers, two functions (ACC-01)', { skip: !url && 'MIGRATION_DATABASE_URL is not set' }, async () => {
+  await withClient(at(DB), async (c) => {
+    const { rows } = await c.query(`
+      select
+        (select relrowsecurity from pg_class where oid = to_regclass('public.finance_sod_settings')) as settings_rls,
+        (select count(*)::int from pg_policy where polrelid = to_regclass('public.finance_sod_settings')) as settings_policies,
+        (select count(*)::int from pg_trigger
+          where tgname in ('finance_approvals_not_by_creator', 'finance_submit_not_by_creator_invoices',
+                           'finance_submit_not_by_creator_payments', 'finance_submit_not_by_creator_journals')
+            and not tgisinternal) as triggers,
+        (select count(*)::int from pg_proc
+          where proname in ('finance_single_officer', 'finance_doc_creator', 'finance_approval_not_by_creator',
+                            'finance_submit_not_by_creator')) as functions`)
+    assert.deepEqual(rows[0], { settings_rls: true, settings_policies: 1, triggers: 4, functions: 4 })
   })
 })
