@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { and, eq, like } from 'drizzle-orm'
 import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
 import { HrError, annualTax, createLeaveType, createStaff, createTaxRegime, decideEncashment, electRegime, generatePayroll, getPayrollSettings, listTaxRegimes, monthlyTax, requestEncashment, setComponent, setPayrollSettings, setPreviousEmployment, setStatutoryIdentity, setTaxDeclarations, type Actor } from './api'
+import { pages } from './pages'
 import { payslips, taxDeclarations, taxPreviousEmployment, taxRegimes, taxSurcharges } from './schema'
 
 /**
@@ -298,4 +299,44 @@ test('previous employment and declarations reach the estimate', async () => {
   const slip = await slipOf(c, s.id, '2026-04-01')
   assert.equal(recOf(slip).previousTdsPaise, 1_500_000)
   assert.equal(recOf(slip).deductionsPaise, 10_000_000)
+})
+
+// --- the tax page (Step 5, NEW-51)
+
+type Field = { name: string; kind?: string; value?: string }
+type Section = { kind: string; title?: string; path?: string; fields?: Field[] }
+
+async function load(path: string, c: College, query = '') {
+  const page = pages.find((p) => p.path === path)!
+  const data = await page.load(c.admin, new Request(`http://localhost${path}${query}`))
+  return { data, sections: page.sections(data) as unknown as Section[] }
+}
+
+test('the tax page shows a person’s stored details in the form it saves', async () => {
+  const c = await college()
+  const s = await hire(c)
+  await setStatutoryIdentity(c.admin, { staffId: s.id, pan: 'ABCDE1234F', uan: '100200300400', bankAccount: '123456789012', bankIfsc: 'HDFC0001234', pfMember: true })
+  const { sections } = await load('/payroll/tax', c, `?staffId=${s.id}&taxYear=2026`)
+  const form = sections.find((x) => x.kind === 'form' && x.path === '/staff/statutory')!
+  const v = (name: string) => form.fields!.find((f) => f.name === name)!.value
+  assert.equal(v('pan'), 'ABCDE1234F')
+  assert.equal(v('bankAccount'), '123456789012')
+  assert.equal(v('pfMember'), 'true')
+  assert.equal(v('esiExempt'), 'false')
+  assert.equal(v('staffId'), s.id)
+  assert.equal(form.fields!.find((f) => f.name === 'staffId')!.kind, 'hidden')
+})
+
+test('the tax page pre-fills the year’s declarations', async () => {
+  const c = await college()
+  const s = await hire(c)
+  await setTaxDeclarations(c.admin, { staffId: s.id, taxYear: 2026, rows: [{ head: '80c', declared: '100000' }] })
+  const { data } = await load('/payroll/tax', c, `?staffId=${s.id}&taxYear=2026`)
+  assert.deepEqual(data.declarationRows, [{ head: '80c', declared: '100000', proved: '', metro: 'false' }])
+})
+
+test('the setup page no longer has a per-person statutory form', async () => {
+  const c = await college()
+  const { sections } = await load('/payroll/setup', c)
+  assert.ok(!sections.some((x) => x.kind === 'form' && x.path === '/staff/statutory'))
 })
