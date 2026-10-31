@@ -142,6 +142,22 @@ test('a claimed link shows nothing until the institution verifies it', async () 
   assert.equal((await childOverview(parent(ids.p1), ids.s1)).studentId, ids.s1)
 })
 
+test('the office opening a child’s overview is logged; a guardian’s own child is not (AUD-07)', async () => {
+  const link = await claimLink(parent(ids.p1), { studentId: ids.s1, relation: 'father' })
+  await decideLink(admin(), { linkId: link.id, approve: true, reason: 'identity checked at the office' })
+  const mark = (await authDb.execute<{ t: string }>(sql`select clock_timestamp()::text as t`)).rows[0]!.t
+  const reads = async () =>
+    (
+      await authDb.execute<{ kind: string; reader_id: string; subject_id: string; purpose: string }>(
+        sql`select kind, reader_id, subject_id, purpose from sensitive_reads where institution_id = ${inst} and at > ${mark}::timestamptz order by seq`,
+      )
+    ).rows
+  await childOverview(parent(ids.p1), ids.s1)
+  assert.equal((await reads()).length, 0, 'a guardian reading their own child is not logged')
+  await childOverview(admin(), ids.s1)
+  assert.deepEqual(await reads(), [{ kind: 'parents.child_overview', reader_id: ids.adm, subject_id: ids.s1, purpose: 'office_view' }])
+})
+
 test('a link an administrator registers is verified by that act', async () => {
   const link = await claimLink(admin(), {
     parentId: ids.p1,

@@ -1,6 +1,6 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { eq, like } from 'drizzle-orm'
+import { eq, like, sql } from 'drizzle-orm'
 import { authDb, institutionModules, institutions, users, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
 import * as hostel from '@campusos/module-hostel/api'
@@ -223,4 +223,22 @@ test('leave: asked for as KIIT’s form asks, decided by the mentor, and handed 
   assert.ok(revoked!.revokedAt, 'and the excuse goes with it')
   assert.deepEqual((await myMentoring(c.asha)).leave.map((l) => l.status).sort(), ['cancelled', 'rejected'])
   await assert.rejects(cancelLeave(c.bilal, { applicationId: med.id }), (e) => code(e) === 'no_such_leave')
+
+  // Who opened the record or the document is written down (AUD-07); the student's own view is not.
+  const mark = (await authDb.execute<{ t: string }>(sql`select clock_timestamp()::text as t`)).rows[0]!.t
+  const reads = async () =>
+    (
+      await authDb.execute<{ kind: string; entity: string; entity_id: string; reader_id: string; subject_id: string; purpose: string }>(
+        sql`select kind, entity, entity_id, reader_id, subject_id, purpose from sensitive_reads
+            where institution_id = ${c.id} and at > ${mark}::timestamptz order by seq`,
+      )
+    ).rows
+  await menteeView(c.rout, c.asha.id)
+  assert.deepEqual((await reads()).map((r) => [r.kind, r.entity, r.entity_id, r.reader_id, r.subject_id, r.purpose]), [
+    ['mentoring.mentee', 'users', c.asha.id, c.rout.id, c.asha.id, 'mentoring'],
+  ], "a mentee's record is logged")
+  await leaveDocument(c.rout, med.id)
+  assert.deepEqual((await reads()).slice(1).map((r) => [r.kind, r.entity, r.entity_id]), [['mentoring.leave_document', 'mentor_leave_applications', med.id]], 'a leave document is logged')
+  await leaveDocument(c.asha, med.id)
+  assert.equal((await reads()).length, 2, "the student's own document is not")
 })
