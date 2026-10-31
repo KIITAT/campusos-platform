@@ -106,7 +106,9 @@ export function statutoryFor(i: StatutoryInput): StatutoryResult {
   let ptState: string | null = null
   if (i.person.workState && i.ptSlabs.length > 0) {
     ptState = i.person.workState
-    const slab = i.ptSlabs.find((s) => s.fromPaise <= esiWages && (s.toPaise === null || esiWages <= s.toPaise))
+    // Slabs are whole rupees; matching on whole rupees leaves no gap between one slab's end and the next's start.
+    const ptBase = Math.floor(esiWages / 100) * 100
+    const slab = i.ptSlabs.find((s) => s.fromPaise <= ptBase && (s.toPaise === null || ptBase <= s.toPaise))
     const pt = slab ? (i.period.slice(5, 7) === '02' && slab.februaryPaise !== null ? slab.februaryPaise : slab.amountPaise) : 0
     if (pt > 0) deductions.push({ code: 'professional_tax', label: 'Professional tax', kind: 'deduction', amountPaise: pt })
   }
