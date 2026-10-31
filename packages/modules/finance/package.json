@@ -22,12 +22,12 @@
     "@campusos/db": "workspace:*",
     "@campusos/module-framework": "workspace:*",
     "@campusos/money": "workspace:*",
-    "drizzle-orm": "^0.45.2",
+    "drizzle-orm": "^0.45.4",
     "pdf-lib": "^1.17.1",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
-    "tsx": "^4.23.12"
+    "tsx": "^4.23.15"
   }
 }
