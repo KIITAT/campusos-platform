@@ -46,6 +46,14 @@ export const employmentEnum = pgEnum('hr_employment', [
   'probation',
 ])
 
+/**
+ * How a pay line counts toward the statutory bases (P1-06a): `wage` is a wage
+ * under the Code on Social Security 2020 s.2(88); `excluded` is an exclusion
+ * that counts toward the 50% proviso (HRA, conveyance, bonus, overtime);
+ * `outside` is not remuneration for any statutory base.
+ */
+export const wageClassEnum = pgEnum('hr_wage_class', ['wage', 'excluded', 'outside'])
+
 export const leaveStatusEnum = pgEnum('hr_leave_status', [
   'pending',
   'approved',
@@ -77,6 +85,17 @@ export const staff = pgTable(
     leftOn: date('left_on'),
     email: text(),
     phone: text(),
+    /** Statutory identity (P1-06a). Read and set by the admin only. */
+    pan: text(),
+    uan: text(),
+    esiNumber: text('esi_number'),
+    bankAccount: text('bank_account'),
+    bankIfsc: text('bank_ifsc'),
+    workState: text('work_state'),
+    pfMember: boolean('pf_member').notNull().default(false),
+    pfOnActual: boolean('pf_on_actual').notNull().default(false),
+    epsExcluded: boolean('eps_excluded').notNull().default(false),
+    esiExempt: boolean('esi_exempt').notNull().default(false),
     createdAt: createdAt(),
   },
   (t) => [
@@ -88,6 +107,12 @@ export const staff = pgTable(
     index('hr_staff_active').on(t.institutionId, t.leftOn),
     check('hr_staff_code_shape', sql`length(trim(employee_code)) > 0`),
     check('hr_staff_dates', sql`left_on is null or left_on >= joined_on`),
+    check('hr_staff_pan', sql`pan is null or pan ~ '^[A-Z]{5}[0-9]{4}[A-Z]$'`),
+    check('hr_staff_uan', sql`uan is null or uan ~ '^[0-9]{12}$'`),
+    check('hr_staff_esi_number', sql`esi_number is null or esi_number ~ '^[0-9]{10}$'`),
+    check('hr_staff_bank_account', sql`bank_account is null or bank_account ~ '^[0-9]{9,18}$'`),
+    check('hr_staff_bank_ifsc', sql`bank_ifsc is null or bank_ifsc ~ '^[A-Z]{4}0[A-Z0-9]{6}$'`),
+    check('hr_staff_work_state', sql`work_state is null or work_state ~ '^[A-Z]{2}$'`),
     tenantPolicy('hr_staff'),
   ],
 )
@@ -201,6 +226,7 @@ export const payComponents = pgTable(
     amountPaise: paise('amount_paise').notNull(),
     effectiveFrom: date('effective_from').notNull(),
     effectiveTo: date('effective_to'),
+    wageClass: wageClassEnum('wage_class').notNull().default('wage'),
     createdAt: createdAt(),
   },
   (t) => [
@@ -240,6 +266,9 @@ export const payslips = pgTable(
     unpaidLeaveDays: smallint('unpaid_leave_days').notNull().default(0),
     lossOfPayPaise: paise('loss_of_pay_paise').notNull().default(0),
     lines: jsonb().notNull(),
+    /** What statutory pay worked out (P1-06a); null when it was off. */
+    statutory: jsonb(),
+    employerCostPaise: paise('employer_cost_paise').notNull().default(0),
     /** The run that produced it. Null for payslips older than runs. */
     runId: uuid('run_id').references(() => payrollRuns.id, { onDelete: 'set null' }),
     /** Held back from the payment run; still a cost of its month. */
@@ -253,6 +282,7 @@ export const payslips = pgTable(
     index('hr_payslips_period').on(t.institutionId, t.period),
     check('hr_payslips_amounts', sql`gross_paise >= 0 and deductions_paise >= 0`),
     check('hr_payslips_net', sql`net_paise = gross_paise - deductions_paise`),
+    check('hr_payslips_employer_cost', sql`employer_cost_paise >= 0`),
     check('hr_payslips_net_not_negative', sql`net_paise >= 0`),
     check('hr_payslips_period_start', sql`extract(day from period) = 1`),
     tenantPolicy('hr_payslips'),
@@ -1528,6 +1558,7 @@ export const salaryStructureLines = pgTable(
     of: text(),
     /** Whether it counts toward income for tax. The institution says, per line. */
     taxable: boolean().notNull().default(true),
+    wageClass: wageClassEnum('wage_class').notNull().default('wage'),
   },
   (t) => [
     uniqueIndex('hr_salary_structure_lines_code').on(t.structureId, t.code),
@@ -1789,11 +1820,45 @@ export const payrollSettings = pgTable(
   {
     institutionId: tenantId().primaryKey(),
     prorationBasis: text('proration_basis').notNull().default('calendar'),
+    /** First month statutory pay applies; null is off (P1-06a). */
+    statutoryFrom: date('statutory_from'),
+    pfRegistered: boolean('pf_registered').notNull().default(false),
+    esiRegistered: boolean('esi_registered').notNull().default(false),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   () => [
     check('hr_payroll_settings_basis', sql`proration_basis in ('calendar', 'days_30', 'days_26')`),
+    check('hr_payroll_settings_statutory_from', sql`statutory_from is null or extract(day from statutory_from) = 1`),
     tenantPolicy('hr_payroll_settings'),
+  ],
+)
+
+/**
+ * Professional tax slabs the institution enters for a state (P1-06a). The
+ * slab set in force for a month is the state's rows with the latest
+ * `effective_from` not after it.
+ */
+export const ptSlabs = pgTable(
+  'hr_pt_slabs',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    state: text().notNull(),
+    effectiveFrom: date('effective_from').notNull(),
+    fromPaise: paise('from_paise').notNull(),
+    toPaise: paise('to_paise'),
+    amountPaise: paise('amount_paise').notNull(),
+    februaryPaise: paise('february_paise'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hr_pt_slabs_once').on(t.institutionId, t.state, t.effectiveFrom, t.fromPaise),
+    check('hr_pt_slabs_state', sql`state ~ '^[A-Z]{2}$'`),
+    check('hr_pt_slabs_effective_from', sql`extract(day from effective_from) = 1`),
+    check('hr_pt_slabs_from', sql`from_paise >= 0`),
+    check('hr_pt_slabs_to', sql`to_paise is null or to_paise >= from_paise`),
+    check('hr_pt_slabs_amount', sql`amount_paise >= 0 and (february_paise is null or february_paise >= 0)`),
+    tenantPolicy('hr_pt_slabs'),
   ],
 )
 
