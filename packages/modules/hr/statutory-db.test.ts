@@ -1,9 +1,9 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { and, eq, like } from 'drizzle-orm'
-import { authDb, institutions, users, withTenant } from '@campusos/db'
+import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
 import { trialBalance, type Actor as Books } from '@campusos/module-finance/api'
-import { createStaff, createTaxRegime, electRegime, generatePayroll, setComponent, type Actor } from './api'
+import { HrError, createStaff, createTaxRegime, electRegime, generatePayroll, getStatutoryIdentity, listPtSlabs, listStaff, setComponent, setPayrollSettings, setPtSlabs, setStatutoryIdentity, type Actor } from './api'
 import { payComponents, payrollSettings, payslips, ptSlabs, staff } from './schema'
 
 /**
@@ -15,7 +15,7 @@ import { payComponents, payrollSettings, payslips, ptSlabs, staff } from './sche
 let n = 0
 const SLUG = 'hr-stat-'
 
-interface College { id: string; admin: Actor }
+interface College { id: string; admin: Actor; clerk: Actor }
 
 async function college(): Promise<College> {
   const tag = `${SLUG}${++n}`
@@ -25,9 +25,16 @@ async function college(): Promise<College> {
     .returning({ id: institutions.id })
   const people = await authDb
     .insert(users)
-    .values([{ email: `adm@${tag}.test`, institutionId: i!.id, role: 'institution_admin', name: 'Adm' }])
+    .values([
+      { email: `adm@${tag}.test`, institutionId: i!.id, role: 'institution_admin', name: 'Adm' },
+      { email: `clerk@${tag}.test`, institutionId: i!.id, role: 'accounts_staff', name: 'Clerk' },
+    ])
     .returning({ id: users.id })
-  return { id: i!.id, admin: { id: people[0]!.id, email: `adm@${tag}.test`, role: 'institution_admin', institutionId: i!.id } }
+  return {
+    id: i!.id,
+    admin: { id: people[0]!.id, email: `adm@${tag}.test`, role: 'institution_admin', institutionId: i!.id },
+    clerk: { id: people[1]!.id, email: `clerk@${tag}.test`, role: 'accounts_staff', institutionId: i!.id },
+  }
 }
 
 after(async () => {
@@ -174,4 +181,77 @@ test('a statutory payslip posts each head to its own payable', async () => {
   assert.equal(bal('2240'), tds)
   assert.equal(bal('2200'), 0)
   assert.equal(tb.differencePaise, 0)
+})
+
+// --- operations (Step 6)
+
+const code = (e: unknown) => (e as HrError).code
+
+test("an accounts clerk cannot read a person's PAN", async () => {
+  const c = await college()
+  const s = await hire(c)
+  await assert.rejects(() => getStatutoryIdentity(c.clerk, s.id), (e) => (e as HrError).status === 403)
+})
+
+test('a malformed PAN is refused with the fixed message', async () => {
+  const c = await college()
+  const s = await hire(c)
+  await assert.rejects(
+    () => setStatutoryIdentity(c.admin, { staffId: s.id, pan: 'ABCDE1234' }),
+    (e) => (e as Error).name === 'ZodError' && /a PAN is five letters, four digits and a letter/.test((e as Error).message),
+  )
+})
+
+test('setting statutory details audits field names, never values', async () => {
+  const c = await college()
+  const s = await hire(c)
+  const got = await setStatutoryIdentity(c.admin, { staffId: s.id, pan: 'abcde1234f', pfMember: true })
+  assert.equal(got.pan, 'ABCDE1234F')
+  const rows = await authDb
+    .select({ detail: auditLog.detail, reason: auditLog.reason })
+    .from(auditLog)
+    .where(and(eq(auditLog.institutionId, c.id), eq(auditLog.action, 'hr.statutory_identity_set')))
+  assert.equal(rows.length, 1)
+  assert.deepEqual(rows[0]!.detail, { changed: ['pan', 'pfMember'] })
+  assert.ok(!JSON.stringify(rows[0]).includes('ABCDE1234F'))
+  assert.equal((await getStatutoryIdentity(c.admin, s.id)).pan, 'ABCDE1234F')
+})
+
+test('overlapping PT slabs are refused', async () => {
+  const c = await college()
+  await assert.rejects(
+    () => setPtSlabs(c.admin, { state: 'KA', effectiveFrom: '2026-04', slabs: [{ from: '0', to: '25000', amount: '0' }, { from: '20000', amount: '200' }] }),
+    (e) => code(e) === 'slabs_overlap',
+  )
+  const ok = await setPtSlabs(c.admin, { state: 'KA', effectiveFrom: '2026-04', slabs: [{ from: '0', to: '24999', amount: '0' }, { from: '25000', amount: '200', february: '300' }] })
+  assert.equal(ok.length, 2)
+  assert.equal((await listPtSlabs(c.admin)).length, 2)
+})
+
+test('listStaff never returns a PAN', async () => {
+  const c = await college()
+  const s = await hire(c)
+  await setStatutoryIdentity(c.admin, { staffId: s.id, pan: 'ABCDE1234F' })
+  const rows = await listStaff(c.admin)
+  assert.ok(rows.length > 0)
+  for (const r of rows) assert.ok(!('pan' in r) && !('bankAccount' in r))
+})
+
+test('statutory settings are saved together and audited when they change', async () => {
+  const c = await college()
+  await setPayrollSettings(c.admin, { prorationBasis: 'calendar', statutoryFrom: '2026-03', pfRegistered: true })
+  const rows = await authDb
+    .select({ detail: auditLog.detail })
+    .from(auditLog)
+    .where(and(eq(auditLog.institutionId, c.id), eq(auditLog.action, 'hr.statutory_settings_set')))
+  assert.equal(rows.length, 1)
+  assert.deepEqual(rows[0]!.detail, {
+    from: { statutoryFrom: null, pfRegistered: false, esiRegistered: false },
+    to: { statutoryFrom: '2026-03-01', pfRegistered: true, esiRegistered: false },
+  })
+  await setPayrollSettings(c.admin, { prorationBasis: 'days_30', statutoryFrom: '2026-03', pfRegistered: true })
+  assert.equal(
+    (await authDb.select({ id: auditLog.id }).from(auditLog).where(and(eq(auditLog.institutionId, c.id), eq(auditLog.action, 'hr.statutory_settings_set')))).length,
+    1,
+  )
 })
