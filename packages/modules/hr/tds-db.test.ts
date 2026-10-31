@@ -2,8 +2,8 @@ import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { and, eq, like } from 'drizzle-orm'
 import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
-import { HrError, createStaff, createTaxRegime, getPayrollSettings, listTaxRegimes, setPayrollSettings, setPreviousEmployment, setTaxDeclarations, type Actor } from './api'
-import { taxDeclarations, taxPreviousEmployment, taxRegimes, taxSurcharges } from './schema'
+import { HrError, annualTax, createLeaveType, createStaff, createTaxRegime, decideEncashment, electRegime, generatePayroll, getPayrollSettings, listTaxRegimes, monthlyTax, requestEncashment, setComponent, setPayrollSettings, setPreviousEmployment, setStatutoryIdentity, setTaxDeclarations, type Actor } from './api'
+import { payslips, taxDeclarations, taxPreviousEmployment, taxRegimes, taxSurcharges } from './schema'
 
 /**
  * The TDS estimator (P1-06b): the tables, the operations, the run and the
@@ -203,4 +203,99 @@ test('previous employment is one row per year', async () => {
   assert.equal(rows.length, 1)
   assert.equal(rows[0]!.incomePaise, 32_000_000)
   assert.equal(rows[0]!.tdsPaise, 1_600_000)
+})
+
+// --- the estimator in the run (Step 4)
+
+const turnOn = (c: College, over: Record<string, unknown> = {}) =>
+  setPayrollSettings(c.admin, { prorationBasis: 'calendar', statutoryFrom: '2026-04', pfRegistered: true, esiRegistered: true, ...over })
+
+const pay = (c: College, staffId: string, code: string, kind: 'earning' | 'deduction', amount: string, wageClass: 'wage' | 'excluded' | 'outside' = 'wage', from = '2026-01-01') =>
+  setComponent(c.admin, { staffId, code, label: code, kind, amount, effectiveFrom: from, wageClass })
+
+const slipOf = (c: College, staffId: string, period: string) =>
+  withTenant(c.id, async (tx) => (await tx.select().from(payslips).where(and(eq(payslips.staffId, staffId), eq(payslips.period, period))))[0]!)
+
+const taxLine = (slip: { lines: unknown }) =>
+  (slip.lines as { code: string; appliedPaise: number }[]).find((l) => l.code === 'income_tax')?.appliedPaise ?? 0
+
+type Rec = { regimeCode: string; annualTaxPaise: number; noPan: boolean; oneOffPaise: number; oneOffTaxPaise: number; previousTdsPaise: number; deductionsPaise: number }
+const recOf = (slip: { tax: unknown }) => slip.tax as Rec
+
+/** Statutory pay on from April 2026, a person with a PAN unless told otherwise, NEW as the default regime. */
+async function taxed(opts: { pan?: boolean; statutoryFrom?: string } = {}) {
+  const c = await college()
+  const s = await hire(c)
+  const regime = await createTaxRegime(c.admin, NEW_REGIME)
+  await turnOn(c, { statutoryFrom: opts.statutoryFrom ?? '2026-04', defaultRegimeId: regime.id })
+  if (opts.pan !== false) await setStatutoryIdentity(c.admin, { staffId: s.id, pan: 'ABCDE1234F' })
+  await pay(c, s.id, 'basic', 'earning', '150000')
+  return { c, s, regime }
+}
+
+test('a person with no election is taxed under the default regime', async () => {
+  const { c, s } = await taxed()
+  await generatePayroll(c.admin, { period: '2026-04' })
+  const slip = await slipOf(c, s.id, '2026-04-01')
+  assert.equal(taxLine(slip), 1_256_700)
+  assert.equal(recOf(slip).annualTaxPaise, 15_080_000)
+  assert.equal(recOf(slip).regimeCode, 'NEW27')
+})
+
+test('no PAN is taxed at twenty per cent of income', async () => {
+  const { c, s } = await taxed({ pan: false })
+  await generatePayroll(c.admin, { period: '2026-04' })
+  const slip = await slipOf(c, s.id, '2026-04-01')
+  assert.equal(taxLine(slip), 2_875_000)
+  assert.equal(recOf(slip).noPan, true)
+})
+
+test('the year is trued up from what was actually paid', async () => {
+  const { c, s } = await taxed()
+  await generatePayroll(c.admin, { period: '2026-04' })
+  await generatePayroll(c.admin, { period: '2026-05' })
+  await pay(c, s.id, 'basic', 'earning', '200000', 'wage', '2026-06-01')
+  await generatePayroll(c.admin, { period: '2026-06' })
+  assert.equal(taxLine(await slipOf(c, s.id, '2026-06-01')), 2_413_700)
+})
+
+test('a leave encashment is taxed in the month it is paid', async () => {
+  const { c, s } = await taxed()
+  const el = await createLeaveType(c.admin, {
+    code: 'el', name: 'Earned leave', annualDays: 15, encashable: true, encashmentComponents: ['basic'],
+  })
+  const req = await requestEncashment(c.admin, {
+    staffId: s.id, leaveTypeId: el.id, year: 2026, days: 1, period: '2026-04', reason: 'one day sold back',
+  })
+  await decideEncashment(c.admin, { requestId: req.id, approve: true })
+  await generatePayroll(c.admin, { period: '2026-04' })
+  const slip = await slipOf(c, s.id, '2026-04-01')
+  const line = (slip.lines as { code: string; appliedPaise: number; taxable?: boolean }[]).find((l) => l.code.startsWith('leave_encashment:'))!
+  assert.equal(recOf(slip).oneOffPaise, line.appliedPaise)
+  assert.ok(recOf(slip).oneOffTaxPaise > 0)
+  assert.equal(line.taxable, true)
+})
+
+test('a month before statutory pay keeps the old method', async () => {
+  const { c, s, regime } = await taxed({ statutoryFrom: '2026-05' })
+  await electRegime(c.admin, { staffId: s.id, regimeId: regime.id, taxYear: 2026 })
+  await generatePayroll(c.admin, { period: '2026-04' })
+  const slip = await slipOf(c, s.id, '2026-04-01')
+  assert.equal(slip.tax, null)
+  const slabs = NEW_REGIME.slabs.map((x) => ({ fromPaise: Number(x.from) * 100, toPaise: x.to ? Number(x.to) * 100 : null, rateBp: x.rateBp }))
+  const expected = monthlyTax(annualTax(180_000_000, { standardDeductionPaise: 7_500_000, cessBp: 400, rebateUpToPaise: 120_000_000, slabs }), 0, 12)
+  assert.equal(expected, 1_256_700)
+  assert.equal(taxLine(slip), expected)
+})
+
+test('previous employment and declarations reach the estimate', async () => {
+  const { c, s } = await taxed()
+  const old = await createTaxRegime(c.admin, OLD_REGIME)
+  await electRegime(c.admin, { staffId: s.id, regimeId: old.id, taxYear: 2026 })
+  await setPreviousEmployment(c.admin, { staffId: s.id, taxYear: 2026, income: '300000', tds: '15000' })
+  await setTaxDeclarations(c.admin, { staffId: s.id, taxYear: 2026, rows: [{ head: '80c', declared: '100000' }] })
+  await generatePayroll(c.admin, { period: '2026-04' })
+  const slip = await slipOf(c, s.id, '2026-04-01')
+  assert.equal(recOf(slip).previousTdsPaise, 1_500_000)
+  assert.equal(recOf(slip).deductionsPaise, 10_000_000)
 })
