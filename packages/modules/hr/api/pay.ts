@@ -192,7 +192,7 @@ export async function payableComponents(
 
   const personal = (await tx.select().from(payComponents).where(eq(payComponents.staffId, staffId)))
     .filter((c) => inForce(c, period))
-    .map((c) => ({ code: c.code, label: c.label, kind: c.kind, amountPaise: c.amountPaise, taxable: true }))
+    .map((c) => ({ code: c.code, label: c.label, kind: c.kind, amountPaise: c.amountPaise, taxable: true, wageClass: c.wageClass }))
 
   const byCode = new Map<string, Component & { taxable: boolean }>()
   for (const c of fromStructure) byCode.set(c.code, c)
@@ -200,7 +200,7 @@ export async function payableComponents(
   const all = [...byCode.values()]
 
   return {
-    components: all.map((c) => ({ code: c.code, label: c.label, kind: c.kind, amountPaise: c.amountPaise })),
+    components: all.map((c) => ({ code: c.code, label: c.label, kind: c.kind, amountPaise: c.amountPaise, wageClass: c.wageClass })),
     taxablePaise: all.filter((c) => c.kind === 'earning' && c.taxable).reduce((n, c) => n + c.amountPaise, 0),
   }
 }
@@ -580,6 +580,16 @@ export async function listWithheld(actor: Actor) {
 export async function payrollBasis(tx: Tx): Promise<ProrationBasis> {
   const [row] = await tx.select({ basis: payrollSettings.prorationBasis }).from(payrollSettings)
   return (row?.basis as ProrationBasis | undefined) ?? 'calendar'
+}
+
+/** Whether statutory pay applies to a month: null when it is off for it (P1-06a). */
+export async function statutorySettings(
+  tx: Tx,
+  period: string,
+): Promise<{ pfRegistered: boolean; esiRegistered: boolean } | null> {
+  const [row] = await tx.select().from(payrollSettings)
+  if (!row || row.statutoryFrom === null || period < row.statutoryFrom) return null
+  return { pfRegistered: row.pfRegistered, esiRegistered: row.esiRegistered }
 }
 
 export async function getPayrollSettings(actor: Actor) {

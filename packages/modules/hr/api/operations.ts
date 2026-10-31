@@ -19,15 +19,18 @@ import {
   payrollArrears,
   payrollRuns,
   payslips,
+  ptSlabs,
   salaryPayments,
   staff,
 } from '../schema'
 import {
   basisDivisor,
   countedDays,
+  daysInMonth,
   payslipFor,
   type Component,
 } from './payroll'
+import { esiPeriodStart, statutoryFor, type PtSlab, type StatutoryResult } from './statutory'
 import {
   cancelLeaveSchema,
   createLeaveTypeSchema,
@@ -49,7 +52,7 @@ import { balancesFor } from './balances'
 import { assertBalance, encashmentsDue } from './leave'
 import { shiftAllowances } from './shifts'
 import { advanceDeductions, recordPayrollRecoveries } from './expenses'
-import { isWithheld, payableComponents, payrollBasis, taxDeduction } from './pay'
+import { isWithheld, payableComponents, payrollBasis, statutorySettings, taxDeduction } from './pay'
 import { leaveEncashments } from '../schema'
 import { checkOtherPerson } from '@campusos/module-finance/api'
 
@@ -424,6 +427,20 @@ export async function lockPayrollPeriod(tx: Tx, institutionId: string, period: s
   await tx.execute(sql`select pg_advisory_xact_lock(1213354066, hashtext(${`${institutionId}:${period}`}::text))`)
 }
 
+/** Deduction codes that statutory pay computes itself (D13): a manual one beside them would deduct twice. */
+const STATUTORY_CODES = new Set(['pf', 'epf', 'provident_fund', 'esi', 'pt', 'professional_tax', 'pf_employee', 'esi_employee'])
+
+/** The slab set in force for a month: the state's rows with the latest effective_from not after it. */
+function slabsInForce(rows: (typeof ptSlabs.$inferSelect)[], state: string | null, period: string): PtSlab[] {
+  if (!state) return []
+  const mine = rows.filter((r) => r.state === state && r.effectiveFrom <= period)
+  const latest = mine.reduce((m, r) => (r.effectiveFrom > m ? r.effectiveFrom : m), '')
+  return mine
+    .filter((r) => r.effectiveFrom === latest)
+    .sort((a, b) => a.fromPaise - b.fromPaise)
+    .map((r) => ({ fromPaise: r.fromPaise, toPaise: r.toPaise, amountPaise: r.amountPaise, februaryPaise: r.februaryPaise }))
+}
+
 /** The innermost message along an error's causes, for a run's report. */
 function reasonOf(e: unknown): string {
   let message = 'unknown error'
@@ -497,6 +514,8 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
       })
       .returning({ id: payrollRuns.id })
 
+    const stat = await statutorySettings(tx, period)
+    const slabRows = stat ? await tx.select().from(ptSlabs) : []
     const basis = await payrollBasis(tx)
     const divisor = basisDivisor(basis, period)
     const monthDays = countedDays(period, monthEnd, basis)
@@ -552,20 +571,58 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
             label: `Leave encashment, ${e.days} days`,
             kind: 'earning',
             amountPaise: e.amountPaise,
+            wageClass: 'outside',
           }))
           // Shift allowances ride alongside, for the days actually worked on a shift.
-          extras.push(...(await shiftAllowances(sp, person, period)))
+          extras.push(...(await shiftAllowances(sp, person, period)).map((x) => ({ ...x, wageClass: 'wage' as const })))
 
           // Advances come back out of what is left after everything else: the room
           // is worked out first so a recovery never pushes the payslip below zero.
-          const before = payslipFor(inForceComponents, { ...days, extras })
+          const pre = payslipFor(inForceComponents, { ...days, extras })
+          let s: StatutoryResult | null = null
+          if (stat) {
+            const manual = payable.components.find((c) => c.kind === 'deduction' && STATUTORY_CODES.has(c.code.toLowerCase()))
+            if (manual) {
+              throw new HrError(409, 'manual_statutory', `remove the manual ${manual.code} deduction: statutory pay computes it`)
+            }
+            // ECR counts calendar days whatever the proration basis (D15).
+            const calEmployed = countedDays(from, to, 'calendar')
+            const calUnpaid = unpaid.reduce(
+              (n, l) => n + countedDays(l.fromOn > from ? l.fromOn : from, l.toOn < to ? l.toOn : to, 'calendar'),
+              0,
+            )
+            const paidDays = Math.max(0, calEmployed - calUnpaid)
+            const prior = await sp.execute<{ v: string | null }>(sql`select statutory->>'esiCovered' as v from hr_payslips
+              where staff_id = ${person.id} and period >= ${esiPeriodStart(period)}::date and period < ${period}::date and statutory is not null
+              order by period asc limit 1`)
+            const v = prior.rows[0]?.v
+            const wageClassOf = new Map(payable.components.map((c) => [c.code, c.wageClass ?? 'wage']))
+            s = statutoryFor({
+              period,
+              earnings: pre.lines
+                .filter((l) => l.kind === 'earning')
+                .map((l) => ({ appliedPaise: l.appliedPaise, wageClass: l.wageClass ?? wageClassOf.get(l.code) ?? 'wage' })),
+              paidDays,
+              ncpDays: daysInMonth(new Date(`${period}T00:00:00Z`)) - paidDays,
+              pfRegistered: stat.pfRegistered,
+              esiRegistered: stat.esiRegistered,
+              person: {
+                pfMember: person.pfMember, pfOnActual: person.pfOnActual, epsExcluded: person.epsExcluded,
+                esiExempt: person.esiExempt, workState: person.workState,
+              },
+              esiCoveredThisPeriod: v === 'true' ? true : v === 'false' ? false : null,
+              ptSlabs: slabsInForce(slabRows, person.workState, period),
+            })
+          }
+          const fixed: Component[] = s ? s.deductions : []
+          const before = s ? payslipFor([...fixed, ...inForceComponents], { ...days, extras }) : pre
           const recoveries = await advanceDeductions(
             sp,
             person.id,
             before.grossPaise - before.deductionsPaise,
           )
           const slip = recoveries.length
-            ? payslipFor([...inForceComponents, ...recoveries], { ...days, extras })
+            ? payslipFor([...fixed, ...inForceComponents, ...recoveries], { ...days, extras })
             : before
 
           const [row] = await sp
@@ -580,6 +637,8 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
               unpaidLeaveDays: slip.unpaidLeaveDays,
               lossOfPayPaise: slip.lossOfPayPaise,
               lines: slip.lines,
+              statutory: s?.record ?? null,
+              employerCostPaise: s?.employerCostPaise ?? 0,
               runId: run!.id,
               withheld: await isWithheld(sp, person.id, period),
               generatedBy: actor.id,

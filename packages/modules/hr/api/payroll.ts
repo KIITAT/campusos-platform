@@ -236,6 +236,7 @@ export interface StructureLine {
   percentBp: number | null
   of: string | null
   taxable: boolean
+  wageClass?: WageClass
 }
 
 /**
@@ -273,6 +274,7 @@ export function structureAmounts(
     kind: l.kind,
     amountPaise: done.get(l.code)!,
     taxable: l.taxable,
+    ...(l.wageClass ? { wageClass: l.wageClass } : {}),
   }))
 }
 
