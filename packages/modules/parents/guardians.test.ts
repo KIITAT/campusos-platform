@@ -23,6 +23,7 @@ import { borrowerStatus } from '@campusos/module-library/api'
 import { matchRoute } from '@campusos/module-framework'
 import {
   ParentError,
+  childConsents,
   childOverview,
   childrenOf,
   claimLink,
@@ -30,9 +31,12 @@ import {
   inviteGuardian,
   listGuardianInvites,
   myChildren,
+  myGuardians,
+  recordChildConsent,
   withdrawGuardian,
   type Actor,
 } from './api'
+import { pages } from './pages'
 import { routes } from './routes'
 import { guardianInvites, links } from './schema'
 
@@ -55,6 +59,7 @@ let termId = ''
 const admin = (): Actor => ({ id: ids.adm, email: 'adm@guardian-college.test', role: 'institution_admin', institutionId: inst })
 const guardianActor = (id: string): Actor => ({ id, email: null, role: 'parent', institutionId: inst })
 const code = (e: unknown) => (e as ParentError).code
+const status = (e: unknown) => (e as ParentError).status
 
 /** What the host does at sign-in: a new account row, then bind it by invitation. */
 async function signUp(email: string) {
@@ -354,5 +359,46 @@ test('a renewal is audited', async () => {
     tx.select().from(auditLog).where(and(eq(auditLog.action, 'parents.link_adult_kept'), eq(auditLog.entityId, linkId), gte(auditLog.at, since))),
   )
   assert.equal(rows.length, 1)
+  await setAge(ids.s1, null)
+})
+
+test('a guardian gives and refuses consent for their child, through the route a parent can call', async () => {
+  const { parent } = await verifiedParent()
+  await setAge(ids.s1, 15)
+  // The dispatcher gives a parent no viewerOf: the route must work without it.
+  const route = routes.find((r) => r.method === 'POST' && r.path === '/consents')!
+  const post = (decision: string) =>
+    route.handler(parent, new Request('http://x/consents', { method: 'POST', body: JSON.stringify({ studentId: ids.s1, purpose: 'apaar', decision }) }))
+  await post('given')
+  const read = async () => (await childConsents(parent, ids.s1)).find((c) => c.purpose === 'apaar')!
+  assert.equal((await read()).decision, 'given')
+  assert.equal((await read()).basis, 'guardian')
+  await post('refused')
+  assert.equal((await read()).decision, 'refused')
+  await setAge(ids.s1, null)
+})
+
+test('a guardian cannot record for a child that is not theirs, or whose access lapsed', async () => {
+  const { parent } = await verifiedParent()
+  const input = { studentId: ids.s2, purpose: 'apaar', decision: 'given' }
+  await assert.rejects(recordChildConsent(parent, input), (e) => code(e) === 'not_your_child')
+  await assert.rejects(childConsents(parent, ids.s2), (e) => code(e) === 'not_your_child')
+  await setAge(ids.s1, 19)
+  await assert.rejects(recordChildConsent(parent, { ...input, studentId: ids.s1 }), (e) => code(e) === 'not_your_child')
+  await setAge(ids.s1, null)
+  await assert.rejects(recordChildConsent(studentActor(ids.s1), { ...input, studentId: ids.s1 }), (e) => status(e) === 403)
+})
+
+test('a student sees who has access and keeps or ends it from a page', async () => {
+  const { linkId } = await verifiedParent()
+  await setAge(ids.s1, 19)
+  const mine = await myGuardians(studentActor(ids.s1))
+  const row = mine.find((m) => m.linkId === linkId)!
+  assert.equal(row.lapsed, true)
+  const page = pages.find((p) => p.roles?.includes('student'))!
+  const data = (await page.load!(studentActor(ids.s1), new Request('http://x/'))) as Record<string, unknown>
+  assert.ok(JSON.stringify(data).includes(linkId))
+  await confirmAsAdult(studentActor(ids.s1), { linkId, keep: true })
+  assert.equal((await myGuardians(studentActor(ids.s1))).find((m) => m.linkId === linkId)!.lapsed, false)
   await setAge(ids.s1, null)
 })
