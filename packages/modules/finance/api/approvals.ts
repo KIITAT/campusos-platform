@@ -20,6 +20,7 @@ import { approvalViewOfInvoice } from './invoices'
 import { approvalViewOfJournal } from './journals'
 import { approvalViewOfPayment } from './payments'
 import { APPROVABLE, decide, fingerprint, mayApprove, ruleFor } from './setup'
+import { countsAsApproval, creatorOf, singleOfficerHere } from './sod'
 import { approvalViewOfOrder } from './trade'
 
 /**
@@ -32,28 +33,32 @@ import { approvalViewOfOrder } from './trade'
 
 type Approvable = (typeof APPROVABLE)[number]
 
-async function viewOf(tx: Tx, docType: Approvable, docId: string): Promise<{ view: unknown; amountPaise: number; draft: boolean }> {
+async function viewOf(tx: Tx, docType: Approvable, docId: string, lock = false): Promise<{ view: unknown; amountPaise: number; draft: boolean }> {
   switch (docType) {
     case 'purchase_order': {
-      const [o] = await tx.select().from(orders).where(eq(orders.id, docId))
+      const q = tx.select().from(orders).where(eq(orders.id, docId))
+      const [o] = lock ? await q.for('update') : await q
       if (!o || o.kind !== 'purchase_order') break
       const ls = await tx.select().from(orderLines).where(eq(orderLines.orderId, docId))
       return { view: approvalViewOfOrder(o, ls), amountPaise: o.totalPaise, draft: o.docstatus === 'draft' }
     }
     case 'purchase_invoice': {
-      const [i] = await tx.select().from(invoices).where(eq(invoices.id, docId))
+      const q = tx.select().from(invoices).where(eq(invoices.id, docId))
+      const [i] = lock ? await q.for('update') : await q
       if (!i || i.kind !== 'purchase') break
       const ls = await tx.select().from(invoiceLines).where(eq(invoiceLines.invoiceId, docId))
       return { view: approvalViewOfInvoice(i, ls.sort((a, b) => a.seq - b.seq)), amountPaise: i.totalPaise, draft: i.docstatus === 'draft' }
     }
     case 'payment_pay': {
-      const [p] = await tx.select().from(payments).where(eq(payments.id, docId))
+      const q = tx.select().from(payments).where(eq(payments.id, docId))
+      const [p] = lock ? await q.for('update') : await q
       if (!p || p.kind !== 'pay') break
       const allocs = await tx.select().from(paymentAllocations).where(eq(paymentAllocations.paymentId, docId))
       return { view: approvalViewOfPayment(p, allocs), amountPaise: p.amountPaise, draft: p.docstatus === 'draft' }
     }
     case 'journal': {
-      const [j] = await tx.select().from(journals).where(eq(journals.id, docId))
+      const q = tx.select().from(journals).where(eq(journals.id, docId))
+      const [j] = lock ? await q.for('update') : await q
       if (!j) break
       const ls = await tx.select().from(journalLines).where(eq(journalLines.journalId, docId))
       const sorted = ls.sort((a, b) => a.seq - b.seq)
@@ -62,7 +67,8 @@ async function viewOf(tx: Tx, docType: Approvable, docId: string): Promise<{ vie
       return { view: approvalViewOfJournal(j, sorted), amountPaise: Math.max(debit, credit), draft: j.docstatus === 'draft' }
     }
     case 'material_request': {
-      const [r] = await tx.select().from(materialRequests).where(eq(materialRequests.id, docId))
+      const q = tx.select().from(materialRequests).where(eq(materialRequests.id, docId))
+      const [r] = lock ? await q.for('update') : await q
       if (!r) break
       const ls = await tx.select().from(materialRequestLines).where(eq(materialRequestLines.requestId, docId))
       // Weighed as the request is submitted: by its items' standard rates.
@@ -95,7 +101,7 @@ export async function decideApproval(actor: Actor, input: unknown) {
   const data = decideSchema.parse(input)
   return withTenant(tenant, (tx) =>
     named(async () => {
-      const { view, amountPaise, draft } = await viewOf(tx, data.docType, data.docId)
+      const { view, amountPaise, draft } = await viewOf(tx, data.docType, data.docId, true)
       if (!draft) throw new FinanceError(409, 'not_a_draft', 'only a draft is approved')
       await decide(tx, tenant, actor, data.docType, data.docId, view, amountPaise, data.decision, data.note)
       return { notice: data.decision === 'approved' ? 'Approved.' : 'Refused.' }
@@ -148,17 +154,21 @@ export async function pendingApprovals(actor: Actor) {
       createdAt: Date
       href: string
     }[] = []
+    const solo = await singleOfficerHere(tx)
     for (const d of drafts) {
+      // A reader who made the draft cannot approve it, so is not asked (P0-07).
+      const creator = await creatorOf(tx, d.docType, d.id)
+      if (!solo && creator === actor.id) continue
       const { view, amountPaise } = await viewOf(tx, d.docType, d.id)
       const rule = await ruleFor(tx, d.docType, amountPaise)
       if (!rule || !(await mayApprove(tx, actor, rule.approver))) continue
       const [last] = await tx
-        .select({ decision: approvals.decision })
+        .select({ decision: approvals.decision, decidedBy: approvals.decidedBy })
         .from(approvals)
         .where(and(eq(approvals.docType, d.docType), eq(approvals.docId, d.id), eq(approvals.fingerprint, fingerprint(view))))
         .orderBy(desc(approvals.createdAt))
         .limit(1)
-      if (last?.decision === 'approved') continue
+      if (last?.decision === 'approved' && countsAsApproval(last.decidedBy, creator, solo)) continue
       out.push({
         docType: d.docType,
         docId: d.id,

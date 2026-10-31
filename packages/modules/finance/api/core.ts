@@ -146,6 +146,8 @@ export async function requireCapability(
  */
 const REFUSALS: Record<string, [400 | 403 | 404 | 409, string]> = {
   finance_period_closed: [409, 'that accounting period is closed'],
+  finance_sod_approver_is_creator: [403, 'you made this document, so someone else must approve it'],
+  finance_sod_submitter_is_creator: [403, 'you made this document, so someone else must submit it'],
   finance_fiscal_year_closed: [409, 'that fiscal year is closed'],
   finance_lines_with_entry: [409, 'a line is written with its entry'],
   finance_lines_group_account: [400, 'a group of accounts takes no postings; choose one of its accounts'],

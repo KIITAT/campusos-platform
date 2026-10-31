@@ -14,6 +14,7 @@ import {
   createItem,
   createParty,
   createStockEntry,
+  setSingleOfficer,
   invoiceDetail,
   listInvoices,
   loadIndiaPreset,
@@ -64,7 +65,9 @@ async function books(): Promise<Books> {
     ])
     .returning({ id: users.id })
   const who = (at: number, role: Role): Actor => ({ id: people[at]!.id, email: `${role}@${tag}.test`, role, institutionId: id })
-  return { id, admin: who(0, 'institution_admin'), staff: who(1, 'accounts_staff'), faculty: who(2, 'faculty') }
+  const b = { id, admin: who(0, 'institution_admin'), staff: who(1, 'accounts_staff'), faculty: who(2, 'faculty') }
+  await setSingleOfficer(b.admin, { enabled: true, reason: 'test fixture: one officer' })
+  return b
 }
 
 after(async () => {

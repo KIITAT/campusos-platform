@@ -8,6 +8,7 @@ import { parseDecimal, toBase } from './numbers'
 import { accountFor, postWithin, reverseWithin } from './operations'
 import { unapplyAdvances } from './parties'
 import { approvalsFor, assertApproved, minorUnitsOf, nextNumber } from './setup'
+import { checkOtherPerson } from './sod'
 import { localToday, settingsWithin } from './years'
 
 /**
@@ -181,6 +182,11 @@ async function submitJournalWithin(tx: Tx, actor: Actor, journalId: string) {
   const [j] = await tx.select().from(journals).where(eq(journals.id, journalId)).for('update')
   if (!j) throw new FinanceError(404, 'no_such_journal', 'no such journal voucher')
   if (j.docstatus !== 'draft') throw new FinanceError(409, 'not_a_draft', 'that voucher is not a draft')
+  if (j.kind !== 'opening') {
+    if ((await checkOtherPerson(tx, actor, tenant, { creatorId: j.createdBy, act: 'submit', moduleId: 'finance', entity: 'finance_journals', entityId: journalId, docType: 'journal' })) === 'refused') {
+      throw new FinanceError(403, 'separation_of_duties', 'you made this document, so someone else must submit it')
+    }
+  }
   const ls = await tx.select().from(journalLines).where(eq(journalLines.journalId, journalId)).orderBy(asc(journalLines.seq))
   const debit = ls.reduce((n, l) => n + l.debitPaise, 0)
   const credit = ls.reduce((n, l) => n + l.creditPaise, 0)

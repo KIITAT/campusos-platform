@@ -51,7 +51,7 @@ BEGIN
   IF OLD.docstatus = 'draft' AND NEW.docstatus = 'submitted'
      AND NEW.created_by IS NOT NULL AND NEW.submitted_by = NEW.created_by THEN
     applies := CASE TG_TABLE_NAME
-      WHEN 'finance_invoices' THEN NEW.kind = 'purchase' AND coalesce(NEW.source_module, '') <> 'finance-recurring'
+      WHEN 'finance_invoices' THEN NEW.kind = 'purchase' AND coalesce(to_jsonb(NEW)->>'source_module', '') <> 'finance-recurring'
       WHEN 'finance_payments' THEN NEW.kind = 'pay'
       WHEN 'finance_journals' THEN NEW.kind <> 'opening'
       ELSE false END;

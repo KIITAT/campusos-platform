@@ -26,6 +26,7 @@ import {
 import { parseDecimal } from './numbers'
 import { fiscalShort, settingsWithin } from './years'
 import { treeOrder } from './operations'
+import { checkOtherPerson, countsAsApproval, creatorOf, singleOfficerHere, singleOfficerOn } from './sod'
 
 /**
  * The lists the books are kept against: cost centres, funds, currencies and
@@ -459,7 +460,10 @@ export async function assertApproved(tx: Tx, docType: string, docId: string, doc
     .where(and(eq(approvals.docType, docType), eq(approvals.docId, docId), eq(approvals.fingerprint, print)))
     .orderBy(desc(approvals.createdAt))
     .limit(1)
-  if (!last || last.decision !== 'approved') {
+  // An approval its own creator gave before single-officer mode was off counts for nothing (P0-07, D13).
+  const solo = await singleOfficerHere(tx)
+  const creator = await creatorOf(tx, docType, docId)
+  if (!last || last.decision !== 'approved' || !countsAsApproval(last.decidedBy, creator, solo)) {
     throw new FinanceError(409, 'needs_approval', `this needs approval by ${rule.approver.replaceAll('_', ' ')} first`, {
       approver: rule.approver,
     })
@@ -482,6 +486,23 @@ export async function decide(
   if (!rule) throw new FinanceError(409, 'no_approval_needed', 'this does not need an approval')
   if (!(await mayApprove(tx, actor, rule.approver))) {
     throw new FinanceError(403, 'forbidden', `approval is for ${rule.approver.replaceAll('_', ' ')}`)
+  }
+  if (decision === 'approved') {
+    const solo = await singleOfficerOn(tx, institutionId)
+    const creator = await creatorOf(tx, docType, docId)
+    const given = await tx
+      .select({ decidedBy: approvals.decidedBy })
+      .from(approvals)
+      .where(and(eq(approvals.docType, docType), eq(approvals.docId, docId), eq(approvals.fingerprint, fingerprint(doc)), eq(approvals.decision, 'approved')))
+    if (given.some((a) => countsAsApproval(a.decidedBy, creator, solo))) {
+      throw new FinanceError(409, 'already_approved', 'this is already approved as it stands')
+    }
+    const verdict = await checkOtherPerson(tx, actor, institutionId, {
+      creatorId: creator, act: 'approve', moduleId: 'finance', entity: docType, entityId: docId, docType,
+    })
+    if (verdict === 'refused') {
+      throw new FinanceError(403, 'separation_of_duties', 'you made this document, so someone else must approve it')
+    }
   }
   await named(() =>
     tx.insert(approvals).values({

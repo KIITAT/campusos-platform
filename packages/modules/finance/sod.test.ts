@@ -216,7 +216,7 @@ test('two approvers at once give one approval', async () => {
   const b = await books()
   await setApprovalRule(b.admin, { docType: 'journal', minAmount: '1', approver: 'institution_admin' })
   const j = await draftJournal(b.clerk, b)
-  const { Client } = createRequire(new URL('../../db/package.json', import.meta.url))('pg') as typeof import('pg')
+  const { Client } = createRequire(new URL('../../db/package.json', import.meta.url))('pg') as { Client: new (o: { connectionString?: string }) => { connect(): Promise<void>; query(q: string, v?: unknown[]): Promise<unknown>; end(): Promise<void> } }
   const owner = new Client({ connectionString: process.env.MIGRATION_DATABASE_URL })
   await owner.connect()
   try {

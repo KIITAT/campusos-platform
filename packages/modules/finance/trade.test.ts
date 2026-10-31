@@ -51,6 +51,7 @@ import {
   saveOrder,
   savePayment,
   setApprovalRule,
+  setSingleOfficer,
   stockBalance,
   submitAsset,
   submitOrder,
@@ -98,7 +99,9 @@ async function books(): Promise<Books> {
     ])
     .returning({ id: users.id })
   const who = (at: number, role: Role): Actor => ({ id: people[at]!.id, email: `${at}@${tag}.test`, role, institutionId: id })
-  return { id, admin: who(0, 'institution_admin'), staff: who(1, 'accounts_staff'), faculty: who(2, 'faculty'), keeper: who(3, 'faculty') }
+  const b = { id, admin: who(0, 'institution_admin'), staff: who(1, 'accounts_staff'), faculty: who(2, 'faculty'), keeper: who(3, 'faculty') }
+  await setSingleOfficer(b.admin, { enabled: true, reason: 'test fixture: one officer' })
+  return b
 }
 
 after(async () => {

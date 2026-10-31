@@ -43,6 +43,7 @@ import {
   type Moved,
 } from './stock'
 import { computeTaxes, isIntraState, tdsFor, templatesWithin } from './tax'
+import { checkOtherPerson } from './sod'
 import { fiscalYearOf, localToday, settingsWithin } from './years'
 
 /**
@@ -630,6 +631,11 @@ export async function submitWithin(tx: Tx, actor: Actor, invoiceId: string, over
   const [draftRow] = await tx.select().from(invoices).where(eq(invoices.id, invoiceId)).for('update')
   if (!draftRow) throw new FinanceError(404, 'no_such_invoice', 'no such invoice')
   if (draftRow.docstatus !== 'draft') throw new FinanceError(409, 'not_a_draft', 'that invoice is not a draft')
+  if (draftRow.kind === 'purchase' && draftRow.sourceModule !== 'finance-recurring') {
+    if ((await checkOtherPerson(tx, actor, tenant, { creatorId: draftRow.createdBy, act: 'submit', moduleId: 'finance', entity: 'finance_invoices', entityId: invoiceId, docType: 'purchase_invoice' })) === 'refused') {
+      throw new FinanceError(403, 'separation_of_duties', 'you made this document, so someone else must submit it')
+    }
+  }
 
   // Worked out again, as of now: a rate, a threshold or a template may have
   // changed since the draft was saved.

@@ -18,6 +18,7 @@ import { parseDecimal, toBase } from './numbers'
 import { accountFor, postWithin, reverseWithin } from './operations'
 import { partyWithin, unapplyAdvances } from './parties'
 import { approvalsFor, assertApproved, minorUnitsOf, nextNumber, rateOn } from './setup'
+import { checkOtherPerson } from './sod'
 import { localToday, settingsWithin } from './years'
 
 /**
@@ -263,6 +264,11 @@ async function submitPaymentWithin(tx: Tx, actor: Actor, paymentId: string) {
   const [p] = await tx.select().from(payments).where(eq(payments.id, paymentId)).for('update')
   if (!p) throw new FinanceError(404, 'no_such_payment', 'no such payment')
   if (p.docstatus !== 'draft') throw new FinanceError(409, 'not_a_draft', 'that payment is not a draft')
+  if (p.kind === 'pay') {
+    if ((await checkOtherPerson(tx, actor, tenant, { creatorId: p.createdBy, act: 'submit', moduleId: 'finance', entity: 'finance_payments', entityId: paymentId, docType: 'payment_pay' })) === 'refused') {
+      throw new FinanceError(403, 'separation_of_duties', 'you made this document, so someone else must submit it')
+    }
+  }
   const allocs = await tx.select().from(paymentAllocations).where(eq(paymentAllocations.paymentId, paymentId))
   if (p.kind === 'pay') {
     await assertApproved(tx, 'payment_pay', paymentId, approvalViewOfPayment(p, allocs), p.amountPaise)
