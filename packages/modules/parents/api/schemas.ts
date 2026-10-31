@@ -20,6 +20,10 @@ export const decideLinkSchema = z
   })
   .meta({ id: 'ParentLinkDecide' })
 
+export const confirmAdultSchema = z
+  .object({ linkId: uuid, keep: z.preprocess(ticked, z.boolean()) })
+  .meta({ id: 'ParentLinkAdult' })
+
 // --- reads -----------------------------------------------------------------
 
 export const linkRowSchema = z

@@ -3,6 +3,7 @@ import { manifest } from '../manifest'
 import {
   childOverviewSchema,
   claimLinkSchema,
+  confirmAdultSchema,
   decideLinkSchema,
   inviteGuardianSchema,
   linkRowSchema,
@@ -62,6 +63,19 @@ export const paths = {
       tags: ['parents'],
       requestBody: { content: json(decideLinkSchema) },
       responses: { '204': { description: 'Revoked' }, ...gated },
+    },
+  },
+  [`${base}/links/adult`]: {
+    post: {
+      summary: 'A student aged 18 or over keeps or ends a guardian’s access. Audited.',
+      tags: ['parents'],
+      requestBody: { content: json(confirmAdultSchema) },
+      responses: {
+        '200': { description: 'Recorded' },
+        ...gated,
+        '404': { description: 'Not the student’s link', content: json(err) },
+        '409': { description: 'The student is not yet 18', content: json(err) },
+      },
     },
   },
   [`${base}/guardians`]: {

@@ -2,6 +2,7 @@ import { flag, jsonBody, requiredParam, type PluginRoute } from '@campusos/modul
 import {
   childOverview,
   claimLink,
+  confirmAsAdult,
   decideLink,
   inviteGuardian,
   listGuardianInvites,
@@ -34,6 +35,12 @@ export const routes: PluginRoute[] = [
     handler: async (actor, req) => {
       await revokeLink(actor as Actor, await jsonBody(req))
     },
+  },
+
+  {
+    method: 'POST',
+    path: '/links/adult',
+    handler: async (actor, req) => confirmAsAdult(actor as Actor, await jsonBody(req)),
   },
 
   { method: 'GET', path: '/guardians', handler: (actor) => listGuardianInvites(actor as Actor) },

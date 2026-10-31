@@ -20,13 +20,15 @@ export const pages: PluginPage[] = [
     async load(actor, req) {
       const a = actor as Actor
       const claims = await myChildren(a)
-      const verified = claims.filter((c) => c.verifiedAt)
+      const verified = claims.filter((c) => c.verifiedAt && !c.lapsed)
+      const lapsed = claims.filter((c) => c.lapsed)
       const wanted = param(req, 'studentId')
       const chosen = verified.find((c) => c.studentId === wanted) ?? verified[0]
       const child = chosen ? await childOverview(a, chosen.studentId) : null
 
       return {
-        waiting: claims.length > 0 && verified.length === 0,
+        waiting: claims.length > 0 && verified.length === 0 && lapsed.length === 0,
+        lapsed: lapsed.map((c) => c.studentName ?? c.studentEmail ?? c.studentId),
         refused: claims.find((c) => c.refusedReason)?.refusedReason ?? null,
         children: verified.map((c) => ({
           label: c.studentName ?? c.studentEmail ?? c.studentId,
@@ -47,6 +49,15 @@ export const pages: PluginPage[] = [
     },
     sections: (data) => [
       { kind: 'links', title: 'Child', links: data.children as never },
+      ...(((data.lapsed as string[]) ?? []).length > 0
+        ? [
+            {
+              kind: 'note' as const,
+              tone: 'warn' as const,
+              text: `Your access ended when this student turned 18: ${(data.lapsed as string[]).join(', ')}. They can renew it from their own account.`,
+            },
+          ]
+        : []),
       ...(data.waiting
         ? [
             {

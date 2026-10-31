@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, inArray, isNull, isNotNull, sql } from 'drizzle-orm'
 import {
   addressStatus,
+  ageStatus,
   audit,
   institutions,
   invitations,
@@ -27,6 +28,7 @@ import { listStructure } from '@campusos/module-academic/api'
 import { guardianInvites, links } from '../schema'
 import {
   claimLinkSchema,
+  confirmAdultSchema,
   decideLinkSchema,
   inviteGuardianSchema,
   withdrawGuardianSchema,
@@ -226,7 +228,11 @@ export async function listLinks(actor: Actor, pendingOnly = false): Promise<Link
   })
 }
 
-/** The students this parent has been verified for. The whole authorisation. */
+/**
+ * The students this parent has been verified for. The whole authorisation.
+ * A verified link to a student aged 18 or over lapses until the student keeps
+ * it; an unknown date of birth does not lapse it (decision D3).
+ */
 export async function childrenOf(actor: Actor): Promise<string[]> {
   const tenant = tenantOf(actor)
   return withTenant(tenant, async (tx) => {
@@ -234,7 +240,13 @@ export async function childrenOf(actor: Actor): Promise<string[]> {
     const rows = await tx
       .select({ studentId: links.studentId })
       .from(links)
-      .where(and(eq(links.parentId, actor.id), isNotNull(links.verifiedAt)))
+      .where(
+        and(
+          eq(links.parentId, actor.id),
+          isNotNull(links.verifiedAt),
+          sql`(public.campusos_age_status(${links.studentId}) <> 'adult' or ${links.adultConfirmedAt} is not null)`,
+        ),
+      )
     return rows.map((r) => r.studentId)
   })
 }
@@ -248,11 +260,47 @@ export async function myChildren(actor: Actor) {
         ...linkColumns,
         studentName: sql<string | null>`(select name from users where users.id = parent_links.student_id)`,
         studentEmail: sql<string | null>`(select email from users where users.id = parent_links.student_id)`,
+        lapsed: sql<boolean>`(parent_links.verified_at is not null and parent_links.adult_confirmed_at is null and public.campusos_age_status(parent_links.student_id) = 'adult')`,
       })
       .from(links)
       .where(eq(links.parentId, actor.id))
       .orderBy(asc(links.createdAt))
     return rows.map((r) => ({ ...r, verifiedAt: r.verifiedAt?.toISOString() ?? null }))
+  })
+}
+
+/**
+ * The student, once 18 or over, keeps or ends each guardian's access. Audited
+ * either way: it decides who sees an adult's record.
+ */
+export async function confirmAsAdult(actor: Actor, input: unknown) {
+  const tenant = tenantOf(actor)
+  const d = confirmAdultSchema.parse(input)
+  if (actor.role !== 'student') throw new ParentError(403, 'forbidden', 'not permitted')
+
+  return withTenant(tenant, async (tx) => {
+    if ((await ageStatus(tx, actor.id)) !== 'adult') {
+      throw new ParentError(409, 'not_adult', 'only a student aged 18 or over decides this')
+    }
+    const [row] = await tx
+      .select()
+      .from(links)
+      .where(and(eq(links.id, d.linkId), eq(links.studentId, actor.id), isNotNull(links.verifiedAt)))
+      .for('no key update')
+    if (!row) throw new ParentError(404, 'no_such_link', 'no such link')
+    await tx.update(links).set({ adultConfirmedAt: d.keep ? new Date() : null }).where(eq(links.id, row.id))
+    await audit(tx, {
+      institutionId: tenant,
+      actorId: actor.id,
+      actorEmail: actor.email ?? null,
+      moduleId: MODULE,
+      action: d.keep ? 'parents.link_adult_kept' : 'parents.link_adult_stopped',
+      entity: 'parent_links',
+      entityId: row.id,
+      reason: d.keep ? 'the student, now an adult, kept the guardian’s access' : 'the student, now an adult, ended the guardian’s access',
+      detail: { parentId: row.parentId, studentId: row.studentId },
+    })
+    return { notice: d.keep ? 'Access kept.' : 'Access ended.' }
   })
 }
 

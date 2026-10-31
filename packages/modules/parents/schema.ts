@@ -47,6 +47,11 @@ export const links = pgTable(
     verifiedBy: text('verified_by').references(() => users.id, { onDelete: 'set null' }),
     /** Why it was refused, when it was. Kept so the parent can be told. */
     refusedReason: text('refused_reason'),
+    /**
+     * Set by the student once 18 or over to keep the guardian's access; until
+     * then a verified link to an adult has lapsed (P1-08b, `childrenOf`).
+     */
+    adultConfirmedAt: timestamp('adult_confirmed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

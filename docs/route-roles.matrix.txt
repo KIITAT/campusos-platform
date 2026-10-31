@@ -653,6 +653,7 @@ GET /api/v1/modules/parents/links                                        SI.....
 POST /api/v1/modules/parents/links                                       SI......p. gate
 POST /api/v1/modules/parents/links/decide                                SI........ op
 POST /api/v1/modules/parents/links/revoke                                SI........ op
+POST /api/v1/modules/parents/links/adult                                 .......s.. gate
 GET /api/v1/modules/parents/guardians                                    SI........ op
 POST /api/v1/modules/parents/guardians/invite                            SI........ op
 POST /api/v1/modules/parents/guardians/withdraw                          SI........ op

@@ -25,6 +25,8 @@ import {
   ParentError,
   childOverview,
   childrenOf,
+  claimLink,
+  confirmAsAdult,
   inviteGuardian,
   listGuardianInvites,
   myChildren,
@@ -287,4 +289,70 @@ test('a guardian of one institution is not a guardian of another', async () => {
   await assert.rejects(childOverview(elsewhere, ids.s3), (e) => code(e) === 'not_your_child')
   const seen = await withTenant(other, (tx) => tx.select().from(invitations))
   assert.equal(seen.length, 0, 'invitations are tenant-scoped')
+})
+
+// --- a guardian's access at 18 (AUD-04) ------------------------------------
+
+const studentActor = (id: string): Actor => ({ id, email: null, role: 'student', institutionId: inst })
+
+/** The student's age in whole years, in India; null clears the date. */
+const setAge = (id: string, years: number | null) =>
+  withTenant(inst, (tx) =>
+    tx.execute(
+      years === null
+        ? sql`update users set date_of_birth = null where id = ${id}`
+        : sql`update users set date_of_birth = ((now() at time zone 'Asia/Kolkata')::date - make_interval(years => ${years}))::date where id = ${id}`,
+    ),
+  )
+
+/** A parent the office has verified for s1. */
+async function verifiedParent(): Promise<{ parent: Actor; linkId: string }> {
+  const [p] = await authDb
+    .insert(users)
+    .values({ email: `p-${crypto.randomUUID()}@family.test`, institutionId: inst, role: 'parent', name: 'Parent' })
+    .returning({ id: users.id })
+  const link = await claimLink(admin(), { studentId: ids.s1, parentId: p!.id, relation: 'mother' })
+  return { parent: guardianActor(p!.id), linkId: link.id }
+}
+
+test('a guardian link lapses at 18 unless the student keeps it', async () => {
+  const { parent, linkId } = await verifiedParent()
+  for (const years of [null, 17]) {
+    await setAge(ids.s1, years)
+    assert.deepEqual(await childrenOf(parent), [ids.s1], `age ${years} keeps access`)
+  }
+
+  await setAge(ids.s1, 18)
+  assert.deepEqual(await childrenOf(parent), [])
+  await assert.rejects(childOverview(parent, ids.s1), (e) => code(e) === 'not_your_child')
+  assert.equal((await myChildren(parent))[0]!.lapsed, true)
+
+  await confirmAsAdult(studentActor(ids.s1), { linkId, keep: true })
+  assert.deepEqual(await childrenOf(parent), [ids.s1])
+  assert.equal((await myChildren(parent))[0]!.lapsed, false)
+
+  await confirmAsAdult(studentActor(ids.s1), { linkId, keep: false })
+  assert.deepEqual(await childrenOf(parent), [])
+  await setAge(ids.s1, null)
+})
+
+test('only an adult student renews, and only their own links', async () => {
+  const { linkId } = await verifiedParent()
+  await setAge(ids.s1, 16)
+  await assert.rejects(confirmAsAdult(studentActor(ids.s1), { linkId, keep: true }), (e) => code(e) === 'not_adult')
+  await setAge(ids.s2, 19)
+  await assert.rejects(confirmAsAdult(studentActor(ids.s2), { linkId, keep: true }), (e) => code(e) === 'no_such_link')
+  await setAge(ids.s1, null)
+  await setAge(ids.s2, null)
+})
+
+test('a renewal is audited', async () => {
+  const { linkId } = await verifiedParent()
+  await setAge(ids.s1, 19)
+  await confirmAsAdult(studentActor(ids.s1), { linkId, keep: true })
+  const rows = await withTenant(inst, (tx) =>
+    tx.select().from(auditLog).where(and(eq(auditLog.action, 'parents.link_adult_kept'), eq(auditLog.entityId, linkId), gte(auditLog.at, since))),
+  )
+  assert.equal(rows.length, 1)
+  await setAge(ids.s1, null)
 })
