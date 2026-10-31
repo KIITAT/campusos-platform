@@ -92,7 +92,7 @@ const field = (v: string | null) => (v === null ? '~' : `${Buffer.byteLength(v, 
 export const genesis = (chain: string) => sha256(Buffer.from(`campusos-audit-genesis:${chain}`, 'utf8'))
 
 /** A row as the verifier reads it: every value as text, as the hash sees it. */
-type ChainRow = {
+export type ChainRow = {
   seq: string
   prev_hash: Buffer
   hash: Buffer
@@ -133,6 +133,23 @@ const tenantBatch = (institutionId: string, after: number) =>
       from audit_chain c left join audit_log a on a.id = c.audit_id
      where c.institution_id = ${institutionId} and c.seq > ${after}
      order by c.seq limit ${BATCH}`)
+
+/**
+ * The sensitive-read chains (P1-08c), one per institution, named `reads:<id>`.
+ * Their column mapping into the hash is the one the insert trigger uses (core
+ * 0015). They are not in `chainHeads`, so no anchor carries them yet: P1-08d
+ * must checkpoint them before it purges them, or this verifier reports
+ * `missing`.
+ */
+const readsBatch = (institutionId: string, after: number) =>
+  authDb.execute<ChainRow>(sql`
+    select r.seq::text as seq, r.prev_hash, r.hash, r.id::text as id,
+           to_char(r.at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as at_text,
+           r.institution_id::text as institution_id, r.reader_id as actor_id, r.module_id, r.kind as action,
+           r.entity, r.entity_id, r.subject_id as actor_email, r.purpose as reason, null::text as detail, r.salt
+      from sensitive_reads r
+     where r.institution_id = ${institutionId} and r.seq > ${after}
+     order by r.seq limit ${BATCH}`)
 
 const platformBatch = (after: number) =>
   authDb.execute<ChainRow>(sql`
@@ -237,7 +254,7 @@ export async function verifyChains(opts: VerifyOptions = {}): Promise<VerifyRepo
   const problems: ChainProblem[] = []
   const all = !opts.institutionId && !opts.platform
   const inScope = (chain: string) =>
-    all || (opts.platform && chain === 'platform') || (!!opts.institutionId && chain === `tenant:${opts.institutionId}`)
+    all || (opts.platform && chain === 'platform') || (!!opts.institutionId && (chain === `tenant:${opts.institutionId}` || chain === `reads:${opts.institutionId}`))
 
   // Anchors first: a corrupt one is reported and then ignored.
   const anchors: AnchorDocument[] = []
@@ -289,13 +306,18 @@ export async function verifyChains(opts: VerifyOptions = {}): Promise<VerifyRepo
 
   // Which chains to walk: those in the database, and any an anchor names.
   const names = new Set<string>()
-  if (opts.institutionId) names.add(`tenant:${opts.institutionId}`)
+  if (opts.institutionId) {
+    names.add(`tenant:${opts.institutionId}`)
+    names.add(`reads:${opts.institutionId}`)
+  }
   if (opts.platform || all) names.add('platform')
   if (all) {
     const t = await authDb.execute<{ id: string }>(sql`
       select distinct institution_id::text as id from audit_chain
       union select distinct institution_id::text from audit_log`)
     for (const r of t.rows) names.add(`tenant:${r.id}`)
+    const reads = await authDb.execute<{ id: string }>(sql`select distinct institution_id::text as id from sensitive_reads`)
+    for (const r of reads.rows) names.add(`reads:${r.id}`)
   }
   for (const chain of anchored.keys()) names.add(chain)
 
@@ -313,15 +335,13 @@ export async function verifyChains(opts: VerifyOptions = {}): Promise<VerifyRepo
 
   const chains: VerifyReport['chains'] = []
   for (const name of [...names].sort()) {
-    const id = name === 'platform' ? 'platform' : name.slice('tenant:'.length)
     const wanted = new Set((anchored.get(name) ?? []).map((a) => a.seq))
-    const walked = await walk(
-      name,
-      id,
-      name === 'platform' ? platformBatch : (after) => tenantBatch(id, after),
-      wanted,
-      problems,
-    )
+    const walked =
+      name.startsWith('reads:')
+        ? await walk(name, name, (after) => readsBatch(name.slice('reads:'.length), after), wanted, problems)
+        : name === 'platform'
+          ? await walk(name, 'platform', platformBatch, wanted, problems)
+          : await walk(name, name.slice('tenant:'.length), (after) => tenantBatch(name.slice('tenant:'.length), after), wanted, problems)
     chains.push({ chain: name, rows: walked.rows, head: walked.head })
 
     for (const a of anchored.get(name) ?? []) {

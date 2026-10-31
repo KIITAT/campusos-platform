@@ -75,6 +75,9 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   background_jobs: 'exclude',
   // The salt is the chain's, not the person's (P0-02).
   audit_log: { omit: ['salt'] },
+  // Who opened this person's records (P1-08c); the chain columns are not theirs.
+  sensitive_reads: { omit: ['salt', 'prev_hash', 'hash'] },
+  privacy_officers: 'export',
   installed_plugins: { only: ['module_id', 'version', 'installed_at'] },
   // The subject's own recorded choices (P1-08b).
   guardian_consents: 'export',
@@ -276,6 +279,7 @@ export function exportableRow(table: string, row: Record<string, unknown>): Reco
  * texts, so a receipt can say what was kept and on what footing.
  */
 export function retentionBasis(table: string): string {
+  if (table === 'sensitive_reads') return 'the record of who opened sensitive records, kept as evidence of access'
   if (table === 'audit_log') return 'the audit trail, kept under the law that requires it (decision 181)'
   if (table === 'guardian_consents') return 'consent records are evidence the institution must produce (DPDP Act s.6(10))'
   if (table.startsWith('fee_') || table.startsWith('finance_')) {
