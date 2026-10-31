@@ -133,7 +133,7 @@ export const windows = pgTable(
     index('feedback_windows_term').on(t.termId),
     check('feedback_windows_title', sql`length(trim(title)) > 0`),
     check('feedback_windows_span', sql`closes_at > opens_at`),
-    check('feedback_windows_min', sql`min_responses between 1 and 50`),
+    check('feedback_windows_min', sql`min_responses between 3 and 50`),
     tenantPolicy('feedback_windows'),
   ],
 )

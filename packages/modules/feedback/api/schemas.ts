@@ -72,7 +72,7 @@ export const createWindowSchema = z
     closesAt: moment,
     timeZone: z.string().trim().min(1).max(64).default('Asia/Kolkata'),
     required: bool.default(true),
-    minResponses: z.coerce.number().int().min(1).max(50).default(5),
+    minResponses: z.coerce.number().int().min(3).max(50).default(5),
   })
   .meta({ id: 'FeedbackWindowCreate' })
 

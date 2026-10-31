@@ -410,6 +410,8 @@ export type Aggregate = {
   prompt: string
   kind: 'scale' | 'choice' | 'text'
   answered: number
+  /** Fewer answers than the window's threshold: nothing about it is shown. */
+  withheld: boolean
   mean: number | null
   /** Scale: how many gave each point, 1 first. Choice: per option. */
   spread: { label: string; count: number }[]
@@ -441,6 +443,10 @@ async function aggregate(tx: Tx, w: Window, offeringId: string | null | undefine
   const out: Aggregate[] = qs.map((q: Question) => {
     const mine = raw.filter((a) => a.question_id === q.id)
     const scores = mine.map((a) => a.score).filter((s): s is number => s !== null)
+    // An optional question can have far fewer answers than the class has responses.
+    if (mine.length < w.minResponses) {
+      return { questionId: q.id, position: q.position, section: q.section, prompt: q.prompt, kind: q.kind, answered: mine.length, withheld: true, mean: null, spread: [], comments: [] }
+    }
     return {
       questionId: q.id,
       position: q.position,
@@ -448,6 +454,7 @@ async function aggregate(tx: Tx, w: Window, offeringId: string | null | undefine
       prompt: q.prompt,
       kind: q.kind,
       answered: mine.length,
+      withheld: false,
       mean: q.kind === 'scale' && scores.length ? round2(scores.reduce((a, b) => a + b, 0) / scores.length) : null,
       spread:
         q.kind === 'scale'
@@ -459,7 +466,8 @@ async function aggregate(tx: Tx, w: Window, offeringId: string | null | undefine
       comments: q.kind === 'text' ? mine.map((a) => a.comment!).sort((a, b) => a.localeCompare(b)) : [],
     }
   })
-  const all = raw.map((a) => a.score).filter((s): s is number => s !== null)
+  const open = new Set(out.filter((q) => !q.withheld).map((q) => q.questionId))
+  const all = raw.filter((a) => open.has(a.question_id)).map((a) => a.score).filter((s): s is number => s !== null)
   return {
     responses: count,
     shown: true,

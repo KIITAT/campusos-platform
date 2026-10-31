@@ -59,6 +59,8 @@ const NEW_FILES = new Set([
   'academic/0010_apaar_and_consent.sql',
   'parents/0003_adult_confirmation.sql',
   'care/0002_minor_basis.sql',
+  'care/0003_counsellor_confirmation.sql',
+  'feedback/0001_response_floor.sql',
 ])
 const NEW_CORE_FROM = 5
 
