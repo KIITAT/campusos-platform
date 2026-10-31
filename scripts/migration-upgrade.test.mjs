@@ -63,6 +63,7 @@ const NEW_FILES = new Set([
   'feedback/0001_response_floor.sql',
   'finance/0012_payroll_payables.sql',
   'hr/0014_statutory_pay.sql',
+  'hr/0015_tds_estimator.sql',
 ])
 const NEW_CORE_FROM = 5
 

@@ -269,6 +269,8 @@ export const payslips = pgTable(
     /** What statutory pay worked out (P1-06a); null when it was off. */
     statutory: jsonb(),
     employerCostPaise: paise('employer_cost_paise').notNull().default(0),
+    /** What the TDS estimator worked out (P1-06b); null when it did not run. */
+    tax: jsonb(),
     /** The run that produced it. Null for payslips older than runs. */
     runId: uuid('run_id').references(() => payrollRuns.id, { onDelete: 'set null' }),
     /** Held back from the payment run; still a cost of its month. */
@@ -1623,10 +1625,17 @@ export const taxRegimes = pgTable(
     cessBp: smallint('cess_bp').notNull().default(0),
     /** Taxable income at or under this pays nothing (a full rebate). Null: no such rule. */
     rebateUpToPaise: paise('rebate_up_to_paise'),
+    /** The most the rebate takes off the tax (P1-06b). Null: all of it. */
+    rebateMaxPaise: paise('rebate_max_paise'),
+    /** Above the rebate threshold, tax is at most the income over it (P1-06b). */
+    rebateMarginalRelief: boolean('rebate_marginal_relief').notNull().default(false),
+    /** Chapter VI-A, HRA and professional tax count (the old regime) (P1-06b). */
+    allowsDeductions: boolean('allows_deductions').notNull().default(false),
     createdAt: createdAt(),
   },
   (t) => [
     uniqueIndex('hr_tax_regimes_code').on(t.institutionId, t.code),
+    check('hr_tax_regimes_rebate_max', sql`rebate_max_paise is null or rebate_max_paise >= 0`),
     check('hr_tax_regimes_month', sql`year_starts_month between 1 and 12`),
     check('hr_tax_regimes_cess', sql`cess_bp between 0 and 5000`),
     check('hr_tax_regimes_deduction', sql`standard_deduction_paise >= 0`),
@@ -1824,6 +1833,8 @@ export const payrollSettings = pgTable(
     statutoryFrom: date('statutory_from'),
     pfRegistered: boolean('pf_registered').notNull().default(false),
     esiRegistered: boolean('esi_registered').notNull().default(false),
+    /** The regime for anybody who has not chosen one (P1-06b). */
+    defaultRegimeId: uuid('default_regime_id').references(() => taxRegimes.id, { onDelete: 'set null' }),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   () => [
@@ -1859,6 +1870,77 @@ export const ptSlabs = pgTable(
     check('hr_pt_slabs_to', sql`to_paise is null or to_paise >= from_paise`),
     check('hr_pt_slabs_amount', sql`amount_paise >= 0 and (february_paise is null or february_paise >= 0)`),
     tenantPolicy('hr_pt_slabs'),
+  ],
+)
+
+// --- the TDS estimator (P1-06b) ----------------------------------------------
+
+export const taxHeadEnum = pgEnum('hr_tax_head', ['80c', '80ccd_1b', '80d', '24b', 'other', 'rent'])
+
+/** Surcharge bands of a regime: income above `above_paise` pays `rate_bp` on the tax. */
+export const taxSurcharges = pgTable(
+  'hr_tax_surcharges',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    regimeId: uuid('regime_id')
+      .notNull()
+      .references(() => taxRegimes.id, { onDelete: 'cascade' }),
+    abovePaise: paise('above_paise').notNull(),
+    rateBp: smallint('rate_bp').notNull(),
+  },
+  (t) => [
+    uniqueIndex('hr_tax_surcharges_once').on(t.regimeId, t.abovePaise),
+    check('hr_tax_surcharges_above', sql`above_paise > 0`),
+    check('hr_tax_surcharges_rate', sql`rate_bp between 0 and 10000`),
+    tenantPolicy('hr_tax_surcharges'),
+  ],
+)
+
+/** What a person declares for a tax year (Form 12BB), and what they proved. */
+export const taxDeclarations = pgTable(
+  'hr_tax_declarations',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    staffId: uuid('staff_id')
+      .notNull()
+      .references(() => staff.id, { onDelete: 'cascade' }),
+    taxYear: smallint('tax_year').notNull(),
+    head: taxHeadEnum().notNull(),
+    declaredPaise: paise('declared_paise').notNull(),
+    provedPaise: paise('proved_paise'),
+    /** Rent only: the city counts as a metro for HRA. */
+    metro: boolean().notNull().default(false),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('hr_tax_declarations_once').on(t.staffId, t.taxYear, t.head),
+    check('hr_tax_declarations_year', sql`tax_year between 2000 and 2100`),
+    check('hr_tax_declarations_amounts', sql`declared_paise >= 0 and (proved_paise is null or proved_paise >= 0)`),
+    tenantPolicy('hr_tax_declarations'),
+  ],
+)
+
+/** Salary and tax from an earlier employer in the same tax year (Form 12B). */
+export const taxPreviousEmployment = pgTable(
+  'hr_tax_previous_employment',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    staffId: uuid('staff_id')
+      .notNull()
+      .references(() => staff.id, { onDelete: 'cascade' }),
+    taxYear: smallint('tax_year').notNull(),
+    incomePaise: paise('income_paise').notNull(),
+    tdsPaise: paise('tds_paise').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('hr_tax_previous_once').on(t.staffId, t.taxYear),
+    check('hr_tax_previous_year', sql`tax_year between 2000 and 2100`),
+    check('hr_tax_previous_amounts', sql`income_paise >= 0 and tds_paise >= 0`),
+    tenantPolicy('hr_tax_previous_employment'),
   ],
 )
 
