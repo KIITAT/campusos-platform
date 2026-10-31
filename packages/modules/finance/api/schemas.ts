@@ -45,6 +45,10 @@ export const accountPurposes = [
   'purchase_expense',
   'bank_charges',
   'other_income',
+  'pf_payable',
+  'esi_payable',
+  'pt_payable',
+  'salary_tds_payable',
 ] as const
 
 export type AccountPurpose = (typeof accountPurposes)[number]
