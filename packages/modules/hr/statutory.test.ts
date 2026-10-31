@@ -83,7 +83,7 @@ test('E3: a new period decides again', () => {
 test('F: low daily wage, employer pays ESI alone', () => {
   const r = run([e(500_000)])
   assert.deepEqual(amounts(r), { pf_employee: 60_000 })
-  assert.deepEqual(r.record.employer, { epsPaise: 41_700, epfPaise: 18_300, edliPaise: 2_500, pfAdminPaise: 2_500, esiPaise: 1_700 })
+  assert.deepEqual(r.record.employer, { epsPaise: 41_700, epfPaise: 18_300, edliPaise: 2_500, pfAdminPaise: 2_500, esiPaise: 16_300 })
 })
 
 test('G: loss of pay, calendar NCP days', () => {

@@ -10,11 +10,15 @@
  * that change every February is a specialist problem and a support burden.
  */
 
+import type { WageClass } from './statutory'
+
 export interface Component {
   code: string
   label: string
   kind: 'earning' | 'deduction'
   amountPaise: number
+  /** How an earning counts toward the statutory bases (P1-06a). */
+  wageClass?: WageClass
 }
 
 export interface PayslipLine extends Component {
