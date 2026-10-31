@@ -41,7 +41,7 @@
     "@campusos/module-skills": "workspace:*",
     "@campusos/module-timetable": "workspace:*",
     "@campusos/module-transport": "workspace:*",
-    "@types/node": "^24.10.1",
+    "@types/node": "^26.6.5",
     "tsx": "^4.23.12"
   }
 }
