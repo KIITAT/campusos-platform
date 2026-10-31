@@ -332,3 +332,18 @@ export const staff = pgTable(
   ],
 )
 
+
+/** Whether one person may do both halves of a duty (ACC-01). One row per institution; no row means no. */
+export const sodSettings = pgTable(
+  'finance_sod_settings',
+  {
+    institutionId: uuid('institution_id')
+      .primaryKey()
+      .references(() => institutions.id, { onDelete: 'cascade' }),
+    singleOfficer: boolean('single_officer').notNull().default(false),
+    /** A user id kept as text with no foreign key: the audit row is the record of who. */
+    changedBy: text('changed_by'),
+    changedAt: timestamp('changed_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  () => [tenantPolicy('finance_sod_settings')],
+)
