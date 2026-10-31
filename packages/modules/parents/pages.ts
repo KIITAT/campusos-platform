@@ -1,15 +1,19 @@
 import { formatPaise } from '@campusos/money'
 import { flag, param, type PluginPage } from '@campusos/module-framework'
 import {
+  childConsents,
   childOverview,
   listGuardianInvites,
   listLinks,
   myChildren,
+  myGuardians,
   studentChoices,
   type Actor,
 } from './api'
 
 const ADMIN = ['institution_admin', 'super_admin'] as const
+
+const PURPOSE_LABEL: Record<string, string> = { privacy_notice: 'Privacy notice', care_self_checks: 'Counselling self-checks', apaar: 'APAAR ID' }
 
 export const pages: PluginPage[] = [
   {
@@ -25,6 +29,8 @@ export const pages: PluginPage[] = [
       const wanted = param(req, 'studentId')
       const chosen = verified.find((c) => c.studentId === wanted) ?? verified[0]
       const child = chosen ? await childOverview(a, chosen.studentId) : null
+      // A choice is the guardian's for a student under 18; for an adult the link has lapsed and no row is read.
+      const consents = chosen ? await childConsents(a, chosen.studentId).catch(() => []) : []
 
       return {
         waiting: claims.length > 0 && verified.length === 0 && lapsed.length === 0,
@@ -34,6 +40,13 @@ export const pages: PluginPage[] = [
           label: c.studentName ?? c.studentEmail ?? c.studentId,
           href: `/m/parents?studentId=${c.studentId}`,
           active: c.studentId === chosen?.studentId,
+        })),
+        studentId: chosen?.studentId ?? null,
+        consentRows: consents.map((c) => ({
+          purpose: PURPOSE_LABEL[c.purpose] ?? c.purpose,
+          decision: c.decision,
+          basis: c.basis ? c.basis.replace(/_/g, ' ') : '',
+          on: c.recordedAt ? c.recordedAt.toISOString().slice(0, 10) : '',
         })),
         name: child?.studentName ?? null,
         sections: child?.sections ?? [],
@@ -171,6 +184,50 @@ export const pages: PluginPage[] = [
             },
           ]
         : []),
+      ...(data.studentId
+        ? [
+            {
+              kind: 'table' as const,
+              title: 'Choices you have made for this child',
+              rows: 'consentRows',
+              empty: 'Nothing asked yet.',
+              columns: [
+                { key: 'purpose', label: 'For' },
+                { key: 'decision', label: 'Decision' },
+                { key: 'basis', label: 'Recorded as' },
+                { key: 'on', label: 'On' },
+              ],
+            },
+            {
+              kind: 'form' as const,
+              title: 'Give, refuse or withdraw a consent',
+              note: 'A refusal of the APAAR ID removes any ID already saved. You can change your mind later.',
+              submit: 'Record',
+              path: '/consents',
+              fields: [
+                { name: 'studentId', label: '', kind: 'hidden' as const, value: String(data.studentId) },
+                {
+                  name: 'purpose',
+                  label: 'For',
+                  kind: 'radio' as const,
+                  value: 'apaar',
+                  options: Object.entries(PURPOSE_LABEL).map(([value, label]) => ({ value, label })),
+                },
+                {
+                  name: 'decision',
+                  label: 'Decision',
+                  kind: 'radio' as const,
+                  value: 'given',
+                  options: [
+                    { value: 'given', label: 'Give' },
+                    { value: 'refused', label: 'Refuse' },
+                    { value: 'withdrawn', label: 'Withdraw' },
+                  ],
+                },
+              ],
+            },
+          ]
+        : []),
       {
         kind: 'form',
         title: 'Add a child',
@@ -184,6 +241,65 @@ export const pages: PluginPage[] = [
           { name: 'relation', label: 'Relation', hint: 'e.g. father, mother, guardian' },
         ],
       },
+    ],
+  },
+
+  {
+    path: '/access',
+    title: 'Who can see my record',
+    menu: 'Guardian access',
+    roles: ['student'],
+    async load(actor) {
+      const rows = await myGuardians(actor as Actor)
+      return {
+        rows: rows.map((r) => ({
+          linkId: r.linkId,
+          who: r.parentName ?? r.parentEmail ?? r.linkId,
+          relation: r.relation,
+          state: r.lapsed ? 'ended at 18 until you renew it' : r.kept ? 'kept by you' : 'active',
+        })),
+        decidable: rows.filter((r) => r.adult).map((r) => ({ value: r.linkId, label: `${r.parentName ?? r.parentEmail ?? r.linkId} (${r.relation})` })),
+      }
+    },
+    sections: (data) => [
+      {
+        kind: 'note' as const,
+        text: 'When you turn 18 a parent or guardian can see your record only if you say so. Keep or end each one here.',
+      },
+      {
+        kind: 'table' as const,
+        title: 'Guardians linked to you',
+        rows: 'rows',
+        empty: 'No guardian is linked to you.',
+        columns: [
+          { key: 'who', label: 'Guardian' },
+          { key: 'relation', label: 'Relation' },
+          { key: 'state', label: 'Access' },
+        ],
+      },
+      ...(((data.decidable as unknown[]) ?? []).length > 0
+        ? [
+            {
+              kind: 'form' as const,
+              title: 'Keep or end a guardian’s access',
+              submit: 'Save',
+              path: '/links/adult',
+              fields: [
+                { name: 'linkId', label: 'Guardian', kind: 'select' as const, options: 'decidable' },
+                {
+                  name: 'keep',
+                  label: 'Access',
+                  kind: 'radio' as const,
+                  value: 'true',
+                  options: [
+                    { value: 'true', label: 'Keep' },
+                    { value: 'false', label: 'End' },
+                  ],
+                },
+              ],
+            },
+          ]
+        : []),
     ],
   },
 

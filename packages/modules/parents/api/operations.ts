@@ -24,10 +24,11 @@ import { transcript } from '@campusos/module-examinations/api'
 import { studentLedger } from '@campusos/module-fees/api'
 import { borrowerStatus } from '@campusos/module-library/api'
 import { myHostel } from '@campusos/module-hostel/api'
-import { listStructure } from '@campusos/module-academic/api'
+import { listStructure, recordStudentConsent, studentConsents } from '@campusos/module-academic/api'
 import { guardianInvites, links } from '../schema'
 import {
   claimLinkSchema,
+  childConsentSchema,
   confirmAdultSchema,
   decideLinkSchema,
   inviteGuardianSchema,
@@ -301,6 +302,49 @@ export async function confirmAsAdult(actor: Actor, input: unknown) {
       detail: { parentId: row.parentId, studentId: row.studentId },
     })
     return { notice: d.keep ? 'Access kept.' : 'Access ended.' }
+  })
+}
+
+/**
+ * A guardian's choice for a child under 18. The dispatcher gives a parent no
+ * `viewerOf`, so the link is checked here, with `childrenOf` (which also drops
+ * a lapsed link), and academic is called with the one child cleared.
+ */
+export async function recordChildConsent(actor: Actor, input: unknown) {
+  const d = childConsentSchema.parse(input)
+  if (actor.role !== 'parent') throw new ParentError(403, 'forbidden', 'not permitted')
+  if (!(await childrenOf(actor)).includes(d.studentId)) {
+    throw new ParentError(403, 'not_your_child', 'that student is not linked to you')
+  }
+  return recordStudentConsent({ ...actor, viewerOf: [d.studentId] }, d)
+}
+
+/** The choices recorded for one of the guardian's children. */
+export async function childConsents(actor: Actor, studentId: string) {
+  if (!isAdmin(actor.role) && !(await childrenOf(actor)).includes(studentId)) {
+    throw new ParentError(403, 'not_your_child', 'that student is not linked to you')
+  }
+  return studentConsents({ ...actor, viewerOf: [studentId] }, studentId)
+}
+
+/** Who has a guardian's access to this student: the student's own list, to keep or end. */
+export async function myGuardians(actor: Actor) {
+  const tenant = tenantOf(actor)
+  if (actor.role !== 'student') throw new ParentError(403, 'forbidden', 'not permitted')
+  return withTenant(tenant, async (tx) => {
+    const rows = await tx
+      .select({
+        linkId: links.id,
+        relation: links.relation,
+        parentName: sql<string | null>`(select name from users where users.id = parent_links.parent_id)`,
+        parentEmail: sql<string | null>`(select email from users where users.id = parent_links.parent_id)`,
+        kept: sql<boolean>`(parent_links.adult_confirmed_at is not null)`,
+        adult: sql<boolean>`(public.campusos_age_status(parent_links.student_id) = 'adult')`,
+      })
+      .from(links)
+      .where(and(eq(links.studentId, actor.id), isNotNull(links.verifiedAt)))
+      .orderBy(asc(links.createdAt))
+    return rows.map((r) => ({ ...r, lapsed: r.adult && !r.kept }))
   })
 }
 

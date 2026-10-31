@@ -2,6 +2,7 @@ import { flag, jsonBody, requiredParam, type PluginRoute } from '@campusos/modul
 import {
   childOverview,
   claimLink,
+  recordChildConsent,
   confirmAsAdult,
   decideLink,
   inviteGuardian,
@@ -37,6 +38,11 @@ export const routes: PluginRoute[] = [
     },
   },
 
+  {
+    method: 'POST',
+    path: '/consents',
+    handler: async (actor, req) => recordChildConsent(actor as Actor, await jsonBody(req)),
+  },
   {
     method: 'POST',
     path: '/links/adult',

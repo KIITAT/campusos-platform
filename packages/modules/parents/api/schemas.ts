@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { CONSENT_PURPOSES } from '@campusos/db'
 import { ticked } from '@campusos/module-framework'
 
 const uuid = z.uuid()
@@ -23,6 +24,14 @@ export const decideLinkSchema = z
 export const confirmAdultSchema = z
   .object({ linkId: uuid, keep: z.preprocess(ticked, z.boolean()) })
   .meta({ id: 'ParentLinkAdult' })
+
+export const childConsentSchema = z
+  .object({
+    studentId: z.string().min(1),
+    purpose: z.enum(CONSENT_PURPOSES),
+    decision: z.enum(['given', 'refused', 'withdrawn']),
+  })
+  .meta({ id: 'ParentChildConsent' })
 
 // --- reads -----------------------------------------------------------------
 
