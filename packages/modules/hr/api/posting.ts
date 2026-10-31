@@ -1,5 +1,6 @@
 import { postWithin } from '@campusos/module-finance/api'
 import { withTenant } from '@campusos/db'
+import type { PayslipStatutory } from './statutory'
 
 /**
  * Everything payroll says to the books, in one file.
@@ -27,10 +28,8 @@ type Tx = Parameters<Parameters<typeof withTenant>[1]>[0]
  * of its own, each is traceable to the document the employee was handed, and a
  * correction to one person's pay reverses one entry instead of the month.
  *
- * Employer contributions are not posted, because HR does not model them -- pay
- * components belong to the employee. The account exists in the chart for when
- * that changes; inventing the data model here would be guessing at somebody
- * else's statutory arithmetic.
+ * Employer contributions (PF, EPS, EDLI, PF admin, ESI) are a cost of the month
+ * and owed to their fund, from the month statutory pay is switched on.
  */
 export async function postPayslip(
   tx: Tx,
@@ -47,11 +46,28 @@ export async function postPayslip(
     netPaise: number
     /** The part of the deductions that is an advance coming back, not a withholding. */
     advanceRecoveryPaise?: number
+    lines: { code: string; kind: string; appliedPaise: number }[]
+    /** Null when statutory pay was off for the month. */
+    employer: PayslipStatutory['employer'] | null
   },
 ): Promise<void> {
   if (slip.grossPaise === 0) return
   const recovered = slip.advanceRecoveryPaise ?? 0
-  const withheld = slip.deductionsPaise - recovered
+
+  // Each statutory head is owed to somebody of its own and is remitted on its own (ACC-24).
+  const HEADS = { pf_employee: 'pf_payable', esi_employee: 'esi_payable', professional_tax: 'pt_payable', income_tax: 'salary_tds_payable' } as const
+  const head = { pf_payable: 0, esi_payable: 0, pt_payable: 0, salary_tds_payable: 0 }
+  for (const l of slip.lines) {
+    if (l.kind === 'deduction' && l.code in HEADS) head[HEADS[l.code as keyof typeof HEADS]] += l.appliedPaise
+  }
+  const withheld = slip.deductionsPaise - recovered - Object.values(head).reduce((n, v) => n + v, 0)
+  // Employer contributions are owed on top of the employee's share.
+  const e = slip.employer
+  const employerCost = e ? e.epsPaise + e.epfPaise + e.edliPaise + e.pfAdminPaise + e.esiPaise : 0
+  if (e) {
+    head.pf_payable += e.epsPaise + e.epfPaise + e.edliPaise + e.pfAdminPaise
+    head.esi_payable += e.esiPaise
+  }
 
   const costCenter = slip.department ?? null
 
@@ -66,6 +82,10 @@ export async function postPayslip(
     sourceRef: `payslip:${slip.id}`,
     lines: [
       { purpose: 'salaries_expense', debitPaise: slip.grossPaise, costCenter },
+      ...(employerCost > 0 ? [{ purpose: 'employer_cost', debitPaise: employerCost, costCenter }] : []),
+      ...(['pf_payable', 'esi_payable', 'pt_payable', 'salary_tds_payable'] as const)
+        .filter((p) => head[p] > 0)
+        .map((p) => ({ purpose: p, creditPaise: head[p], costCenter })),
       ...(withheld > 0
         ? [{ purpose: 'withholdings_payable', creditPaise: withheld, costCenter }]
         : []),

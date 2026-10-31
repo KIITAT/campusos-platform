@@ -672,6 +672,8 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
             deductionsPaise: slip.deductionsPaise,
             netPaise: slip.netPaise,
             advanceRecoveryPaise: recoveries.reduce((n, r) => n + r.amountPaise, 0),
+            lines: slip.lines,
+            employer: s?.record.employer ?? null,
           })
 
           return {
