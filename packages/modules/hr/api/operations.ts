@@ -400,6 +400,7 @@ export async function setComponent(actor: Actor, input: unknown) {
         kind: d.kind,
         amountPaise: d.amount,
         effectiveFrom: d.effectiveFrom,
+        wageClass: d.wageClass,
       })
       .returning()
     return row!

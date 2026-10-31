@@ -9,6 +9,7 @@ import {
   payrollRuns,
   payrollSettings,
   payslips,
+  ptSlabs,
   salaryAssignments,
   salaryStructureLines,
   salaryStructures,
@@ -52,6 +53,8 @@ import {
   payGratuitySchema,
   payrollSettingsSchema,
   releasePayslipSchema,
+  setPtSlabsSchema,
+  setStatutoryIdentitySchema,
   withholdSalarySchema,
 } from './schemas'
 
@@ -98,6 +101,7 @@ export async function createStructure(actor: Actor, input: unknown) {
         percentBp: l.percentBp ?? null,
         of: l.of ?? null,
         taxable: l.taxable,
+        wageClass: l.wageClass,
       })),
     )
     return { ...row, lines: d.lines.length }
@@ -592,9 +596,19 @@ export async function statutorySettings(
   return { pfRegistered: row.pfRegistered, esiRegistered: row.esiRegistered }
 }
 
+async function readSettings(tx: Tx) {
+  const [row] = await tx.select().from(payrollSettings)
+  return {
+    prorationBasis: (row?.prorationBasis ?? 'calendar') as ProrationBasis,
+    statutoryFrom: row?.statutoryFrom ?? null,
+    pfRegistered: row?.pfRegistered ?? false,
+    esiRegistered: row?.esiRegistered ?? false,
+  }
+}
+
 export async function getPayrollSettings(actor: Actor) {
   const tenant = requireHr(actor)
-  return withTenant(tenant, async (tx) => ({ prorationBasis: await payrollBasis(tx) }))
+  return withTenant(tenant, (tx) => readSettings(tx))
 }
 
 /** Audited: it changes what every joiner, leaver and day of unpaid leave is paid. */
@@ -602,7 +616,8 @@ export async function setPayrollSettings(actor: Actor, input: unknown) {
   const tenant = requireAdmin(actor)
   const d = payrollSettingsSchema.parse(input)
   return withTenant(tenant, async (tx) => {
-    const from = await payrollBasis(tx)
+    const before = await readSettings(tx)
+    const from = before.prorationBasis
     await audit(tx, {
       institutionId: tenant,
       actorId: actor.id,
@@ -614,14 +629,136 @@ export async function setPayrollSettings(actor: Actor, input: unknown) {
       reason: `part months paid on the ${d.prorationBasis} basis`,
       detail: { from, to: d.prorationBasis },
     })
+    const to = { statutoryFrom: d.statutoryFrom, pfRegistered: d.pfRegistered, esiRegistered: d.esiRegistered }
+    const was = { statutoryFrom: before.statutoryFrom, pfRegistered: before.pfRegistered, esiRegistered: before.esiRegistered }
+    if (JSON.stringify(was) !== JSON.stringify(to)) {
+      await audit(tx, {
+        institutionId: tenant,
+        actorId: actor.id,
+        actorEmail: actor.email ?? null,
+        moduleId: MODULE,
+        action: 'hr.statutory_settings_set',
+        entity: 'hr_payroll_settings',
+        entityId: tenant,
+        reason: 'statutory pay settings changed',
+        detail: { from: was, to },
+      })
+    }
     await tx
       .insert(payrollSettings)
-      .values({ institutionId: tenant, prorationBasis: d.prorationBasis })
+      .values({ institutionId: tenant, prorationBasis: d.prorationBasis, ...to })
       .onConflictDoUpdate({
         target: payrollSettings.institutionId,
-        set: { prorationBasis: d.prorationBasis, updatedAt: new Date() },
+        set: { prorationBasis: d.prorationBasis, ...to, updatedAt: new Date() },
       })
-    return { prorationBasis: d.prorationBasis }
+    return { prorationBasis: d.prorationBasis, ...to }
+  })
+}
+
+// --- statutory identity and professional tax (P1-06a) ---------------------------
+
+const IDENTITY_FIELDS = ['pan', 'uan', 'esiNumber', 'bankAccount', 'bankIfsc', 'workState', 'pfMember', 'pfOnActual', 'epsExcluded', 'esiExempt'] as const
+
+function identityOf(r: typeof staff.$inferSelect) {
+  return {
+    staffId: r.id,
+    pan: r.pan, uan: r.uan, esiNumber: r.esiNumber, bankAccount: r.bankAccount, bankIfsc: r.bankIfsc,
+    workState: r.workState, pfMember: r.pfMember, pfOnActual: r.pfOnActual, epsExcluded: r.epsExcluded, esiExempt: r.esiExempt,
+  }
+}
+
+/** Admin only: a PAN and a bank account are not for every accounts clerk. */
+export async function getStatutoryIdentity(actor: Actor, staffId: string) {
+  const tenant = requireAdmin(actor)
+  return withTenant(tenant, async (tx) => {
+    const [row] = await tx.select().from(staff).where(eq(staff.id, staffId))
+    if (!row) throw new HrError(404, 'not_found', 'no such member of staff')
+    return identityOf(row)
+  })
+}
+
+/** Audited by field name, never by value. */
+export async function setStatutoryIdentity(actor: Actor, input: unknown) {
+  const tenant = requireAdmin(actor)
+  const d = setStatutoryIdentitySchema.parse(input)
+  return withTenant(tenant, async (tx) => {
+    const [row] = await tx.select().from(staff).where(eq(staff.id, d.staffId)).for('no key update')
+    if (!row) throw new HrError(404, 'not_found', 'no such member of staff')
+    const changed = IDENTITY_FIELDS.filter((f) => row[f] !== d[f])
+    const [updated] = await tx
+      .update(staff)
+      .set({
+        pan: d.pan, uan: d.uan, esiNumber: d.esiNumber, bankAccount: d.bankAccount, bankIfsc: d.bankIfsc,
+        workState: d.workState, pfMember: d.pfMember, pfOnActual: d.pfOnActual, epsExcluded: d.epsExcluded, esiExempt: d.esiExempt,
+      })
+      .where(eq(staff.id, d.staffId))
+      .returning()
+    if (changed.length > 0) {
+      await audit(tx, {
+        institutionId: tenant,
+        actorId: actor.id,
+        actorEmail: actor.email ?? null,
+        moduleId: MODULE,
+        action: 'hr.statutory_identity_set',
+        entity: 'hr_staff',
+        entityId: d.staffId,
+        reason: 'statutory details changed',
+        detail: { changed },
+      })
+    }
+    return identityOf(updated!)
+  })
+}
+
+const slabOut = (r: typeof ptSlabs.$inferSelect) => ({
+  state: r.state, effectiveFrom: r.effectiveFrom, fromPaise: r.fromPaise, toPaise: r.toPaise,
+  amountPaise: r.amountPaise, februaryPaise: r.februaryPaise,
+})
+
+export async function listPtSlabs(actor: Actor, state?: string) {
+  const tenant = requireHr(actor)
+  return withTenant(tenant, async (tx) =>
+    (
+      await tx
+        .select()
+        .from(ptSlabs)
+        .where(state ? eq(ptSlabs.state, state) : undefined)
+        .orderBy(asc(ptSlabs.state), desc(ptSlabs.effectiveFrom), asc(ptSlabs.fromPaise))
+    ).map(slabOut),
+  )
+}
+
+/** Replaces every slab for a state from a month. Audited. */
+export async function setPtSlabs(actor: Actor, input: unknown) {
+  const tenant = requireAdmin(actor)
+  const d = setPtSlabsSchema.parse(input)
+  const slabs = [...d.slabs].sort((a, b) => a.from - b.from)
+  slabs.forEach((s, i) => {
+    const prev = slabs[i - 1]
+    if ((prev && (prev.to === null || s.from <= prev.to)) || (s.to !== null && s.to < s.from)) {
+      throw new HrError(400, 'slabs_overlap', 'slabs must rise without overlapping, and only the last may be open')
+    }
+  })
+  return withTenant(tenant, async (tx) => {
+    await tx.delete(ptSlabs).where(and(eq(ptSlabs.state, d.state), eq(ptSlabs.effectiveFrom, d.effectiveFrom)))
+    await tx.insert(ptSlabs).values(
+      slabs.map((s) => ({
+        institutionId: tenant, state: d.state, effectiveFrom: d.effectiveFrom,
+        fromPaise: s.from, toPaise: s.to, amountPaise: s.amount, februaryPaise: s.february,
+      })),
+    )
+    await audit(tx, {
+      institutionId: tenant,
+      actorId: actor.id,
+      actorEmail: actor.email ?? null,
+      moduleId: MODULE,
+      action: 'hr.pt_slabs_set',
+      entity: 'hr_pt_slabs',
+      entityId: `${d.state}:${d.effectiveFrom}`,
+      reason: `professional tax slabs for ${d.state} from ${d.effectiveFrom.slice(0, 7)}`,
+      detail: { count: slabs.length },
+    })
+    return (await tx.select().from(ptSlabs).where(eq(ptSlabs.state, d.state)).orderBy(desc(ptSlabs.effectiveFrom), asc(ptSlabs.fromPaise))).map(slabOut)
   })
 }
 

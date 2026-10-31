@@ -1,6 +1,7 @@
 import * as z from 'zod'
 import { ticked } from '@campusos/module-framework'
 import { parseRupeesToPaise } from '@campusos/money'
+import { WORK_STATES } from './statutory'
 import {
   componentKindEnum,
   employmentChangeEnum,
@@ -27,6 +28,14 @@ const period = z
   .trim()
   .regex(/^\d{4}-\d{2}(-\d{2})?$/, 'expected YYYY-MM')
   .transform((s) => `${s.slice(0, 7)}-01`)
+
+const blankToNull = (v: unknown) => (typeof v === 'string' && v.trim() === '' ? null : v)
+
+/** An optional statutory identifier: blank is none, the rest must match its shape. */
+const identifier = (re: RegExp, message: string, upper = false) =>
+  z
+    .preprocess(blankToNull, (upper ? z.string().trim().toUpperCase() : z.string().trim()).regex(re, message).nullable())
+    .default(null)
 
 export const createStaffSchema = z
   .object({
@@ -103,6 +112,7 @@ export const setComponentSchema = z
     kind: z.enum(componentKindEnum.enumValues),
     amount: rupees,
     effectiveFrom: day,
+    wageClass: z.enum(['wage', 'excluded', 'outside']).default('wage'),
   })
   .meta({ id: 'HrPayComponentSet' })
 
@@ -222,8 +232,50 @@ export const payrollRunSchema = z
 
 /** How a part month is paid (ACC-15): see basisDivisor and countedDays. */
 export const payrollSettingsSchema = z
-  .object({ prorationBasis: z.enum(['calendar', 'days_30', 'days_26']) })
+  .object({
+    prorationBasis: z.enum(['calendar', 'days_30', 'days_26']),
+    /** First month statutory pay applies (P1-06a); blank is off. */
+    statutoryFrom: z.preprocess(blankToNull, period.nullable()).default(null),
+    pfRegistered: z.preprocess(ticked, z.boolean()).default(false),
+    esiRegistered: z.preprocess(ticked, z.boolean()).default(false),
+  })
   .meta({ id: 'HrPayrollSettings' })
+
+/** A person's statutory details (P1-06a): every field is replaced. */
+export const setStatutoryIdentitySchema = z
+  .object({
+    staffId: uuid,
+    pan: identifier(/^[A-Z]{5}[0-9]{4}[A-Z]$/, 'a PAN is five letters, four digits and a letter', true),
+    uan: identifier(/^[0-9]{12}$/, 'a UAN is 12 digits'),
+    esiNumber: identifier(/^[0-9]{10}$/, 'an ESI number is 10 digits'),
+    bankAccount: identifier(/^[0-9]{9,18}$/, 'a bank account number is 9 to 18 digits'),
+    bankIfsc: identifier(/^[A-Z]{4}0[A-Z0-9]{6}$/, 'an IFSC is four letters, a zero and six letters or digits', true),
+    workState: z.preprocess(blankToNull, z.enum(WORK_STATES).nullable()).default(null),
+    pfMember: z.preprocess(ticked, z.boolean()).default(false),
+    pfOnActual: z.preprocess(ticked, z.boolean()).default(false),
+    epsExcluded: z.preprocess(ticked, z.boolean()).default(false),
+    esiExempt: z.preprocess(ticked, z.boolean()).default(false),
+  })
+  .meta({ id: 'HrStatutoryIdentitySet' })
+
+/** Professional tax slabs for a state from a month (P1-06a): replaces that state's set for the month. */
+export const setPtSlabsSchema = z
+  .object({
+    state: z.enum(WORK_STATES),
+    effectiveFrom: period,
+    slabs: z
+      .array(
+        z.object({
+          from: rupees,
+          to: z.preprocess(blankToNull, rupees.nullable()).default(null),
+          amount: rupees,
+          february: z.preprocess(blankToNull, rupees.nullable()).default(null),
+        }),
+      )
+      .min(1)
+      .max(12),
+  })
+  .meta({ id: 'HrPtSlabsSet' })
 
 export const myEmploymentSchema = z
   .object({
@@ -874,6 +926,7 @@ export const createStructureSchema = z
           percentBp: z.coerce.number().int().min(1).max(10_000).nullish(),
           of: z.string().trim().min(1).max(30).nullish(),
           taxable: z.preprocess(ticked, z.boolean()).default(true),
+          wageClass: z.enum(['wage', 'excluded', 'outside']).default('wage'),
         }),
       )
       .min(1)

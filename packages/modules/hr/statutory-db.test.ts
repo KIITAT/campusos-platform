@@ -4,7 +4,7 @@ import { and, eq, like } from 'drizzle-orm'
 import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
 import { trialBalance, type Actor as Books } from '@campusos/module-finance/api'
 import { HrError, createStaff, createTaxRegime, electRegime, generatePayroll, getStatutoryIdentity, listPtSlabs, listStaff, setComponent, setPayrollSettings, setPtSlabs, setStatutoryIdentity, type Actor } from './api'
-import { payComponents, payrollSettings, payslips, ptSlabs, staff } from './schema'
+import { payslips, ptSlabs, staff } from './schema'
 
 /**
  * Statutory pay (P1-06a): the schema, then the run, the posting and the
@@ -73,20 +73,15 @@ test('the database refuses a malformed PAN', async () => {
   )
 })
 
-// --- the run (Step 4). Settings and classes are set as the owner until Step 6 gives operations for them.
+// --- the run (Step 4)
 
 const turnOn = (c: College, over: Record<string, unknown> = {}) =>
-  withTenant(c.id, (tx) =>
-    tx.insert(payrollSettings).values({ institutionId: c.id, prorationBasis: 'calendar', statutoryFrom: '2026-03-01', pfRegistered: true, esiRegistered: true, ...over }),
-  )
+  setPayrollSettings(c.admin, { prorationBasis: 'calendar', statutoryFrom: '2026-03', pfRegistered: true, esiRegistered: true, ...over })
 
-const member = (c: College, staffId: string) =>
-  withTenant(c.id, (tx) => tx.update(staff).set({ pfMember: true }).where(eq(staff.id, staffId)))
+const member = (c: College, staffId: string) => setStatutoryIdentity(c.admin, { staffId, pfMember: true })
 
-async function pay(c: College, staffId: string, code: string, kind: 'earning' | 'deduction', amount: string, wageClass: 'wage' | 'excluded' | 'outside' = 'wage', from = '2026-01-01') {
-  await setComponent(c.admin, { staffId, code, label: code, kind, amount, effectiveFrom: from })
-  await withTenant(c.id, (tx) => tx.update(payComponents).set({ wageClass }).where(and(eq(payComponents.staffId, staffId), eq(payComponents.code, code))))
-}
+const pay = (c: College, staffId: string, code: string, kind: 'earning' | 'deduction', amount: string, wageClass: 'wage' | 'excluded' | 'outside' = 'wage', from = '2026-01-01') =>
+  setComponent(c.admin, { staffId, code, label: code, kind, amount, effectiveFrom: from, wageClass })
 
 const slipOf = (c: College, staffId: string, period: string) =>
   withTenant(c.id, async (tx) => (await tx.select().from(payslips).where(and(eq(payslips.staffId, staffId), eq(payslips.period, period))))[0])
@@ -144,7 +139,7 @@ test('a month before statutory_from is unchanged', async () => {
 test('ESI coverage holds for the period', async () => {
   const c = await college()
   const s = await hire(c)
-  await turnOn(c, { statutoryFrom: '2026-10-01', pfRegistered: false })
+  await turnOn(c, { statutoryFrom: '2026-10', pfRegistered: false })
   await pay(c, s.id, 'basic', 'earning', '20000', 'wage', '2026-01-01')
   assert.deepEqual((await generatePayroll(c.admin, { period: '2026-10' })).failed, [])
   await pay(c, s.id, 'basic', 'earning', '23000', 'wage', '2026-11-01')
@@ -160,7 +155,7 @@ test('ESI coverage holds for the period', async () => {
 test('a statutory payslip posts each head to its own payable', async () => {
   const c = await college()
   const s = await hire(c)
-  await turnOn(c, { statutoryFrom: '2026-04-01' })
+  await turnOn(c, { statutoryFrom: '2026-04' })
   await member(c, s.id)
   await pay(c, s.id, 'basic', 'earning', '40000')
   await pay(c, s.id, 'hra', 'earning', '16000', 'excluded')

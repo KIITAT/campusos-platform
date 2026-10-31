@@ -10,6 +10,8 @@ import {
   payGratuitySchema,
   payrollSettingsSchema,
   releasePayslipSchema,
+  setPtSlabsSchema,
+  setStatutoryIdentitySchema,
   withholdSalarySchema,
 } from './schemas'
 
@@ -102,6 +104,22 @@ export const payPaths = {
       payrollSettingsSchema,
       'calendar: a day is the month over its own days; days_30: over 30; days_26: over 26, Sundays not ' +
         'counted. Applies to joiners, leavers, unpaid leave and leave encashment from the next run. Audited.',
+    ),
+  },
+  [`${base}/staff/statutory`]: {
+    ...get("A person's statutory details", ['staffId']),
+    ...post(
+      "Set a person's statutory details",
+      setStatutoryIdentitySchema,
+      'PAN, UAN, ESI number, bank, work state and the PF and ESI options. Every field is replaced. Audited by field name, never by value.',
+    ),
+  },
+  [`${base}/payroll/pt-slabs`]: {
+    ...get('Professional tax slabs the institution has entered'),
+    ...post(
+      "Set a state's professional tax slabs",
+      setPtSlabsSchema,
+      'Replaces the slabs for that state from that month. The slab set in force for a month is the latest one not after it. Audited.',
     ),
   },
 }
