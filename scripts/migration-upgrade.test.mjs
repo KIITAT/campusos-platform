@@ -64,6 +64,10 @@ const NEW_FILES = new Set([
   'finance/0012_payroll_payables.sql',
   'hr/0014_statutory_pay.sql',
   'hr/0015_tds_estimator.sql',
+  'notices/0003_retention.sql',
+  'admissions/0002_retention.sql',
+  'hr/0016_retention.sql',
+  'attendance/0004_retention.sql',
 ])
 const NEW_CORE_FROM = 5
 

@@ -108,9 +108,9 @@ test('an enquiry that never became a student is anonymised after a year', async 
     )
   const application = (e: string, status: string, updatedDaysAgo: number, studentId: string | null, reason: string | null) =>
     q(
-      `insert into admissions_applications (institution_id, enquiry_id, program_id, term_id, status, reason, student_id, created_at, updated_at)
-       values ($1, $2, $3, $4, $5, $6, $7, now() - interval '400 days', now() - $8 * interval '1 day')`,
-      [I, e, uid(), uid(), status, reason, studentId, updatedDaysAgo],
+      `insert into admissions_applications (institution_id, enquiry_id, program_id, term_id, status, reason, student_id, student_program_id, created_at, updated_at)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, now() - interval '400 days', now() - $9 * interval '1 day')`,
+      [I, e, uid(), uid(), status, reason, studentId, studentId ? uid() : null, updatedDaysAgo],
     )
   for (const e of [X, Y, Z]) await enquiry(e)
   await application(X, 'rejected', 400, null, 'no seat')
