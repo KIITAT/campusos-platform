@@ -242,8 +242,8 @@ test('statutory settings are saved together and audited when they change', async
     .where(and(eq(auditLog.institutionId, c.id), eq(auditLog.action, 'hr.statutory_settings_set')))
   assert.equal(rows.length, 1)
   assert.deepEqual(rows[0]!.detail, {
-    from: { statutoryFrom: null, pfRegistered: false, esiRegistered: false },
-    to: { statutoryFrom: '2026-03-01', pfRegistered: true, esiRegistered: false },
+    from: { statutoryFrom: null, pfRegistered: false, esiRegistered: false, defaultRegimeId: null },
+    to: { statutoryFrom: '2026-03-01', pfRegistered: true, esiRegistered: false, defaultRegimeId: null },
   })
   await setPayrollSettings(c.admin, { prorationBasis: 'days_30', statutoryFrom: '2026-03', pfRegistered: true })
   assert.equal(
