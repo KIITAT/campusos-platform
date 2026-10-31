@@ -3,16 +3,20 @@ import { type PluginPage } from '@campusos/module-framework'
 import {
   getPayrollSettings,
   listGratuityRules,
+  listPtSlabs,
   listRuns,
   listStaff,
   listStructures,
   listTaxRegimes,
   listWithheld,
+  WORK_STATES,
   type Actor,
 } from './api'
 
 const OFFICE = ['institution_admin', 'super_admin', 'accounts_staff'] as const
 const ADMIN = ['institution_admin', 'super_admin'] as const
+
+const stateOptions = WORK_STATES.map((v) => ({ value: v, label: v }))
 
 const pct = (bp: number | null) => (bp === null ? '' : `${bp / 100}%`)
 
@@ -24,7 +28,7 @@ export const payPages: PluginPage[] = [
     roles: [...OFFICE],
     async load(actor) {
       const a = actor as Actor
-      const [structures, regimes, rules, withheld, runs, staff, settings] = await Promise.all([
+      const [structures, regimes, rules, withheld, runs, staff, settings, slabs] = await Promise.all([
         listStructures(a),
         listTaxRegimes(a),
         listGratuityRules(a),
@@ -32,9 +36,12 @@ export const payPages: PluginPage[] = [
         listRuns(a),
         listStaff(a),
         getPayrollSettings(a),
+        listPtSlabs(a),
       ])
       return {
         basis: settings.prorationBasis,
+        statutoryFrom: settings.statutoryFrom ? settings.statutoryFrom.slice(0, 7) : '',
+        ptSlabs: slabs.map((p) => ({ ...p, month: p.effectiveFrom.slice(0, 7) })),
         structures: structures.map((s) => ({
           ...s,
           makeup: s.lines
@@ -82,11 +89,14 @@ export const payPages: PluginPage[] = [
       },
       {
         kind: 'form',
-        title: 'How a part month is paid',
+        title: 'Pay basis and statutory pay',
         note:
           `Now: ${String(data.basis)}. Joiners, leavers and unpaid leave are paid by the day: calendar ` +
           'divides the month by its own days, days_30 by 30, days_26 by 26 with Sundays not ' +
-          'counted. Leave sold back uses the same day. Audited.',
+          'counted. Leave sold back uses the same day. Every field is saved together. Before switching ' +
+          'statutory pay on, mark each earning as wage, excluded or outside, give each person their ' +
+          'statutory details, enter your state’s professional tax slabs, and remove manual PF, ESI and PT ' +
+          'deductions: a person who still has one is not paid that month. Audited.',
         submit: 'Save',
         path: '/payroll/settings',
         roles: [...ADMIN],
@@ -102,6 +112,67 @@ export const payPages: PluginPage[] = [
               { value: 'days_26', label: '26 days, Sundays off' },
             ],
           },
+          { name: 'statutoryFrom', label: 'Statutory pay from (YYYY-MM)', optional: true, value: String(data.statutoryFrom) },
+          { name: 'pfRegistered', label: 'Registered with EPFO', kind: 'checkbox', optional: true },
+          { name: 'esiRegistered', label: 'Registered with ESIC', kind: 'checkbox', optional: true },
+        ],
+      },
+      {
+        kind: 'table',
+        title: 'Professional tax slabs',
+        rows: 'ptSlabs',
+        empty: 'None entered: no professional tax is deducted.',
+        columns: [
+          { key: 'state', label: 'State', kind: 'code' },
+          { key: 'month', label: 'From' },
+          { key: 'fromPaise', label: 'Slab from', kind: 'money' },
+          { key: 'toPaise', label: 'Slab to', kind: 'money' },
+          { key: 'amountPaise', label: 'Amount', kind: 'money' },
+          { key: 'februaryPaise', label: 'February', kind: 'money' },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Set a state’s slabs',
+        note: 'Replaces the slabs for that state from that month.',
+        submit: 'Save slabs',
+        path: '/payroll/pt-slabs',
+        roles: [...ADMIN],
+        fields: [
+          { name: 'state', label: 'State', kind: 'select', options: stateOptions },
+          { name: 'effectiveFrom', label: 'From (YYYY-MM)' },
+          {
+            name: 'slabs',
+            label: 'Slabs',
+            kind: 'lines',
+            columns: [
+              { name: 'from', label: 'From', kind: 'money' },
+              { name: 'to', label: 'To', kind: 'money', optional: true },
+              { name: 'amount', label: 'Amount', kind: 'money' },
+              { name: 'february', label: 'February', kind: 'money', optional: true },
+            ],
+          },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'A person’s statutory details',
+        note: 'Every field is replaced. The current values: GET /staff/statutory?staffId=…',
+        submit: 'Save details',
+        path: '/staff/statutory',
+        roles: [...ADMIN],
+        fields: [
+          { name: 'staffId', label: 'Who', kind: 'select', options: 'staffOptions' },
+          { name: 'pan', label: 'PAN', optional: true },
+          { name: 'uan', label: 'UAN', optional: true },
+          { name: 'esiNumber', label: 'ESI number', optional: true },
+          { name: 'bankAccount', label: 'Bank account', optional: true },
+          { name: 'bankIfsc', label: 'IFSC', optional: true },
+          { name: 'workState', label: 'Work state', kind: 'select', options: stateOptions, optional: true },
+          { name: 'pfMember', label: 'PF member', kind: 'checkbox', optional: true },
+          { name: 'pfOnActual', label: 'PF on actual wages above the ceiling (joint option)', kind: 'checkbox', optional: true },
+          { name: 'epsExcluded', label: 'Not in the pension scheme (EPS)', kind: 'checkbox', optional: true },
+          { name: 'esiExempt', label: 'Exempt from ESI', kind: 'checkbox', optional: true },
         ],
       },
       {
