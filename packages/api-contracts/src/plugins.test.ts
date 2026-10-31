@@ -134,7 +134,7 @@ test('the whole product still answers the same number of endpoints', () => {
   // P0-08 added two to hr: the payroll basis, read and set.
   // A regression guard on the conversion, not a target.
   const total = PLUGINS.reduce((n, p) => n + p.routes.length, 0)
-  assert.equal(total, 719, `expected 719 endpoints across all modules, found ${total}`)
+  assert.equal(total, 722, `expected 722 endpoints across all modules, found ${total}`)
 })
 
 test('a longer path is never swallowed by a shorter one', () => {

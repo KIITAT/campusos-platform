@@ -291,6 +291,9 @@ POST /api/v1/modules/finance/approval-rules                              SI.....
 POST /api/v1/modules/finance/approval-rules/remove                       SI........ op
 POST /api/v1/modules/finance/approvals/decide                            SIHFALO... gate
 GET /api/v1/modules/finance/approvals/pending                            SIHFALO... op
+GET /api/v1/modules/finance/sod                                          SI..A..... op
+POST /api/v1/modules/finance/sod/single-officer                          SI........ op
+GET /api/v1/modules/finance/sod/uses                                     SI..A..... op
 GET /api/v1/modules/finance/staff                                        SI..A..... op
 POST /api/v1/modules/finance/staff                                       SI........ op
 POST /api/v1/modules/finance/staff/revoke                                SI........ op
