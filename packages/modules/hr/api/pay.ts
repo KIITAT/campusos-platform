@@ -974,14 +974,24 @@ export async function tdsDeduction(
   const oneOffPaise = a.base.lines
     .filter((l) => a.extraCodes.has(l.code) && l.taxable !== false)
     .reduce((n, l) => n + l.appliedPaise, 0)
+  let projectedMonths = monthsLeftInTaxYear(a.period, r.yearStartsMonth) - 1
+  if (a.person.leftOn !== null) projectedMonths = Math.min(projectedMonths, monthsUntil(a.period, a.person.leftOn))
+  // A personal component that ends before the projection does is not projected at all:
+  // under-projecting is trued up month by month, over-deducted tax is never refunded (P1-06b review).
+  const y = Number(a.period.slice(0, 4))
+  const m = Number(a.period.slice(5, 7))
+  const horizonEnd = new Date(Date.UTC(y, m - 1 + projectedMonths + 1, 0)).toISOString().slice(0, 10)
+  const ending = await tx
+    .select({ code: payComponents.code })
+    .from(payComponents)
+    .where(and(eq(payComponents.staffId, a.person.id), gte(payComponents.effectiveTo, a.period), sql`${payComponents.effectiveTo} < ${horizonEnd}`))
+  const endsEarly = new Set(ending.map((c) => c.code))
   // ponytail: PT projected flat, February's higher PT not foreseen.
   const projected = {
-    ...figuresOf(a.contracted.map((c) => ({ ...c, appliedPaise: c.amountPaise }))),
+    ...figuresOf(a.contracted.filter((c) => !endsEarly.has(c.code)).map((c) => ({ ...c, appliedPaise: c.amountPaise }))),
     pfPaise: thisMonth.pfPaise,
     ptPaise: thisMonth.ptPaise,
   }
-  let projectedMonths = monthsLeftInTaxYear(a.period, r.yearStartsMonth) - 1
-  if (a.person.leftOn !== null) projectedMonths = Math.min(projectedMonths, monthsUntil(a.period, a.person.leftOn))
 
   const est = estimateTds({
     regime: {
