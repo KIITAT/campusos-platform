@@ -477,7 +477,7 @@ GET /api/v1/modules/hostel/imports                                       SI....O
 GET /api/v1/modules/hostel/imports/template                              SI....O... gate
 POST /api/v1/modules/hostel/imports/run                                  SI....O... gate
 
-## hr 0.13.0
+## hr 0.14.0
 GET /api/v1/modules/hr/staff                                             SI..A..... op
 POST /api/v1/modules/hr/staff                                            SI........ op
 POST /api/v1/modules/hr/staff/end                                        SI........ op
@@ -589,6 +589,17 @@ GET /api/v1/modules/hr/pay/withheld                                      SI..A..
 POST /api/v1/modules/hr/pay/withhold                                     SI........ op
 POST /api/v1/modules/hr/pay/withhold/lift                                SI........ op
 POST /api/v1/modules/hr/pay/withheld/release                             SI........ op
+GET /api/v1/modules/hr/payroll/payslip.pdf                               SIHFALO... gate
+GET /api/v1/modules/hr/payroll/dues                                      SI........ gate
+GET /api/v1/modules/hr/payroll/remittances                               SI........ op
+POST /api/v1/modules/hr/payroll/remittances                              SI........ op
+POST /api/v1/modules/hr/payroll/reissue                                  SI........ op
+POST /api/v1/modules/hr/payroll/remittances/void                         SI........ op
+GET /api/v1/modules/hr/payroll/tax-statement.pdf                         SIHFALO... gate
+GET /api/v1/modules/hr/payroll/tds-quarter                               SI........ gate
+GET /api/v1/modules/hr/payroll/ecr                                       SI........ gate
+GET /api/v1/modules/hr/payroll/esi                                       SI........ gate
+GET /api/v1/modules/hr/payroll/bank-advice                               SI........ gate
 GET /api/v1/modules/hr/payroll/runs                                      SI..A..... op
 GET /api/v1/modules/hr/payroll/settings                                  SI..A..... op
 POST /api/v1/modules/hr/payroll/settings                                 SI........ op
