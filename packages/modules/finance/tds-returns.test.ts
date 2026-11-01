@@ -8,6 +8,7 @@ import {
   FinanceError,
   accountFor,
   cancelInvoice,
+  cancelPayment,
   dueDateOf,
   monthsLate,
   recordChallan,
@@ -235,6 +236,19 @@ test("an advance's tax is counted as deducted when the annual threshold is cross
   await submitInvoice(b.admin, { invoiceId: next })
   // 10% of 70,000 is 7,000 in all: 1,000 on the advance, 5,000 on the first bill, 1,000 on this one.
   assert.deepEqual(await tdsOf(b, next), { tds: 100_000, adv: 0 })
+})
+
+test('an advance whose tax a bill has absorbed is not cancelled until that bill is (review finding 2)', async () => {
+  const b = await books()
+  const d = await deducting(b)
+  const pay = await advance(b, d)
+  await submitPayment(b.admin, { paymentId: pay.id })
+  const first = await bill(b, d.payee, 'Z-1')
+  await submitInvoice(b.admin, { invoiceId: first })
+  assert.deepEqual(await tdsOf(b, first), { tds: 0, adv: 100_000 })
+  await refused(cancelPayment(b.admin, { paymentId: pay.id, reason: 'wrong payee' }), 'tds_absorbed', 409)
+  await cancelInvoice(b.admin, { invoiceId: first, reason: 'wrong supplier' })
+  await cancelPayment(b.admin, { paymentId: pay.id, reason: 'wrong payee' })
 })
 
 // --- the challan register ----------------------------------------------------
