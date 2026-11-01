@@ -149,13 +149,16 @@ export async function invoicePdf(actor: Actor, invoiceId: string): Promise<{ byt
   })
   const { inv, party, ls, ts, orig, s, minor } = data
   const lh = await letterheadOf(tenant, s)
+  const billOfSupply = inv.kind === 'sales' && !inv.isReturn && s.gstScheme === 'composition'
   const title =
     inv.kind === 'sales'
       ? inv.isReturn
         ? 'CREDIT NOTE'
-        : ts.length
-          ? 'TAX INVOICE'
-          : 'INVOICE'
+        : billOfSupply
+          ? 'BILL OF SUPPLY'
+          : ts.length
+            ? 'TAX INVOICE'
+            : 'INVOICE'
       : inv.isReturn
         ? 'DEBIT NOTE'
         : 'PURCHASE BILL'
@@ -176,6 +179,10 @@ export async function invoicePdf(actor: Actor, invoiceId: string): Promise<{ byt
   }
   if (party.stateCode) {
     sh.text(`State code ${party.stateCode}`, M, 8)
+    sh.y -= 11
+  }
+  if (billOfSupply) {
+    sh.text('Composition taxable person, not eligible to collect tax on supplies.', M, 8)
     sh.y -= 11
   }
   const left = sh.y

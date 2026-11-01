@@ -15,6 +15,18 @@ import { addMonths, monthEnd } from './numbers'
  */
 
 const MODULE = 'finance'
+
+/** The first month of each quarter of the Indian GST year: April, July, October, January. */
+export const QUARTER_START_MONTHS = [4, 7, 10, 1] as const
+
+/** Whether a period is exactly one calendar month, exactly one GST quarter, or neither. */
+export function periodKind(from: string, to: string): 'month' | 'quarter' | null {
+  if (!from.endsWith('-01')) return null
+  if (to === monthEnd(from)) return 'month'
+  const month = Number(from.slice(5, 7))
+  if ((QUARTER_START_MONTHS as readonly number[]).includes(month) && to === monthEnd(addMonths(from, 2))) return 'quarter'
+  return null
+}
 const isoDate = z.iso.date()
 
 export const gstFilingSchema = z

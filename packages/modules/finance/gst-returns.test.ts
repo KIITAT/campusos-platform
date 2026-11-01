@@ -16,6 +16,7 @@ import {
   makeReturn,
   refusal,
   saveInvoice,
+  submitInvoice,
   trialBalance,
   updateSettings,
   type Actor,
@@ -189,8 +190,8 @@ test("a composition dealer's purchases claim no credit", async () => {
     postingDate: '2026-04-10',
     billNo: 'B-1',
     lines: [{ description: 'Chairs', qty: '1', rate: '10000', taxTemplateId: gst18 }],
-    submit: true,
   })) as { id: string }
+  await submitInvoice(b.admin, { invoiceId: bill.id })
   const d = await invoiceDetail(b.admin, bill.id)
   assert.ok(d.taxes.length > 0)
   for (const t of d.taxes) assert.equal(t.ineligiblePaise, t.taxPaise)

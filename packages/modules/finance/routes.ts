@@ -285,6 +285,7 @@ export const specs: RouteSpec[] = [
   get('reports', '/reports/funds', "Every fund's balance", (a, q) => api.fundBalances(a, q)),
   get('reports', '/reports/cost-centers', 'Income and expenditure by cost centre', (a, q) => api.costCenterReport(a, q)),
   get('reports', '/reports/gstr1', 'GSTR-1 tables for a period', (a, q) => api.gstr1(a, range(q))),
+  get('reports', '/reports/cmp08', 'CMP-08 working for a quarter (composition dealers)', (a, q) => api.cmp08(a, range(q))),
   get('reports', '/reports/gstr3b', 'GSTR-3B summary for a period', (a, q) => api.gstr3b(a, range(q))),
   get('reports', '/reports/hsn', 'HSN/SAC summary', (a, q) => api.hsnReport(a, { kind: kind(q), ...range(q) })),
   get('reports', '/reports/register', 'Sales or purchase register', (a, q) => api.register(a, { kind: kind(q), ...range(q) })),

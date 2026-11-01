@@ -1,6 +1,8 @@
 import { sql } from 'drizzle-orm'
 import { withTenant } from '@campusos/db'
-import { requireRead, type Actor, type Tx } from './core'
+import { FinanceError, requireRead, type Actor, type Tx } from './core'
+import { periodKind } from './gst-filings'
+import { bpOf } from './numbers'
 import { settingsWithin } from './years'
 
 /**
@@ -432,4 +434,38 @@ export function toCsv(rows: Record<string, unknown>[], minorUnits = 2): string {
   }
   const head = keys.map((k) => k.replace(/Paise$/, '').replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase()))
   return [head.join(','), ...rows.map((r) => keys.map((k) => cell(k, r[k])).join(','))].join('\n')
+}
+
+/**
+ * CMP-08 working (P1-05a, composition scheme): the tax a composition dealer pays
+ * for one quarter, on turnover (exempt and non-GST supplies left out), plus any
+ * tax due under reverse charge. A working statement to check, not a return.
+ */
+export async function cmp08(actor: Actor, input: { from: string; to: string }) {
+  const tenant = requireRead(actor)
+  return withTenant(tenant, async (tx) => {
+    const s = await settingsWithin(tx, tenant)
+    if (s.gstScheme !== 'composition' || s.compositionRateBp === null) {
+      throw new FinanceError(409, 'not_composition', 'the institution is not a composition dealer')
+    }
+    if (periodKind(input.from, input.to) !== 'quarter') {
+      throw new FinanceError(400, 'bad_return_period', 'a CMP-08 covers one quarter: April-June, July-September, October-December or January-March')
+    }
+    const sales = await taxRows(tx, 'sales', input.from, input.to)
+    const purchases = await taxRows(tx, 'purchase', input.from, input.to)
+    const turnoverPaise = sales
+      .filter((r) => r.treatment === null || r.treatment === 'taxable')
+      .reduce((sum, r) => sum + sign(r) * r.taxable_paise, 0)
+    const reverseCharge = { igstPaise: 0, cgstPaise: 0, sgstPaise: 0, cessPaise: 0 }
+    for (const r of purchases.filter((p) => p.reverse_charge)) {
+      reverseCharge.igstPaise += sign(r) * r.igst
+      reverseCharge.cgstPaise += sign(r) * r.cgst
+      reverseCharge.sgstPaise += sign(r) * r.sgst
+      reverseCharge.cessPaise += sign(r) * r.cess
+    }
+    const cgstPaise = bpOf(turnoverPaise, s.compositionRateBp / 2)
+    const sgstPaise = cgstPaise
+    const totalPaise = cgstPaise + sgstPaise + reverseCharge.igstPaise + reverseCharge.cgstPaise + reverseCharge.sgstPaise + reverseCharge.cessPaise
+    return { from: input.from, to: input.to, turnoverPaise, rateBp: s.compositionRateBp, cgstPaise, sgstPaise, reverseCharge, totalPaise }
+  })
 }

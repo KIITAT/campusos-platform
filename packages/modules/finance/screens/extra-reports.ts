@@ -6,7 +6,7 @@ import { chooseRecord, col, context, dateFields, display, field, filter, form, h
 export const extraReportLinks = [
   ['Aging of receivables and payables', '/reports/aging'], ['Funds and grants', '/reports/funds'], ['Sub-ledgers against the books', '/reports/subledgers'], ['Fund statement', '/reports/fund'], ['Cost centres', '/reports/cost-centers'], ['GST and TDS', '/reports/gst'], ['Stock balance', '/stock/balance'], ['Stock ledger', '/stock/ledger'], ['Stores against books', '/stock/against-books'], ['Asset register', '/assets'], ['Depreciation', '/depreciation'],
 ].map(([label, path]) => ({ label: label!, href: `/m/finance${path}` }))
-const gstLinks = [['GSTR-1', '/reports/gstr1'], ['GSTR-3B', '/reports/gstr3b'], ['HSN / SAC summary', '/reports/hsn'], ['Sales and purchase register', '/reports/register'], ['TDS', '/reports/tds']]
+const gstLinks = [['GSTR-1', '/reports/gstr1'], ['GSTR-3B', '/reports/gstr3b'], ['CMP-08 (composition)', '/reports/cmp08'], ['HSN / SAC summary', '/reports/hsn'], ['Sales and purchase register', '/reports/register'], ['TDS', '/reports/tds']]
 const taxColumns = () => moneyCols('taxablePaise', 'igstPaise', 'cgstPaise', 'sgstPaise', 'cessPaise')
 const hsnColumns = () => [col('hsnSac'), col('uom'), col('qtyMilliText', undefined, { label: 'Quantity' }), ...taxColumns()]
 const exportCsv = (report: string, data: Data): PluginSection => ({ kind: 'links', links: [{ label: 'Download CSV', href: `/api/v1/modules/finance/reports/export.csv?${new URLSearchParams({ ...Object.fromEntries(Object.entries(object(data.query)).map(([key, value]) => [key, str(value)])), report, from: str(data.from), to: str(data.to), on: str(data.on) })}` }] })
@@ -81,6 +81,20 @@ export const extraReportPages: PluginPage[] = [
       return { ...data, outward: Object.entries(object(report['3.1'])).map(([name, value]) => ({ name, ...object(value) })), input: Object.entries(object(report['4'])).map(([name, value]) => ({ name, ...object(value) })), exempt: [object(report['5'])], payable: [object(report.payable)] }
     },
     sections: data => [filter('/reports/gstr3b', data, dateFields('from', 'to')), table('3.1 Outward supplies and reverse charge', 'outward', [col('name'), ...taxColumns()]), table('4 Input tax credit', 'input', [col('name'), ...taxColumns()]), table('5 Exempt inward supplies', 'exempt', moneyCols('intraStatePaise', 'interStatePaise')), table('Tax payable', 'payable', taxColumns().filter(column => column.key !== 'taxablePaise'))],
+  }),
+  page({ path: '/reports/cmp08', title: 'CMP-08 working', roles: OFFICE,
+    async load(actor, request) {
+      const data = await context(actor, request)
+      // A regular taxpayer has no CMP-08: the page shows its note and an empty table.
+      const report = object(await read(actor, '/reports/cmp08', { from: data.from, to: data.to }).catch((error: { code?: string }) => { if (error?.code === 'not_composition') return {}; throw error }))
+      const rc = object(report.reverseCharge)
+      return { ...data, figures: !('turnoverPaise' in report) ? [] : [
+        { label: 'Turnover of the quarter', amountPaise: report.turnoverPaise }, { label: 'Central tax on turnover', amountPaise: report.cgstPaise }, { label: 'State tax on turnover', amountPaise: report.sgstPaise },
+        { label: 'Integrated tax on reverse charge', amountPaise: rc.igstPaise }, { label: 'Central tax on reverse charge', amountPaise: rc.cgstPaise }, { label: 'State tax on reverse charge', amountPaise: rc.sgstPaise }, { label: 'Cess on reverse charge', amountPaise: rc.cessPaise },
+        { label: 'Total to pay', amountPaise: report.totalPaise },
+      ] }
+    },
+    sections: data => [{ kind: 'note', text: 'CampusOS files nothing: check this against the portal before you file. A quarter runs April-June, July-September, October-December or January-March; turnover leaves out exempt and non-GST supplies.' }, filter('/reports/cmp08', data, dateFields('from', 'to')), table('CMP-08', 'figures', [col('label'), ...moneyCols('amountPaise')])],
   }),
   ...['hsn', 'register'].map(report => page({ path: `/reports/${report}`, title: report === 'hsn' ? 'HSN / SAC summary' : 'Sales and purchase register', roles: OFFICE,
     async load(actor, request) { const data = await context(actor, request); const query = { kind: 'sales', ...object(data.query) }; return { ...data, query, rows: rows(await read(actor, `/reports/${report}`, { ...query, from: data.from, to: data.to })).map(row => display(row, data)) } },

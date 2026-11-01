@@ -392,7 +392,8 @@ export async function computeInvoice(
       serials: l.serials?.length ? l.serials : null,
       orderLineId: l.orderLineId ?? null,
       receiptLineId: l.receiptLineId ?? null,
-      itcEligible: l.itcEligible ?? true,
+      // A composition dealer claims no input tax credit (P1-05a D5): the tax posts to cost.
+      itcEligible: settings.gstScheme === 'composition' && draft.kind === 'purchase' ? false : (l.itcEligible ?? true),
     })
   }
 
@@ -405,6 +406,10 @@ export async function computeInvoice(
     intra,
     draft.kind,
   )
+  // A composition dealer may not collect tax on its supplies (P1-05a D4).
+  if (draft.kind === 'sales' && settings.gstScheme === 'composition' && rows.some((r) => r.tax !== 0)) {
+    throw new FinanceError(400, 'composition_no_tax', 'a composition dealer charges no GST: remove the tax from the lines')
+  }
   const fallbackTax = rows.some((r) => !r.accountId)
     ? await accountFor(tx, institutionId, draft.kind === 'sales' ? 'gst_output' : 'gst_input')
     : null

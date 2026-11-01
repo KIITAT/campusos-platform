@@ -193,6 +193,7 @@ export const routeRoles: Record<string, readonly Role[]> = {
   'GET /reports/cost-centers': OFFICE,
   'GET /reports/gstr1': OFFICE,
   'GET /reports/gstr3b': OFFICE,
+  'GET /reports/cmp08': OFFICE,
   'GET /reports/hsn': OFFICE,
   'GET /reports/register': OFFICE,
   'GET /reports/tds': OFFICE,
