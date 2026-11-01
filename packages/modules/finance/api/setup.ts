@@ -24,7 +24,7 @@ import {
   type Tx,
 } from './core'
 import { parseDecimal } from './numbers'
-import { fiscalShort, settingsWithin } from './years'
+import { fiscalShort, localToday, settingsWithin } from './years'
 import { treeOrder } from './operations'
 import { checkOtherPerson, countsAsApproval, creatorOf, singleOfficerHere, singleOfficerOn } from './sod'
 
@@ -311,8 +311,15 @@ export async function nextNumber(tx: Tx, institutionId: string, docType: string,
       do update set last_value = finance_series_counters.last_value + 1
     returning last_value`)
   const n = Number((res.rows[0] as { last_value: number }).last_value)
-  return `${prefix.replaceAll('{FYS}', short).replaceAll('{FY}', label)}${String(n).padStart(padding, '0')}`
+  const number = `${prefix.replaceAll('{FYS}', short).replaceAll('{FY}', label)}${String(n).padStart(padding, '0')}`
+  if (RULE46.has(docType) && number.length > 16) {
+    throw new FinanceError(409, 'number_too_long', 'the next number would exceed 16 characters; widen the padding or shorten the prefix from next year')
+  }
+  return number
 }
+
+/** GST Rule 46(b): an invoice number is up to sixteen characters, letters, digits, / and - only. */
+const RULE46 = new Set(['sales_invoice', 'sales_return', 'payment_receive'])
 
 export const seriesSchema = z
   .object({
@@ -344,6 +351,22 @@ export async function setSeries(actor: Actor, input: unknown) {
   const tenant = requireConfigure(actor)
   const data = seriesSchema.parse(input)
   return withTenant(tenant, async (tx) => {
+    const { label, short } = await fiscalShort(tx, tenant, await localToday(tx, tenant))
+    if (RULE46.has(data.docType)) {
+      if (!/^(?:[A-Za-z0-9/-]|{FYS?})*$/.test(data.prefix)) {
+        throw new FinanceError(400, 'series_characters', 'Use letters, digits, / and - only')
+      }
+      const length = data.prefix.replaceAll('{FYS}', short).replaceAll('{FY}', label).length + data.padding
+      if (length > 16) {
+        throw new FinanceError(400, 'series_too_long', `An invoice number may be 16 characters at most (GST Rule 46); this one would be ${length}`)
+      }
+    }
+    // Numbers already issued this fiscal year fix the series until the next year's first document.
+    const issued = await tx.execute(sql`select 1 from finance_series_counters where doc_type = ${data.docType} and scope = ${label} and last_value > 0`)
+    if (issued.rows.length > 0) {
+      throw new FinanceError(409, 'series_in_use', "numbers have been issued this fiscal year; change the numbering before the next year's first document")
+    }
+    const [before] = await tx.select().from(series).where(eq(series.docType, data.docType))
     await tx
       .insert(series)
       .values({ institutionId: tenant, docType: data.docType, prefix: data.prefix, padding: data.padding })
@@ -351,6 +374,21 @@ export async function setSeries(actor: Actor, input: unknown) {
         target: [series.institutionId, series.docType],
         set: { prefix: data.prefix, padding: data.padding },
       })
+    await audit(tx, {
+      institutionId: tenant,
+      actorId: actor.id,
+      actorEmail: actor.email ?? null,
+      moduleId: 'finance',
+      action: 'series.set',
+      reason: `numbering for ${data.docType.replaceAll('_', ' ')} changed`,
+      entity: 'finance_series',
+      entityId: data.docType,
+      detail: {
+        docType: data.docType,
+        before: before ? { prefix: before.prefix, padding: before.padding } : null,
+        after: { prefix: data.prefix, padding: data.padding },
+      },
+    })
     return { notice: `Numbering for ${data.docType.replaceAll('_', ' ')} saved.` }
   })
 }
