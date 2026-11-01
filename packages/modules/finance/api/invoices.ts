@@ -23,6 +23,7 @@ import {
   lines as glLines,
   parties,
   partyLedger,
+  payments,
   receiptLines,
   stockLedger,
   tdsSections,
@@ -445,6 +446,7 @@ export async function computeInvoice(
   // section's thresholds; on a debit note, the share of what the bill deducted.
   let tdsSectionId: string | null = null
   let tdsPaise = 0
+  let tdsAdvancePaise = 0
   if (draft.kind === 'purchase') {
     tdsSectionId = draft.tdsSectionId ?? party.tdsSectionId ?? null
     if (tdsSectionId && foreign) {
@@ -465,6 +467,30 @@ export async function computeInvoice(
         fyEnd: fy.endsOn,
         excludeInvoiceId: invoiceId,
       })
+      // Tax already deducted on an advance to this supplier under the section, in the year, is not deducted twice (P1-05b D12).
+      if (tdsPaise > 0 && !draft.isReturn) {
+        const [paid] = await tx
+          .select({ tds: sql<number>`coalesce(sum(${payments.tdsPaise}), 0)::bigint` })
+          .from(payments)
+          .where(and(eq(payments.partyId, party.id), eq(payments.kind, 'pay'), eq(payments.docstatus, 'submitted'), eq(payments.tdsSectionId, tdsSectionId), sql`${payments.postingDate} between ${fy.startsOn} and ${fy.endsOn}`))
+        const [absorbed] = await tx
+          .select({ tds: sql<number>`coalesce(sum(${invoices.tdsAdvancePaise}), 0)::bigint` })
+          .from(invoices)
+          .where(
+            and(
+              eq(invoices.partyId, party.id),
+              eq(invoices.kind, 'purchase'),
+              eq(invoices.isReturn, false),
+              eq(invoices.docstatus, 'submitted'),
+              eq(invoices.tdsSectionId, tdsSectionId),
+              sql`${invoices.postingDate} between ${fy.startsOn} and ${fy.endsOn}`,
+              invoiceId ? sql`${invoices.id} <> ${invoiceId}` : undefined,
+            ),
+          )
+        const spare = Math.max(Number(paid?.tds ?? 0) - Number(absorbed?.tds ?? 0), 0)
+        tdsAdvancePaise = Math.min(tdsPaise, spare)
+        tdsPaise -= tdsAdvancePaise
+      }
     }
     if (tdsPaise > totalPaise) tdsPaise = totalPaise
   }
@@ -497,6 +523,7 @@ export async function computeInvoice(
       totalPaise,
       tdsSectionId,
       tdsPaise,
+      tdsAdvancePaise,
       costCenter: draft.costCenter ?? null,
       fundId: draft.fundId ?? null,
       memo: draft.memo ?? null,
