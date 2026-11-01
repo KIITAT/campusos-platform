@@ -248,12 +248,17 @@ export const budgetReportSchema = z
         /** Debits less credits: a credit to an expense account is spending undone. */
         actualPaise: z.number().int(),
         remainingPaise: z.number().int(),
+        /** Open purchase orders not yet billed (ACC-12). */
+        committedPaise: z.number().int(),
+        /** Budget less spent less committed. */
+        availablePaise: z.number().int(),
         hardLimit: z.boolean(),
         overspent: z.boolean(),
       }),
     ),
     budgetedPaise: z.number().int(),
     spentPaise: z.number().int(),
+    committedPaise: z.number().int(),
     overspentCount: z.number().int(),
   })
   .meta({ id: 'FinanceBudgetReport' })

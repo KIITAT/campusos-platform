@@ -7,6 +7,7 @@ import { FinanceError, ensureDefaultChart, type Actor } from './operations'
 import { requireRead, type Tx } from './core'
 import { fiscalBounds, localToday, settingsWithin } from './years'
 import { monthEnd, parseDecimal } from './numbers'
+import { committedWithin } from './encumbrance'
 import { checkOtherPerson } from './sod'
 import { subledgerRows } from './subledgers'
 import {
@@ -395,11 +396,13 @@ export async function budgetReport(actor: Actor, input: unknown): Promise<Budget
       .where(sql`${entries.postingDate} between ${fy.startsOn} and ${fy.endsOn}`)
       .groupBy(lines.accountId, lines.costCenter)
 
+    const committed = await committedWithin(tx, { fy })
     const rows = planned.map((b) => {
       const actualPaise = Number(
         spent.find((s) => s.accountId === b.accountId && s.costCenter === b.costCenter)
           ?.spentPaise ?? 0,
       )
+      const committedHere = committed.get(`${b.costCenter}|${b.accountId}`) ?? 0
       return {
         costCenter: b.costCenter,
         accountCode: b.accountCode,
@@ -407,6 +410,8 @@ export async function budgetReport(actor: Actor, input: unknown): Promise<Budget
         budgetPaise: b.amountPaise,
         actualPaise,
         remainingPaise: b.amountPaise - actualPaise,
+        committedPaise: committedHere,
+        availablePaise: b.amountPaise - actualPaise - committedHere,
         hardLimit: b.hardLimit,
         overspent: actualPaise > b.amountPaise,
       }
@@ -417,6 +422,7 @@ export async function budgetReport(actor: Actor, input: unknown): Promise<Budget
       rows,
       budgetedPaise: rows.reduce((n, r) => n + r.budgetPaise, 0),
       spentPaise: rows.reduce((n, r) => n + r.actualPaise, 0),
+      committedPaise: rows.reduce((n, r) => n + r.committedPaise, 0),
       overspentCount: rows.filter((r) => r.overspent).length,
     }
   })

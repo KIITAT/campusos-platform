@@ -397,14 +397,15 @@ const legacyPages: PluginPage[] = [
           { key: 'accountName', label: 'Name' },
           { key: 'budgetPaise', label: 'Budget', kind: 'money' },
           { key: 'actualPaise', label: 'Spent', kind: 'money' },
-          { key: 'remainingPaise', label: 'Left', kind: 'money', alertWhen: 'overspent' },
+          { key: 'committedPaise', label: 'Committed', kind: 'money' },
+          { key: 'availablePaise', label: 'Available', kind: 'money', alertWhen: 'overspent' },
           { key: 'hardLimit', label: 'Enforced', kind: 'bool' },
         ],
       },
       {
         kind: 'form',
         title: 'Set a budget',
-        note: 'Enforced budgets refuse the entry that would pass them. Left off, an overspend is recorded and reported -- which is usually right, because books that refuse to record what happened are worse than an overspend somebody has to explain.',
+        note: 'Enforced budgets refuse the entry that would pass them. Open purchase orders count against an enforced budget when they are submitted. Left off, an overspend is recorded and reported -- which is usually right, because books that refuse to record what happened are worse than an overspend somebody has to explain.',
         submit: 'Set',
         path: '/budgets',
         fields: [
