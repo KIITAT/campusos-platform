@@ -6,6 +6,7 @@ import type { Role } from '@campusos/module-framework'
 import {
   FinanceError,
   accountFor,
+  cancelInvoice,
   closePeriod,
   createAssetCategory,
   createBankAccount,
@@ -18,6 +19,8 @@ import {
   createParty,
   createStockEntry,
   loadIndiaPreset,
+  makeReturn,
+  markFiled,
   postDepreciation,
   postEntry,
   postWithin,
@@ -358,4 +361,41 @@ test('the series is locked once a number is issued this year, and every change i
 test('a non-GST series keeps its freedom', async () => {
   const b = await books()
   await setSeries(b.admin, { docType: 'journal', prefix: 'JOURNAL-VOUCHER/{FY}/', padding: 6 })
+})
+
+// --- Step 5: GST filings and the cancel refusal (ACC-05) ---------------------------
+
+const APRIL = { returnType: 'gstr1', periodFrom: '2026-04-01', periodTo: '2026-04-30', filedOn: '2026-05-11' }
+
+test('a sales invoice in a filed GSTR-1 cannot be cancelled (ACC-05)', async () => {
+  const b = await books()
+  const c = await customer(b)
+  const service = await createItem(b.clerk, { code: 'SVC', name: 'Service', nature: 'service' })
+  const inv = (await saveInvoice(b.clerk, { kind: 'sales', partyId: c, postingDate: '2026-04-10', lines: [{ itemId: service.id, qty: '1', rate: '100' }], submit: true })) as { id: string }
+  await markFiled(b.admin, APRIL)
+  await refused(cancelInvoice(b.admin, { invoiceId: inv.id, reason: 'wrong party' }), 'gst_return_filed', 409)
+  const note = (await makeReturn(b.clerk, { invoiceId: inv.id, postingDate: '2026-05-02', submit: true })) as { id: string }
+  assert.ok(note.id)
+})
+
+test('a purchase invoice in that month still cancels', async () => {
+  const b = await books()
+  const s = await supplier(b)
+  const bill = (await saveInvoice(b.clerk, { kind: 'purchase', partyId: s, postingDate: '2026-04-10', billNo: 'B-9', lines: [{ description: 'Paper', qty: '1', rate: '100' }] })) as { id: string }
+  await submitInvoice(b.admin, { invoiceId: bill.id })
+  await markFiled(b.admin, APRIL)
+  await cancelInvoice(b.admin, { invoiceId: bill.id, reason: 'wrong supplier' })
+})
+
+test('filings refuse overlap and odd periods', async () => {
+  const b = await books()
+  await markFiled(b.admin, APRIL)
+  await refused(markFiled(b.admin, APRIL), 'return_already_filed', 409)
+  await refused(markFiled(b.admin, { ...APRIL, periodFrom: '2026-04-02' }), 'bad_return_period', 400)
+  await markFiled(b.admin, { returnType: 'gstr1', periodFrom: '2026-07-01', periodTo: '2026-09-30', filedOn: '2026-10-25' })
+})
+
+test('only administrators mark a return filed', async () => {
+  const b = await books()
+  await refused(markFiled(b.clerk, APRIL), 'forbidden', 403)
 })
