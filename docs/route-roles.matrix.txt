@@ -216,7 +216,7 @@ GET /api/v1/modules/feedback/give                                        .......
 POST /api/v1/modules/feedback/give                                       .......s.. op
 GET /api/v1/modules/feedback/completion                                  SIHF...s.. gate
 
-## fees 0.13.0
+## fees 0.14.0
 GET /api/v1/modules/fees/bank-accounts                                   SI..A..s.. gate
 POST /api/v1/modules/fees/bank-accounts                                  SI........ op
 POST /api/v1/modules/fees/bank-accounts/retire                           SI........ op
@@ -257,7 +257,7 @@ GET /api/v1/modules/fees/ledger                                          SIH.A..
 GET /api/v1/modules/fees/dues                                            SI..A..... gate
 GET /api/v1/modules/fees/receipt.pdf                                     SI..A..s.. gate
 
-## finance 0.11.0
+## finance 0.12.0
 GET /api/v1/modules/finance/accounts                                     SI..A..... op
 POST /api/v1/modules/finance/accounts                                    SI........ op
 POST /api/v1/modules/finance/accounts/update                             SI........ op
@@ -481,7 +481,7 @@ GET /api/v1/modules/hostel/imports                                       SI....O
 GET /api/v1/modules/hostel/imports/template                              SI....O... gate
 POST /api/v1/modules/hostel/imports/run                                  SI....O... gate
 
-## hr 0.15.0
+## hr 0.16.0
 GET /api/v1/modules/hr/staff                                             SI..A..... op
 POST /api/v1/modules/hr/staff                                            SI........ op
 POST /api/v1/modules/hr/staff/end                                        SI........ op
@@ -589,6 +589,8 @@ GET /api/v1/modules/hr/pay/gratuity                                      SI..A..
 POST /api/v1/modules/hr/pay/gratuity                                     SI........ op
 GET /api/v1/modules/hr/pay/gratuity/quote                                SI..A..... gate
 POST /api/v1/modules/hr/pay/gratuity/pay                                 SI........ op
+GET /api/v1/modules/hr/pay/gratuity/valuations                           SI..A..... op
+POST /api/v1/modules/hr/pay/gratuity/valuations                          SI........ op
 GET /api/v1/modules/hr/pay/withheld                                      SI..A..... op
 POST /api/v1/modules/hr/pay/withhold                                     SI........ op
 POST /api/v1/modules/hr/pay/withhold/lift                                SI........ op
@@ -615,7 +617,7 @@ GET /api/v1/modules/hr/imports                                           SI.....
 GET /api/v1/modules/hr/imports/template                                  SI........ gate
 POST /api/v1/modules/hr/imports/run                                      SI........ gate
 
-## library 0.7.0
+## library 0.8.0
 GET /api/v1/modules/library/titles                                       SIHF.L.s.. gate
 POST /api/v1/modules/library/titles                                      SI...L.... op
 GET /api/v1/modules/library/copies                                       SIHF.L.s.. gate
