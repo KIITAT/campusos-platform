@@ -20,7 +20,7 @@ import {
   type Actor,
 } from './api'
 import { plugin } from './plugin'
-import { noticeAttachments, notices, notifications } from './schema'
+import { noticeAttachments, notices, notificationMandatory, notificationOptOuts, notifications } from './schema'
 
 // The audit trail is append-only (AUD-01): a reset cannot empty it, so each
 // test reads only the rows written since its own reset.
@@ -314,6 +314,15 @@ test('a lecturer cannot withdraw somebody else s notice', async () => {
 test('no email path remains', async () => {
   assert.equal('emailConfigured' in (await inbox(student(ids.s1))), false)
   assert.equal(plugin.routes.some((r) => r.path === '/board/email'), false)
+})
+
+test('preferences are per institution', async () => {
+  const [o] = await authDb.insert(users).values({ email: 'o1@noticeother.test', institutionId: other, role: 'student', name: 'Other One' }).returning({ id: users.id })
+  await authDb.insert(notificationMandatory).values({ institutionId: other, moduleId: 'fees' })
+  await authDb.insert(notificationOptOuts).values({ institutionId: other, userId: o!.id, moduleId: 'fees' })
+  assert.deepEqual(await withTenant(inst, (tx) => tx.select().from(notificationMandatory)), [])
+  assert.deepEqual(await withTenant(inst, (tx) => tx.select().from(notificationOptOuts)), [])
+  assert.equal((await withTenant(other, (tx) => tx.select().from(notificationOptOuts))).length, 1)
 })
 
 // --- tenancy ---------------------------------------------------------------
