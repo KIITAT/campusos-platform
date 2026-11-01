@@ -1026,7 +1026,8 @@ export async function cancelInvoice(actor: Actor, input: unknown) {
       if (!inv) throw new FinanceError(404, 'no_such_invoice', 'no such invoice')
       if (inv.docstatus !== 'submitted') throw new FinanceError(409, 'not_submitted', 'only a submitted invoice is cancelled')
       // A sales invoice reported in a filed GSTR-1 is corrected by a credit note, never cancelled (ACC-05).
-      if (inv.kind === 'sales' && (await inFiledReturn(tx, inv.postingDate))) {
+      const [buyer] = inv.kind === 'sales' ? await tx.select().from(parties).where(eq(parties.id, inv.partyId)) : []
+      if (inv.kind === 'sales' && (await inFiledReturn(tx, inv.postingDate, !!buyer?.gstin && buyer.gstCategory !== 'overseas'))) {
         throw new FinanceError(409, 'gst_return_filed', 'this invoice is in a filed GSTR-1; raise a credit note instead')
       }
       const voucherType = voucherTypeOf(inv.kind)
