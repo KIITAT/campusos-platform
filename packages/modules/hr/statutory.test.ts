@@ -140,3 +140,9 @@ test('L: a base with paise between two whole-rupee slabs takes the lower slab (r
   const r = run([e(1_500_050)], { ptSlabs: slabs })
   assert.equal(amounts(r).professional_tax, 15_000)
 })
+
+test('M: the PF base is recorded for the ECR (P1-06c)', () => {
+  assert.equal(run([e(4_000_000), e(1_600_000, 'excluded')]).record.epfWagesPaise, 1_500_000)
+  assert.equal(run([e(4_000_000)], { person: { pfOnActual: true } }).record.epfWagesPaise, 4_000_000)
+  assert.equal(run([e(4_000_000)], { person: { pfMember: false } }).record.epfWagesPaise, 0)
+})
