@@ -326,6 +326,29 @@ export async function accountFor(tx: Tx, institutionId: string, purpose: Account
 }
 
 /**
+ * A purpose's balance on its accounts' normal side, from entries dated on or
+ * before `on`. Zero when nothing has been posted to it. Reversals count: they
+ * are entries.
+ */
+export async function purposeBalance(tx: Tx, purpose: AccountPurpose, on: string): Promise<number> {
+  const rows = await tx
+    .select({
+      type: accounts.type,
+      debit: sql<string>`coalesce(sum(${lines.debitPaise}), 0)`,
+      credit: sql<string>`coalesce(sum(${lines.creditPaise}), 0)`,
+    })
+    .from(lines)
+    .innerJoin(entries, eq(entries.id, lines.entryId))
+    .innerJoin(accounts, eq(accounts.id, lines.accountId))
+    .where(and(eq(accounts.purpose, purpose), lte(entries.postingDate, on)))
+    .groupBy(accounts.type)
+  return rows.reduce(
+    (n, r) => n + (normalSide(r.type) === 'debit' ? Number(r.debit) - Number(r.credit) : Number(r.credit) - Number(r.debit)),
+    0,
+  )
+}
+
+/**
  * Write one balanced entry.
  *
  * The balance is asserted here and again by a deferred constraint trigger at

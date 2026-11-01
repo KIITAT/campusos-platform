@@ -17,6 +17,7 @@ import {
   setPtSlabsSchema,
   setTaxDeclarationsSchema,
   setStatutoryIdentitySchema,
+  valueGratuitySchema,
   withholdSalarySchema,
 } from './schemas'
 
@@ -96,6 +97,14 @@ export const payPaths = {
     payGratuitySchema,
     'Once per employment, computed not typed, posted to employer contributions.',
   ),
+  [`${base}/pay/gratuity/valuations`]: {
+    ...get('Gratuity provision valuations, with the working'),
+    ...post(
+      'Value the gratuity provision as at a month end',
+      valueGratuitySchema,
+      'Accrued: computed for every person; actuarial: the actuary’s figure. The difference to the provision is posted.',
+    ),
+  },
   [`${base}/pay/withheld`]: get('Payslips held back, and whether released'),
   [`${base}/pay/withhold`]: post(
     'Hold back somebody’s salary from a month',

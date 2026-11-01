@@ -49,6 +49,7 @@ export const accountPurposes = [
   'esi_payable',
   'pt_payable',
   'salary_tds_payable',
+  'gratuity_provision',
   'tds_interest',
 ] as const
 

@@ -3,6 +3,7 @@ import { type PluginPage } from '@campusos/module-framework'
 import {
   getPayrollSettings,
   listGratuityRules,
+  listGratuityValuations,
   listPtSlabs,
   listRuns,
   listStaff,
@@ -28,7 +29,7 @@ export const payPages: PluginPage[] = [
     roles: [...OFFICE],
     async load(actor) {
       const a = actor as Actor
-      const [structures, regimes, rules, withheld, runs, staff, settings, slabs] = await Promise.all([
+      const [structures, regimes, rules, withheld, runs, staff, settings, slabs, valuations] = await Promise.all([
         listStructures(a),
         listTaxRegimes(a),
         listGratuityRules(a),
@@ -37,6 +38,7 @@ export const payPages: PluginPage[] = [
         listStaff(a),
         getPayrollSettings(a),
         listPtSlabs(a),
+        listGratuityValuations(a),
       ])
       return {
         basis: settings.prorationBasis,
@@ -69,6 +71,8 @@ export const payPages: PluginPage[] = [
           ...g,
           formula: `${g.daysPerYear}/${g.divisorDays} of ${g.wageCodes.join('+')} per year, from ${g.minServiceYears} years`,
         })),
+        valuations: valuations.map((v) => ({ ...v, people: v.lines.length })),
+        ruleOptions: rules.map((g) => ({ value: g.id, label: `${g.code} - ${g.name}` })),
         withheld: withheld.map((w) => ({ ...w, month: w.period.slice(0, 7), held: !w.releasedAt })),
         runs: runs.map((r) => ({
           ...r,
@@ -209,6 +213,49 @@ export const payPages: PluginPage[] = [
           { key: 'name', label: 'Name' },
           { key: 'formula', label: 'Rule' },
           { key: 'maxPaise', label: 'Ceiling', kind: 'money' },
+        ],
+      },
+      {
+        kind: 'table',
+        title: 'Gratuity provision',
+        rows: 'valuations',
+        empty: 'Not valued yet: gratuity is a cost only when it is paid.',
+        columns: [
+          { key: 'asOf', label: 'As at' },
+          { key: 'method', label: 'Method' },
+          { key: 'obligationPaise', label: 'Obligation', kind: 'money' },
+          { key: 'provisionBeforePaise', label: 'Provision before', kind: 'money' },
+          { key: 'adjustmentPaise', label: 'Posted', kind: 'money' },
+          { key: 'people', label: 'People' },
+          { key: 'reference', label: 'Report' },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Value the gratuity provision',
+        note:
+          'As at the last day of a month. Accrued: every person as if they left that day, service not yet ' +
+          'vested included, and leavers of the last year who qualify and are unpaid. Actuarial: the ' +
+          'obligation from the actuary’s report, with its reference. The difference to the provision is ' +
+          'posted to employer contributions; once a provision exists, gratuity paid on leaving draws on it. ' +
+          'Value again as at the same date to correct. Audited.',
+        submit: 'Value',
+        path: '/pay/gratuity/valuations',
+        roles: [...ADMIN],
+        fields: [
+          { name: 'asOf', label: 'As at', kind: 'date' },
+          {
+            name: 'method',
+            label: 'Method',
+            kind: 'select',
+            options: [
+              { value: 'accrued', label: 'accrued (computed)' },
+              { value: 'actuarial', label: 'actuarial (from the report)' },
+            ],
+          },
+          { name: 'ruleId', label: 'Rule (accrued)', kind: 'select', options: 'ruleOptions', optional: true },
+          { name: 'obligation', label: 'Obligation (actuarial)', kind: 'money', optional: true },
+          { name: 'reference', label: 'Report reference (actuarial)', optional: true },
         ],
       },
       {
