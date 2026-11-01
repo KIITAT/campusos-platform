@@ -1745,6 +1745,54 @@ export const gratuityPayouts = pgTable(
   ],
 )
 
+/** The gratuity obligation as at a month end, and what was posted to bring the provision to it (P1-06d). */
+export const gratuityValuations = pgTable(
+  'hr_gratuity_valuations',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    asOf: date('as_of').notNull(),
+    method: text().notNull().$type<'accrued' | 'actuarial'>(),
+    ruleId: uuid('rule_id').references(() => gratuityRules.id, { onDelete: 'restrict' }),
+    obligationPaise: paise('obligation_paise').notNull(),
+    provisionBeforePaise: paise('provision_before_paise').notNull(),
+    adjustmentPaise: paise('adjustment_paise').notNull(),
+    reference: text(),
+    valuedBy: text('valued_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('hr_gratuity_valuations_as_of').on(t.institutionId, t.asOf),
+    check('hr_gratuity_valuations_method', sql`method in ('accrued', 'actuarial')`),
+    check('hr_gratuity_valuations_month_end', sql`as_of = (date_trunc('month', as_of) + interval '1 month - 1 day')::date`),
+    check('hr_gratuity_valuations_obligation', sql`obligation_paise >= 0`),
+    check('hr_gratuity_valuations_sum', sql`adjustment_paise = obligation_paise - provision_before_paise`),
+    check('hr_gratuity_valuations_basis', sql`(method = 'accrued' and rule_id is not null) or (method = 'actuarial' and rule_id is null and coalesce(length(trim(reference)) between 3 and 200, false))`),
+    tenantPolicy('hr_gratuity_valuations'),
+  ],
+)
+
+/** One person's part of an accrued valuation: the working a CA reads. */
+export const gratuityValuationLines = pgTable(
+  'hr_gratuity_valuation_lines',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    valuationId: uuid('valuation_id').notNull().references(() => gratuityValuations.id, { onDelete: 'cascade' }),
+    staffId: uuid('staff_id').notNull().references(() => staff.id, { onDelete: 'no action' }),
+    leftOn: date('left_on'),
+    serviceYears: smallint('service_years').notNull(),
+    monthlyWagePaise: paise('monthly_wage_paise').notNull(),
+    amountPaise: paise('amount_paise').notNull(),
+  },
+  (t) => [
+    uniqueIndex('hr_gratuity_valuation_lines_once').on(t.valuationId, t.staffId),
+    index('hr_gratuity_valuation_lines_staff').on(t.staffId),
+    check('hr_gratuity_valuation_lines_figures', sql`service_years >= 0 and monthly_wage_paise >= 0 and amount_paise >= 0`),
+    tenantPolicy('hr_gratuity_valuation_lines'),
+  ],
+)
+
 /**
  * Salary held back: payslips are still generated -- the cost belongs to the
  * month -- but they are left out of the payment run until released.
@@ -2022,5 +2070,6 @@ export type TaxRegime = typeof taxRegimes.$inferSelect
 export type TaxSlab = typeof taxSlabs.$inferSelect
 export type GratuityRule = typeof gratuityRules.$inferSelect
 export type GratuityPayout = typeof gratuityPayouts.$inferSelect
+export type GratuityValuation = typeof gratuityValuations.$inferSelect
 export type SalaryWithholding = typeof salaryWithholdings.$inferSelect
 export type PayrollRunRecord = typeof payrollRuns.$inferSelect

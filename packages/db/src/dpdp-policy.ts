@@ -199,6 +199,8 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   hr_expense_claims: 'export',
   hr_goals: 'export',
   hr_gratuity_payouts: 'export',
+  hr_gratuity_valuations: 'export',
+  hr_gratuity_valuation_lines: 'export',
   hr_interview_feedback: 'export',
   hr_job_offers: 'export',
   hr_job_requisitions: 'export',
