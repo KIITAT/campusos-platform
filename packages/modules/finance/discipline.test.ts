@@ -473,6 +473,32 @@ test('a purchase order beyond its budget is refused at submit (ACC-12)', async (
   assert.equal((e.detail as { wouldBePaise: number }).wouldBePaise, 1_100_000)
 })
 
+test('two purchase orders submitted together cannot both fit in room for one (ACC-12, review P1-04 finding 1)', async () => {
+  const b = await books()
+  const { po } = await budgeted(b, true)
+  const first = (await po('6000')).id
+  const second = (await po('6000')).id
+  // The first submit creates the fiscal year lazily and would serialise the pair before the budget; do that now.
+  await submitOrder(b.admin, { orderId: (await po('100')).id })
+  let release!: () => void
+  const barrier = new Promise<void>((resolve) => (release = resolve))
+  let held!: () => void
+  const holding = new Promise<void>((resolve) => (held = resolve))
+  // A third connection holds the budget row, so both submits read, then queue on it.
+  const hold = withTenant(b.id, async (tx) => {
+    await tx.execute(sql`select 1 from finance_budgets where hard_limit for update`)
+    held()
+    await barrier
+  })
+  await holding
+  const one = submitOrder(b.admin, { orderId: first }).then(() => 'ok', (e: unknown) => (e as FinanceError).code)
+  const two = submitOrder(b.admin2, { orderId: second }).then(() => 'ok', (e: unknown) => (e as FinanceError).code)
+  await new Promise((resolve) => setTimeout(resolve, 1500))
+  release()
+  const results = (await Promise.all([one, two, hold]).then((r) => r.slice(0, 2))) as string[]
+  assert.deepEqual(results.sort(), ['ok', 'over_budget'])
+})
+
 test('billing a PO moves the amount from committed to spent', async () => {
   const b = await books()
   const { po, service, vendor } = await budgeted(b, true)
