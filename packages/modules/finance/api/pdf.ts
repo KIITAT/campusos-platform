@@ -504,7 +504,7 @@ export async function tdsCertificatePdf(actor: Actor, input: { partyId: string; 
   sh.right(money(paid), col.paid + 52, 9, sh.bold)
   sh.right(money(tds), col.tds + 0, 9, sh.bold)
   sh.y -= 24
-  sh.text('The certificate a deductee may rely on is issued from TRACES; this statement is the institution’s record.', M, 8, sh.font, faint)
+  sh.text("The certificate a deductee may rely on is issued from TRACES; this statement is the institution's record.", M, 8, sh.font, faint)
   sh.y -= 12
   signature(sh, lh)
   return { bytes: await sh.doc.save(), fileName: `tds-statement-${party.code.replace(/[^a-zA-Z0-9._-]/g, '_')}-${fy}-Q${quarter}.pdf` }
