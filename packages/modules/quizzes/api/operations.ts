@@ -623,7 +623,7 @@ async function finalise(tx: Tx, attemptId: string, auto: boolean) {
 }
 
 /** Attempts whose time is up and grace spent, submitted by the clock. */
-async function finaliseExpired(tx: Tx, where: { quizId?: string; studentId?: string }) {
+export async function finaliseExpired(tx: Tx, where: { quizId?: string; studentId?: string }) {
   const due = await tx
     .select({ id: attempts.id })
     .from(attempts)

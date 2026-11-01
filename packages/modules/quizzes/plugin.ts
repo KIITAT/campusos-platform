@@ -4,9 +4,10 @@ import { manifest } from './manifest'
 import { paths as openapiPaths } from './api/openapi'
 import { routes } from './routes'
 import { pages } from './pages'
+import { jobs } from './jobs'
 
 /** The single entry point the host imports after installing this package. */
-export const plugin: Plugin = withRouteRoles({ manifest, routes, openapiPaths, pages }, routeRoles)
+export const plugin: Plugin = withRouteRoles({ manifest, routes, openapiPaths, pages, jobs }, routeRoles)
 validatePlugin(plugin)
 
 export default plugin
