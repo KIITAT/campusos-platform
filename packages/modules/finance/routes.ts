@@ -288,6 +288,11 @@ export const specs: RouteSpec[] = [
   post('reports', '/tds/challans', 'Record a TDS challan against a month of deductions', api.recordChallan, api.recordChallanSchema),
   post('reports', '/tds/challans/void', 'Void a TDS challan', api.voidChallan, api.voidChallanSchema),
   get('reports', '/tds/challans', 'TDS challans recorded', (a) => api.listChallans(a)),
+  file('reports', '/tds/quarter', 'The TDS working statement for a quarter as CSV (fy, quarter, form)', (a, req) => {
+    const q = query(req)
+    return api.tdsQuarterFile(a, { fy: q.fy, quarter: q.quarter, form: q.form })
+  }),
+  get('reports', '/tds/interest', 'Interest on TDS deposited late', (a, q) => api.tdsInterest(a, { on: q.on })),
   post('reports', '/gst/2b', 'Import a GSTR-2B JSON file (replaces that month)', api.import2b, api.import2bSchema),
   get('reports', '/gst/2b', 'A month of GSTR-2B against the purchase bills', (a, _q, req) => api.match2b(a, { period: requiredParam(req, 'period') })),
   get('reports', '/gst/2b/returns', 'GSTR-2B files imported', (a) => api.list2bReturns(a)),

@@ -3,7 +3,7 @@ import { audit, withTenant } from '@campusos/db'
 import * as z from 'zod'
 import { tdsChallanLinks, tdsChallans, tdsSections } from '../schema'
 import { FinanceError, named, requireConfigure, requireRead, type Actor, type Tx } from './core'
-import { monthEnd, parseDecimal } from './numbers'
+import { bpOf, monthEnd, parseDecimal } from './numbers'
 import { bankAccountWithin } from './payments'
 import { accountFor, postWithin, reverseWithin } from './operations'
 import { localToday } from './years'
@@ -274,4 +274,116 @@ export async function inChallan(tx: Tx, which: { invoiceId: string } | { payment
       : sql`select 1 from finance_tds_challan_links where payment_id = ${which.paymentId}`,
   )
   return r.rows.length > 0
+}
+
+// --- the quarterly working statement --------------------------------------------------
+
+const QUARTERS = [
+  { from: (fy: number) => `${fy}-04-01`, to: (fy: number) => `${fy}-06-30` },
+  { from: (fy: number) => `${fy}-07-01`, to: (fy: number) => `${fy}-09-30` },
+  { from: (fy: number) => `${fy}-10-01`, to: (fy: number) => `${fy}-12-31` },
+  { from: (fy: number) => `${fy + 1}-01-01`, to: (fy: number) => `${fy + 1}-03-31` },
+] as const
+
+const quarterSchema = z.object({
+  fy: z.coerce.number().int().min(2000).max(2100),
+  quarter: z.coerce.number().int().min(1).max(4),
+  form: z.enum(['26Q', '27Q']).default('26Q'),
+})
+
+function quarterOf(input: unknown) {
+  const parsed = quarterSchema.safeParse(input)
+  if (!parsed.success) throw new FinanceError(400, 'bad_period', 'give a fiscal year from 2000 to 2100 and a quarter from 1 to 4')
+  const { fy, quarter, form } = parsed.data
+  const q = QUARTERS[quarter - 1]!
+  return { fy, quarter, form, from: q.from(fy), to: q.to(fy) }
+}
+
+const rupeeText = (paise: number) => (paise / 100).toFixed(2)
+const csvCell = (v: unknown) => {
+  const s = v === null || v === undefined ? '' : String(v)
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+}
+
+/**
+ * The quarter's deductions and challans as one CSV, the working an accountant
+ * or the FVU file is prepared from: a DEDUCTEE row for each deduction, a CHALLAN
+ * row for each live challan, and what was deducted against what was deposited.
+ */
+export async function tdsQuarterFile(actor: Actor, input: unknown) {
+  const tenant = requireRead(actor)
+  const q = quarterOf(input)
+  return withTenant(tenant, async (tx) => {
+    const deductions = await deductionsWithin(tx, { from: q.from, to: q.to, form: q.form })
+    const challans = await tx
+      .select()
+      .from(tdsChallans)
+      .where(sql`${tdsChallans.form} = ${q.form} and ${tdsChallans.month} between ${q.from}::date and ${q.to}::date and ${tdsChallans.voidedAt} is null`)
+    const head = ['Record', 'Section', 'Deductee', 'PAN', 'Document', 'Date', 'Amount paid', 'TDS', 'BSR code', 'Challan serial', 'Deposited on']
+    const lines: unknown[][] = [head]
+    for (const d of deductions) {
+      lines.push(['DEDUCTEE', d.section, d.party, d.pan ?? 'PANNOTAVBL', d.number, d.postingDate, rupeeText(d.paidPaise), rupeeText(d.tdsPaise), d.bsrCode, d.challanSerial, d.depositedOn])
+    }
+    for (const c of challans) {
+      lines.push(['CHALLAN', '', '', '', '', c.month, rupeeText(c.tdsPaise + c.interestPaise + c.feePaise), rupeeText(c.tdsPaise), c.bsrCode, c.challanSerial, c.depositedOn])
+    }
+    const deducted = deductions.reduce((n, d) => n + d.tdsPaise, 0)
+    const deposited = challans.reduce((n, c) => n + c.tdsPaise, 0)
+    for (const [label, value] of [['Deducted', deducted], ['Deposited', deposited], ['Difference', deducted - deposited]] as const) {
+      lines.push(['TOTAL', label, '', '', '', '', '', rupeeText(value), '', '', ''])
+    }
+    return {
+      bytes: lines.map((l) => l.map(csvCell).join(',')).join('\n'),
+      fileName: `tds-${q.form}-${q.fy}-Q${q.quarter}.csv`,
+      type: 'text/csv; charset=utf-8',
+    }
+  })
+}
+
+// --- late-deposit interest ------------------------------------------------------------
+
+/** Interest on tax deducted but deposited late: one and a half percent for each month or part month. */
+export const TDS_LATE_DEPOSIT_BP = 150
+
+/** The 7th of the month after the deduction; deductions dated in March are due on 30 April. */
+export function dueDateOf(postingDate: string): string {
+  const [y, m] = postingDate.split('-').map(Number) as [number, number]
+  if (m === 3) return `${y}-04-30`
+  return m === 12 ? `${y + 1}-01-07` : `${y}-${String(m + 1).padStart(2, '0')}-07`
+}
+
+/** Calendar months from the deduction's month to the payment's month, both counted. */
+export function monthsLate(deductedOn: string, paidOn: string): number {
+  const [dy, dm] = deductedOn.split('-').map(Number) as [number, number]
+  const [py, pm] = paidOn.split('-').map(Number) as [number, number]
+  return (py - dy) * 12 + (pm - dm) + 1
+}
+
+/** Late-deposit interest as of a day (default today): what each late deduction would cost or cost. */
+export async function tdsInterest(actor: Actor, input: { on?: string } = {}) {
+  const tenant = requireRead(actor)
+  return withTenant(tenant, async (tx) => {
+    const on = input.on ?? (await localToday(tx, tenant))
+    const rows = (await deductionsWithin(tx, { from: '2000-01-01', to: on }))
+      .filter((d) => d.tdsPaise > 0)
+      .map((d) => {
+        const dueOn = dueDateOf(d.postingDate)
+        const paidOn = d.depositedOn ?? on
+        if (paidOn <= dueOn) return null
+        const months = monthsLate(d.postingDate, paidOn)
+        return {
+          document: d.number,
+          party: d.party,
+          section: d.section,
+          deductedOn: d.postingDate,
+          dueOn,
+          depositedOn: d.depositedOn,
+          tdsPaise: d.tdsPaise,
+          months,
+          interestPaise: bpOf(d.tdsPaise, TDS_LATE_DEPOSIT_BP * months),
+        }
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null)
+    return { on, rows, totalPaise: rows.reduce((n, r) => n + r.interestPaise, 0) }
+  })
 }
