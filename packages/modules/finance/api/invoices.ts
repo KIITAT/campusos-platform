@@ -1,7 +1,17 @@
-import { and, asc, desc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm'
 import { amendDocument, cancelDocument, submitDocument, withTenant } from '@campusos/db'
 import * as z from 'zod'
-import { ticked } from '@campusos/module-framework'
+import {
+  cursorColumn,
+  finishPage,
+  keyset,
+  orderKeys,
+  readPage,
+  searchAny,
+  ticked,
+  type PageRequest,
+  type SortSpec,
+} from '@campusos/module-framework'
 import {
   assetCategories,
   assets,
@@ -1212,44 +1222,73 @@ export function statusOf(
   return outstandingFc < inv.totalFc - inv.tdsPaise ? 'partly_paid' : 'unpaid'
 }
 
+const INVOICE_SORTS: SortSpec = {
+  date: {
+    dir: 'desc',
+    keys: [
+      { sql: sql`${invoices.postingDate}`, type: 'date' },
+      { sql: sql`${invoices.createdAt}`, type: 'timestamptz' },
+      { sql: sql`${invoices.id}`, type: 'uuid' },
+    ],
+  },
+  number: { dir: 'asc', keys: [{ sql: sql`coalesce(${invoices.number}, '')`, type: 'text' }, { sql: sql`${invoices.id}`, type: 'uuid' }] },
+}
+export const invoicePage = (req: Request, prefix: string) => readPage(req, prefix, INVOICE_SORTS, 'date')
+
+/** One page of invoices, with what is still owed on each. Status is decided in SQL, mirroring `statusOf`. */
 export async function listInvoices(
   actor: Actor,
   input: { kind?: InvoiceKind; status?: string; partyId?: string; q?: string; from?: string; to?: string } = {},
+  page: PageRequest = invoicePage(new Request('https://x/'), ''),
 ) {
   const tenant = requireRead(actor)
   return withTenant(tenant, async (tx) => {
     const today = await localToday(tx, tenant)
+    const outstanding = sql<number>`coalesce((select sum(p.amount_fc) from finance_party_ledger p where p.against_id = "finance_invoices"."id"), 0)::bigint`
+    const status = sql<string>`case
+      when ${invoices.docstatus} = 'draft' then 'draft'
+      when ${invoices.docstatus} = 'cancelled' then 'cancelled'
+      when ${invoices.isReturn} then 'return'
+      when ${outstanding} <= 0 then 'paid'
+      when ${invoices.dueDate} < ${today}::date then 'overdue'
+      when ${outstanding} < ${invoices.totalFc} - ${invoices.tdsPaise} then 'partly_paid'
+      else 'unpaid' end`
+    const keys = INVOICE_SORTS[page.sort]!.keys
+    const filter = and(
+      input.kind ? eq(invoices.kind, input.kind) : undefined,
+      input.partyId ? eq(invoices.partyId, input.partyId) : undefined,
+      input.from ? sql`${invoices.postingDate} >= ${input.from}` : undefined,
+      input.to ? sql`${invoices.postingDate} <= ${input.to}` : undefined,
+      searchAny(input.q?.trim() || page.q, [sql`${invoices.number}`, sql`${parties.name}`, sql`${invoices.billNo}`]),
+      input.status === 'open'
+        ? sql`${status} in ('unpaid', 'partly_paid', 'overdue')`
+        : input.status
+          ? sql`${status} = ${input.status}`
+          : undefined,
+    )
     const rows = await tx
-      .select({
-        inv: invoices,
-        partyName: parties.name,
-        outstandingFc: sql<number>`coalesce((select sum(p.amount_fc) from finance_party_ledger p where p.against_id = "finance_invoices"."id"), 0)::bigint`,
-      })
+      .select({ inv: invoices, partyName: parties.name, outstandingFc: outstanding, _cursor: cursorColumn(keys) })
       .from(invoices)
       .innerJoin(parties, eq(parties.id, invoices.partyId))
-      .where(
-        and(
-          input.kind ? eq(invoices.kind, input.kind) : undefined,
-          input.partyId ? eq(invoices.partyId, input.partyId) : undefined,
-          input.from ? sql`${invoices.postingDate} >= ${input.from}` : undefined,
-          input.to ? sql`${invoices.postingDate} <= ${input.to}` : undefined,
-          input.q
-            ? sql`(${invoices.number} ilike ${`%${input.q}%`} or ${parties.name} ilike ${`%${input.q}%`} or ${invoices.billNo} ilike ${`%${input.q}%`})`
-            : undefined,
-          input.status === 'draft' || input.status === 'cancelled' ? eq(invoices.docstatus, input.status) : undefined,
-        ),
-      )
-      .orderBy(desc(invoices.postingDate), desc(invoices.createdAt))
-      .limit(1000)
-    const out = rows.map((r) => ({
-      ...r.inv,
-      partyName: r.partyName,
-      outstandingFc: Number(r.outstandingFc),
-      status: statusOf(r.inv, Number(r.outstandingFc), today),
-    }))
-    return input.status && !['draft', 'cancelled'].includes(input.status)
-      ? out.filter((r) => r.status === input.status || (input.status === 'open' && ['unpaid', 'partly_paid', 'overdue'].includes(r.status)))
-      : out
+      .where(and(filter, keyset(keys, page)))
+      .orderBy(...orderKeys(keys, page.dir))
+      .limit(page.limit + 1)
+    const [counted] = await tx
+      .select({ total: sql<number>`count(*)::int` })
+      .from(invoices)
+      .innerJoin(parties, eq(parties.id, invoices.partyId))
+      .where(filter)
+    return finishPage(
+      rows.map((r) => ({
+        ...r.inv,
+        partyName: r.partyName,
+        outstandingFc: Number(r.outstandingFc),
+        status: statusOf(r.inv, Number(r.outstandingFc), today),
+        _cursor: r._cursor,
+      })),
+      page,
+      counted!.total,
+    )
   })
 }
 

@@ -1,5 +1,6 @@
 import { and, asc, eq, sql } from 'drizzle-orm'
 import { withTenant } from '@campusos/db'
+import { cursorColumn, finishPage, keyset, orderKeys, readPage, type KeyColumn, type PageRequest } from '@campusos/module-framework'
 import { accounts, costCenters, funds } from '../schema'
 import { normalSide, cashFlowOf } from './chart'
 import { FinanceError, requireRead, type Actor, type Tx } from './core'
@@ -313,8 +314,25 @@ export async function cashMovements(actor: Actor, input: { from?: string; to?: s
 
 // --- ledgers and the day book --------------------------------------------------------
 
-/** An account's ledger for a period: its opening, every line with the running balance, its closing. */
-export async function generalLedger(actor: Actor, input: { accountId: string; from?: string; to?: string; partyId?: string; costCenter?: string }) {
+const GL_KEYS: KeyColumn[] = [
+  { sql: sql`e.posting_date`, type: 'date' },
+  { sql: sql`e.occurred_at`, type: 'timestamptz' },
+  { sql: sql`l.id`, type: 'uuid' },
+]
+/** The ledger's order is its meaning (a running balance), so it has one sort and no search. */
+export const glPage = (req: Request, prefix: string) => readPage(req, prefix, { ledger: { dir: 'asc', keys: GL_KEYS } }, 'ledger', 100)
+
+/**
+ * An account's ledger for a period: its opening, every line with the running
+ * balance, its closing. The closing is always summed over the whole period,
+ * never from the lines read. With `page`, only that page's lines come back,
+ * their balances carried across the cut.
+ */
+export async function generalLedger(
+  actor: Actor,
+  input: { accountId: string; from?: string; to?: string; partyId?: string; costCenter?: string },
+  page?: PageRequest,
+) {
   const tenant = requireRead(actor)
   return withTenant(tenant, async (tx) => {
     const [account] = await tx.select().from(accounts).where(eq(accounts.id, input.accountId))
@@ -331,24 +349,46 @@ export async function generalLedger(actor: Actor, input: { accountId: string; fr
     }
     const idList = sql.join(ids.map((i) => sql`${i}::uuid`), sql`, `)
     const extra = sql`${input.partyId ? sql`and l.party_id = ${input.partyId}::uuid` : sql``} ${input.costCenter ? sql`and l.cost_center = ${input.costCenter}` : sql``}`
+    const inPeriod = sql`l.account_id in (${idList}) and e.posting_date between ${from}::date and ${to}::date ${extra}`
     const [open] = (
       await tx.execute(sql`
         select coalesce(sum(l.debit_paise - l.credit_paise), 0)::bigint as v
           from finance_journal_lines l join finance_journal_entries e on e.id = l.entry_id
          where l.account_id in (${idList}) and e.posting_date < ${from}::date ${extra}`)
     ).rows as { v: number }[]
+    const [whole] = (
+      await tx.execute(sql`
+        select coalesce(sum(l.debit_paise - l.credit_paise), 0)::bigint as v, count(*)::int as n
+          from finance_journal_lines l join finance_journal_entries e on e.id = l.entry_id
+         where ${inPeriod}`)
+    ).rows as { v: number; n: number }[]
+    const openingPaise = sign * Number(open?.v ?? 0)
+    const closingPaise = sign * (Number(open?.v ?? 0) + Number(whole?.v ?? 0))
+
+    // Where this page's running balance starts: the opening, plus every line before the cursor.
+    let balance = openingPaise
+    const cut = page ? keyset(GL_KEYS, page) : undefined
+    if (page && cut) {
+      // Every line up to and including the cursor line, which closed the previous page.
+      const before = sql`not (${cut})`
+      const [prior] = (
+        await tx.execute(sql`
+          select coalesce(sum(l.debit_paise - l.credit_paise), 0)::bigint as v
+            from finance_journal_lines l join finance_journal_entries e on e.id = l.entry_id
+           where ${inPeriod} and ${before}`)
+      ).rows as { v: number }[]
+      balance += sign * Number(prior?.v ?? 0)
+    }
     const res = await tx.execute(sql`
       select l.id, e.id as entry_id, e.posting_date::text as posting_date, e.memo, e.source_module, e.source_ref,
-             l.debit_paise, l.credit_paise, l.cost_center, l.memo as line_memo, p.name as party, a.code, a.name as account
+             l.debit_paise, l.credit_paise, l.cost_center, l.memo as line_memo, p.name as party, a.code, a.name as account${page ? sql`, ${cursorColumn(GL_KEYS)} as _cursor` : sql``}
         from finance_journal_lines l
         join finance_journal_entries e on e.id = l.entry_id
         join finance_accounts a on a.id = l.account_id
         left join finance_parties p on p.id = l.party_id
-       where l.account_id in (${idList}) and e.posting_date between ${from}::date and ${to}::date ${extra}
-       order by e.posting_date, e.occurred_at, l.id
-       limit 5000`)
-    let balance = sign * Number(open?.v ?? 0)
-    const openingPaise = balance
+       where ${inPeriod} ${cut ? sql`and ${cut}` : sql``}
+       order by ${sql.join(orderKeys(GL_KEYS, 'asc'), sql`, `)}
+       ${page ? sql`limit ${page.limit + 1}` : sql``}`)
     const lines = (res.rows as Record<string, unknown>[]).map((r) => {
       balance += sign * (Number(r.debit_paise) - Number(r.credit_paise))
       return {
@@ -365,9 +405,14 @@ export async function generalLedger(actor: Actor, input: { accountId: string; fr
         debitPaise: Number(r.debit_paise),
         creditPaise: Number(r.credit_paise),
         balancePaise: balance,
+        _cursor: (r._cursor as string[] | undefined) ?? [],
       }
     })
-    return { account, from, to, openingPaise, lines, closingPaise: balance }
+    const total = Number(whole?.n ?? 0)
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    if (!page) return { account, from, to, openingPaise, lines: lines.map(({ _cursor, ...line }) => line), closingPaise, total, next: null as string | null }
+    const done = finishPage(lines, page, total)
+    return { account, from, to, openingPaise, lines: done.rows, closingPaise, total, next: done.next }
   })
 }
 
@@ -384,12 +429,42 @@ function isUnder(a: { id: string; isGroup: boolean }, groupId: string, parents: 
   return false
 }
 
-/** Every entry in a period, in order, with its lines: the day book. */
-export async function dayBook(actor: Actor, input: { from?: string; to?: string; sourceModule?: string } = {}) {
+const DAY_KEYS: KeyColumn[] = [
+  { sql: sql`e.posting_date`, type: 'date' },
+  { sql: sql`e.occurred_at`, type: 'timestamptz' },
+  { sql: sql`e.id`, type: 'uuid' },
+]
+/** The day book is read in order and paged by entry, so a page never splits an entry's lines. */
+export const dayBookPage = (req: Request, prefix: string) => readPage(req, prefix, { book: { dir: 'asc', keys: DAY_KEYS } }, 'book', 50)
+
+/** Every entry in a period, in order, with its lines: the day book. With `page`, one page of entries. */
+export async function dayBook(actor: Actor, input: { from?: string; to?: string; sourceModule?: string } = {}, page?: PageRequest) {
   const tenant = requireRead(actor)
   return withTenant(tenant, async (tx) => {
     const to = input.to ?? (await localToday(tx, tenant))
     const from = input.from ?? to
+    const entryWhere = sql`e.posting_date between ${from}::date and ${to}::date
+         ${input.sourceModule ? sql`and e.source_module = ${input.sourceModule}` : sql``}`
+    let only = sql``
+    let total = 0
+    let next: string | null = null
+    if (page) {
+      const cut = keyset(DAY_KEYS, page)
+      const found = (
+        await tx.execute(sql`
+          select e.id, ${cursorColumn(DAY_KEYS)} as _cursor
+            from finance_journal_entries e
+           where ${entryWhere} ${cut ? sql`and ${cut}` : sql``}
+           order by ${sql.join(orderKeys(DAY_KEYS, page.dir), sql`, `)}
+           limit ${page.limit + 1}`)
+      ).rows as { id: string; _cursor: string[] }[]
+      const [counted] = (await tx.execute(sql`select count(*)::int as n from finance_journal_entries e where ${entryWhere}`)).rows as { n: number }[]
+      const done = finishPage(found, page, Number(counted?.n ?? 0))
+      total = done.total
+      next = done.next
+      if (done.rows.length === 0) return { from, to, entries: [], total, next }
+      only = sql`and e.id in (${sql.join(done.rows.map((r) => sql`${r.id}::uuid`), sql`, `)})`
+    }
     const res = await tx.execute(sql`
       select e.id, e.posting_date::text as posting_date, e.memo, e.source_module, e.source_ref, e.reversal_of,
              l.debit_paise, l.credit_paise, a.code, a.name, p.name as party, l.cost_center
@@ -397,10 +472,8 @@ export async function dayBook(actor: Actor, input: { from?: string; to?: string;
         join finance_journal_lines l on l.entry_id = e.id
         join finance_accounts a on a.id = l.account_id
         left join finance_parties p on p.id = l.party_id
-       where e.posting_date between ${from}::date and ${to}::date
-         ${input.sourceModule ? sql`and e.source_module = ${input.sourceModule}` : sql``}
-       order by e.posting_date, e.occurred_at, e.id, l.debit_paise desc
-       limit 10000`)
+       where ${entryWhere} ${only}
+       order by e.posting_date, e.occurred_at, e.id, l.debit_paise desc`)
     const byEntry = new Map<string, { id: string; postingDate: string; memo: string; sourceModule: string; sourceRef: string; reversal: boolean; lines: { account: string; party: string | null; costCenter: string | null; debitPaise: number; creditPaise: number }[] }>()
     for (const r of res.rows as Record<string, unknown>[]) {
       const id = String(r.id)
@@ -422,7 +495,8 @@ export async function dayBook(actor: Actor, input: { from?: string; to?: string;
       })
       byEntry.set(id, e)
     }
-    return { from, to, entries: [...byEntry.values()] }
+    const entries = [...byEntry.values()]
+    return { from, to, entries, total: page ? total : entries.length, next }
   })
 }
 

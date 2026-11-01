@@ -188,9 +188,9 @@ test('a reader sees what is addressed to them and not what is not', async () => 
   await post({ title: 'For students', audienceRoles: ['student'] })
   await post({ title: 'For staff', audienceRoles: ['faculty'] })
 
-  const seen = (await board(student(ids.s1))).map((n) => n.title)
+  const seen = (await board(student(ids.s1))).rows.map((n) => n.title)
   assert.deepEqual(seen, ['For students'])
-  assert.equal((await board(admin(), true)).length, 2, 'the office sees both')
+  assert.equal((await board(admin(), true)).rows.length, 2, 'the office sees both')
 })
 
 test('a notice cannot be published already expired', async () => {
@@ -202,24 +202,24 @@ test('a notice cannot be published already expired', async () => {
 
 test('an expired notice drops off the board', async () => {
   const n = await post({ title: 'Yesterday' })
-  assert.equal((await board(student(ids.s1))).length, 1)
+  assert.equal((await board(student(ids.s1))).rows.length, 1)
 
   await withTenant(inst, (tx) =>
     tx.update(notices).set({ expiresAt: new Date() }).where(eq(notices.id, n.id)),
   )
-  assert.equal((await board(student(ids.s1))).length, 0)
+  assert.equal((await board(student(ids.s1))).rows.length, 0)
 })
 
 test('a pinned notice sorts first', async () => {
   await post({ title: 'Ordinary' })
   await post({ title: 'Important', pinned: true })
-  assert.equal((await board(student(ids.s1)))[0]!.title, 'Important')
+  assert.equal((await board(student(ids.s1))).rows[0]!.title, 'Important')
 })
 
 test('a draft is invisible to a reader but visible to the office', async () => {
   await post({ title: 'Not yet', publish: false })
-  assert.equal((await board(student(ids.s1))).length, 0)
-  assert.equal((await board(admin(), true)).length, 1)
+  assert.equal((await board(student(ids.s1))).rows.length, 0)
+  assert.equal((await board(admin(), true)).rows.length, 1)
 })
 
 test('the board reports reach and how many have read it', async () => {
@@ -300,7 +300,7 @@ test('withdrawing takes the notice and its inbox copies away, and is audited', a
 
   await withdrawNotice(admin(), { noticeId: n.id, reason: 'posted to the wrong cohort' })
   assert.equal((await inbox(student(ids.s1))).unread, 0)
-  assert.equal((await board(student(ids.s1))).length, 0)
+  assert.equal((await board(student(ids.s1))).rows.length, 0)
 
   const trail = await withTenant(inst, (tx) =>
     tx.select({ action: auditLog.action, reason: auditLog.reason }).from(auditLog).where(gte(auditLog.at, since)),
@@ -510,7 +510,7 @@ test('a file that is not what it says it is, or not a document, is refused befor
   await assert.rejects(post({ attachment: exe }), (e) => code(e) === 'wrong_type')
   const html = { name: 'page.html', type: 'text/html', size: 0, base64: Buffer.from('<script>').toString('base64') }
   await assert.rejects(post({ attachment: html }), (e) => code(e) === 'wrong_type')
-  assert.equal((await board(admin(), true)).length, 0, 'no notice was left behind without its document')
+  assert.equal((await board(admin(), true)).rows.length, 0, 'no notice was left behind without its document')
 })
 
 test('a document is for whoever may read its notice, and nobody else', async () => {
@@ -518,4 +518,17 @@ test('a document is for whoever may read its notice, and nobody else', async () 
   const [doc] = (await noticeView(teacher(), n.id)).documents
   await assert.rejects(attachmentFile(student(ids.s1), doc!.id), (e) => status(e) === 404)
   await assert.rejects(attachmentFile(A({ institutionId: other }), doc!.id), (e) => status(e) === 404)
+})
+
+// --- paging (DATA-01) --------------------------------------------------------
+
+test('readNotice opens a notice that is not on the first page (DATA-01)', async () => {
+  await withTenant(inst, (tx) =>
+    tx.execute(sql`insert into notices (institution_id, title, body, author_id, published_at)
+      select ${inst}, 'N' || g, 'b', ${ids.adm}, now() - (g || ' minutes')::interval
+      from generate_series(1, 205) g`),
+  )
+  const [row] = (await withTenant(inst, (tx) => tx.execute<{ id: string }>(sql`select id from notices where title = 'N205'`))).rows
+  const one = await readNotice(student(ids.s1), row!.id)
+  assert.equal(one.title, 'N205')
 })

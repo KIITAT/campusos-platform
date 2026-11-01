@@ -377,7 +377,7 @@ test('money paid ahead is set against the next invoice, and taken back if the pa
 
   await cancelPayment(b.staff, { paymentId: ahead.id, reason: 'cheque bounced' })
   assert.equal((await invoiceDetail(b.admin, inv.id)).outstanding.fc, 300_000)
-  const open = await listInvoices(b.admin, { kind: 'sales', status: 'open' })
+  const open = (await listInvoices(b.admin, { kind: 'sales', status: 'open' })).rows
   assert.equal(open.length, 1)
   await balanced(b)
 })

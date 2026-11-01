@@ -3,6 +3,7 @@ import {
   addAttachment,
   attachmentFile,
   board,
+  noticePage,
   createNotice,
   inbox,
   markRead,
@@ -20,7 +21,7 @@ export const routes: PluginRoute[] = [
   {
     method: 'GET',
     path: '/board',
-    handler: (actor, req) => board(actor as Actor, flag(req, 'drafts')),
+    handler: (actor, req) => board(actor as Actor, flag(req, 'drafts'), noticePage(req, '')),
   },
   {
     method: 'POST',

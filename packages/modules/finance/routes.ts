@@ -26,8 +26,8 @@ const query = (req: Request): Query => Object.fromEntries(new URL(req.url).searc
 function post(tag: string, path: string, summary: string, fn: (a: A, body: unknown) => Promise<unknown>, body?: z.ZodType): RouteSpec {
   return { method: 'POST', path, summary, body, tag, handler: async (actor, req) => fn(as(actor), await jsonBody(req)) }
 }
-function get(tag: string, path: string, summary: string, fn: (a: A, q: Query) => Promise<unknown>): RouteSpec {
-  return { method: 'GET', path, summary, tag, handler: (actor, req) => fn(as(actor), query(req)) }
+function get(tag: string, path: string, summary: string, fn: (a: A, q: Query, req: Request) => Promise<unknown>): RouteSpec {
+  return { method: 'GET', path, summary, tag, handler: (actor, req) => fn(as(actor), query(req), req) }
 }
 /** Bytes, not JSON: a printed document or a spreadsheet. */
 function file(
@@ -157,8 +157,8 @@ export const specs: RouteSpec[] = [
   get('stock', '/stock/against-books', 'Whether the stores and the stock accounts agree', (a) => api.stockAgainstBooks(a)),
 
   // --- invoices ----------------------------------------------------------------------
-  get('invoices', '/invoices', 'Sales or purchase invoices, with what is still owed on each', (a, q) =>
-    api.listInvoices(a, { kind: q.kind ? kind(q) : undefined, status: q.status, partyId: q.partyId, q: q.q, from: q.from, to: q.to })),
+  get('invoices', '/invoices', 'Sales or purchase invoices, with what is still owed on each', (a, q, req) =>
+    api.listInvoices(a, { kind: q.kind ? kind(q) : undefined, status: q.status, partyId: q.partyId, q: q.q, from: q.from, to: q.to }, api.invoicePage(req, ''))),
   get('invoices', '/invoices/detail', 'One invoice: lines, taxes, settlements, posting', (a, q) => api.invoiceDetail(a, q.invoiceId ?? '')),
   post('invoices', '/invoices', 'Save an invoice as a draft (and submit it, if asked)', api.saveInvoice, api.invoiceSchema),
   post('invoices', '/invoices/submit', 'Submit an invoice: number it and post it', api.submitInvoice),
@@ -175,8 +175,8 @@ export const specs: RouteSpec[] = [
   post('invoices', '/recurring/run', 'Raise every recurring invoice that has fallen due', api.runRecurring),
 
   // --- payments and vouchers -----------------------------------------------------------
-  get('payments', '/payments', 'Receipts, payments and transfers', (a, q) =>
-    api.listPayments(a, { kind: q.kind as 'receive' | 'pay' | 'transfer' | undefined, partyId: q.partyId, status: q.status, from: q.from, to: q.to })),
+  get('payments', '/payments', 'Receipts, payments and transfers', (a, q, req) =>
+    api.listPayments(a, { kind: q.kind as 'receive' | 'pay' | 'transfer' | undefined, partyId: q.partyId, status: q.status, q: q.q, from: q.from, to: q.to }, api.paymentPage(req, ''))),
   get('payments', '/payments/detail', 'One payment with what it settled', (a, q) => api.paymentDetail(a, q.paymentId ?? '')),
   get('payments', '/payments/open-invoices', "A party's open invoices, oldest first", (a, q) =>
     api.openInvoicesFor(a, { partyId: q.partyId ?? '', side: side(q), currency: q.currency })),
@@ -186,7 +186,7 @@ export const specs: RouteSpec[] = [
   post('payments', '/payments/amend', 'Copy a cancelled payment into a new draft', api.amendPayment),
   post('payments', '/payments/delete', 'Delete a draft payment', api.deletePayment),
   file('payments', '/payments/pdf', 'The receipt or voucher, printed', (a, req) => api.paymentPdf(a, requiredParam(req, 'paymentId'))),
-  get('payments', '/vouchers', 'Journal vouchers', (a, q) => api.listJournals(a, { kind: q.kind, status: q.status })),
+  get('payments', '/vouchers', 'Journal vouchers', (a, q, req) => api.listJournals(a, { kind: q.kind, status: q.status, q: q.q }, api.journalPage(req, ''))),
   get('payments', '/vouchers/detail', 'One journal voucher', (a, q) => api.journalDetail(a, q.journalId ?? '')),
   post('payments', '/vouchers', 'Save a journal voucher (and submit it, if asked)', api.saveJournal, api.journalSchema),
   post('payments', '/vouchers/submit', 'Submit a journal voucher', api.submitJournal),

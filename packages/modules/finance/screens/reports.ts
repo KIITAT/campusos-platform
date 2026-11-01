@@ -1,5 +1,5 @@
 import { formatPaise } from '@campusos/money'
-import { balanceSheet, cashMovements, dayBook, generalLedger, incomeAndExpenditure, trialBalanceReport } from '../api'
+import { balanceSheet, cashMovements, dayBook, dayBookPage, generalLedger, glPage, incomeAndExpenditure, trialBalanceReport } from '../api'
 import { OFFICE, as } from './kit'
 import { extraReportLinks } from './extra-reports'
 import { ROOT, costFilter, csv, filters, fundFilter, ledgerColumn, money, partyChoices, pick, reportContext, reportLinks, reportTable, screen, treeColumns, values, withLedger } from './report-kit'
@@ -81,17 +81,17 @@ export const reportPages = [
     path: '/reports/general-ledger', title: 'General ledger', roles: OFFICE,
     async load(actor, request) {
       const data = await reportContext(actor, request)
-      const [parties, report] = await Promise.all([partyChoices(actor), data.query.accountId ? generalLedger(as(actor), { accountId: data.query.accountId, from: data.from, to: data.to, partyId: data.query.partyId, costCenter: data.query.costCenter }) : null])
-      return { ...data, partyOptions: parties, report, lines: report?.lines ?? [] }
+      const [parties, report] = await Promise.all([partyChoices(actor), data.query.accountId ? generalLedger(as(actor), { accountId: data.query.accountId, from: data.from, to: data.to, partyId: data.query.partyId, costCenter: data.query.costCenter }, glPage(request, 'lines')) : null])
+      return { ...data, partyOptions: parties, report, lines: report?.lines ?? [], linesPage: { total: report?.total ?? 0, next: report?.next ?? null } }
     },
     sections: data => [
       filters('/reports/general-ledger', data, [pick('accountId', 'Account', 'accountOptions', data.query.accountId, false), pick('partyId', 'Party', 'partyOptions', data.query.partyId), costFilter(data)]),
       ...(data.report ? [
-        { kind: 'figures' as const, figures: [{ label: 'Opening', value: formatPaise(data.report.openingPaise) }, { label: 'Closing', value: formatPaise(data.report.closingPaise) }] },
+        { kind: 'figures' as const, figures: [{ label: 'Opening', value: formatPaise(data.report.openingPaise) }, { label: 'Closing', value: formatPaise(data.report.closingPaise) }, { label: 'Lines', value: String(data.report.total) }] },
         reportTable(`${data.report.account.code} · ${data.report.account.name}`, 'lines', [
           { key: 'postingDate', label: 'Date', kind: 'date' }, { key: 'memo', label: 'Entry' }, { key: 'lineMemo', label: 'Line note' }, { key: 'account', label: 'Account' },
           { key: 'party', label: 'Party' }, { key: 'costCenter', label: 'Cost centre' }, { key: 'sourceModule', label: 'Source' }, money('debitPaise', 'Debit'), money('creditPaise', 'Credit'), money('balancePaise', 'Balance'),
-        ]), csv('general-ledger', { ...data.query, from: data.from, to: data.to }),
+        ], { paging: { data: 'linesPage', sorts: [] } }), csv('general-ledger', { ...data.query, from: data.from, to: data.to }),
       ] : [{ kind: 'note' as const, text: 'Choose an account to read its postings. Group accounts include all their leaf accounts.' }]),
     ],
   }),
@@ -99,15 +99,15 @@ export const reportPages = [
     path: '/reports/day-book', title: 'Day book', roles: OFFICE,
     async load(actor, request) {
       const data = await reportContext(actor, request)
-      const report = await dayBook(as(actor), { from: data.from, to: data.to, sourceModule: data.query.sourceModule })
-      return { ...data, rows: report.entries.flatMap(entry => entry.lines.map((line, index) => ({ ...line,
+      const report = await dayBook(as(actor), { from: data.from, to: data.to, sourceModule: data.query.sourceModule }, dayBookPage(request, 'rows'))
+      return { ...data, rowsPage: { total: report.total, next: report.next }, rows: report.entries.flatMap(entry => entry.lines.map((line, index) => ({ ...line,
         entryId: entry.id, postingDate: index === 0 ? entry.postingDate : '', memo: index === 0 ? entry.memo : '', sourceModule: index === 0 ? entry.sourceModule : '',
         reversal: index === 0 && entry.reversal, entryStart: index === 0,
       }))) }
     },
     sections: data => [
       filters('/reports/day-book', data, [{ name: 'sourceModule', label: 'Source module', optional: true, value: data.query.sourceModule }]),
-      reportTable('Journal lines', 'rows', [{ key: 'postingDate', label: 'Date', kind: 'date' }, { key: 'memo', label: 'Entry' }, { key: 'sourceModule', label: 'Source' }, { key: 'account', label: 'Account' }, { key: 'party', label: 'Party' }, { key: 'costCenter', label: 'Cost centre' }, money('debitPaise', 'Debit'), money('creditPaise', 'Credit'), { key: 'reversal', label: 'Reversal', kind: 'bool' }], { emphasis: 'entryStart' }),
+      reportTable('Journal entries', 'rows', [{ key: 'postingDate', label: 'Date', kind: 'date' }, { key: 'memo', label: 'Entry' }, { key: 'sourceModule', label: 'Source' }, { key: 'account', label: 'Account' }, { key: 'party', label: 'Party' }, { key: 'costCenter', label: 'Cost centre' }, money('debitPaise', 'Debit'), money('creditPaise', 'Credit'), { key: 'reversal', label: 'Reversal', kind: 'bool' }], { emphasis: 'entryStart', paging: { data: 'rowsPage', sorts: [] }, note: "Paged by entry: a page never splits an entry's lines." }),
     ],
   }),
 ]
