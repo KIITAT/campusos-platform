@@ -519,3 +519,16 @@ test('a document is for whoever may read its notice, and nobody else', async () 
   await assert.rejects(attachmentFile(student(ids.s1), doc!.id), (e) => status(e) === 404)
   await assert.rejects(attachmentFile(A({ institutionId: other }), doc!.id), (e) => status(e) === 404)
 })
+
+// --- paging (DATA-01) --------------------------------------------------------
+
+test('readNotice opens a notice that is not on the first page (DATA-01)', async () => {
+  await withTenant(inst, (tx) =>
+    tx.execute(sql`insert into notices (institution_id, title, body, author_id, published_at)
+      select ${inst}, 'N' || g, 'b', ${ids.adm}, now() - (g || ' minutes')::interval
+      from generate_series(1, 205) g`),
+  )
+  const [row] = (await withTenant(inst, (tx) => tx.execute<{ id: string }>(sql`select id from notices where title = 'N205'`))).rows
+  const one = await readNotice(student(ids.s1), row!.id)
+  assert.equal(one.title, 'N205')
+})
