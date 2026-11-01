@@ -649,31 +649,45 @@ export async function entryLines(actor: Actor, entryId: string) {
  * rather than a silent report. Groups are left out: their balance is their
  * accounts', and listing both would count it twice.
  */
+/**
+ * Movement totals for the debits-equal-credits check. The trial balance people
+ * read is `trialBalanceReport`.
+ */
 export async function trialBalance(actor: Actor, input: unknown = {}) {
   const tenant = tenantOf(actor)
   if (!canRead(actor.role)) throw new FinanceError(403, 'forbidden', 'not permitted')
   const { from, to } = trialBalanceSchema.parse(input)
 
   return withTenant(tenant, async (tx) => {
+    // By the day each entry counts on, not the instant it was typed. The dates
+    // filter the movement, not the accounts, so an account with no movement keeps its row.
     const within = [
-      // By the day each entry counts on, not the instant it was typed.
       from ? gte(entries.postingDate, from.toISOString().slice(0, 10)) : undefined,
       to ? lte(entries.postingDate, to.toISOString().slice(0, 10)) : undefined,
     ].filter(Boolean)
+    const moved = tx
+      .select({
+        accountId: lines.accountId,
+        debit: sql<number>`sum(${lines.debitPaise})`.as('debit'),
+        credit: sql<number>`sum(${lines.creditPaise})`.as('credit'),
+      })
+      .from(lines)
+      .innerJoin(entries, eq(entries.id, lines.entryId))
+      .where(and(...within))
+      .groupBy(lines.accountId)
+      .as('moved')
 
     const rows = await tx
       .select({
         code: accounts.code,
         name: accounts.name,
         type: accounts.type,
-        debitPaise: sql<number>`coalesce(sum(${lines.debitPaise}), 0)::bigint`,
-        creditPaise: sql<number>`coalesce(sum(${lines.creditPaise}), 0)::bigint`,
+        debitPaise: sql<number>`coalesce(${moved.debit}, 0)::bigint`,
+        creditPaise: sql<number>`coalesce(${moved.credit}, 0)::bigint`,
       })
       .from(accounts)
-      .leftJoin(lines, eq(lines.accountId, accounts.id))
-      .leftJoin(entries, eq(entries.id, lines.entryId))
-      .where(and(eq(accounts.isGroup, false), ...within))
-      .groupBy(accounts.id, accounts.code, accounts.name, accounts.type)
+      .leftJoin(moved, eq(moved.accountId, accounts.id))
+      .where(eq(accounts.isGroup, false))
       .orderBy(asc(accounts.code))
 
     const accountRows = rows.map((r) => ({

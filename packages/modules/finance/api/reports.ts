@@ -3,7 +3,7 @@ import { withTenant } from '@campusos/db'
 import { accounts, costCenters, funds } from '../schema'
 import { normalSide, cashFlowOf } from './chart'
 import { FinanceError, requireRead, type Actor, type Tx } from './core'
-import { daysBetween } from './numbers'
+import { addMonths, daysBetween } from './numbers'
 import { treeOrder } from './operations'
 import { fiscalBounds, localToday, settingsWithin } from './years'
 
@@ -175,7 +175,7 @@ export async function incomeAndExpenditure(
     const period = (r: StatementRow) => r.closingPaise - r.openingPaise
     let before: Map<string, number> | null = null
     if (input.compare) {
-      const shift = (d: string) => `${Number(d.slice(0, 4)) - 1}${d.slice(4)}`
+      const shift = (d: string) => addMonths(d, -12)
       before = new Map((await read(shift(from), shift(to))).map((r) => [r.id, period(r)]))
     }
     const rows = now
@@ -258,12 +258,19 @@ export async function cashMovements(actor: Actor, input: { from?: string; to?: s
          where l.entry_id in (select entry_id from moved) and l.account_id not in (select id from cash)
          group by l.entry_id, l.account_id
       ),
-      shares as (
+      shares0 as (
         -- An entry that moved cash against several accounts is shared between
         -- them by their size, so each receipt and payment lands on its own head.
-        select o.account_id,
-               round(m.net * o.amount / nullif(sum(o.amount) over (partition by o.entry_id), 0))::bigint as cash
+        select o.entry_id, o.account_id, m.net,
+               coalesce(round(m.net * o.amount / nullif(sum(o.amount) over (partition by o.entry_id), 0))::bigint, 0) as cash,
+               row_number() over (partition by o.entry_id order by abs(o.amount) desc, o.account_id) as rn
           from other o join moved m on m.entry_id = o.entry_id
+      ),
+      shares as (
+        -- Each share rounds on its own; what rounding lost or gained goes to the largest (ACC-09).
+        select account_id,
+               cash + case when rn = 1 then net - sum(cash) over (partition by entry_id) else 0 end as cash
+          from shares0
       )
       select a.id, a.code, a.name, a.type, a.subtype, a.cash_flow,
              coalesce(sum(s.cash) filter (where s.cash > 0), 0)::bigint as received,
