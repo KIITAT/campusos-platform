@@ -3,7 +3,20 @@ import assert from 'node:assert/strict'
 import { like, sql } from 'drizzle-orm'
 import { authDb, institutions, users, withTenant } from '@campusos/db'
 import type { Role } from '@campusos/module-framework'
-import { FinanceError, accountFor, createParty, loadIndiaPreset, refusal, saveInvoice, submitInvoice, updateSettings, type Actor } from './api'
+import {
+  FinanceError,
+  accountFor,
+  createParty,
+  createTdsSection,
+  loadIndiaPreset,
+  refusal,
+  savePayment,
+  saveInvoice,
+  submitInvoice,
+  submitPayment,
+  updateSettings,
+  type Actor,
+} from './api'
 
 /** The TDS returns pack (P1-05b, ACC-31 and the second half of ACC-06). */
 
@@ -13,6 +26,7 @@ const SLUG = 'fin-tds-'
 interface Books {
   id: string
   admin: Actor
+  admin2: Actor
   clerk: Actor
 }
 
@@ -28,10 +42,11 @@ async function books(): Promise<Books> {
     .values([
       { email: `adm@${tag}.test`, institutionId: id, role: 'institution_admin', name: 'Adm' },
       { email: `acc@${tag}.test`, institutionId: id, role: 'accounts_staff', name: 'Acc' },
+      { email: `adm2@${tag}.test`, institutionId: id, role: 'institution_admin', name: 'Adm Two' },
     ])
     .returning({ id: users.id })
   const who = (at: number, role: Role): Actor => ({ id: people[at]!.id, email: `${at}@${tag}.test`, role, institutionId: id })
-  const b = { id, admin: who(0, 'institution_admin'), clerk: who(1, 'accounts_staff') }
+  const b = { id, admin: who(0, 'institution_admin'), clerk: who(1, 'accounts_staff'), admin2: who(2, 'institution_admin') }
   await loadIndiaPreset(b.admin)
   await updateSettings(b.admin, { gstin: '29ABCDE1234F1Z5', stateCode: '29', tan: 'BLRA12345B', pan: 'ABCDE1234F', legalName: 'TDS College' })
   return b
@@ -108,4 +123,90 @@ test('a link names one document', async () => {
     ),
     'finance_tds_challan_links_one',
   )
+})
+
+async function refused(p: Promise<unknown>, code: string, status?: number) {
+  await assert.rejects(p, (e: unknown) => {
+    assert.ok(e instanceof FinanceError, `expected a FinanceError, got ${String(e)}`)
+    assert.equal(e.code, code)
+    if (status) assert.equal(e.status, status)
+    return true
+  })
+}
+
+// --- sections on payments; advances absorbed at billing ----------------------
+
+/** A professional-fees section that always deducts 10%, and a supplier on it. */
+async function deducting(b: Books) {
+  const section = (await createTdsSection(b.admin, { code: 'PROFX', name: 'Professional fees', ratePercent: '10', rateNoPanPercent: '20', thresholdSingle: '0', thresholdAnnual: '0' })) as { id: string }
+  const payee = (await createParty(b.clerk, { code: `P${++n}`, name: 'Consultant', isSupplier: true, stateCode: '29', pan: 'ABCDE1234F', tdsSectionId: section.id })).id
+  const cash = await withTenant(b.id, (tx) => accountFor(tx, b.id, 'cash'))
+  return { section: section.id, payee, cash }
+}
+
+const advance = (b: Books, d: { payee: string; cash: string; section: string }, amount = '9000', tds = '1000', date = '2026-04-05') =>
+  savePayment(b.clerk, { kind: 'pay', partyId: d.payee, postingDate: date, accountId: d.cash, amount, tds, tdsSectionId: d.section }) as Promise<{ id: string }>
+
+const bill = async (b: Books, payee: string, billNo: string, date = '2026-04-20') =>
+  ((await saveInvoice(b.clerk, { kind: 'purchase', partyId: payee, postingDate: date, billNo, lines: [{ description: 'Advice', qty: '1', rate: '10000' }] })) as { id: string }).id
+
+const tdsOf = (b: Books, id: string) =>
+  withTenant(b.id, async (tx) => {
+    const r = await tx.execute(sql`select tds_paise::int as tds, tds_advance_paise::int as adv from finance_invoices where id = ${id}`)
+    return r.rows[0] as { tds: number; adv: number }
+  })
+
+test("a payment's TDS names its section", async () => {
+  const b = await books()
+  const d = await deducting(b)
+  await refused(savePayment(b.clerk, { kind: 'pay', partyId: d.payee, accountId: d.cash, amount: '900', tds: '100' }), 'tds_section_required', 400)
+})
+
+test("an advance's TDS is not deducted again on the bill", async () => {
+  const b = await books()
+  const d = await deducting(b)
+  const pay = await advance(b, d)
+  await submitPayment(b.admin, { paymentId: pay.id })
+  const first = await bill(b, d.payee, 'A-1')
+  await submitInvoice(b.admin, { invoiceId: first })
+  assert.deepEqual(await tdsOf(b, first), { tds: 0, adv: 100_000 })
+  const second = await bill(b, d.payee, 'A-2')
+  await submitInvoice(b.admin, { invoiceId: second })
+  assert.deepEqual(await tdsOf(b, second), { tds: 100_000, adv: 0 })
+})
+
+test('an advance and a bill submitted together deduct the tax once', async () => {
+  const b = await books()
+  const d = await deducting(b)
+  const other = (await createParty(b.clerk, { code: `O${++n}`, name: 'Other', isSupplier: true, stateCode: '29' })).id
+  // The numbering row for payments must exist, so the barrier below can hold it.
+  const prior = (await savePayment(b.clerk, { kind: 'pay', partyId: other, accountId: d.cash, amount: '100', postingDate: '2026-04-01' })) as { id: string }
+  await submitPayment(b.admin, { paymentId: prior.id })
+  const pay = await advance(b, d)
+  const billId = await bill(b, d.payee, 'C-1')
+
+  let release!: () => void
+  const barrier = new Promise<void>((resolve) => (release = resolve))
+  let held!: () => void
+  const holding = new Promise<void>((resolve) => (held = resolve))
+  const hold = withTenant(b.id, async (tx) => {
+    await tx.execute(sql`select 1 from finance_series_counters where doc_type = 'payment_pay' for update`)
+    held()
+    await barrier
+  })
+  await holding
+  const paying = submitPayment(b.admin, { paymentId: pay.id })
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  const billing = submitInvoice(b.admin2, { invoiceId: billId })
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  release()
+  await Promise.all([hold, paying, billing])
+
+  const total = await withTenant(b.id, async (tx) => {
+    const r = await tx.execute(sql`
+      select (select coalesce(sum(tds_paise), 0) from finance_payments where id = ${pay.id})::int
+           + (select coalesce(sum(tds_paise), 0) from finance_invoices where id = ${billId})::int as total`)
+    return (r.rows[0] as { total: number }).total
+  })
+  assert.equal(total, 100_000)
 })
