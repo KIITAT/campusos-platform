@@ -37,7 +37,7 @@ export const leads = pgTable('crm_leads', {
   id: uuid().primaryKey().defaultRandom(), institutionId: tenantId(), kind: text().notNull().default('lead'), status: text().notNull().default('open'),
   title: text().notNull(), company: text(), contactName: text('contact_name'), email: text(), phone: text(), gstin: text(), source: text().notNull(), notes: text(),
   ownerId: text('owner_id').notNull().references(() => users.id), stageId: uuid('stage_id'), itemId: uuid('item_id'),
-  expectedValuePaise: bigint('expected_value_paise', { mode: 'bigint' }), expectedClose: date('expected_close'),
+  expectedValuePaise: bigint('expected_value_paise', { mode: 'number' }), expectedClose: date('expected_close'),
   lostReasonId: uuid('lost_reason_id'), lostNote: text('lost_note'),
   wonAt: timestamp('won_at', { withTimezone: true }), closedAt: timestamp('closed_at', { withTimezone: true }),
   partyId: uuid('party_id').references(() => parties.id), quotationId: uuid('quotation_id').references(() => orders.id, { onDelete: 'set null' }),

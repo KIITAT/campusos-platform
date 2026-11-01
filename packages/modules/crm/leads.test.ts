@@ -40,7 +40,7 @@ test("a manager sees their team's pipeline and no other team's", async () => {
 test('someone outside every team is refused', async () => {
   const c = await sales()
   for (const who of [c.outsider, c.clerk]) {
-    await assert.rejects(() => createLead(who, lead('X')), refused(403, 'not_in_sales_team'))
+    await assert.rejects(() => createLead(who, lead('Not allowed')), refused(403, 'not_in_sales_team'))
     await assert.rejects(() => listLeads(who, page(), {}), refused(403, 'not_in_sales_team'))
   }
 })

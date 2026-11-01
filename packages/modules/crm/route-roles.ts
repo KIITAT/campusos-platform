@@ -7,6 +7,8 @@ import { ADMIN, STAFF, type Role } from '@campusos/module-framework'
  */
 export const routeRoles: Record<string, readonly Role[]> = {
   'GET /settings': STAFF,
+  'GET /pipeline': STAFF,
+  'GET /leads/detail': STAFF,
   'POST /stages': ADMIN,
   'POST /stages/update': ADMIN,
   'POST /lost-reasons': ADMIN,
@@ -14,4 +16,12 @@ export const routeRoles: Record<string, readonly Role[]> = {
   'POST /teams': ADMIN,
   'POST /teams/members': ADMIN,
   'POST /teams/members/remove': ADMIN,
+  'POST /leads': STAFF,
+  'POST /leads/update': STAFF,
+  'POST /leads/qualify': STAFF,
+  'POST /leads/stage': STAFF,
+  'POST /leads/assign': STAFF,
+  'POST /leads/won': STAFF,
+  'POST /leads/lost': STAFF,
+  'POST /leads/reopen': STAFF,
 }
