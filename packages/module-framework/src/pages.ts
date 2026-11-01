@@ -62,9 +62,10 @@ export interface PluginTable {
   columns: PluginColumn[]
   empty?: string
   /**
-   * Rows shown before "more". The host pages, searches and sorts a table
-   * itself, over the rows the page loaded -- every list view gets a filter bar
-   * and a sort for nothing -- so this is only the first screenful. Default 20.
+   * Rows shown before "more". Without `paging`, the host pages, searches and
+   * sorts a table itself over the rows the page loaded, so this is only the
+   * first screenful; with `paging`, it is the default page size the loader
+   * used. Default 20.
    */
   pageSize?: number
   /**
@@ -85,6 +86,14 @@ export interface PluginTable {
    * running balance -- so the table offers no sort and no filter.
    */
   fixedOrder?: boolean
+  /**
+   * The rows were paged by the server (DATA-01): the host shows them as
+   * loaded -- no filter, sort or cut of its own -- and offers "next page"
+   * from `data[paging.data]`, a `PageInfo`. `sorts` are the column keys
+   * whose headers become sort links. Search and sort parameters are the
+   * table's rows key plus `.q`, `.sort`, `.dir`, `.n`, `.after`.
+   */
+  paging?: { data: string; sorts: string[] }
 }
 
 export interface PluginBulkAction {
