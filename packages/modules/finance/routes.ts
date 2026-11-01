@@ -78,6 +78,7 @@ export const specs: RouteSpec[] = [
   post('ledger', '/journal/reverse', 'Post the mirror image of an entry', api.reverseEntry, api.reverseEntrySchema),
   get('ledger', '/trial-balance', 'Every account with its debits, credits and balance', (a, q) => api.trialBalance(a, { from: q.from, to: q.to })),
   get('ledger', '/periods', 'Accounting months and whether each is open', (a, q) => api.listPeriods(a, { year: q.year })),
+  get('ledger', '/periods/checklist', 'What stands between a month and its close', (a, q) => api.periodChecklist(a, q)),
   post('ledger', '/periods/close', 'Close a month', api.closePeriod, api.closePeriodSchema),
   post('ledger', '/periods/reopen', 'Open a closed month again, with a reason', api.reopenPeriod, api.reopenPeriodSchema),
   get('ledger', '/budgets', 'Budget against actual by cost centre for a fiscal year', (a, q) => api.budgetReport(a, { year: q.year, costCenter: q.costCenter })),

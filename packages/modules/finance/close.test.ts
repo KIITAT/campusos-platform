@@ -9,6 +9,7 @@ import {
   listPeriods,
   postEntry,
   reopenPeriod,
+  setSingleOfficer,
   setBudget,
   trialBalance,
   type Actor,
@@ -149,13 +150,13 @@ test('closing twice is refused, and the first close is the one on the record', a
 test('reopening is a decision with a reason, and the reason stays on the row', async () => {
   const b = await books()
   const past = lastMonth()
+  // One administrator only: reopening takes a second person unless single-officer mode is on (P1-04, D8).
+  await setSingleOfficer(b.admin, { enabled: true, reason: 'test fixture: one administrator' })
   await closePeriod(b.admin, { year: past.year, month: past.month })
 
-  const reopened = await reopenPeriod(b.admin, {
-    year: past.year,
-    month: past.month,
-    reason: 'a supplier invoice for March arrived in June',
-  })
+  const input = { year: past.year, month: past.month, reason: 'a supplier invoice for March arrived in June' }
+  await reopenPeriod(b.admin, input)
+  const reopened = await reopenPeriod(b.admin, input)
   assert.equal(reopened.status, 'open')
   assert.equal(reopened.closedAt, null)
   assert.match(String(reopened.reopenedReason), /supplier invoice/)

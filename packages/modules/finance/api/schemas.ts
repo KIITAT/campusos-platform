@@ -188,7 +188,14 @@ export const periodsQuerySchema = z
   .meta({ id: 'FinancePeriodsQuery' })
 
 export const closePeriodSchema = z
-  .object({ year, month, reason: z.string().max(500).trim().optional() })
+  .object({
+    year,
+    month,
+    reason: z.string().max(500).trim().optional(),
+    /** Close despite failed checks (never the month being over); needs a reason of 10 to 300 characters. */
+    override: z.preprocess(ticked, z.boolean()).default(false),
+    overrideReason: z.string().trim().max(300).optional(),
+  })
   .meta({ id: 'FinanceClosePeriod' })
 
 export const reopenPeriodSchema = z

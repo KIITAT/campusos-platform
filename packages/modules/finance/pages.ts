@@ -1,4 +1,5 @@
 import { formatPaise } from '@campusos/money'
+import { withTenant } from '@campusos/db'
 import { param, type PluginPage } from '@campusos/module-framework'
 import { accountingPages } from './screens/accounting'
 import { reportPages } from './screens/reports'
@@ -17,6 +18,8 @@ import {
   listAccounts,
   listEntries,
   listPeriods,
+  localToday,
+  periodChecklist,
   trialBalance,
   type Actor,
 } from './api'
@@ -240,10 +243,22 @@ const legacyPages: PluginPage[] = [
     title: 'Periods',
     menu: 'Periods',
     roles: [...ADMIN],
-    async load(actor) {
+    async load(actor, req) {
       const rows = await listPeriods(actor as Actor, {})
       const now = new Date()
+      // The month to check: named in the query, else the month before this one in the institution's own zone.
+      const today = await withTenant(actor.institutionId!, (tx) => localToday(tx, actor.institutionId!))
+      const [ty, tm] = today.split('-').map(Number) as [number, number]
+      const prev = tm === 1 ? { year: ty - 1, month: 12 } : { year: ty, month: tm - 1 }
+      const year = Number(param(req, 'year') ?? prev.year)
+      const month = Number(param(req, 'month') ?? prev.month)
+      const checklist = await periodChecklist(actor as Actor, { year, month })
       return {
+        checkMonth: `${year}-${String(month).padStart(2, '0')}`,
+        checks: checklist.checks.map((c) => ({ ...c, state: c.ok ? 'passed' : c.blocking ? 'failed' : 'pending' })),
+        pending: rows
+          .filter((p) => p.reopenRequestedAt)
+          .map((p) => ({ month: `${p.year}-${String(p.month).padStart(2, '0')}`, requestedAt: p.reopenRequestedAt, reason: p.reopenRequestReason ?? '' })),
         periods: rows.map((p) => ({
           ...p,
           month: `${p.year}-${String(p.month).padStart(2, '0')}`,
@@ -261,6 +276,39 @@ const legacyPages: PluginPage[] = [
       {
         kind: 'figures',
         figures: [{ label: 'Months closed', value: String(data.closedCount) }],
+      },
+      {
+        kind: 'form',
+        title: 'Check a month',
+        submit: 'Check',
+        path: '/periods',
+        method: 'GET',
+        fields: [
+          { name: 'year', label: 'Year', kind: 'number', optional: true },
+          { name: 'month', label: 'Month', kind: 'number', hint: '1-12', optional: true },
+        ],
+      },
+      {
+        kind: 'table',
+        title: `Checklist for ${String(data.checkMonth)}`,
+        rows: 'checks',
+        fixedOrder: true,
+        columns: [
+          { key: 'label', label: 'Check' },
+          { key: 'state', label: 'State', kind: 'status' },
+          { key: 'detail', label: 'Detail' },
+        ],
+      },
+      {
+        kind: 'table',
+        title: 'Reopen requests',
+        rows: 'pending',
+        empty: 'No reopening is waiting for a second administrator.',
+        columns: [
+          { key: 'month', label: 'Month', kind: 'code' },
+          { key: 'requestedAt', label: 'Asked', kind: 'when' },
+          { key: 'reason', label: 'Reason' },
+        ],
       },
       {
         kind: 'table',
@@ -283,12 +331,14 @@ const legacyPages: PluginPage[] = [
           { name: 'year', label: 'Year', kind: 'number' },
           { name: 'month', label: 'Month', kind: 'number', hint: '1-12' },
           { name: 'reason', label: 'Note', optional: true },
+          { name: 'override', label: 'Close despite failed checks', kind: 'checkbox', optional: true },
+          { name: 'overrideReason', label: 'Why', optional: true },
         ],
       },
       {
         kind: 'form',
         title: 'Open one again',
-        note: 'A decision, not an undo. The reason stays on the row, because the close is what everybody downstream relied on.',
+        note: 'A request until a second administrator confirms it with the same form. The reason stays on the row.',
         submit: 'Reopen',
         path: '/periods/reopen',
         fields: [
