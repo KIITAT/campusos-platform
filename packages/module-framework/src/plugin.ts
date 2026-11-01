@@ -7,6 +7,8 @@ export interface PluginJob {
   kind: string
   roles: Role[]
   daily?: boolean
+  /** Run every this many minutes (1 to 1440); the host skips any other value. */
+  everyMinutes?: number
   run: (actor: PluginActor, tx: JobTransaction, payload: Record<string, unknown>) => Promise<unknown>
 }
 
