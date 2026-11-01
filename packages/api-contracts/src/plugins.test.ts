@@ -138,7 +138,8 @@ test('the whole product still answers the same number of endpoints', () => {
   // A regression guard on the conversion, not a target.
   const total = PLUGINS.reduce((n, p) => n + p.routes.length, 0)
   // P1-06b: +2 (hr tax declarations and previous employment)
-  assert.equal(total, 734, `expected 734 endpoints across all modules, found ${total}`)
+  // P1-06c: +11 (hr: ECR, ESI file, bank advice, payslip PDF, dues, remittances read/record/void, reissue, tax statement, 24Q working statement)
+  assert.equal(total, 745, `expected 745 endpoints across all modules, found ${total}`)
 })
 
 test('a longer path is never swallowed by a shorter one', () => {
@@ -179,6 +180,12 @@ test('only the document routes return bytes instead of JSON', () => {
     'finance/reports/export.csv',
     'hostel/imports/template',
     'hr/imports/template',
+    'hr/payroll/bank-advice',
+    'hr/payroll/ecr',
+    'hr/payroll/esi',
+    'hr/payroll/payslip.pdf',
+    'hr/payroll/tax-statement.pdf',
+    'hr/payroll/tds-quarter',
     'library/imports/template',
     'mentoring/imports/template',
     'mentoring/leave/document.pdf',
