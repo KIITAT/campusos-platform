@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { eq, like, sql } from 'drizzle-orm'
 import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
 import type { Role } from '@campusos/module-framework'
+import { printedText } from '@campusos/module-framework/pdf'
 import {
   FinanceError,
   accountFor,
@@ -10,6 +11,7 @@ import {
   dueDateOf,
   monthsLate,
   recordChallan,
+  tdsCertificatePdf,
   tdsInterest,
   tdsQuarterFile,
   trialBalance,
@@ -405,4 +407,40 @@ test('late deposit interest is a month and a half percent for each month or part
   const open = await tdsInterest(e.clerk, { on: '2026-07-01' })
   assert.equal(open.rows[0]!.months, 4)
   assert.equal(open.rows[0]!.interestPaise, 60_000)
+})
+
+// --- the certificate statement -----------------------------------------------
+
+test('the certificate statement quotes the challan of each deduction', async () => {
+  const b = await books()
+  const f = await april(b)
+  await recordChallan(b.admin, { ...CHALLAN, accountId: f.bank })
+  const out = await tdsCertificatePdf(b.clerk, { partyId: f.payee, fy: 2026, quarter: 1 })
+  assert.match(out.fileName, /^tds-statement-P\d+-2026-Q1\.pdf$/)
+  const printed = await printedText(out.bytes)
+  const all = printed.join('|')
+  assert.ok(all.includes('BLRA12345B'), 'the TAN')
+  assert.ok(all.includes('ABCDE1234F'), "the supplier's PAN")
+  assert.equal(printed.filter((s) => s === '0510308').length, 2, 'the BSR code of each of the two deductions')
+  assert.equal(printed.filter((s) => s === '00012').length, 2, 'and the challan serial')
+  assert.ok(all.includes('1,500.00'), 'the total tax')
+  assert.ok(all.includes('issued from TRACES'), all)
+  assert.ok(all.includes('Form 16A or its Income-tax Act 2025 equivalent'), 'the form name from 2026')
+})
+
+test('the certificate statement for an earlier year is a Form 16A', async () => {
+  const b = await books()
+  const d = await deducting(b)
+  const id = ((await saveInvoice(b.clerk, { kind: 'purchase', partyId: d.payee, postingDate: '2025-06-10', billNo: 'Y-1', lines: [{ description: 'Advice', qty: '1', rate: '1000' }] })) as { id: string }).id
+  await submitInvoice(b.admin, { invoiceId: id })
+  const all = (await printedText((await tdsCertificatePdf(b.clerk, { partyId: d.payee, fy: 2025, quarter: 1 })).bytes)).join('|')
+  assert.ok(all.includes('Form 16A'))
+  assert.ok(all.includes('not yet deposited'))
+  assert.ok(!all.includes('Income-tax Act 2025 equivalent'))
+})
+
+test('a party with no deductions has no statement', async () => {
+  const b = await books()
+  const d = await deducting(b)
+  await refused(tdsCertificatePdf(b.clerk, { partyId: d.payee, fy: 2026, quarter: 1 }), 'no_such_statement', 404)
 })
