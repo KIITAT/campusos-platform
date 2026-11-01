@@ -40,9 +40,6 @@ test('the pipeline, lead and settings screens offer each role only what its stat
   // An outsider gets a note and no form; their own loader does not throw.
   assert.deepEqual(await collect(c.outsider, pipeline), [])
   assert.deepEqual(await collect(c.rep, pipeline), ['/leads'])
-  const cfg = await settings(c.admin)
-  const stageOf = (name: string) => cfg.stages.find(s => s.name === name)!.id
-  void stageOf
   const l = await createLead(c.rep, { kind: 'lead', title: 'Page lead', source: 'website', itemId: item.id, expectedValue: '500' })
   assert.deepEqual((await collect(c.rep, detail, l.id)).sort(), ['/activities', '/leads/assign', '/leads/lost', '/leads/qualify', '/leads/update'].sort())
   await qualifyLead(c.rep, { leadId: l.id })
@@ -57,6 +54,7 @@ test('the pipeline, lead and settings screens offer each role only what its stat
   await convertOpportunity(c.rep, { leadId: l.id })
   const converted = await collect(c.rep, detail, l.id)
   assert.ok(!converted.includes('/leads/convert') && !converted.includes('/leads/reopen'))
+  const cfg = await settings(c.admin)
   const l2 = await createLead(c.rep, { kind: 'lead', title: 'Lost lead', source: 'website' })
   await markLost(c.rep, { leadId: l2.id, reasonId: cfg.reasons[0]!.id })
   assert.ok((await collect(c.rep, detail, l2.id)).includes('/leads/reopen'))

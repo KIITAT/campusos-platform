@@ -1,5 +1,5 @@
 import * as z from 'zod'
-import { and, asc, eq, isNull, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { users, withTenant } from '@campusos/db'
 import { ticked } from '@campusos/module-framework'
 import { leads, lostReasons, stages, teamMembers, teams } from '../schema'
@@ -138,5 +138,23 @@ export async function settings(actor: Actor) {
       tx.select({ teamId: teamMembers.teamId, userId: teamMembers.userId, name: users.name }).from(teamMembers).innerJoin(users, eq(users.id, teamMembers.userId)).orderBy(asc(users.name)),
     ])
     return { stages: stageRows, reasons: reasonRows, teams: teamRows.map(team => ({ ...team, members: memberRows.filter(m => m.teamId === team.id).map(m => ({ userId: m.userId, name: m.name })) })) }
+  })
+}
+
+/** Who a lead may be given to: the actor's owners set, or for an administrator every salesperson and themself. */
+export async function ownerChoices(actor: Actor): Promise<{ value: string; label: string }[]> {
+  return withTenant(tenant(actor), async tx => {
+    const owners = await ownersOf(tx, actor)
+    const ids = owners ?? [...new Set([actor.id, ...(await tx.select({ id: teamMembers.userId }).from(teamMembers)).map(r => r.id), ...(await tx.select({ id: teams.managerId }).from(teams)).map(r => r.id)])]
+    if (!ids.length) return []
+    const rows = await tx.select({ id: users.id, name: users.name }).from(users).where(and(inArray(users.id, ids), isNull(users.erasedAt))).orderBy(asc(users.name))
+    return rows.map(r => ({ value: r.id, label: r.name ?? r.id }))
+  })
+}
+/** Staff who can be a team manager or member. */
+export async function staffChoices(actor: Actor): Promise<{ value: string; label: string }[]> {
+  return withTenant(tenant(actor, ADMIN), async tx => {
+    const rows = await tx.select({ id: users.id, name: users.name, role: users.role }).from(users).where(isNull(users.erasedAt)).orderBy(asc(users.name))
+    return rows.filter(r => STAFF.includes(r.role)).map(r => ({ value: r.id, label: `${r.name ?? r.id} · ${r.role.replaceAll('_', ' ')}` }))
   })
 }

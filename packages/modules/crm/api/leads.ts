@@ -24,7 +24,7 @@ export const leadSchema = z.object({
   ownerId: opt(z.string().min(1)), itemId: opt(z.uuid()), expectedValue: opt(z.union([z.string(), z.number()])),
   expectedClose: opt(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)),
 })
-export const updateSchema = leadSchema.omit({ kind: true, ownerId: true, source: true, title: true }).extend({ title: leadSchema.shape.title.optional(), source: z.enum(SOURCES).optional() }).partial().extend({ leadId: z.uuid() })
+export const updateSchema = leadSchema.omit({ kind: true, ownerId: true, source: true, title: true }).extend({ title: opt(z.string().trim().min(2).max(200)), source: z.enum(SOURCES).optional() }).partial().extend({ leadId: z.uuid() })
 export const stageMoveSchema = z.object({ leadId: z.uuid(), stageId: z.uuid() })
 export const assignSchema = z.object({ leadId: z.uuid(), ownerId: z.string().min(1) })
 export const lostSchema = z.object({ leadId: z.uuid(), reasonId: z.uuid(), lostNote: text(500) })

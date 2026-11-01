@@ -143,7 +143,8 @@ test('the whole product still answers the same number of endpoints', () => {
   // P1-06d: +2 (hr gratuity provision valuations, read and value)
   // P1-04: +4 (finance: GST filing mark, reopen request, close checklist, subledger report). P1-06c: +11 (hr: ECR, ESI file, bank advice, payslip PDF, dues, remittances read/record/void, reissue, tax statement, 24Q working statement)
   // P1-05a: +4 (finance: CMP-08 working, GSTR-2B import, match, imports read). P1-05b: +7 (finance: TDS challans record, void, read; quarter CSV; deductions; interest; certificate PDF)
-  assert.equal(total, 762, `expected 762 endpoints across all modules, found ${total}`)
+  // P2-16: +22 (crm: pipeline, lead detail, settings; 19 writes for leads, activities, conversion, erasure and settings)
+  assert.equal(total, 784, `expected 784 endpoints across all modules, found ${total}`)
 })
 
 test('a longer path is never swallowed by a shorter one', () => {
