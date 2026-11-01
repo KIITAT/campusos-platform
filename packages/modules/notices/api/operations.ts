@@ -1,12 +1,14 @@
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm'
 import { audit, enqueueJob, users, withTenant } from '@campusos/db'
-import { readUpload, UploadError, type Role } from '@campusos/module-framework'
+import { ADMIN, readUpload, UploadError, type Role } from '@campusos/module-framework'
 import { departments } from '@campusos/module-academic/schema'
-import { noticeAttachments, notices, notifications } from '../schema'
+import { noticeAttachments, notices, notificationMandatory, notificationOptOuts, notifications } from '../schema'
 import {
   attachSchema,
   createNoticeSchema,
+  mandatorySchema,
   markReadSchema,
+  preferenceSchema,
   removeAttachmentSchema,
   publishNoticeSchema,
   withdrawNoticeSchema,
@@ -60,6 +62,66 @@ const requirePoster = (actor: Actor) => {
 
 // --- the inbox other modules write into ------------------------------------
 
+/**
+ * A category is the raising module's id. Add one here when a module starts
+ * notifying; `notify` refuses any other.
+ */
+export const NOTIFICATION_CATEGORIES: Record<string, string> = {
+  notices: 'Notices',
+  attendance: 'Attendance',
+  examinations: 'Results',
+  fees: 'Fees',
+  hr: 'Staff leave',
+  mentoring: 'Mentoring and student leave',
+  placement: 'Placement',
+  care: 'Student care',
+}
+
+const unknownCategory = () => new NoticeError(400, 'unknown_category', 'no such notification category')
+
+export interface Delivery {
+  notificationId: string
+  institutionId: string
+  userId: string
+  moduleId: string
+  title: string
+  body: string
+  link: string | null
+}
+
+/**
+ * Runs inside the caller's transaction. A channel only records what it will send (for example by enqueueing a job); it never calls the network here, and if it throws, the caller's write rolls back.
+ */
+export interface NotificationChannel {
+  id: string
+  deliver(tx: Tx, deliveries: Delivery[]): Promise<void>
+}
+
+const channels = new Map<string, NotificationChannel>()
+
+/** Add a delivery channel beside the in-app inbox. Returns a function that removes it. */
+export function registerNotificationChannel(channel: NotificationChannel): () => void {
+  if (channels.has(channel.id)) throw new Error(`channel ${channel.id} is already registered`)
+  channels.set(channel.id, channel)
+  return () => {
+    channels.delete(channel.id)
+  }
+}
+
+async function dispatch(
+  tx: Tx,
+  institutionId: string,
+  moduleId: string,
+  title: string,
+  body: string,
+  link: string | null,
+  inserted: { id: string; userId: string }[],
+) {
+  if (channels.size === 0 || inserted.length === 0) return
+  const deliveries: Delivery[] = inserted.map((r) => ({ notificationId: r.id, institutionId, userId: r.userId, moduleId, title, body, link }))
+  for (const c of channels.values()) await c.deliver(tx, deliveries)
+}
+
 export interface NotifyInput {
   userIds: string[]
   moduleId: string
@@ -67,6 +129,46 @@ export interface NotifyInput {
   body: string
   link?: string | null
   noticeId?: string | null
+  /** Also tell every current guardian of each person in `userIds`, with this link. */
+  alsoGuardians?: { link: string }
+}
+
+// One array literal, not one parameter per element (see `fanOut`); user ids are
+// Auth.js text ids with no commas or braces.
+const literal = (ids: string[]) => `{${ids.join(',')}}`
+
+/** Who of `userIds` has muted the category, unless the institution made it mandatory. */
+async function mutedAmong(tx: Tx, institutionId: string, moduleId: string, userIds: string[]): Promise<Set<string>> {
+  const rows = (await tx.execute(sql`
+    select o.user_id from notification_opt_outs o
+     where o.module_id = ${moduleId}
+       and o.user_id = any(${literal(userIds)}::text[])
+       and not exists (select 1 from notification_mandatory m where m.institution_id = ${institutionId} and m.module_id = ${moduleId})`)).rows as { user_id: string }[]
+  return new Set(rows.map((r) => r.user_id))
+}
+
+async function deliverTo(tx: Tx, institutionId: string, input: NotifyInput, userIds: string[], link: string | null): Promise<number> {
+  if (userIds.length === 0) return 0
+  const muted = await mutedAmong(tx, institutionId, input.moduleId, userIds)
+  const recipients = userIds.filter((u) => !muted.has(u))
+  if (recipients.length === 0) return 0
+
+  const inserted = await tx
+    .insert(notifications)
+    .values(
+      recipients.map((userId) => ({
+        institutionId,
+        userId,
+        moduleId: input.moduleId,
+        title: input.title,
+        body: input.body,
+        link,
+        noticeId: input.noticeId ?? null,
+      })),
+    )
+    .returning({ id: notifications.id, userId: notifications.userId })
+  await dispatch(tx, institutionId, input.moduleId, input.title, input.body, link, inserted)
+  return inserted.length
 }
 
 /**
@@ -76,30 +178,91 @@ export interface NotifyInput {
  * transaction as the thing it is notifying about: either the fee is recorded
  * and the student is told, or neither happened. A notification about a write
  * that rolled back is worse than no notification.
+ *
+ * The one delivery path (P1-02): it applies each person's opt-outs and the
+ * institution's mandatory categories, can also tell guardians, and hands every
+ * row it wrote to the registered channels.
  */
-export async function notify(
-  tx: Tx,
-  institutionId: string,
-  input: NotifyInput,
-): Promise<number> {
-  const recipients = [...new Set(input.userIds)]
-  if (recipients.length === 0) return 0
+export async function notify(tx: Tx, institutionId: string, input: NotifyInput): Promise<number> {
+  if (!(input.moduleId in NOTIFICATION_CATEGORIES)) throw unknownCategory()
+  const students = [...new Set(input.userIds)]
+  let n = await deliverTo(tx, institutionId, input, students, input.link ?? null)
+  if (input.alsoGuardians && students.length > 0) {
+    // The parents module owns this function; without its migrations nobody is a guardian.
+    const [ok] = (await tx.execute(sql`select to_regprocedure('public.campusos_guardians_of(text[])') is not null as ok`)).rows as { ok: boolean }[]
+    if (ok?.ok) {
+      const rows = (await tx.execute(sql`select distinct guardian_id from public.campusos_guardians_of(${literal(students)}::text[])`)).rows as { guardian_id: string }[]
+      n += await deliverTo(tx, institutionId, input, rows.map((r) => r.guardian_id).filter((g) => !students.includes(g)), input.alsoGuardians.link)
+    }
+  }
+  return n
+}
 
-  const rows = await tx
-    .insert(notifications)
-    .values(
-      recipients.map((userId) => ({
-        institutionId,
-        userId,
-        moduleId: input.moduleId,
-        title: input.title,
-        body: input.body,
-        link: input.link ?? null,
-        noticeId: input.noticeId ?? null,
+// --- preferences -----------------------------------------------------------
+
+export async function preferences(actor: Actor) {
+  const tenant = tenantOf(actor)
+  return withTenant(tenant, async (tx) => {
+    const muted = new Set((await tx.select({ m: notificationOptOuts.moduleId }).from(notificationOptOuts).where(eq(notificationOptOuts.userId, actor.id))).map((r) => r.m))
+    const mandatory = new Set((await tx.select({ m: notificationMandatory.moduleId }).from(notificationMandatory)).map((r) => r.m))
+    return {
+      categories: Object.entries(NOTIFICATION_CATEGORIES).map(([moduleId, label]) => ({
+        moduleId,
+        label,
+        muted: muted.has(moduleId),
+        mandatory: mandatory.has(moduleId),
       })),
-    )
-    .returning({ id: notifications.id })
-  return rows.length
+    }
+  })
+}
+
+/** A person mutes or unmutes a category for themselves. */
+export async function setPreference(actor: Actor, input: unknown) {
+  const tenant = tenantOf(actor)
+  if (actor.role === 'pending') throw new NoticeError(403, 'forbidden', 'not permitted')
+  const d = preferenceSchema.parse(input)
+  const label = NOTIFICATION_CATEGORIES[d.moduleId]
+  if (!label) throw unknownCategory()
+
+  return withTenant(tenant, async (tx) => {
+    if (d.muted) {
+      const [m] = await tx.select().from(notificationMandatory).where(eq(notificationMandatory.moduleId, d.moduleId))
+      if (m) throw new NoticeError(409, 'category_mandatory', 'the institution has made this category mandatory')
+      await tx.insert(notificationOptOuts).values({ institutionId: tenant, userId: actor.id, moduleId: d.moduleId }).onConflictDoNothing()
+    } else {
+      await tx.delete(notificationOptOuts).where(and(eq(notificationOptOuts.userId, actor.id), eq(notificationOptOuts.moduleId, d.moduleId)))
+    }
+    return { notice: d.muted ? `${label} no longer reaches your inbox.` : `${label} reaches your inbox again.` }
+  })
+}
+
+/** An administrator makes a category mandatory for everybody, or optional again. */
+export async function setMandatory(actor: Actor, input: unknown) {
+  const tenant = tenantOf(actor)
+  if (!(ADMIN as readonly Role[]).includes(actor.role)) throw new NoticeError(403, 'forbidden', 'not permitted')
+  const d = mandatorySchema.parse(input)
+  const label = NOTIFICATION_CATEGORIES[d.moduleId]
+  if (!label) throw unknownCategory()
+
+  return withTenant(tenant, async (tx) => {
+    if (d.mandatory) {
+      await tx.insert(notificationMandatory).values({ institutionId: tenant, moduleId: d.moduleId }).onConflictDoNothing()
+    } else {
+      await tx.delete(notificationMandatory).where(eq(notificationMandatory.moduleId, d.moduleId))
+    }
+    await audit(tx, {
+      institutionId: tenant,
+      actorId: actor.id,
+      actorEmail: actor.email ?? null,
+      moduleId: MODULE,
+      action: d.mandatory ? 'notifications.mandatory_set' : 'notifications.mandatory_cleared',
+      entity: 'notification_mandatory',
+      entityId: d.moduleId,
+      reason: d.reason,
+      detail: { moduleId: d.moduleId },
+    })
+    return { notice: d.mandatory ? `${label} is mandatory for everybody.` : `${label} is optional again.` }
+  })
 }
 
 // --- notices ---------------------------------------------------------------
@@ -300,12 +463,16 @@ async function fanOut(tx: Tx, tenant: string, noticeId: string): Promise<number>
       from users u
      where u.institution_id = ${tenant}
        and u.role <> 'pending'
+       and not exists (select 1 from notification_opt_outs o where o.user_id = u.id and o.module_id = ${MODULE}
+                         and not exists (select 1 from notification_mandatory m where m.institution_id = ${tenant} and m.module_id = ${MODULE}))
        and (cardinality(${audience}::role[]) = 0
             or u.role = any(${audience}::role[]))
     on conflict do nothing
-    returning id
+    returning id, user_id
   `)
-  return inserted.rowCount ?? 0
+  const rows = (inserted.rows as { id: string; user_id: string }[]).map((r) => ({ id: r.id, userId: r.user_id }))
+  await dispatch(tx, tenant, MODULE, notice.title, notice.body, link, rows)
+  return rows.length
 }
 
 export async function publishNotice(actor: Actor, input: unknown) {

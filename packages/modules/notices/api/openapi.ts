@@ -4,8 +4,10 @@ import {
   attachSchema,
   createNoticeSchema,
   inboxSchema,
+  mandatorySchema,
   markReadSchema,
   noticeRowSchema,
+  preferenceSchema,
   publishNoticeSchema,
   removeAttachmentSchema,
   withdrawNoticeSchema,
@@ -122,6 +124,31 @@ export const paths = {
       tags: ['notices'],
       requestBody: { content: json(markReadSchema) },
       responses: { '200': { description: 'Marked' }, ...gated },
+    },
+  },
+
+  [`${base}/preferences`]: {
+    get: {
+      summary: 'Your notification categories',
+      description: 'Every category with whether you muted it and whether the institution made it mandatory.',
+      tags: ['notices'],
+      responses: { '200': { description: 'OK' }, ...gated },
+    },
+    post: {
+      summary: 'Mute or unmute a category for yourself',
+      description: 'Refused with 409 for a category the institution has made mandatory.',
+      tags: ['notices'],
+      requestBody: { content: json(preferenceSchema) },
+      responses: { '200': { description: 'Saved' }, ...gated, '409': { description: 'The category is mandatory', content: json(err) } },
+    },
+  },
+  [`${base}/preferences/mandatory`]: {
+    post: {
+      summary: 'Make a category mandatory, or optional again',
+      description: 'Administrators only. Audited with the reason.',
+      tags: ['notices'],
+      requestBody: { content: json(mandatorySchema) },
+      responses: { '200': { description: 'Saved' }, ...gated },
     },
   },
 }

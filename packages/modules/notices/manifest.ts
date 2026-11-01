@@ -27,6 +27,7 @@ export const manifest: ModuleManifest = {
   navEntries: [
     { label: 'Notices', href: '/m/notices', roles: ['super_admin', 'institution_admin', 'hod', 'faculty', 'accounts_staff', 'library_staff', 'hostel_staff', 'student', 'parent'] },
     { label: 'Inbox', href: '/m/notices/inbox', roles: ['super_admin', 'institution_admin', 'hod', 'faculty', 'accounts_staff', 'library_staff', 'hostel_staff', 'student', 'parent'] },
+    { label: 'Notification settings', href: '/m/notices/preferences', roles: ['super_admin', 'institution_admin', 'hod', 'faculty', 'accounts_staff', 'library_staff', 'hostel_staff', 'student', 'parent'] },
   ],
 
   routeRoles: true,

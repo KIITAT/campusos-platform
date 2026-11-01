@@ -1,5 +1,5 @@
 import { flag, param, type PluginPage, type PluginSection } from '@campusos/module-framework'
-import { board, inbox, noticeView, type Actor } from './api'
+import { board, inbox, noticeView, preferences, type Actor } from './api'
 
 const POSTERS = [
   'super_admin',
@@ -278,6 +278,69 @@ export const pages: PluginPage[] = [
         path: '/inbox',
         fields: [],
       },
+    ],
+  },
+
+  {
+    path: '/preferences',
+    title: 'Notification settings',
+    menu: 'Notification settings',
+    roles: [...READERS],
+    async load(actor) {
+      const a = actor as Actor
+      const { categories } = await preferences(a)
+      return {
+        canSet: a.role === 'institution_admin' || a.role === 'super_admin',
+        categories: categories.map((c) => ({
+          ...c,
+          state: c.muted ? 'muted' : 'on',
+          mandatoryText: c.mandatory ? 'mandatory' : '',
+        })),
+        choices: categories.filter((c) => !c.mandatory).map((c) => ({ value: c.moduleId, label: c.label })),
+        all: categories.map((c) => ({ value: c.moduleId, label: c.label })),
+      }
+    },
+    sections: (data) => [
+      {
+        kind: 'note',
+        text: 'Choose what reaches your inbox. Categories your institution has made mandatory always do.',
+      },
+      {
+        kind: 'table',
+        rows: 'categories',
+        empty: 'Nothing here.',
+        columns: [
+          { key: 'label', label: 'Category' },
+          { key: 'state', label: 'For you', kind: 'status', alertWhen: 'muted' },
+          { key: 'mandatoryText', label: 'Institution' },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Mute or unmute',
+        submit: 'Save',
+        path: '/preferences',
+        fields: [
+          { name: 'moduleId', label: 'Category', kind: 'select', options: 'choices' },
+          { name: 'muted', label: 'Mute', kind: 'checkbox', optional: true },
+        ],
+      },
+      ...(data.canSet
+        ? [
+            {
+              kind: 'form' as const,
+              title: 'Make a category mandatory',
+              note: 'Audited. People cannot mute it, and any mute they set before is ignored.',
+              submit: 'Save',
+              path: '/preferences/mandatory',
+              fields: [
+                { name: 'moduleId', label: 'Category', kind: 'select' as const, options: 'all' },
+                { name: 'mandatory', label: 'Mandatory', kind: 'checkbox' as const, optional: true },
+                { name: 'reason', label: 'Reason', hint: 'At least three characters' },
+              ],
+            },
+          ]
+        : []),
     ],
   },
 ]
