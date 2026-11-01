@@ -178,6 +178,7 @@ export const routeRoles: Record<string, readonly Role[]> = {
   'POST /bank-rules/apply': OFFICE,
   'GET /bank/reconciliation': OFFICE,
   'GET /reports/trial-balance': OFFICE,
+  'GET /reports/subledgers': OFFICE,
   'GET /reports/income-expenditure': OFFICE,
   'GET /reports/balance-sheet': OFFICE,
   'GET /reports/cash': OFFICE,

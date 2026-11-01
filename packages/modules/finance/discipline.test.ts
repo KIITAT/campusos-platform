@@ -176,7 +176,7 @@ test('a journal voucher cannot touch a stock account', async () => {
   const b = await books()
   const [stock, cash] = await withTenant(b.id, async (tx) => [await accountFor(tx, b.id, 'stock_in_hand'), await accountFor(tx, b.id, 'cash')])
   await refused(
-    saveJournal(b.admin, { kind: 'journal', memo: 'x', postingDate: '2026-10-01', lines: [{ accountId: stock, debit: '1' }, { accountId: cash, credit: '1' }], submit: false }),
+    saveJournal(b.admin, { kind: 'journal', memo: 'Stock by hand', postingDate: '2026-10-01', lines: [{ accountId: stock, debit: '1' }, { accountId: cash, credit: '1' }], submit: false }),
     'control_account',
     400,
   )

@@ -269,6 +269,7 @@ export const specs: RouteSpec[] = [
 
   // --- reports ---------------------------------------------------------------------
   get('reports', '/reports/trial-balance', 'Trial balance with opening and closing, as a tree', (a, q) => api.trialBalanceReport(a, q)),
+  get('reports', '/reports/subledgers', 'Each sub-ledger beside its control account', (a, q) => api.subledgerReport(a, { on: q.on })),
   get('reports', '/reports/income-expenditure', 'Income and expenditure for a period', (a, q) => api.incomeAndExpenditure(a, { ...q, compare: q.compare === 'true' })),
   get('reports', '/reports/balance-sheet', 'The balance sheet on a day', (a, q) => api.balanceSheet(a, q)),
   get('reports', '/reports/cash', 'Receipts and payments, and the cash flow statement', (a, q) => api.cashMovements(a, q)),

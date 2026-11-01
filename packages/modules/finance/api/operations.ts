@@ -3,6 +3,7 @@ import { audit, withTenant } from '@campusos/db'
 import { accounts, budgets, entries, lines } from '../schema'
 import { DEFAULT_CHART, normalSide } from './chart'
 import { spentSoFar } from './periods'
+import { refuseControlAccounts } from './subledgers'
 import { fiscalYearStart, localToday } from './years'
 import {
   FinanceError,
@@ -337,7 +338,12 @@ export async function postEntry(actor: Actor, input: unknown) {
   if (!canPost(actor.role)) throw new FinanceError(403, 'forbidden', 'not permitted')
   const data = postEntrySchema.parse(input)
 
-  return withTenant(tenant, (tx) => postWithin(tx, tenant, actor.id, data))
+  return withTenant(tenant, async (tx) => {
+    // A control account's balance is its sub-ledger's total: a raw line breaks that (ACC-02).
+    const ids = await resolveAccounts(tx, tenant, data.lines)
+    await refuseControlAccounts(tx, [...ids.values()])
+    return postWithin(tx, tenant, actor.id, data)
+  })
 }
 
 /**

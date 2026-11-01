@@ -4,7 +4,7 @@ import { OFFICE } from './kit'
 import { chooseRecord, col, context, dateFields, display, field, filter, href, linkCol, moneyCols, object, page, read, rows, select, shortcuts, str, table, tabs, type Data } from './screen-kit'
 
 export const extraReportLinks = [
-  ['Aging of receivables and payables', '/reports/aging'], ['Funds and grants', '/reports/funds'], ['Fund statement', '/reports/fund'], ['Cost centres', '/reports/cost-centers'], ['GST and TDS', '/reports/gst'], ['Stock balance', '/stock/balance'], ['Stock ledger', '/stock/ledger'], ['Stores against books', '/stock/against-books'], ['Asset register', '/assets'], ['Depreciation', '/depreciation'],
+  ['Aging of receivables and payables', '/reports/aging'], ['Funds and grants', '/reports/funds'], ['Sub-ledgers against the books', '/reports/subledgers'], ['Fund statement', '/reports/fund'], ['Cost centres', '/reports/cost-centers'], ['GST and TDS', '/reports/gst'], ['Stock balance', '/stock/balance'], ['Stock ledger', '/stock/ledger'], ['Stores against books', '/stock/against-books'], ['Asset register', '/assets'], ['Depreciation', '/depreciation'],
 ].map(([label, path]) => ({ label: label!, href: `/m/finance${path}` }))
 const gstLinks = [['GSTR-1', '/reports/gstr1'], ['GSTR-3B', '/reports/gstr3b'], ['HSN / SAC summary', '/reports/hsn'], ['Sales and purchase register', '/reports/register'], ['TDS', '/reports/tds']]
 const taxColumns = () => moneyCols('taxablePaise', 'igstPaise', 'cgstPaise', 'sgstPaise', 'cessPaise')
@@ -22,6 +22,20 @@ export const extraReportPages: PluginPage[] = [
       return { ...data, ...report, query, rows: rows(report.rows).map(row => ({ ...row, ...flatten(row.buckets) })), invoices: query.partyId ? rows(report.rows).flatMap(row => rows(row.invoices)) : [], footer: { name: 'Total', ...flatten(report.totals), advancePaise: report.advancePaise, totalPaise: report.totalPaise } }
     },
     sections: data => [filter('/reports/aging', data, [select('side', ['receivable', 'payable'], { value: 'receivable' }), ...dateFields('on'), select('partyId', 'parties')]), table('Aging by party', 'rows', [linkCol('name', '/party', 'partyId'), ...(Array.isArray(data.bucketLabels) ? data.bucketLabels : []).map((label, index) => col(`bucket${index}`, 'money', { label: str(label) })), ...moneyCols('advancePaise', 'totalPaise')], { footer: 'footer' }), ...(object(data.query).partyId ? [table('Open invoices', 'invoices', [linkCol('number', '/invoice'), col('postingDate', 'date'), col('dueDate', 'date'), col('days', 'days'), ...moneyCols('openPaise')])] : []), exportCsv('aging', data)],
+  }),
+  page({ path: '/reports/subledgers', title: 'Sub-ledgers against the books', roles: OFFICE,
+    async load(actor, request) {
+      const data = await context(actor, request)
+      const report = object(await read(actor, '/reports/subledgers', { on: data.on }))
+      const list = rows(report.rows).map(row => ({ ...row, differs: Number(row.differencePaise) !== 0 }))
+      return { ...data, rows: list, checked: list.length, differing: list.filter(row => row.differs).length }
+    },
+    sections: data => [
+      filter('/reports/subledgers', data, dateFields('on')),
+      { kind: 'figures', figures: [{ label: 'Ledgers checked', value: String(data.checked) }, { label: 'Differences', value: String(data.differing), tone: Number(data.differing) ? 'due' : 'clear' }] },
+      { kind: 'note', text: 'Fee receivables reconcile to the fee ledger in P1-03.' },
+      table('Each sub-ledger against its control account', 'rows', [col('ledger', 'status'), col('code', 'code'), col('name'), ...moneyCols('subledgerPaise', 'booksPaise'), col('differencePaise', 'money', { label: 'Difference', alertWhen: 'differs' })]),
+    ],
   }),
   page({ path: '/reports/funds', title: 'Fund balances', roles: OFFICE,
     async load(actor, request) { const data = await context(actor, request); return { ...data, rows: rows(await read(actor, '/reports/funds', { on: data.on })) } },
