@@ -18,3 +18,11 @@ export async function college() {
   return { id: institution!.id, admin: actor(0), manager: actor(1), rep: actor(2), rep2: actor(3), outsider: actor(4), clerk: actor(5) }
 }
 export type College = Awaited<ReturnType<typeof college>>
+
+/** Creates a sales team (as the administrator) with its manager and members. */
+export async function team(admin: Actor, name: string, managerId: string, memberIds: string[]) {
+  const { createTeam, addTeamMember } = await import('./api/settings')
+  const created = await createTeam(admin, { name, managerId })
+  for (const userId of memberIds) await addTeamMember(admin, { teamId: created.id, userId })
+  return created.id
+}
