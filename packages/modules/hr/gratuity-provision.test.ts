@@ -16,6 +16,7 @@ import {
   valueGratuity,
   type Actor,
 } from './api'
+import { payPages } from './pages-pay'
 import { gratuityValuationLines, gratuityValuations, staff } from './schema'
 
 /**
@@ -315,4 +316,20 @@ test('two valuations at once take turns', async () => {
   // Which of the two took the lock first is not fixed: one posts it all, the other nothing.
   assert.deepEqual(rows.map((row) => row.a), [0, 43_269_231])
   assert.equal(await bal(c, 'gratuity_provision', '2026-09-30'), 43_269_231)
+})
+
+test('the pay setup page shows the provision and offers the form', async () => {
+  const c = await college()
+  const { r } = await people(c)
+  await valueGratuity(c.admin, { asOf: '2026-09-30', method: 'accrued', ruleId: r.id })
+  const page = payPages.find((p) => p.path === '/payroll/setup')!
+  const data = (await page.load(c.admin, new Request('http://localhost/payroll/setup'))) as { valuations: { asOf: string; method: string; people: number }[] }
+  assert.equal(data.valuations.length, 1)
+  assert.equal(data.valuations[0]!.asOf, '2026-09-30')
+  assert.equal(data.valuations[0]!.method, 'accrued')
+  assert.equal(data.valuations[0]!.people, 3)
+  const sections = page.sections(data as never) as unknown as { kind: string; title?: string; path?: string }[]
+  assert.ok(sections.some((s) => s.kind === 'table' && s.title === 'Gratuity provision'))
+  const form = sections.find((s) => s.kind === 'form' && s.title === 'Value the gratuity provision')
+  assert.equal(form?.path, '/pay/gratuity/valuations')
 })
