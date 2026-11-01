@@ -162,6 +162,11 @@ export const voidRemittanceSchema = z
   .object({ remittanceId: uuid, reason: z.string().trim().min(5).max(300) })
   .meta({ id: 'HrRemittanceVoid' })
 
+/** Reverse a payslip and make a new one for the same month (P1-06c). */
+export const reissueSchema = z
+  .object({ payslipId: uuid, reason: z.string().trim().min(5).max(300) })
+  .meta({ id: 'HrPayslipReissue' })
+
 // --- reads -----------------------------------------------------------------
 
 export const staffRowSchema = z

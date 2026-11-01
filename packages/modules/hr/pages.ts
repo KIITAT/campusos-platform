@@ -431,6 +431,7 @@ const corePages: PluginPage[] = [
         total: formatPaise(payslips.reduce((n, p) => n + p.netPaise, 0)),
         count: payslips.length,
         staffOptions: staff.map((s) => ({ value: s.id, label: `${s.employeeCode} - ${s.name}` })),
+        payslipOptions: payslips.map((p) => ({ value: p.id, label: `${p.employeeCode} - ${p.staffName}` })),
       }
     },
     sections: (data) => [
@@ -516,6 +517,25 @@ const corePages: PluginPage[] = [
           },
         ],
       },
+      ...(data.isPaid || Number(data.count ?? 0) === 0
+        ? []
+        : [
+            {
+              kind: 'form' as const,
+              title: 'Reissue a payslip',
+              note:
+                'Reverses the books entry and issues a new payslip for the same month. Refused once the month ' +
+                'is paid, after the person has a later payslip, with advance recoveries on it, or once the month ' +
+                'has been remitted: correct those on the next payslip.',
+              submit: 'Reissue',
+              path: '/payroll/reissue',
+              roles: [...ADMIN],
+              fields: [
+                { name: 'payslipId', label: 'Payslip', kind: 'select' as const, options: 'payslipOptions' },
+                { name: 'reason', label: 'Reason' },
+              ],
+            },
+          ]),
       ...(data.isPaid || Number(data.count ?? 0) === 0
         ? []
         : [

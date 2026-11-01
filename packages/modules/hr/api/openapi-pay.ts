@@ -10,6 +10,7 @@ import {
   payGratuitySchema,
   payrollSettingsSchema,
   releasePayslipSchema,
+  reissueSchema,
   remitSchema,
   voidRemittanceSchema,
   setPreviousEmploymentSchema,
@@ -114,6 +115,7 @@ export const payPaths = {
       responses: { ...ok, '200': { description: 'OK', content: { 'application/pdf': {} } }, '404': { description: 'No such payslip', content: json(err) } },
     },
   },
+  [`${base}/payroll/reissue`]: post('Reissue a payslip: reverse its books entry and make a new one', reissueSchema, 'Refused once the month is paid, after the person has a later payslip, with advance recoveries on it, after a release of a held payslip, or once the month has been remitted.'),
   [`${base}/payroll/dues`]: get('What each statutory head owes for a month, what was remitted and what is left', ['period']),
   [`${base}/payroll/remittances`]: {
     get: { ...get('Remittances, newest first, voided ones included', []).get, parameters: [{ name: 'period', in: 'query', required: false, schema: { type: 'string' } }] },

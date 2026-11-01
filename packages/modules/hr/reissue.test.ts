@@ -89,7 +89,7 @@ test('a reissue replaces the payslip, reverses its entry and keeps the old one',
   const { bal, diff } = await books(c)
   assert.equal(diff, 0)
   assert.equal(bal('2100'), 6_000_000)
-  const paid = await paySalaries(c.admin, { period: '2026-04', paidOn: '2026-05-02' })
+  const paid = await paySalaries(c.principal, { period: '2026-04', paidOn: '2026-05-02' })
   assert.equal(paid.amountPaise, 6_000_000)
 })
 
@@ -108,7 +108,7 @@ test('a reissue is refused once the month is paid', async () => {
   const c = await college()
   await basic(c, '50000')
   await generatePayroll(c.admin, { period: '2026-04' })
-  await paySalaries(c.admin, { period: '2026-04', paidOn: '2026-05-02' })
+  await paySalaries(c.principal, { period: '2026-04', paidOn: '2026-05-02' })
   await refused(c, '2026-04-01', 'period_paid')
 })
 
@@ -188,8 +188,9 @@ test('only the administrators may reissue', async () => {
   const c = await college()
   await basic(c, '50000')
   await generatePayroll(c.admin, { period: '2026-04' })
+  const id = (await slipFor(c, '2026-04-01')).id
   await assert.rejects(
-    () => reissuePayslip(c.clerk, { payslipId: (await slipFor(c, '2026-04-01')).id, reason }),
+    () => reissuePayslip(c.clerk, { payslipId: id, reason }),
     (e) => e instanceof HrError && e.status === 403 && e.code === 'forbidden',
   )
 })
@@ -229,7 +230,7 @@ test('a reissue and a payment racing for the month: payables end at zero either 
   })
   await locked
   const reissue = settle(reissuePayslip(c.admin, { payslipId: old.id, reason }))
-  const payment = settle(paySalaries(c.admin, { period: '2026-04', paidOn: '2026-05-02' }))
+  const payment = settle(paySalaries(c.principal, { period: '2026-04', paidOn: '2026-05-02' }))
   try {
     await until(async () => (await waiting('%pg_advisory_xact_lock(1213354066%')) >= 2)
   } finally {
