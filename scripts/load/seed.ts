@@ -3,7 +3,7 @@ import { authDb, corePool, institutionModules, institutions, users } from '../..
 import { listAccounts, saveJournal, setSingleOfficer, updateSettings, type Actor } from '../../packages/modules/finance/api/index'
 
 /**
- * A synthetic data set for measuring reads at scale (P1-10a, decisions 332 to 337).
+ * A synthetic data set for measuring reads at scale (P1-10a, decisions 376 to 381).
  * Never run against a real database: the guard below refuses anything that is not
  * a disposable `*_load` database named by both connections.
  */

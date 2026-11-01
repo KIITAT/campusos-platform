@@ -3,7 +3,7 @@ import { authDb, corePool } from '../../packages/db/src/index'
 import { balanceSheet, trialBalanceReport, type Actor } from '../../packages/modules/finance/api/index'
 import { validateLoadEnvironment } from './seed'
 
-/** Times the two ledger reports on load-00 (P1-10a, decision 338): same code path as the route, no HTTP. */
+/** Times the two ledger reports on load-00 (P1-10a, decision 382): same code path as the route, no HTTP. */
 const RUNS = 5
 
 async function time(report: string, call: () => Promise<unknown>) {
