@@ -72,6 +72,7 @@ const NEW_FILES = new Set([
   'notices/0004_preferences.sql',
   'parents/0004_guardians_of.sql',
   'finance/0014_gst_returns.sql',
+  'finance/0015_tds_returns.sql',
 ])
 const NEW_CORE_FROM = 5
 
