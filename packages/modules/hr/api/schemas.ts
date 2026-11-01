@@ -1039,6 +1039,22 @@ export const payGratuitySchema = z
   .object({ staffId: uuid, ruleId: uuid, paidOn: day, paidFrom: z.enum(['bank', 'cash']).default('bank') })
   .meta({ id: 'HrGratuityPay' })
 
+const monthEnd = (d: string) => {
+  const [y, m] = d.split('-').map(Number) as [number, number]
+  return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10) === d
+}
+
+/** Valuing the gratuity provision as at a month end (P1-06d). */
+export const valueGratuitySchema = z
+  .object({
+    asOf: day.refine(monthEnd, 'value the provision as at the last day of a month'),
+    method: z.enum(['accrued', 'actuarial']),
+    ruleId: z.preprocess(blankToNull, uuid.nullable()).default(null),
+    obligation: z.preprocess(blankToNull, rupees.nullable()).default(null),
+    reference: z.preprocess(blankToNull, z.string().trim().min(3).max(200).nullable()).default(null),
+  })
+  .meta({ id: 'HrGratuityValue' })
+
 export const withholdSalarySchema = z
   .object({ staffId: uuid, fromPeriod: period, reason: z.string().trim().min(5).max(500) })
   .meta({ id: 'HrSalaryWithhold' })
