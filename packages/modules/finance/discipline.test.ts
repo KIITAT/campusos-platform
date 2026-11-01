@@ -4,6 +4,7 @@ import { and, eq, like, sql } from 'drizzle-orm'
 import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
 import type { Role } from '@campusos/module-framework'
 import { specs } from './routes'
+import { pages } from './pages'
 import {
   FinanceError,
   accountFor,
@@ -497,6 +498,13 @@ test('two purchase orders submitted together cannot both fit in room for one (AC
   release()
   const results = (await Promise.all([one, two, hold]).then((r) => r.slice(0, 2))) as string[]
   assert.deepEqual(results.sort(), ['ok', 'over_budget'])
+})
+
+test('the Periods page loads when the optional year and month fields are blank (review P1-04 note)', async () => {
+  const b = await books()
+  const page = pages.find((p) => p.path === '/periods')!
+  const data = await page.load(b.admin, new Request('https://college.test/m/finance/periods?year=&month='))
+  assert.match(String(data.checkMonth), /^d{4}-d{2}$/)
 })
 
 test('billing a PO moves the amount from committed to spent', async () => {
