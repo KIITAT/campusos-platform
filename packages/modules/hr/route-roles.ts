@@ -117,6 +117,7 @@ export const routeRoles: Record<string, readonly Role[]> = {
   'POST /pay/withhold/lift': ADMIN,
   'POST /pay/withheld/release': ADMIN,
   'GET /payroll/runs': OFFICE,
+  'GET /payroll/payslip.pdf': STAFF,
   'GET /payroll/ecr': ADMIN,
   'GET /payroll/esi': ADMIN,
   'GET /payroll/bank-advice': ADMIN,

@@ -106,6 +106,12 @@ export const payPaths = {
     releasePayslipSchema,
     'Audited, and posted as the salary liability being discharged.',
   ),
+  [`${base}/payroll/payslip.pdf`]: {
+    get: {
+      ...get('A payslip as a PDF: one’s own, or anyone’s for the office', ['payslipId']).get,
+      responses: { ...ok, '200': { description: 'OK', content: { 'application/pdf': {} } }, '404': { description: 'No such payslip', content: json(err) } },
+    },
+  },
   [`${base}/payroll/ecr`]: file('The provident fund ECR text file for a month', 'text/plain'),
   [`${base}/payroll/esi`]: file('The ESI monthly contribution CSV for a month', 'text/csv'),
   [`${base}/payroll/bank-advice`]: file('The salary transfer advice CSV for a month (non-withheld payslips)', 'text/csv'),

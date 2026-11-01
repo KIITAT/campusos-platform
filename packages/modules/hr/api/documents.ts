@@ -2,14 +2,15 @@
  * Files built on demand from stored payslips (P1-06c): nothing is kept, a
  * payslip is immutable so the same month always gives the same file.
  */
-import { and, asc, eq } from 'drizzle-orm'
-import { withTenant } from '@campusos/db'
-import { HrError, requireAdmin, type Actor } from './guards'
+import { and, asc, desc, eq } from 'drizzle-orm'
+import { db, institutions, withTenant } from '@campusos/db'
+import { HrError, isHr, requireAdmin, tenantOf, type Actor } from './guards'
+import { payslipPdf } from './payslip-pdf'
 import { bankAdviceFile, ecrFile, esiFile, type BankRow, type EcrRow, type EsiRow } from './files'
 import type { PayslipLine } from './payroll'
 import type { PayslipStatutory } from './statutory'
 import { STATUTORY } from './statutory'
-import { payslips, staff } from '../schema'
+import { payslipReissues, payslips, staff } from '../schema'
 
 export type FileKind = 'ecr' | 'esi' | 'bank-advice'
 
@@ -93,4 +94,54 @@ export async function statutoryFile(actor: Actor, kind: FileKind, rawPeriod: str
     }))
   if (list.length === 0) throw new HrError(409, 'nothing_to_file', `no ${LABEL[kind]} rows for this month`)
   return { name: `salary-advice-${ym}.csv`, type: 'text/csv; charset=utf-8', content: bankAdviceFile(list, ym) }
+}
+
+/** A payslip as a PDF: the person's own, or anyone's for the office. Anything else is 404, never 403. */
+export async function payslipDocument(actor: Actor, payslipId: string): Promise<{ name: string; bytes: Uint8Array }> {
+  const tenant = tenantOf(actor)
+  const found = await withTenant(tenant, async (tx) => {
+    const [row] = await tx
+      .select({ slip: payslips, person: staff })
+      .from(payslips)
+      .innerJoin(staff, eq(staff.id, payslips.staffId))
+      .where(eq(payslips.id, payslipId))
+    if (!row || (!isHr(actor.role) && row.person.userId !== actor.id)) return null
+    const [again] = await tx
+      .select()
+      .from(payslipReissues)
+      .where(and(eq(payslipReissues.staffId, row.slip.staffId), eq(payslipReissues.period, row.slip.period)))
+      .orderBy(desc(payslipReissues.reissuedAt))
+      .limit(1)
+    return { ...row, again }
+  })
+  if (!found) throw new HrError(404, 'no_such_payslip', 'no such payslip')
+  const { slip, person, again } = found
+  // institutions carries no RLS policy, so this reads without a tenant transaction.
+  const [inst] = await db.select({ name: institutions.name }).from(institutions).where(eq(institutions.id, tenant))
+  const generatedAt = (again?.snapshot as { generatedAt?: string } | undefined)?.generatedAt
+  const bytes = await payslipPdf({
+    institutionName: inst?.name ?? 'Institution',
+    period: slip.period,
+    employeeCode: person.employeeCode,
+    name: person.name,
+    designation: person.designation,
+    department: person.department,
+    joinedOn: person.joinedOn,
+    pan: person.pan,
+    uan: person.uan,
+    esiNumber: person.esiNumber,
+    bankAccount: person.bankAccount,
+    bankIfsc: person.bankIfsc,
+    lines: slip.lines as PayslipLine[],
+    grossPaise: slip.grossPaise,
+    deductionsPaise: slip.deductionsPaise,
+    netPaise: slip.netPaise,
+    unpaidLeaveDays: slip.unpaidLeaveDays,
+    lossOfPayPaise: slip.lossOfPayPaise,
+    employer: (slip.statutory as PayslipStatutory | null)?.employer ?? null,
+    reissue: again
+      ? { on: again.reissuedAt.toISOString().slice(0, 10), originalGeneratedOn: (generatedAt ?? '').slice(0, 10), reason: again.reason }
+      : null,
+  })
+  return { name: `payslip-${person.employeeCode}-${slip.period.slice(0, 7)}.pdf`, bytes }
 }

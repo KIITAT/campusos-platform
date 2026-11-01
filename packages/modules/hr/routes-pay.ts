@@ -19,6 +19,7 @@ import {
   listWithheld,
   payGratuity,
   releasePayslip,
+  payslipDocument,
   statutoryFile,
   type FileKind,
   setPayrollSettings,
@@ -70,6 +71,17 @@ export const payRoutes: PluginRoute[] = [
   post('/pay/withhold', withholdSalary),
   post('/pay/withhold/lift', liftWithholding),
   post('/pay/withheld/release', releasePayslip),
+  {
+    method: 'GET',
+    path: '/payroll/payslip.pdf',
+    raw: true,
+    handler: async (a, req) => {
+      const d = await payslipDocument(a as Actor, requiredParam(req, 'payslipId'))
+      return new Response(d.bytes as unknown as BodyInit, {
+        headers: { 'content-type': 'application/pdf', 'content-disposition': `inline; filename="${d.name}"`, 'cache-control': 'no-store' },
+      })
+    },
+  },
   fileRoute('/payroll/ecr', 'ecr'),
   fileRoute('/payroll/esi', 'esi'),
   fileRoute('/payroll/bank-advice', 'bank-advice'),
