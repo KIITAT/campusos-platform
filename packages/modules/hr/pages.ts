@@ -1,4 +1,5 @@
 import { payPages } from './pages-pay'
+import { remitPages } from './pages-remit'
 import { taxPages } from './pages-tax'
 import { expensesPages } from './pages-expenses'
 import { performancePages } from './pages-performance'
@@ -417,7 +418,16 @@ const corePages: PluginPage[] = [
           ...p,
           month: p.period.slice(0, 7),
           lop: p.unpaidLeaveDays > 0,
+          pdfLabel: 'PDF',
         })),
+        // The files carry UAN, ESI number and bank account: administrators only (route-roles).
+        files: (ADMIN as readonly string[]).includes(a.role)
+          ? [
+              { name: 'Provident fund file (ECR)', file: 'ecr' },
+              { name: 'ESI contribution file', file: 'esi' },
+              { name: 'Bank salary advice', file: 'bank-advice' },
+            ].map((f) => ({ ...f, period: period.slice(0, 7) }))
+          : [],
         total: formatPaise(payslips.reduce((n, p) => n + p.netPaise, 0)),
         count: payslips.length,
         staffOptions: staff.map((s) => ({ value: s.id, label: `${s.employeeCode} - ${s.name}` })),
@@ -427,8 +437,8 @@ const corePages: PluginPage[] = [
       {
         kind: 'note',
         text:
-          `${data.period}: ${data.count} payslips, ${data.total} net. Figures only ` +
-          `— no statutory filing. A payslip cannot be edited once generated; ` +
+          `${data.period}: ${data.count} payslips, ${data.total} net. Statutory files are on ` +
+          `this page; see Remittances for payments. A payslip cannot be edited once generated; ` +
           `corrections go on the next one.`,
       },
       ...(data.isPaid
@@ -455,7 +465,15 @@ const corePages: PluginPage[] = [
           { key: 'unpaidLeaveDays', label: 'Unpaid', kind: 'days', alertWhen: 'lop' },
           { key: 'deductionsPaise', label: 'Deductions', kind: 'money' },
           { key: 'netPaise', label: 'Net', kind: 'money' },
+          { key: 'pdfLabel', label: '', href: '/api/v1/modules/hr/payroll/payslip.pdf?payslipId={id}' },
         ],
+      },
+      {
+        kind: 'table',
+        title: 'Files for this month',
+        rows: 'files',
+        empty: 'Statutory files are for administrators.',
+        columns: [{ key: 'name', label: 'File', href: '/api/v1/modules/hr/payroll/{file}?period={period}' }],
       },
       {
         kind: 'table',
@@ -558,7 +576,7 @@ const corePages: PluginPage[] = [
           ...l,
           span: l.toOn === l.fromOn ? l.fromOn : `${l.fromOn} to ${l.toOn}`,
         })),
-        payslips: mine.payslips.map((p) => ({ ...p, month: p.period.slice(0, 7) })),
+        payslips: mine.payslips.map((p) => ({ ...p, month: p.period.slice(0, 7), pdfLabel: 'PDF' })),
       }
     },
     sections: (data) =>
@@ -603,6 +621,7 @@ const corePages: PluginPage[] = [
                 { key: 'grossPaise', label: 'Gross', kind: 'money' },
                 { key: 'deductionsPaise', label: 'Deductions', kind: 'money' },
                 { key: 'netPaise', label: 'Net', kind: 'money' },
+                { key: 'pdfLabel', label: '', href: '/api/v1/modules/hr/payroll/payslip.pdf?payslipId={id}' },
               ],
             },
           ]
@@ -617,4 +636,4 @@ const corePages: PluginPage[] = [
   },
 ]
 
-export const pages: PluginPage[] = [...corePages, ...lifecyclePages, ...leavePages, ...shiftsPages, ...recruitmentPages, ...performancePages, ...expensesPages, ...payPages, ...taxPages]
+export const pages: PluginPage[] = [...corePages, ...lifecyclePages, ...leavePages, ...shiftsPages, ...recruitmentPages, ...performancePages, ...expensesPages, ...payPages, ...taxPages, ...remitPages]
