@@ -20,6 +20,8 @@ export const STATUTORY = {
   esiEmployeeBp: 75,
   esiEmployerBp: 325,
   esiLowDailyWagePaise: 17_600,
+  /** Least EPF administration charge for a month an establishment has members (NEW-50). */
+  pfAdminMinPaise: 50_000,
 } as const
 
 /** ISO 3166-2:IN state and union territory codes. */
@@ -41,6 +43,8 @@ export interface StatutoryInput {
 
 export interface PayslipStatutory {
   codeWagesPaise: number; pfWagesPaise: number; epsWagesPaise: number; edliWagesPaise: number
+  /** The PF base: what the employee's contribution was worked on. Absent on payslips older than 0.13.0. */
+  epfWagesPaise: number
   ncpDays: number; esiWagesPaise: number; esiCovered: boolean | null; ptState: string | null
   employer: { epsPaise: number; epfPaise: number; edliPaise: number; pfAdminPaise: number; esiPaise: number }
 }
@@ -77,11 +81,12 @@ export function statutoryFor(i: StatutoryInput): StatutoryResult {
   const codeW = codeWages(i.earnings)
   const esiWages = sum(i.earnings, 'wage', 'excluded')
   const employer = { epsPaise: 0, epfPaise: 0, edliPaise: 0, pfAdminPaise: 0, esiPaise: 0 }
-  let pfWages = 0, epsWages = 0, edliWages = 0
+  let pfWages = 0, epsWages = 0, edliWages = 0, epfWages = 0
 
   if (i.pfRegistered && i.person.pfMember) {
     pfWages = codeW
     const base = i.person.pfOnActual ? pfWages : Math.min(pfWages, S.pfCeilingPaise)
+    epfWages = base
     epsWages = i.person.epsExcluded ? 0 : Math.min(pfWages, S.pfCeilingPaise)
     edliWages = Math.min(pfWages, S.pfCeilingPaise)
     const pfEmployee = R(base, S.pfEmployeeBp)
@@ -118,7 +123,7 @@ export function statutoryFor(i: StatutoryInput): StatutoryResult {
     deductions,
     employerCostPaise,
     record: {
-      codeWagesPaise: codeW, pfWagesPaise: pfWages, epsWagesPaise: epsWages, edliWagesPaise: edliWages,
+      codeWagesPaise: codeW, pfWagesPaise: pfWages, epsWagesPaise: epsWages, edliWagesPaise: edliWages, epfWagesPaise: epfWages,
       ncpDays: i.ncpDays, esiWagesPaise: esiWages, esiCovered, ptState, employer,
     },
   }
