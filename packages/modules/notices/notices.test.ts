@@ -15,9 +15,13 @@ import {
   notify,
   publishNotice,
   readNotice,
+  registerNotificationChannel,
   removeAttachment,
+  setMandatory,
+  setPreference,
   withdrawNotice,
   type Actor,
+  type Delivery,
 } from './api'
 import { plugin } from './plugin'
 import { noticeAttachments, notices, notificationMandatory, notificationOptOuts, notifications } from './schema'
@@ -97,6 +101,8 @@ beforeEach(async () => {
     await tx.execute(sql`select set_config('app.audit_reason', 'test reset', true)`)
     await tx.delete(notifications)
     await tx.delete(notices)
+    await tx.delete(notificationOptOuts)
+    await tx.delete(notificationMandatory)
     since = new Date(Math.floor(Number((await tx.execute<{ ms: string }>(sql`select extract(epoch from clock_timestamp()) * 1000 as ms`)).rows[0]!.ms)))
   })
 })
@@ -323,6 +329,100 @@ test('preferences are per institution', async () => {
   assert.deepEqual(await withTenant(inst, (tx) => tx.select().from(notificationMandatory)), [])
   assert.deepEqual(await withTenant(inst, (tx) => tx.select().from(notificationOptOuts)), [])
   assert.equal((await withTenant(other, (tx) => tx.select().from(notificationOptOuts))).length, 1)
+})
+
+// --- preferences, mandatory categories, channels (P1-02) -------------------
+
+const titlesFor = async (id: string, noticeId: string) =>
+  (await inbox(student(id))).items.filter((i) => i.noticeId === noticeId)
+
+test('a muted category does not reach the inbox', async () => {
+  await setPreference(student(ids.s1), { moduleId: 'notices', muted: true })
+  const n = await post({ audienceRoles: ['student'] })
+  assert.equal((await titlesFor(ids.s1, n.id)).length, 0)
+  assert.equal((await titlesFor(ids.s2, n.id)).length, 1)
+})
+
+test('a mandatory category reaches a person who muted it', async () => {
+  await setPreference(student(ids.s1), { moduleId: 'notices', muted: true })
+  await setMandatory(admin(), { moduleId: 'notices', mandatory: true, reason: 'circulars must reach everybody' })
+  const n = await post({ audienceRoles: ['student'] })
+  assert.equal((await titlesFor(ids.s1, n.id)).length, 1)
+  const trail = await withTenant(inst, (tx) =>
+    tx.select({ action: auditLog.action }).from(auditLog).where(gte(auditLog.at, since)),
+  )
+  assert.ok(trail.some((t) => t.action === 'notifications.mandatory_set'))
+})
+
+test('muting a mandatory category is refused', async () => {
+  await setMandatory(admin(), { moduleId: 'notices', mandatory: true, reason: 'circulars must reach everybody' })
+  await assert.rejects(
+    () => setPreference(student(ids.s1), { moduleId: 'notices', muted: true }),
+    (e: unknown) => code(e) === 'category_mandatory' && status(e) === 409,
+  )
+})
+
+test('only an administrator makes a category mandatory', async () => {
+  const input = { moduleId: 'notices', mandatory: true, reason: 'circulars must reach everybody' }
+  for (const who of [teacher(), student(ids.s1)]) {
+    await assert.rejects(
+      () => setMandatory(who, input),
+      (e: unknown) => code(e) === 'forbidden' && status(e) === 403,
+    )
+  }
+})
+
+test('an unknown category is refused', async () => {
+  await assert.rejects(
+    () => withTenant(inst, (tx) => notify(tx, inst, { userIds: [ids.s1], moduleId: 'nope', title: 't', body: 'b' })),
+    (e: unknown) => code(e) === 'unknown_category',
+  )
+})
+
+test('a registered channel receives every delivery with no change to the caller', async () => {
+  const got: Delivery[] = []
+  const off = registerNotificationChannel({ id: 'test', deliver: async (_tx, d) => { got.push(...d) } })
+  try {
+    assert.throws(() => registerNotificationChannel({ id: 'test', deliver: async () => {} }), /already registered/)
+    const n = await post({ audienceRoles: ['student'] })
+    const direct = await withTenant(inst, (tx) => notify(tx, inst, { userIds: [ids.s1], moduleId: 'care', title: 'T', body: 'B' }))
+    assert.equal(direct, 1)
+    const rows = await withTenant(inst, (tx) => tx.select({ id: notifications.id }).from(notifications))
+    assert.equal(got.length, 3, 'two from the notice, one from notify')
+    assert.deepEqual(got.map((g) => g.notificationId).sort(), rows.map((r) => r.id).sort())
+    assert.equal(got.filter((g) => g.moduleId === 'notices').length, 2)
+    assert.ok(n.id)
+  } finally {
+    off()
+  }
+})
+
+test('a channel that throws rolls the write back', async () => {
+  const off = registerNotificationChannel({ id: 'boom', deliver: async () => { throw new Error('boom') } })
+  try {
+    const d = await post({ audienceRoles: ['student'], publish: false })
+    await assert.rejects(() => publishNotice(admin(), { noticeId: d.id }), /boom/)
+    const [row] = await withTenant(inst, (tx) => tx.select().from(notices).where(eq(notices.id, d.id)))
+    assert.equal(row!.publishedAt, null)
+    assert.equal((await titlesFor(ids.s1, d.id)).length, 0)
+  } finally {
+    off()
+  }
+})
+
+test('alsoGuardians notifies the current guardian with the guardian link', async () => {
+  const [par] = await authDb.insert(users).values({ email: 'par@notice.test', institutionId: inst, role: 'parent', name: 'Par' }).returning({ id: users.id })
+  await authDb.execute(sql`insert into parent_links (institution_id, parent_id, student_id, relation, verified_at) values (${inst}, ${par!.id}, ${ids.s1}, 'mother', now())`)
+  try {
+    const n = await withTenant(inst, (tx) =>
+      notify(tx, inst, { userIds: [ids.s1], moduleId: 'attendance', title: 'T', body: 'B', link: '/m/attendance/me', alsoGuardians: { link: '/m/parents' } }),
+    )
+    assert.equal(n, 2)
+    const mine = await withTenant(inst, (tx) => tx.select({ link: notifications.link }).from(notifications).where(eq(notifications.userId, par!.id)))
+    assert.deepEqual(mine.map((m) => m.link), ['/m/parents'])
+  } finally {
+    await authDb.delete(users).where(eq(users.id, par!.id))
+  }
 })
 
 // --- tenancy ---------------------------------------------------------------
