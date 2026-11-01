@@ -28,5 +28,7 @@ export const specs: RouteSpec[] = [
   post('/leads/won', 'Mark an opportunity won', api.leadIdSchema, api.markWon),
   post('/leads/lost', 'Mark a lead lost, with a reason', api.lostSchema, api.markLost),
   post('/leads/reopen', 'Reopen a lost or unconverted won opportunity', api.leadIdSchema, api.reopenLead),
+  post('/activities', 'Schedule a call, meeting or task', api.activitySchema, api.createActivity),
+  post('/activities/done', 'Complete an activity', api.activityDoneSchema, api.completeActivity),
 ]
 export const routes: PluginRoute[] = specs

@@ -1,3 +1,4 @@
 export * from './core'
 export * from './settings'
 export * from './leads'
+export * from './activities'
