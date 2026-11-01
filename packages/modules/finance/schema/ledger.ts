@@ -295,6 +295,10 @@ export const periods = pgTable(
     closedAt: timestamp('closed_at', { withTimezone: true }),
     /** Why it was opened again, which is the interesting half of the trail. */
     reopenedReason: text('reopened_reason'),
+    /** A pending reopening: who asked, when and why. A second administrator confirms it (P1-04, ACC-07). */
+    reopenRequestedBy: text('reopen_requested_by').references(() => users.id, { onDelete: 'set null' }),
+    reopenRequestedAt: timestamp('reopen_requested_at', { withTimezone: true }),
+    reopenRequestReason: text('reopen_request_reason'),
     createdAt: createdAt(),
   },
   (t) => [
@@ -302,7 +306,36 @@ export const periods = pgTable(
     check('finance_periods_year', sql`year between 1900 and 2200`),
     check('finance_periods_month', sql`month between 1 and 12`),
     check('finance_periods_closed', sql`(status = 'closed') = (closed_at is not null)`),
+    check(
+      'finance_periods_reopen_request',
+      sql`(reopen_requested_at is null and reopen_request_reason is null) or (reopen_requested_at is not null and reopen_request_reason is not null)`,
+    ),
     tenantPolicy('finance_periods'),
+  ],
+)
+
+/**
+ * A GST return marked filed (P1-04, ACC-05). Once a GSTR-1 covers a day, a sales
+ * invoice of that day is corrected by a credit or debit note, never cancelled.
+ * No person column: the audit log says who marked it.
+ */
+export const gstFilings = pgTable(
+  'finance_gst_filings',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    returnType: text('return_type').notNull(),
+    periodFrom: date('period_from').notNull(),
+    periodTo: date('period_to').notNull(),
+    filedOn: date('filed_on').notNull(),
+    arn: text(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('finance_gst_filings_period_start').on(t.institutionId, t.returnType, t.periodFrom),
+    check('finance_gst_filings_type', sql`return_type in ('gstr1', 'gstr3b')`),
+    check('finance_gst_filings_period', sql`period_to >= period_from`),
+    tenantPolicy('finance_gst_filings'),
   ],
 )
 
