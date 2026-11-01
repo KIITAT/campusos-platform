@@ -7,7 +7,11 @@ import {
   FinanceError,
   accountFor,
   cancelInvoice,
+  dueDateOf,
+  monthsLate,
   recordChallan,
+  tdsInterest,
+  tdsQuarterFile,
   trialBalance,
   voidChallan,
   createParty,
@@ -314,4 +318,91 @@ test('only an administrator records a challan, and not for a future day', async 
   const f = await april(b)
   await refused(recordChallan(b.clerk, { ...CHALLAN, accountId: f.bank }), 'forbidden', 403)
   await refused(recordChallan(b.admin, { ...CHALLAN, depositedOn: '2099-01-01', accountId: f.bank }), 'future_date', 409)
+})
+
+// --- the quarterly working statement and late-deposit interest ---------------
+
+const parseCsv = (text: string | Uint8Array) =>
+  String(typeof text === 'string' ? text : Buffer.from(text).toString('utf8'))
+    .split('\n')
+    .map((line) => line.split(','))
+
+test('the quarter file lists deductions, challans and what is still undeposited', async () => {
+  const b = await books()
+  const f = await april(b)
+  await recordChallan(b.admin, { ...CHALLAN, accountId: f.bank })
+  const noPan = (await createParty(b.clerk, { code: `N${++n}`, name: 'No PAN Advisor', isSupplier: true, stateCode: '29', tdsSectionId: f.section })).id
+  const june = ((await saveInvoice(b.clerk, { kind: 'purchase', partyId: noPan, postingDate: '2026-06-10', billNo: 'J-1', lines: [{ description: 'Advice', qty: '1', rate: '1000' }] })) as { id: string }).id
+  await submitInvoice(b.admin, { invoiceId: june })
+  const out = await tdsQuarterFile(b.clerk, { fy: 2026, quarter: 1, form: '26Q' })
+  assert.equal(out.fileName, 'tds-26Q-2026-Q1.csv')
+  const rows = parseCsv(out.bytes)
+  assert.equal(rows[0]!.join(','), 'Record,Section,Deductee,PAN,Document,Date,Amount paid,TDS,BSR code,Challan serial,Deposited on')
+  assert.equal(rows.filter((r) => r[0] === 'DEDUCTEE').length, 5)
+  assert.equal(rows.filter((r) => r[0] === 'CHALLAN').length, 1)
+  assert.ok(rows.some((r) => r[0] === 'DEDUCTEE' && r[2] === 'No PAN Advisor' && r[3] === 'PANNOTAVBL'))
+  const total = (label: string) => rows.find((r) => r[0] === 'TOTAL' && r[1] === label)![7]
+  assert.equal(total('Deducted'), '2400.00')
+  assert.equal(total('Deposited'), '2200.00')
+  assert.equal(total('Difference'), '200.00')
+})
+
+test('quarter four runs January to March of the next year', async () => {
+  const b = await books()
+  const d = await deducting(b)
+  const id = ((await saveInvoice(b.clerk, { kind: 'purchase', partyId: d.payee, postingDate: '2027-02-10', billNo: 'Q4-1', lines: [{ description: 'Advice', qty: '1', rate: '1000' }] })) as { id: string }).id
+  await submitInvoice(b.admin, { invoiceId: id })
+  const q4 = parseCsv((await tdsQuarterFile(b.clerk, { fy: 2026, quarter: 4, form: '26Q' })).bytes)
+  assert.equal(q4.filter((r) => r[0] === 'DEDUCTEE').length, 1)
+  const q3 = parseCsv((await tdsQuarterFile(b.clerk, { fy: 2026, quarter: 3, form: '26Q' })).bytes)
+  assert.equal(q3.filter((r) => r[0] === 'DEDUCTEE').length, 0)
+})
+
+test('a quarter outside one to four is refused', async () => {
+  const b = await books()
+  await refused(tdsQuarterFile(b.clerk, { fy: 2026, quarter: 5, form: '26Q' }), 'bad_period', 400)
+  await refused(tdsQuarterFile(b.clerk, { fy: 1999, quarter: 1, form: '26Q' }), 'bad_period', 400)
+})
+
+test('due dates and months late', () => {
+  assert.equal(dueDateOf('2026-04-15'), '2026-05-07')
+  assert.equal(dueDateOf('2026-12-31'), '2027-01-07')
+  assert.equal(dueDateOf('2027-03-10'), '2027-04-30')
+  assert.equal(monthsLate('2026-04-15', '2026-05-08'), 2)
+  assert.equal(monthsLate('2026-04-15', '2026-05-06'), 2)
+  assert.equal(monthsLate('2026-04-15', '2026-04-20'), 1)
+})
+
+test('late deposit interest is a month and a half percent for each month or part', async () => {
+  const b = await books()
+  const d = await deducting(b)
+  const bank = await withTenant(b.id, (tx) => accountFor(tx, b.id, 'bank'))
+  const big = async (no: string, date: string) => {
+    const id = ((await saveInvoice(b.clerk, { kind: 'purchase', partyId: d.payee, postingDate: date, billNo: no, lines: [{ description: 'Advice', qty: '1', rate: '100000' }] })) as { id: string }).id
+    await submitInvoice(b.admin, { invoiceId: id })
+  }
+  // Deducted on 15 April, deposited on 8 May: late, two months.
+  await big('L-1', '2026-04-15')
+  await recordChallan(b.admin, { ...CHALLAN, depositedOn: '2026-05-08', accountId: bank })
+  const late = await tdsInterest(b.clerk, { on: '2026-07-01' })
+  assert.equal(late.rows.length, 1)
+  assert.equal(late.rows[0]!.months, 2)
+  assert.equal(late.rows[0]!.interestPaise, 30_000)
+  assert.equal(late.totalPaise, 30_000)
+  // Deposited on 6 May: on time, no row.
+  const c = await books()
+  const dc = await deducting(c)
+  const bankC = await withTenant(c.id, (tx) => accountFor(tx, c.id, 'bank'))
+  const idC = ((await saveInvoice(c.clerk, { kind: 'purchase', partyId: dc.payee, postingDate: '2026-04-15', billNo: 'L-2', lines: [{ description: 'Advice', qty: '1', rate: '100000' }] })) as { id: string }).id
+  await submitInvoice(c.admin, { invoiceId: idC })
+  await recordChallan(c.admin, { ...CHALLAN, accountId: bankC })
+  assert.equal((await tdsInterest(c.clerk, { on: '2026-07-01' })).rows.length, 0)
+  // Never deposited, as of 1 July: four months.
+  const e = await books()
+  const de = await deducting(e)
+  const idE = ((await saveInvoice(e.clerk, { kind: 'purchase', partyId: de.payee, postingDate: '2026-04-15', billNo: 'L-3', lines: [{ description: 'Advice', qty: '1', rate: '100000' }] })) as { id: string }).id
+  await submitInvoice(e.admin, { invoiceId: idE })
+  const open = await tdsInterest(e.clerk, { on: '2026-07-01' })
+  assert.equal(open.rows[0]!.months, 4)
+  assert.equal(open.rows[0]!.interestPaise, 60_000)
 })
