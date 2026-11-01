@@ -1,6 +1,6 @@
 import type { PluginField, PluginPage, PluginSection, Role } from '@campusos/module-framework'
 import { ADMIN, MEMBERS } from './api/core'
-import { statistics, workspace } from './api/operations'
+import { applicationPage, applicationsPage, offerPage, offersPage, statistics, workspace } from './api/operations'
 
 const staff: Role[] = [...ADMIN, 'faculty', 'hod']
 const select = (name: string, label: string, options: string, optional = false): PluginField => ({ name, label, kind: 'select', options, optional })
@@ -12,10 +12,19 @@ const load: PluginPage['load'] = async (actor) => {
   const data = await workspace(actor)
   return {
     ...data, companyOptions: choices(data.companies, 'name'), driveOptions: choices(data.drives, 'title'),
-    applicationOptions: choices(data.applications, 'studentId'), roundOptions: choices(data.rounds, 'name'), offerOptions: choices(data.offers, 'applicationId'),
+    roundOptions: choices(data.rounds, 'name'),
   }
 }
-const menu = (path: string, title: string, sections: PluginPage['sections'], roles = MEMBERS): PluginPage => ({ path, title, menu: title, roles, load, sections })
+const menu = (path: string, title: string, sections: PluginPage['sections'], roles = MEMBERS, loader: PluginPage['load'] = load): PluginPage => ({ path, title, menu: title, roles, load: loader, sections })
+/** The applications and offers lists are paged in SQL; the rest of the workspace loads as before. */
+const applicationsLoad: PluginPage['load'] = async (actor, req) => {
+  const p = await applicationsPage(actor, applicationPage(req, 'applications'))
+  return { ...(await load(actor, req)), applications: p.rows, applicationsPage: { total: p.total, next: p.next }, results: p.results }
+}
+const offersLoad: PluginPage['load'] = async (actor, req) => {
+  const p = await offersPage(actor, offerPage(req, 'offers'))
+  return { ...(await load(actor, req)), offers: p.rows, offersPage: { total: p.total, next: p.next } }
+}
 
 export const pages: PluginPage[] = [
   menu('/', 'Placement workspace', (data) => [
@@ -41,15 +50,15 @@ export const pages: PluginPage[] = [
     { kind: 'table', title: 'Selection rounds', rows: 'rounds', columns: [{ key: 'driveId', label: 'Drive', kind: 'code' }, { key: 'position', label: 'Order' }, { key: 'name', label: 'Round' }], fixedOrder: true },
   ]),
   menu('/applications', 'Applications', (data) => [
-    { kind: 'table', rows: 'applications', columns: [{ key: 'id', label: 'Application', kind: 'code' }, { key: 'driveId', label: 'Drive', kind: 'code' }, { key: 'studentId', label: 'Student', kind: 'code' }, { key: 'status', label: 'Status', kind: 'status' }] },
+    { kind: 'table', rows: 'applications', paging: { data: 'applicationsPage', sorts: [] }, columns: [{ key: 'student', label: 'Student' }, { key: 'drive', label: 'Drive' }, { key: 'status', label: 'Status', kind: 'status' }] },
     { kind: 'table', title: 'Selection results', rows: 'results', columns: [{ key: 'applicationId', label: 'Application', kind: 'code' }, { key: 'roundId', label: 'Round', kind: 'code' }, { key: 'outcome', label: 'Decision', kind: 'status' }, { key: 'note', label: 'Reason' }] },
     ...(data.staff ? [form('Record result', '/results', [select('applicationId', 'Application', 'applicationOptions'), select('roundId', 'Round', 'roundOptions'), { name: 'outcome', label: 'Decision', kind: 'select', options: [{ value: 'passed', label: 'Passed' }, { value: 'failed', label: 'Failed' }] }, field('note', 'Panel reason', 'textarea')])] : [form('Withdraw application', '/withdraw', [select('applicationId', 'Application', 'applicationOptions')], ['student'])]),
-  ]),
+  ], MEMBERS, applicationsLoad),
   menu('/offers', 'Offers', (data) => [
     { kind: 'note', text: 'Annual compensation is recorded in integer paise. A student can accept one placement offer; issued compensation and selection results cannot be silently rewritten.' },
-    { kind: 'table', rows: 'offers', columns: [{ key: 'id', label: 'Offer', kind: 'code' }, { key: 'applicationId', label: 'Application', kind: 'code' }, { key: 'annualPaise', label: 'Annual compensation', kind: 'money' }, { key: 'status', label: 'Decision', kind: 'status' }] },
+    { kind: 'table', rows: 'offers', paging: { data: 'offersPage', sorts: [] }, columns: [{ key: 'student', label: 'Student' }, { key: 'drive', label: 'Drive' }, { key: 'annualPaise', label: 'Annual compensation', kind: 'money' }, { key: 'status', label: 'Decision', kind: 'status' }] },
     ...(data.staff ? [form('Issue offer', '/offers', [select('applicationId', 'Application', 'applicationOptions'), field('annualPaise', 'Annual compensation (integer paise)', 'number')])] : [form('Respond to offer', '/offers/respond', [select('offerId', 'Offer', 'offerOptions'), { name: 'decision', label: 'Decision', kind: 'select', options: [{ value: 'accepted', label: 'Accept' }, { value: 'declined', label: 'Decline' }] }], ['student'])]),
-  ]),
+  ], MEMBERS, offersLoad),
   { path: '/statistics', title: 'Placement statistics', menu: 'Statistics', roles: staff, load: (actor) => statistics(actor), sections: (data) => [{ kind: 'figures', figures: ['applications', 'offered', 'accepted', 'rejected'].map((key) => ({ label: key, value: String(data[key] ?? 0) })) }] },
   menu('/officers', 'Placement officers', () => [
     { kind: 'table', rows: 'officers', columns: [{ key: 'userId', label: 'Staff member', kind: 'code' }, { key: 'active', label: 'Appointed', kind: 'bool' }] },

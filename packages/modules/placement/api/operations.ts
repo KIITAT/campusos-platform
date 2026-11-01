@@ -1,4 +1,5 @@
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { cursorColumn, finishPage, keyset, orderKeys, readPage, searchAny, type PageRequest, type SortSpec } from '@campusos/module-framework'
 import { notify } from '@campusos/module-notices/api'
 import { users, withTenant } from '@campusos/db'
 import { gpaPolicyVersions } from '@campusos/module-academic/api'
@@ -240,27 +241,107 @@ export async function respondOffer(actor: Actor, input: unknown) {
   })
 }
 
+// ponytail: companies, drives and placement staff are unbounded here; they grow with the institution, not with time.
 export async function workspace(actor: Actor) {
   const institutionId = tenant(actor)
   return withTenant(institutionId, async (tx) => {
     const staff = actor.role !== 'student'
     if (staff) await officer(tx, actor)
-    const applicationRows = await tx.select().from(applications).where(staff ? undefined : eq(applications.studentId, actor.id)).orderBy(asc(applications.createdAt)).limit(1000)
-    const companyRows = await tx.select().from(companies).orderBy(asc(companies.name)).limit(1000)
-    const driveRows = await tx.select().from(drives).where(staff ? undefined : sql`${drives.status} = 'open' or ${drives.id} in (select drive_id from placement_applications where student_id=${actor.id})`).orderBy(asc(drives.closesAt)).limit(1000)
+    const companyRows = await tx.select().from(companies).orderBy(asc(companies.name))
+    const driveRows = await tx.select().from(drives).where(staff ? undefined : sql`${drives.status} = 'open' or ${drives.id} in (select drive_id from placement_applications where student_id=${actor.id})`).orderBy(asc(drives.closesAt))
     const visibleDriveIds = driveRows.map((drive) => drive.id)
-    const visibleApplicationIds = applicationRows.map((application) => application.id)
+    const mine = staff ? undefined : eq(applications.studentId, actor.id)
+    const applicationOptions = await tx
+      .select({ value: applications.id, student: users.name, drive: drives.title, status: applications.status })
+      .from(applications)
+      .innerJoin(users, eq(users.id, applications.studentId))
+      .innerJoin(drives, eq(drives.id, applications.driveId))
+      .where(and(inArray(applications.status, ['applied', 'shortlisted']), mine))
+      .orderBy(sql`${applications.createdAt} desc`)
+    const offerOptions = await tx
+      .select({ value: offers.id, drive: drives.title, status: offers.status })
+      .from(offers)
+      .innerJoin(applications, eq(applications.id, offers.applicationId))
+      .innerJoin(drives, eq(drives.id, applications.driveId))
+      .where(and(eq(offers.status, 'pending'), staff ? undefined : eq(offers.studentId, actor.id)))
+      .orderBy(sql`${offers.createdAt} desc`)
     return {
       staff, admin: ADMIN.includes(actor.role), companies: companyRows,
       drives: driveRows.map((drive) => ({ ...drive, company: companyRows.find((company) => company.id === drive.companyId)?.name ?? '', closesAt: drive.closesAt.toISOString() })),
-      applications: applicationRows,
+      applicationOptions: applicationOptions.map((row) => ({ value: row.value, label: `${row.student} · ${row.drive} · ${row.status}` })),
+      offerOptions: offerOptions.map((row) => ({ value: row.value, label: `${row.drive} · ${row.status}` })),
       rounds: visibleDriveIds.length ? await tx.select().from(rounds).where(inArray(rounds.driveId, visibleDriveIds)).orderBy(asc(rounds.position)) : [],
-      results: visibleApplicationIds.length ? await tx.select().from(results).where(inArray(results.applicationId, visibleApplicationIds)) : [],
-      offers: await tx.select().from(offers).where(staff ? undefined : eq(offers.studentId, actor.id)).limit(1000),
       programs: staff ? await tx.select({ value: programs.id, label: programs.name }).from(programs).orderBy(asc(programs.name)) : [],
-      people: staff ? await tx.select({ value: users.id, label: users.name }).from(users).where(and(inArray(users.role, ['faculty', 'hod']), isNull(users.erasedAt))).limit(1000) : [],
+      people: staff ? await tx.select({ value: users.id, label: users.name }).from(users).where(and(inArray(users.role, ['faculty', 'hod']), isNull(users.erasedAt))) : [],
       officers: staff ? await tx.select().from(officers) : [],
     }
+  })
+}
+
+const APPLICATION_SORTS: SortSpec = {
+  created: { dir: 'desc', keys: [{ sql: sql`${applications.createdAt}`, type: 'timestamptz' }, { sql: sql`${applications.id}`, type: 'uuid' }] },
+}
+export const applicationPage = (req: Request, prefix: string) => readPage(req, prefix, APPLICATION_SORTS, 'created', 50)
+
+/** One page of applications (a student's own), with the selection results of that page. */
+export async function applicationsPage(actor: Actor, page: PageRequest) {
+  const institutionId = tenant(actor)
+  return withTenant(institutionId, async (tx) => {
+    const staff = actor.role !== 'student'
+    if (staff) await officer(tx, actor)
+    const keys = APPLICATION_SORTS[page.sort]!.keys
+    const filter = and(staff ? undefined : eq(applications.studentId, actor.id), searchAny(page.q, [sql`${users.name}`, sql`${drives.title}`]))
+    const rows = await tx
+      .select({ id: applications.id, driveId: applications.driveId, studentId: applications.studentId, status: applications.status, student: users.name, drive: drives.title, _cursor: cursorColumn(keys) })
+      .from(applications)
+      .innerJoin(users, eq(users.id, applications.studentId))
+      .innerJoin(drives, eq(drives.id, applications.driveId))
+      .where(and(filter, keyset(keys, page)))
+      .orderBy(...orderKeys(keys, page.dir))
+      .limit(page.limit + 1)
+    const [counted] = await tx
+      .select({ total: sql<number>`count(*)::int` })
+      .from(applications)
+      .innerJoin(users, eq(users.id, applications.studentId))
+      .innerJoin(drives, eq(drives.id, applications.driveId))
+      .where(filter)
+    const done = finishPage(rows, page, counted!.total)
+    const ids = done.rows.map((row) => row.id)
+    const found = ids.length ? await tx.select().from(results).where(inArray(results.applicationId, ids)) : []
+    return { ...done, results: found }
+  })
+}
+
+const OFFER_SORTS: SortSpec = {
+  created: { dir: 'desc', keys: [{ sql: sql`${offers.createdAt}`, type: 'timestamptz' }, { sql: sql`${offers.id}`, type: 'uuid' }] },
+}
+export const offerPage = (req: Request, prefix: string) => readPage(req, prefix, OFFER_SORTS, 'created', 50)
+
+/** One page of offers (a student's own). */
+export async function offersPage(actor: Actor, page: PageRequest) {
+  const institutionId = tenant(actor)
+  return withTenant(institutionId, async (tx) => {
+    const staff = actor.role !== 'student'
+    if (staff) await officer(tx, actor)
+    const keys = OFFER_SORTS[page.sort]!.keys
+    const filter = and(staff ? undefined : eq(offers.studentId, actor.id), searchAny(page.q, [sql`${users.name}`, sql`${drives.title}`]))
+    const rows = await tx
+      .select({ id: offers.id, applicationId: offers.applicationId, studentId: offers.studentId, annualPaise: offers.annualPaise, status: offers.status, student: users.name, drive: drives.title, _cursor: cursorColumn(keys) })
+      .from(offers)
+      .innerJoin(users, eq(users.id, offers.studentId))
+      .innerJoin(applications, eq(applications.id, offers.applicationId))
+      .innerJoin(drives, eq(drives.id, applications.driveId))
+      .where(and(filter, keyset(keys, page)))
+      .orderBy(...orderKeys(keys, page.dir))
+      .limit(page.limit + 1)
+    const [counted] = await tx
+      .select({ total: sql<number>`count(*)::int` })
+      .from(offers)
+      .innerJoin(users, eq(users.id, offers.studentId))
+      .innerJoin(applications, eq(applications.id, offers.applicationId))
+      .innerJoin(drives, eq(drives.id, applications.driveId))
+      .where(filter)
+    return finishPage(rows, page, counted!.total)
   })
 }
 
