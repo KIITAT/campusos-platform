@@ -6,8 +6,9 @@ import { printedText } from '@campusos/module-framework/pdf'
 import { plainPaise } from '@campusos/money'
 import {
   HrError, createStaff, createTaxRegime, electRegime, generatePayroll, quarterMonths, remit, setComponent,
-  setStatutoryIdentity, taxStatementDocument, tdsQuarterFile, voidRemittance, type Actor, type TaxRecord,
+  setPayrollSettings, setStatutoryIdentity, taxStatementDocument, tdsQuarterFile, voidRemittance, type Actor,
 } from './api'
+import type { TaxRecord } from './api/tds'
 import { payslips } from './schema'
 
 /** The annual tax statement and the 24Q working statement (P1-06c step 7). */
@@ -34,6 +35,8 @@ async function college(pan: string | null = 'ABCDE1234F'): Promise<College> {
     .returning({ id: users.id })
   const mk = (k: number, role: Actor['role']): Actor => ({ id: people[k]!.id, email: null, role, institutionId: i!.id })
   const c: College = { id: i!.id, admin: mk(0, 'institution_admin'), clerk: mk(1, 'accounts_staff'), faculty: mk(2, 'faculty'), other: mk(3, 'faculty'), staffId: '', otherId: '' }
+  // The tax record on a payslip is kept when statutory pay is on (P1-06b).
+  await setPayrollSettings(c.admin, { prorationBasis: 'calendar', statutoryFrom: '2026-03', pfRegistered: false, esiRegistered: false })
   const regime = await createTaxRegime(c.admin, {
     code: 'TEST', name: 'Test regime', yearStartsMonth: 4, standardDeduction: '50000', cessBp: 400, rebateUpTo: '500000',
     slabs: [{ from: '0', to: '300000', rateBp: 0 }, { from: '300000', to: '600000', rateBp: 500 }, { from: '600000', rateBp: 1000 }],
@@ -82,7 +85,7 @@ test('a quarter lists deductees, challans and the difference', async () => {
   await remit(c.admin, { ...challan, period: '2026-04', amount: plainPaise(tds['2026-04']!), challanRef: 'T-1' })
   const second = rows((await tdsQuarterFile(c.admin, 2026, 1)).content)
   assert.equal(second.filter((r) => r[0] === 'CHALLAN').length, 1)
-  assert.equal(second.find((r) => r[0] === 'TOTAL' && r[1] === 'Deposited')![5], plainPaise(tds['2026-04']!))
+  assert.equal(second.find((r) => r[0] === 'TOTAL' && r[1] === 'Deposited')![9], plainPaise(tds['2026-04']!))
   assert.equal(second.find((r) => r[0] === 'TOTAL' && r[1] === 'Difference')![5], plainPaise(tds['2026-05']! + tds['2026-06']!))
 })
 
@@ -106,7 +109,7 @@ test('a voided remittance is not a deposit', async () => {
   await voidRemittance(c.admin, { remittanceId: r.id, reason: 'entered against the wrong month' })
   const out = rows((await tdsQuarterFile(c.admin, 2026, 1)).content)
   assert.equal(out.filter((x) => x[0] === 'CHALLAN').length, 0)
-  assert.equal(out.find((x) => x[0] === 'TOTAL' && x[1] === 'Deposited')![5], '0.00')
+  assert.equal(out.find((x) => x[0] === 'TOTAL' && x[1] === 'Deposited')![9], '0.00')
 })
 
 test('the annual statement names the form, the PAN, the regime and the tax', async () => {

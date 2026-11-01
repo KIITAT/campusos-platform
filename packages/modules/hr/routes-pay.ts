@@ -24,6 +24,8 @@ import {
   payslipDocument,
   reissuePayslip,
   remit,
+  taxStatementDocument,
+  tdsQuarterFile,
   voidRemittance,
   statutoryFile,
   type FileKind,
@@ -92,6 +94,28 @@ export const payRoutes: PluginRoute[] = [
   post('/payroll/remittances', remit),
   post('/payroll/reissue', reissuePayslip),
   post('/payroll/remittances/void', voidRemittance),
+  {
+    method: 'GET',
+    path: '/payroll/tax-statement.pdf',
+    raw: true,
+    handler: async (a, req) => {
+      const d = await taxStatementDocument(a as Actor, requiredParam(req, 'staffId'), Number(requiredParam(req, 'taxYear')))
+      return new Response(d.bytes as unknown as BodyInit, {
+        headers: { 'content-type': 'application/pdf', 'content-disposition': `inline; filename="${d.name}"`, 'cache-control': 'no-store' },
+      })
+    },
+  },
+  {
+    method: 'GET',
+    path: '/payroll/tds-quarter',
+    raw: true,
+    handler: async (a, req) => {
+      const f = await tdsQuarterFile(a as Actor, Number(requiredParam(req, 'taxYear')), Number(requiredParam(req, 'quarter')))
+      return new Response(f.content, {
+        headers: { 'content-type': f.type, 'content-disposition': `attachment; filename="${f.name}"`, 'cache-control': 'no-store' },
+      })
+    },
+  },
   fileRoute('/payroll/ecr', 'ecr'),
   fileRoute('/payroll/esi', 'esi'),
   fileRoute('/payroll/bank-advice', 'bank-advice'),

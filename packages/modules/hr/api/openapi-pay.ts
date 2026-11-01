@@ -47,9 +47,9 @@ const get = (summary: string, query: string[] = []) => ({
 })
 
 /** A downloadable file for a month; 409 `incomplete_details` lists whose records are short. */
-const file = (summary: string, type: string) => ({
+const file = (summary: string, type: string, query: string[] = ['period']) => ({
   get: {
-    ...get(summary, ['period']).get,
+    ...get(summary, query).get,
     responses: { ...ok, '200': { description: 'OK', content: { [type]: {} } } },
   },
 })
@@ -116,6 +116,13 @@ export const payPaths = {
     },
   },
   [`${base}/payroll/reissue`]: post('Reissue a payslip: reverse its books entry and make a new one', reissueSchema, 'Refused once the month is paid, after the person has a later payslip, with advance recoveries on it, after a release of a held payslip, or once the month has been remitted.'),
+  [`${base}/payroll/tax-statement.pdf`]: {
+    get: {
+      ...get('A person’s annual tax statement (Form 16 Part B / Form 130)', ['staffId', 'taxYear']).get,
+      responses: { ...ok, '200': { description: 'OK', content: { 'application/pdf': {} } }, '404': { description: 'No such person or statement', content: json(err) } },
+    },
+  },
+  [`${base}/payroll/tds-quarter`]: file('The quarterly TDS working statement for the 24Q', 'text/csv', ['taxYear', 'quarter']),
   [`${base}/payroll/dues`]: get('What each statutory head owes for a month, what was remitted and what is left', ['period']),
   [`${base}/payroll/remittances`]: {
     get: { ...get('Remittances, newest first, voided ones included', []).get, parameters: [{ name: 'period', in: 'query', required: false, schema: { type: 'string' } }] },
