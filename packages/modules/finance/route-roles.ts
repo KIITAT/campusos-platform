@@ -199,6 +199,7 @@ export const routeRoles: Record<string, readonly Role[]> = {
   'GET /tds/challans': OFFICE,
   'GET /tds/quarter': OFFICE,
   'GET /tds/interest': OFFICE,
+  'GET /tds/certificate.pdf': OFFICE,
   'POST /gst/2b': OFFICE,
   'GET /gst/2b': OFFICE,
   'GET /gst/2b/returns': OFFICE,
