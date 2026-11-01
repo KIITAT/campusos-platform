@@ -1,7 +1,7 @@
-import { desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { audit, withTenant } from '@campusos/db'
 import * as z from 'zod'
-import { tdsChallanLinks, tdsChallans, tdsSections } from '../schema'
+import { invoices, payments, tdsChallanLinks, tdsChallans, tdsSections } from '../schema'
 import { FinanceError, named, requireConfigure, requireRead, type Actor, type Tx } from './core'
 import { bpOf, monthEnd, parseDecimal } from './numbers'
 import { bankAccountWithin } from './payments'
@@ -156,7 +156,19 @@ export async function recordChallan(actor: Actor, input: unknown) {
          where bsr_code = ${data.bsrCode} and deposited_on = ${data.depositedOn}::date and challan_serial = ${data.challanSerial} and voided_at is null`)
       if (same.rows.length > 0) throw new FinanceError(409, 'duplicate_challan', 'that challan is already recorded')
 
-      const waiting = (await deductionsWithin(tx, { from, to: monthEnd(from), form: data.form })).filter((d) => !d.challanId && d.sectionId)
+      const read = (await deductionsWithin(tx, { from, to: monthEnd(from), form: data.form })).filter((d) => !d.challanId && d.sectionId)
+      // A cancellation that commits between that read and the links below would leave a link to a reversed deduction (review finding 3): lock the documents and keep those still submitted.
+      const ids = (kind: 'invoice' | 'payment') => read.filter((d) => d.kind === kind).map((d) => d.id)
+      const live = new Set<string>()
+      if (ids('invoice').length) {
+        const rows = await tx.select({ id: invoices.id }).from(invoices).where(and(inArray(invoices.id, ids('invoice')), eq(invoices.docstatus, 'submitted'))).for('update')
+        rows.forEach((r) => live.add(r.id))
+      }
+      if (ids('payment').length) {
+        const rows = await tx.select({ id: payments.id }).from(payments).where(and(inArray(payments.id, ids('payment')), eq(payments.docstatus, 'submitted'))).for('update')
+        rows.forEach((r) => live.add(r.id))
+      }
+      const waiting = read.filter((d) => live.has(d.id))
       const total = waiting.reduce((n, d) => n + d.tdsPaise, 0)
       if (total <= 0) throw new FinanceError(409, 'nothing_due', 'no tax deducted in that month is waiting to be deposited')
 
