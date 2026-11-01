@@ -381,6 +381,9 @@ importers:
       '@campusos/module-framework':
         specifier: workspace:*
         version: link:../../module-framework
+      '@campusos/module-notices':
+        specifier: workspace:*
+        version: link:../notices
       '@campusos/money':
         specifier: workspace:*
         version: link:../../money
@@ -449,6 +452,9 @@ importers:
       '@campusos/module-framework':
         specifier: workspace:*
         version: link:../../module-framework
+      '@campusos/module-notices':
+        specifier: workspace:*
+        version: link:../notices
       '@campusos/money':
         specifier: workspace:*
         version: link:../../money

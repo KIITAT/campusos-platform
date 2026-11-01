@@ -7,7 +7,7 @@ export const manifest: ModuleManifest = {
     'Exam scheduling, marks entry with publish-locking, configurable grade scales and transcripts; the examination cycle -- enrolment, admit cards, backlog booking, semester grade reports, sealed question papers -- and statistics.',
   version: '0.8.0',
   alwaysEnabled: false,
-  dependsOn: ['academic'],
+  dependsOn: ['academic', 'notices'],
   softDependsOn: ['feedback', 'fees'],
   pricing: { model: 'not_priced_yet', priceINR: null },
 

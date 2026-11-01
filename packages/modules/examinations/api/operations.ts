@@ -1,5 +1,6 @@
 import { and, asc, eq, inArray, isNotNull } from 'drizzle-orm'
 import { audit, auditLog, users, withTenant } from '@campusos/db'
+import { notify } from '@campusos/module-notices/api'
 import { assertCanAccessStudent, type Role, type ViewerScope } from '@campusos/module-framework'
 import {
   courses,
@@ -388,6 +389,23 @@ export async function publishExam(actor: Actor, input: unknown) {
       reason: `results published for ${exam.name}`,
       detail: { examName: exam.name, offeringId: exam.offeringId },
     })
+
+    const [course] = await tx
+      .select({ code: courses.code, title: courses.title })
+      .from(offerings)
+      .innerJoin(courses, eq(courses.id, offerings.courseId))
+      .where(eq(offerings.id, exam.offeringId))
+    const marked = await tx.selectDistinct({ studentId: examMarks.studentId }).from(examMarks).where(eq(examMarks.examId, examId))
+    if (marked.length > 0) {
+      await notify(tx, tenant, {
+        userIds: marked.map((m) => m.studentId),
+        moduleId: 'examinations',
+        title: `Results published: ${exam.name}`,
+        body: `${course?.code ?? ''} ${course?.title ?? ''}: the marks for ${exam.name} are out.`.trim(),
+        link: '/m/examinations/me',
+        alsoGuardians: { link: '/m/parents' },
+      })
+    }
   })
 }
 

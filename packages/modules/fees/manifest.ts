@@ -13,7 +13,7 @@ export const manifest: ModuleManifest = {
    * it was never double entry; two sets of books that can disagree are worse
    * than one.
    */
-  dependsOn: ['academic', 'finance'],
+  dependsOn: ['academic', 'finance', 'notices'],
   /**
    * enrollment, softly: scholarships and charges work without it, and what
    * cannot work without it is anything keyed to a course being dropped on a
