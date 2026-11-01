@@ -24,6 +24,7 @@ import care from '@campusos/module-care/plugin'
 import timetable from '@campusos/module-timetable/plugin'
 import admissions from '@campusos/module-admissions/plugin'
 import alumni from '@campusos/module-alumni/plugin'
+import crm from '@campusos/module-crm/plugin'
 import helpdesk from '@campusos/module-helpdesk/plugin'
 import placement from '@campusos/module-placement/plugin'
 import transport from '@campusos/module-transport/plugin'
@@ -56,6 +57,7 @@ const PLUGINS: Plugin[] = [
   timetable,
   admissions,
   alumni,
+  crm,
   helpdesk,
   placement,
   transport,

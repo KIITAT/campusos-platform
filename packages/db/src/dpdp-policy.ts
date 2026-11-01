@@ -126,6 +126,13 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   ceremony_events: 'export',
   ceremony_holds: 'export',
 
+  // crm (P2-16): a contact is not a user. A staff member's export shows that they owned or
+  // worked a lead, never the contact's data (decision 405).
+  crm_leads: { only: ['id', 'kind', 'status', 'owner_id', 'created_by', 'created_at'] },
+  crm_activities: { only: ['id', 'lead_id', 'kind', 'due_at', 'done_at', 'assignee_id', 'created_by', 'created_at'] },
+  crm_teams: 'export',
+  crm_team_members: 'export',
+
   // enrollment
   enrollment_registration_events: 'export',
   enrollment_registrations: 'export',
