@@ -701,7 +701,7 @@ GET /api/v1/modules/placement/imports                                    SIHF...
 GET /api/v1/modules/placement/imports/template                           SIHF...... gate
 POST /api/v1/modules/placement/imports/run                               SIHF...... gate
 
-## quizzes 0.3.0
+## quizzes 0.4.0
 GET /api/v1/modules/quizzes/courses                                      SIHF...... op
 GET /api/v1/modules/quizzes/questions                                    SIHF...... gate
 POST /api/v1/modules/quizzes/questions                                   SIHF...... op
