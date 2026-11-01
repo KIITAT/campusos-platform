@@ -213,7 +213,7 @@ test('two parallel remittances of the whole balance: one wins, the payable never
   const results = await Promise.all([one, two])
   assert.equal(results.filter((r) => r.ok).length, 1)
   const failed = results.find((r) => !r.ok)!
-  assert.equal(code(failed.error), 'over_remitted')
+  assert.equal(code(failed.error), 'nothing_due')
   assert.equal((await balances(c)).bal('2220'), 0)
 })
 

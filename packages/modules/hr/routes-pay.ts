@@ -1,4 +1,4 @@
-import { jsonBody, requiredParam, type PluginRoute } from '@campusos/module-framework'
+import { jsonBody, param, requiredParam, type PluginRoute } from '@campusos/module-framework'
 import {
   assignStructure,
   createGratuityRule,
@@ -19,7 +19,11 @@ import {
   listWithheld,
   payGratuity,
   releasePayslip,
+  listDues,
+  listRemittances,
   payslipDocument,
+  remit,
+  voidRemittance,
   statutoryFile,
   type FileKind,
   setPayrollSettings,
@@ -82,6 +86,10 @@ export const payRoutes: PluginRoute[] = [
       })
     },
   },
+  { method: 'GET', path: '/payroll/dues', handler: (a, req) => listDues(a as Actor, requiredParam(req, 'period')) },
+  { method: 'GET', path: '/payroll/remittances', handler: (a, req) => listRemittances(a as Actor, param(req, 'period') ?? undefined) },
+  post('/payroll/remittances', remit),
+  post('/payroll/remittances/void', voidRemittance),
   fileRoute('/payroll/ecr', 'ecr'),
   fileRoute('/payroll/esi', 'esi'),
   fileRoute('/payroll/bank-advice', 'bank-advice'),

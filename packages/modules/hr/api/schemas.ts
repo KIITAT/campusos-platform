@@ -139,6 +139,29 @@ export const paySalariesSchema = z
   })
   .meta({ id: 'HrSalariesPay' })
 
+/**
+ * Money paid to a statutory authority (P1-06c). `amount` is typed in rupees,
+ * as every other form here does, and is paise once parsed.
+ */
+export const remitSchema = z
+  .object({
+    head: z.enum(['pf', 'esi', 'pt', 'tds']),
+    period,
+    state: z.preprocess(blankToNull, z.enum(WORK_STATES).nullable()).default(null),
+    amount: rupees.refine((p) => p > 0, 'an amount above zero'),
+    paidOn: day,
+    paidFrom: z.enum(['bank', 'cash']).default('bank'),
+    challanRef: z.string().trim().min(1).max(40),
+    bsrCode: z.preprocess(blankToNull, z.string().trim().regex(/^[0-9]{7}$/, 'a BSR code is 7 digits').nullable()).default(null),
+    challanSerial: z.preprocess(blankToNull, z.string().trim().regex(/^[0-9]{5}$/, 'a challan serial is 5 digits').nullable()).default(null),
+    note: z.preprocess(blankToNull, z.string().trim().max(200).nullable()).default(null),
+  })
+  .meta({ id: 'HrRemit' })
+
+export const voidRemittanceSchema = z
+  .object({ remittanceId: uuid, reason: z.string().trim().min(5).max(300) })
+  .meta({ id: 'HrRemittanceVoid' })
+
 // --- reads -----------------------------------------------------------------
 
 export const staffRowSchema = z
