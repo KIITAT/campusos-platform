@@ -323,6 +323,39 @@ test('a deposited bill cannot be cancelled until the challan is voided', async (
   assert.equal(voided.length, 1)
 })
 
+test('a bill cancelled while the challan reads the month is not linked (review finding 3)', async () => {
+  const b = await books()
+  const d = await deducting(b)
+  const billId = await bill(b, d.payee, 'R-1')
+  await submitInvoice(b.admin, { invoiceId: billId })
+  const bank = await withTenant(b.id, (tx) => accountFor(tx, b.id, 'bank'))
+
+  let release!: () => void
+  const barrier = new Promise<void>((resolve) => (release = resolve))
+  let held!: () => void
+  const holding = new Promise<void>((resolve) => (held = resolve))
+  const hold = withTenant(b.id, async (tx) => {
+    await tx.execute(sql`select 1 from finance_invoices where id = ${billId} for update`)
+    held()
+    await barrier
+  })
+  await holding
+  // The cancellation queues for the bill first; the challan then reads the month, still seeing the bill as submitted.
+  const cancelling = cancelInvoice(b.admin, { invoiceId: billId, reason: 'wrong supplier' })
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  const depositing = recordChallan(b.admin, { ...CHALLAN, accountId: bank }).then(
+    () => null,
+    (e: unknown) => e,
+  )
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  release()
+  await Promise.all([hold, cancelling])
+  const outcome = await depositing
+  assert.ok(outcome instanceof FinanceError && outcome.code === 'nothing_due', `expected nothing_due, got ${String(outcome)}`)
+  const links = await withTenant(b.id, async (tx) => (await tx.execute(sql`select count(*)::int as n from finance_tds_challan_links`)).rows[0] as { n: number })
+  assert.equal(links.n, 0)
+})
+
 test('a voided challan can be recorded again', async () => {
   const b = await books()
   const f = await april(b)
