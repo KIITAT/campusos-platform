@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm'
+import { notify } from '@campusos/module-notices/api'
 import { audit, withTenant } from '@campusos/db'
 import {
   HrError,
@@ -275,6 +276,15 @@ export async function decideLeave(actor: Actor, input: unknown) {
       })
       .where(eq(leaveRequests.id, d.requestId))
       .returning()
+    if (person?.userId) {
+      await notify(tx, tenant, {
+        userIds: [person.userId],
+        moduleId: 'hr',
+        title: d.approve ? 'Leave approved' : 'Leave refused',
+        body: `${row.fromOn} to ${row.toOn}${d.note ? `: ${d.note}` : '.'}`,
+        link: '/m/hr/me',
+      })
+    }
     return updated!
   })
 }

@@ -7,7 +7,7 @@ export const manifest: ModuleManifest = {
     'A mentor and co-mentor for every student, who see the whole of them -- record, attendance, results, fees, where they live -- keep notes, talk with them, and decide their leave. Approved leave reaches the hostel roll call.',
   version: '0.8.0',
   alwaysEnabled: false,
-  dependsOn: ['academic'],
+  dependsOn: ['academic', 'notices'],
   softDependsOn: ['attendance', 'examinations', 'fees', 'hostel'],
   pricing: { model: 'not_priced_yet', priceINR: null },
 

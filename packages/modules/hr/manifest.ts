@@ -13,7 +13,7 @@ export const manifest: ModuleManifest = {
    * reach them is a cost the institution cannot see, and an institution running
    * payroll has books whether or not it has students.
    */
-  dependsOn: ['finance'],
+  dependsOn: ['finance', 'notices'],
   pricing: { model: 'not_priced_yet', priceINR: null },
 
   rolesWithAccess: ['super_admin', 'institution_admin', 'accounts_staff', 'hod', 'faculty', 'library_staff', 'hostel_staff'],
