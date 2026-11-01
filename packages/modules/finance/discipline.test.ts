@@ -6,6 +6,7 @@ import type { Role } from '@campusos/module-framework'
 import {
   FinanceError,
   accountFor,
+  budgetReport,
   cancelInvoice,
   closePeriod,
   createAssetCategory,
@@ -29,12 +30,15 @@ import {
   saveAsset,
   saveInvoice,
   saveJournal,
+  saveOrder,
+  setBudget,
+  submitOrder,
   savePayment,
   submitInvoice,
   subledgerReport,
   type Actor,
 } from './api'
-import { gstFilings } from './schema'
+import { gstFilings, orderLines } from './schema'
 
 /**
  * Close discipline (P1-04): control accounts, sub-ledgers against the books, the
@@ -439,4 +443,52 @@ test('two bills submitted together deduct TDS once the year crosses the threshol
   const tds = rows.rows.map((r) => Number(r.tds_paise))
   assert.equal(tds[0], 0)
   assert.equal(tds[0]! + tds[1]!, 120_000)
+})
+
+// --- Step 7: encumbrance and the purchase-order budget check (ACC-12) --------------
+
+async function budgeted(b: Books, hardLimit: boolean) {
+  const service = await createItem(b.clerk, { code: 'SVC', name: 'Service', nature: 'service' })
+  await setBudget(b.admin, { year: 2026, costCenter: 'ADMIN-CC', accountCode: '5400', amount: '10000', hardLimit })
+  const vendor = await supplier(b)
+  const po = async (rate: string) =>
+    (await saveOrder(b.clerk, { kind: 'purchase_order', partyId: vendor, postingDate: '2026-10-01', costCenter: 'ADMIN-CC', lines: [{ itemId: service.id, qty: '1', rate }] })) as { id: string }
+  return { service, vendor, po }
+}
+
+const row = async (b: Books) => (await budgetReport(b.admin, { year: 2026 })).rows.find((r) => r.costCenter === 'ADMIN-CC')!
+
+test('a purchase order beyond its budget is refused at submit (ACC-12)', async () => {
+  const b = await books()
+  const { po } = await budgeted(b, true)
+  await submitOrder(b.admin, { orderId: (await po('8000')).id })
+  const e = await closeRefusal(submitOrder(b.admin, { orderId: (await po('3000')).id }))
+  assert.equal(e.code, 'over_budget')
+  assert.equal(e.status, 409)
+  assert.equal((e.detail as { wouldBePaise: number }).wouldBePaise, 1_100_000)
+})
+
+test('billing a PO moves the amount from committed to spent', async () => {
+  const b = await books()
+  const { po, service, vendor } = await budgeted(b, true)
+  const first = await po('8000')
+  await submitOrder(b.admin, { orderId: first.id })
+  const before = (await row(b)) as { actualPaise: number; committedPaise: number; availablePaise: number }
+  assert.deepEqual([before.actualPaise, before.committedPaise, before.availablePaise], [0, 800_000, 200_000])
+  const [line] = await withTenant(b.id, (tx) => tx.select().from(orderLines).where(eq(orderLines.orderId, first.id)))
+  const bill = (await saveInvoice(b.clerk, {
+    kind: 'purchase', partyId: vendor, postingDate: '2026-10-02', billNo: 'PO-1',
+    lines: [{ itemId: service.id, qty: '1', rate: '8000', orderLineId: line!.id, costCenter: 'ADMIN-CC' }],
+  })) as { id: string }
+  await submitInvoice(b.admin, { invoiceId: bill.id })
+  const after = (await row(b)) as { actualPaise: number; committedPaise: number }
+  assert.deepEqual([after.actualPaise, after.committedPaise], [800_000, 0])
+})
+
+test('a soft budget only reports', async () => {
+  const b = await books()
+  const { po } = await budgeted(b, false)
+  await submitOrder(b.admin, { orderId: (await po('8000')).id })
+  await submitOrder(b.admin, { orderId: (await po('3000')).id })
+  assert.equal(((await row(b)) as { availablePaise: number }).availablePaise, -100_000)
 })
