@@ -4,7 +4,7 @@ import { users, withTenant } from '@campusos/db'
 import { cursorColumn, finishPage, keyset, orderKeys, readPage, searchAny, type PageRequest, type SortSpec } from '@campusos/module-framework'
 import { parseDecimal } from '@campusos/module-finance/api'
 import { activities, leads, lostReasons, stages } from '../schema'
-import { CrmError, log, tenant, type Actor, type Tx } from './core'
+import { ADMIN, CrmError, log, tenant, type Actor, type Tx } from './core'
 import { ensureDefaults, isSalesperson, ownersOf } from './settings'
 
 const GSTIN = /^[0-9]{2}[A-Z0-9]{10}[0-9A-Z]Z[0-9A-Z]$/
@@ -244,5 +244,22 @@ export async function leadDetail(actor: Actor, id: string) {
     const [reason] = lead.lostReasonId ? await tx.select({ name: lostReasons.name }).from(lostReasons).where(eq(lostReasons.id, lead.lostReasonId)) : []
     const acts = await tx.select({ id: activities.id, kind: activities.kind, summary: activities.summary, dueAt: activities.dueAt, doneAt: activities.doneAt, assigneeId: activities.assigneeId }).from(activities).where(eq(activities.leadId, lead.id)).orderBy(asc(activities.dueAt))
     return { lead, stageName: stage?.name ?? null, ownerName: owner?.name ?? '', lostReason: reason?.name ?? null, activities: acts }
+  })
+}
+
+// --- erasure (decision 406) -------------------------------------------------
+
+export const eraseSchema = z.object({ leadId: z.uuid(), reason: z.string().trim().min(10).max(300) })
+/** DPDP erasure for a data principal who is not a user: clears the contact, keeps the record that a lead existed. */
+export async function eraseLead(actor: Actor, input: unknown) {
+  const institutionId = tenant(actor, ADMIN)
+  const data = eraseSchema.parse(input)
+  return withTenant(institutionId, async tx => {
+    const { lead } = await visibleLead(tx, actor, data.leadId)
+    if (lead.erasedAt) throw new CrmError(409, 'already_erased', "This lead's contact data was already erased.")
+    await tx.update(leads).set({ title: '[erased]', company: null, contactName: null, email: null, phone: null, gstin: null, notes: null, lostNote: null, erasedAt: new Date(), updatedAt: new Date() }).where(eq(leads.id, lead.id))
+    await tx.update(activities).set({ summary: '[erased]' }).where(eq(activities.leadId, lead.id))
+    await log(tx, actor, 'lead.erased', lead.id, data.reason)
+    return result(lead.id, 'Contact data erased.')
   })
 }

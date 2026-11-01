@@ -27,4 +27,5 @@ export const routeRoles: Record<string, readonly Role[]> = {
   'POST /activities': STAFF,
   'POST /activities/done': STAFF,
   'POST /leads/convert': STAFF,
+  'POST /leads/erase': ADMIN,
 }
