@@ -1,12 +1,18 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { like, sql } from 'drizzle-orm'
-import { authDb, institutions, users, withTenant } from '@campusos/db'
+import { and, eq, like, sql } from 'drizzle-orm'
+import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
 import type { Role } from '@campusos/module-framework'
 import {
   FinanceError,
   accountFor,
+  closePeriod,
   createAssetCategory,
+  createBankAccount,
+  importStatement,
+  reopenPeriod,
+  setSingleOfficer,
+  updateSettings,
   createItem,
   createParty,
   createStockEntry,
@@ -222,4 +228,107 @@ test('a manual entry on a receivable account shows as a difference', async () =>
   const { rows } = await subledgerReport(b.admin, { on: '2026-10-31' })
   const r = rows.find((x) => x.ledger === 'receivable')!
   assert.equal(r.differencePaise, 500)
+})
+
+// --- Step 3: close checklist, zone, two-person reopen (ACC-07) ---------------------
+
+const MONTH = { year: 2026, month: 9 }
+const trail = (b: Books, action: string) =>
+  withTenant(b.id, (tx) => tx.select().from(auditLog).where(and(eq(auditLog.institutionId, b.id), eq(auditLog.action, action))))
+
+async function closeRefusal(p: Promise<unknown>): Promise<FinanceError> {
+  try {
+    await p
+  } catch (e) {
+    assert.ok(e instanceof FinanceError, String(e))
+    return e
+  }
+  assert.fail('expected the close to be refused')
+}
+const failing = (e: FinanceError) => ((e.detail as { checks: { key: string }[] }).checks ?? []).map((c) => c.key)
+
+test('a month with a draft does not close without an override (ACC-07)', async () => {
+  const b = await books()
+  const c = await customer(b)
+  const service = await createItem(b.clerk, { code: 'SVC', name: 'Service', nature: 'service' })
+  await saveInvoice(b.clerk, { kind: 'sales', partyId: c, postingDate: '2026-09-10', lines: [{ itemId: service.id, qty: '1', rate: '100' }] })
+  const e = await closeRefusal(closePeriod(b.admin, MONTH))
+  assert.equal(e.code, 'close_checks_failed')
+  assert.equal(e.status, 409)
+  assert.deepEqual(failing(e), ['drafts'])
+  await refused(closePeriod(b.admin, { ...MONTH, override: true, overrideReason: 'short' }), 'override_reason', 400)
+  const closed = await closePeriod(b.admin, { ...MONTH, override: true, overrideReason: 'auditor accepted the draft' })
+  assert.equal(closed.status, 'closed')
+  const rows = await trail(b, 'period.close_overridden')
+  assert.equal(rows.length, 1)
+  assert.deepEqual((rows[0]!.detail as { failed: string[] }).failed, ['drafts'])
+})
+
+test('an unmatched bank line blocks the close', async () => {
+  const b = await books()
+  const ba = (await createBankAccount(b.admin, { bankName: 'State Bank', accountNumber: '1234567890', ifsc: 'SBIN0001234' })) as { id: string }
+  const csv = ['Txn Date,Narration,Chq/Ref No,Withdrawal Amt,Deposit Amt,Closing Balance', '05/09/2026,UNKNOWN CREDIT,,,500.00,500.00', ''].join('\n')
+  await importStatement(b.clerk, { bankAccountId: ba.id, file: { name: 'sep.csv', type: 'text/csv', size: csv.length, base64: Buffer.from(csv).toString('base64') } })
+  const e = await closeRefusal(closePeriod(b.admin, MONTH))
+  assert.equal(e.code, 'close_checks_failed')
+  assert.deepEqual(failing(e), ['bank'])
+})
+
+test('a sub-ledger difference blocks the close', async () => {
+  const b = await books()
+  const c = await customer(b)
+  await withTenant(b.id, (tx) =>
+    postWithin(tx, b.id, b.admin.id, {
+      memo: 'a module posted without the party ledger',
+      sourceModule: 'test',
+      sourceRef: 'diff-close',
+      postingDate: '2026-09-10',
+      lines: [
+        { purpose: 'accounts_receivable', debitPaise: 500, creditPaise: 0, partyId: c },
+        { purpose: 'sales_income', debitPaise: 0, creditPaise: 500 },
+      ],
+    }),
+  )
+  const e = await closeRefusal(closePeriod(b.admin, MONTH))
+  assert.deepEqual(failing(e), ['subledgers'])
+})
+
+test("the month is over in the institution's zone", async () => {
+  const b = await books()
+  await updateSettings(b.admin, { timeZone: 'Pacific/Kiritimati' })
+  const today = await withTenant(b.id, async (tx) => (await tx.execute(sql`select (now() at time zone 'Pacific/Kiritimati')::date::text as d`)).rows[0] as { d: string })
+  const [y, m] = today.d.split('-').map(Number) as [number, number]
+  const prev = m === 1 ? { year: y - 1, month: 12 } : { year: y, month: m - 1 }
+  const { periodChecklist } = await import('./api')
+  const state = async (p: { year: number; month: number }) =>
+    ((await periodChecklist(b.admin, p)) as { checks: { key: string; ok: boolean }[] }).checks.find((c) => c.key === 'month_over')!.ok
+  assert.equal(await state({ year: y, month: m }), false)
+  assert.equal(await state(prev), true)
+})
+
+test('reopening needs a second administrator (ACC-07)', async () => {
+  const b = await books()
+  await closePeriod(b.admin, MONTH)
+  const first = (await reopenPeriod(b.admin, { ...MONTH, reason: 'late supplier bill' })) as { status: string; notice?: string }
+  assert.equal(first.status, 'closed')
+  assert.match(String(first.notice), /Another administrator must confirm/)
+  await refused(reopenPeriod(b.admin, { ...MONTH, reason: 'late supplier bill' }), 'separation_of_duties', 403)
+  const done = await reopenPeriod(b.admin2, { ...MONTH, reason: 'confirmed' })
+  assert.equal(done.status, 'open')
+  assert.equal(done.reopenedReason, 'late supplier bill')
+  assert.equal(done.reopenRequestedAt, null)
+  const asked = await trail(b, 'period.reopen_requested')
+  const reopened = await trail(b, 'period.reopened')
+  assert.equal(asked[0]!.actorId, b.admin.id)
+  assert.equal(reopened[0]!.actorId, b.admin2.id)
+})
+
+test('single-officer mode lets one administrator reopen, on the trail', async () => {
+  const b = await books()
+  await setSingleOfficer(b.admin, { enabled: true, reason: 'one administrator only' })
+  await closePeriod(b.admin, MONTH)
+  await reopenPeriod(b.admin, { ...MONTH, reason: 'late supplier bill' })
+  const done = await reopenPeriod(b.admin, { ...MONTH, reason: 'late supplier bill' })
+  assert.equal(done.status, 'open')
+  assert.ok((await trail(b, 'sod.single_officer_used')).length >= 1)
 })
