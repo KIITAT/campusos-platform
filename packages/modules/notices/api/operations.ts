@@ -3,7 +3,6 @@ import { audit, enqueueJob, users, withTenant } from '@campusos/db'
 import { readUpload, UploadError, type Role } from '@campusos/module-framework'
 import { departments } from '@campusos/module-academic/schema'
 import { noticeAttachments, notices, notifications } from '../schema'
-import { mailConfigured, sendMail } from './channels'
 import {
   attachSchema,
   createNoticeSchema,
@@ -470,7 +469,6 @@ export async function inbox(actor: Actor, unreadOnly = false): Promise<Inbox> {
 
     return {
       unread: counted?.n ?? 0,
-      emailConfigured: mailConfigured(),
       items: items.map((i) => ({
         id: i.id,
         moduleId: i.moduleId,
@@ -502,46 +500,5 @@ export async function markRead(actor: Actor, input: unknown) {
       )
       .returning({ id: notifications.id })
     return { marked: rows.length }
-  })
-}
-
-/**
- * Send an email copy of everything unsent for a notice.
- *
- * Separate from publishing on purpose: publishing must not fail because a mail
- * provider is down, and the inbox is the delivery that matters. Without a
- * provider configured this reports that it sent nothing and changes nothing.
- */
-export async function emailNotice(actor: Actor, noticeId: string) {
-  const tenant = requirePoster(actor)
-
-  return withTenant(tenant, async (tx) => {
-    const pending = await tx
-      .select({
-        id: notifications.id,
-        title: notifications.title,
-        body: notifications.body,
-        email: users.email,
-      })
-      .from(notifications)
-      .innerJoin(users, eq(users.id, notifications.userId))
-      .where(and(eq(notifications.noticeId, noticeId), isNull(notifications.emailedAt)))
-      .orderBy(asc(notifications.createdAt))
-      .limit(100)
-
-    const deliverable = pending.filter((p) => p.email)
-    const result = await sendMail(
-      deliverable.map((p) => ({ to: p.email!, subject: p.title, text: p.body })),
-    )
-
-    if (result.sent > 0) {
-      const sentIds = deliverable.slice(0, result.sent).map((p) => p.id)
-      await tx
-        .update(notifications)
-        .set({ emailedAt: new Date() })
-        .where(sql`${notifications.id} = any(${sentIds}::uuid[])`)
-    }
-
-    return { queued: deliverable.length, ...result }
   })
 }

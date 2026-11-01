@@ -95,7 +95,7 @@ export const notifications = pgTable(
     link: text(),
     noticeId: uuid('notice_id').references(() => notices.id, { onDelete: 'cascade' }),
     readAt: timestamp('read_at', { withTimezone: true }),
-    /** When an email copy went out, if a channel was configured at all. */
+    /** Unused since P1-02 (decision 280); kept so no data is dropped. */
     emailedAt: timestamp('emailed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },

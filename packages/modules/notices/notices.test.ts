@@ -9,7 +9,6 @@ import {
   attachmentFile,
   board,
   createNotice,
-  emailNotice,
   inbox,
   markRead,
   noticeView,
@@ -310,23 +309,6 @@ test('a lecturer cannot withdraw somebody else s notice', async () => {
     () => withdrawNotice(teacher(), { noticeId: n.id, reason: 'not mine to remove' }),
     (e: unknown) => code(e) === 'not_yours',
   )
-})
-
-// --- email -----------------------------------------------------------------
-
-test('without a mail provider, emailing reports that it sent nothing', async () => {
-  const before = process.env.RESEND_API_KEY
-  delete process.env.RESEND_API_KEY
-  try {
-    const n = await post({ audienceRoles: ['student'] })
-    const r = await emailNotice(admin(), n.id)
-    assert.equal(r.sent, 0)
-    assert.equal(r.skipped, 'not_configured')
-    assert.equal(r.queued, 2, 'the recipients are known; only delivery is absent')
-    assert.equal((await inbox(student(ids.s1))).emailConfigured, false)
-  } finally {
-    if (before !== undefined) process.env.RESEND_API_KEY = before
-  }
 })
 
 test('no email path remains', async () => {

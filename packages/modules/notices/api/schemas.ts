@@ -96,8 +96,6 @@ export const inboxSchema = z
   .object({
     unread: z.number().int(),
     items: z.array(notificationRowSchema),
-    /** False when no mail provider is configured, so the UI can say so. */
-    emailConfigured: z.boolean(),
   })
   .meta({ id: 'NotificationInbox' })
 

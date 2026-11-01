@@ -4,7 +4,6 @@ import {
   attachmentFile,
   board,
   createNotice,
-  emailNotice,
   inbox,
   markRead,
   noticeView,
@@ -36,11 +35,6 @@ export const routes: PluginRoute[] = [
     handler: async (actor, req) => {
       await withdrawNotice(actor as Actor, await jsonBody(req))
     },
-  },
-  {
-    method: 'POST',
-    path: '/board/email',
-    handler: (actor, req) => emailNotice(actor as Actor, requiredParam(req, 'noticeId')),
   },
 
   {

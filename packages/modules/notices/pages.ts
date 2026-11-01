@@ -1,5 +1,5 @@
 import { flag, param, type PluginPage, type PluginSection } from '@campusos/module-framework'
-import { board, inbox, mailConfigured, noticeView, type Actor } from './api'
+import { board, inbox, noticeView, type Actor } from './api'
 
 const POSTERS = [
   'super_admin',
@@ -25,7 +25,6 @@ export const pages: PluginPage[] = [
       const notices = await board(a, canPost && flag(req, 'drafts'))
       return {
         canPost,
-        mail: mailConfigured(),
         notices: notices.map((n) => ({
           ...n,
           when: n.publishedAt ?? '',
@@ -42,16 +41,6 @@ export const pages: PluginPage[] = [
       }
     },
     sections: (data) => [
-      ...(data.canPost && !data.mail
-        ? [
-            {
-              kind: 'note' as const,
-              text:
-                'No mail provider is configured, so notices land in the in-app ' +
-                'inbox only. Set RESEND_API_KEY to send email copies as well.',
-            },
-          ]
-        : []),
       {
         kind: 'table',
         rows: 'notices',
@@ -253,7 +242,6 @@ export const pages: PluginPage[] = [
       const box = await inbox(a, flag(req, 'unread'))
       return {
         unread: box.unread,
-        mail: box.emailConfigured,
         items: box.items.map((i) => ({
           ...i,
           state: i.readAt ? 'read' : 'new',
@@ -269,9 +257,7 @@ export const pages: PluginPage[] = [
       { kind: 'links', links: data.filters as never },
       {
         kind: 'note',
-        text:
-          'Everything the system has told you, from every module.' +
-          (data.mail ? '' : ' No mail provider is configured, so this is the only copy.'),
+        text: 'Everything the system has told you, from every module.',
       },
       {
         kind: 'table',

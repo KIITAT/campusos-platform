@@ -65,17 +65,6 @@ export const paths = {
       responses: { '204': { description: 'Withdrawn' }, ...gated },
     },
   },
-  [`${base}/board/email`]: {
-    post: {
-      summary: 'Send an email copy of a published notice',
-      description:
-        'Separate from publishing on purpose: publishing must not fail because a mail provider ' +
-        'is down, and the inbox is the delivery that matters. Without a provider configured this ' +
-        'reports that it sent nothing and changes nothing.',
-      tags: ['notices'],
-      responses: { '200': { description: 'OK' }, ...gated },
-    },
-  },
   [`${base}/board/notice`]: {
     get: {
       summary: 'One notice, whole: its text and the documents that go with it',
