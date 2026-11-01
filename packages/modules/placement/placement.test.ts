@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { after, test } from 'node:test'
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 import { authDb, institutions, users, withTenant } from '@campusos/db'
 import { courseCompletions, courses, departments, programs, studentPrograms } from '@campusos/module-academic/schema'
 import * as placement from './api'
@@ -177,4 +177,18 @@ test('all seven pages load real records and every form has a declared route', as
   const data = await pages[0]!.load(campusData.student, new Request('https://campus.test/m/placement'))
   assert.equal(data.staff, false)
   assert.deepEqual(data.people, [])
+})
+
+test('a result and an offer reach the student', async () => {
+  const c = await campus()
+  await placement.changeDrive(c.admin, { driveId: c.drive.id, status: 'open' })
+  const application = await placement.apply(c.student, { driveId: c.drive.id })
+  const round = await placement.createRound(c.admin, { driveId: c.drive.id, name: 'Interview' })
+  await placement.recordResult(c.admin, { applicationId: application.id, roundId: round.id, outcome: 'passed', note: 'Panel approved.' })
+  await placement.issueOffer(c.admin, { applicationId: application.id, annualPaise: 120000000 })
+  const got = (await withTenant(c.institutionId, (tx) => tx.execute(sql`select title, link from notifications where user_id = ${c.student.id} order by created_at`))).rows as { title: string; link: string }[]
+  assert.deepEqual(got.map((g) => [g.title, g.link]), [
+    ['Placement: through Interview', '/m/placement'],
+    ['Placement offer: Graduate Engineer', '/m/placement'],
+  ])
 })
