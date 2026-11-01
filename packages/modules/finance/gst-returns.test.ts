@@ -1,9 +1,9 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { like, sql } from 'drizzle-orm'
-import { authDb, institutions, users, withTenant } from '@campusos/db'
+import { and, eq, like, sql } from 'drizzle-orm'
+import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
 import type { Role } from '@campusos/module-framework'
-import { FinanceError, createParty, loadIndiaPreset, refusal, saveInvoice, updateSettings, type Actor } from './api'
+import { FinanceError, createParty, getSettings, loadIndiaPreset, refusal, saveInvoice, updateSettings, type Actor } from './api'
 
 /**
  * The GST returns pack (P1-05a, ACC-03 Part A): the institution's scheme and
@@ -105,4 +105,39 @@ test('an IFF filing locks a B2B invoice', async () => {
     withTenant(b.id, (tx) => tx.execute(sql`update finance_invoices set docstatus = 'cancelled', cancelled_at = now(), cancel_reason = 'test' where id = ${id}`))
   await dbRefuses(cancel(registered.id), 'finance_invoice_in_filed_return')
   await cancel(unregistered.id)
+})
+
+const audited = (b: Books, action: string) =>
+  withTenant(b.id, (tx) => tx.select().from(auditLog).where(and(eq(auditLog.institutionId, b.id), eq(auditLog.action, action))))
+
+async function refused(p: Promise<unknown>, code: string, status?: number) {
+  await assert.rejects(p, (e: unknown) => {
+    assert.ok(e instanceof FinanceError, `expected a FinanceError, got ${String(e)}`)
+    assert.equal(e.code, code)
+    if (status) assert.equal(e.status, status)
+    return true
+  })
+}
+
+test('the GST scheme is set and audited', async () => {
+  const b = await books()
+  await updateSettings(b.admin, { gstScheme: 'composition', gstFiling: 'quarterly', compositionRate: '1' })
+  const s = await getSettings(b.admin)
+  assert.equal(s.gstScheme, 'composition')
+  assert.equal(s.gstFiling, 'quarterly')
+  assert.equal(s.compositionRateBp, 100)
+  const rows = await audited(b, 'settings.gst_registration')
+  assert.equal(rows.length, 1)
+  assert.equal((rows[0]!.detail as { after: { rateBp: number } }).after.rateBp, 100)
+})
+
+test('composition without a rate is refused', async () => {
+  const b = await books()
+  await refused(updateSettings(b.admin, { gstScheme: 'composition', gstFiling: 'quarterly' }), 'composition_rate', 400)
+})
+
+test('saving an unrelated setting writes no GST registration audit row', async () => {
+  const b = await books()
+  await updateSettings(b.admin, { legalName: 'Some College' })
+  assert.equal((await audited(b, 'settings.gst_registration')).length, 0)
 })
