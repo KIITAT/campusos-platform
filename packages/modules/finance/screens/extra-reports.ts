@@ -1,7 +1,7 @@
 import type { PluginColumn, PluginPage, PluginSection } from '@campusos/module-framework'
 import { formatPaise } from '@campusos/money'
-import { OFFICE } from './kit'
-import { chooseRecord, col, context, dateFields, display, field, filter, href, linkCol, moneyCols, object, page, read, rows, select, shortcuts, str, table, tabs, type Data } from './screen-kit'
+import { ADMIN, OFFICE } from './kit'
+import { chooseRecord, col, context, dateFields, display, field, filter, form, href, linkCol, moneyCols, object, page, read, rows, select, shortcuts, str, table, tabs, type Data } from './screen-kit'
 
 export const extraReportLinks = [
   ['Aging of receivables and payables', '/reports/aging'], ['Funds and grants', '/reports/funds'], ['Sub-ledgers against the books', '/reports/subledgers'], ['Fund statement', '/reports/fund'], ['Cost centres', '/reports/cost-centers'], ['GST and TDS', '/reports/gst'], ['Stock balance', '/stock/balance'], ['Stock ledger', '/stock/ledger'], ['Stores against books', '/stock/against-books'], ['Asset register', '/assets'], ['Depreciation', '/depreciation'],
@@ -60,9 +60,10 @@ export const extraReportPages: PluginPage[] = [
     async load(actor, request) {
       const data = await context(actor, request)
       const report = object(await read(actor, '/reports/gstr1', { from: data.from, to: data.to }))
+      const filings = rows(await read(actor, '/gst/filings', {}))
       const tables = ['b2b', 'sez', 'b2cl', 'b2cs', 'exports', 'cdnr', 'cdnur', 'nil', 'hsn', 'documents']
       const selected = tables.includes(str(object(data.query).table)) ? str(object(data.query).table) : 'b2b'
-      return { ...data, query: { ...object(data.query), table: selected }, selected, rows: (selected === 'nil' ? [object(report.nil)] : rows(report[selected])).map(row => display(row, data)) }
+      return { ...data, query: { ...object(data.query), table: selected }, selected, filings, rows: (selected === 'nil' ? [object(report.nil)] : rows(report[selected])).map(row => display(row, data)) }
     },
     sections: data => {
       const selected = str(data.selected || 'b2b')
@@ -71,7 +72,7 @@ export const extraReportPages: PluginPage[] = [
       if (selected === 'nil') columns = moneyCols('nilRatedPaise', 'exemptPaise', 'nonGstPaise')
       if (selected === 'hsn') columns = hsnColumns()
       if (selected === 'documents') columns = [col('nature'), col('first'), col('last'), col('total'), col('cancelled')]
-      return [filter('/reports/gstr1', data, [...dateFields('from', 'to'), select('table', ['b2b', 'sez', 'b2cl', 'b2cs', 'exports', 'cdnr', 'cdnur', 'nil', 'hsn', 'documents'])]), tabs('/reports/gstr1', { ...object(data.query), from: data.from, to: data.to }, 'table', ['b2b', 'sez', 'b2cl', 'b2cs', 'exports', 'cdnr', 'cdnur', 'nil', 'hsn', 'documents']), table(selected.toUpperCase(), 'rows', columns), ...(['b2b', 'sez', 'b2cl', 'b2cs', 'exports', 'cdnr', 'cdnur'].includes(selected) ? [exportCsv('gstr1', data)] : [])]
+      return [filter('/reports/gstr1', data, [...dateFields('from', 'to'), select('table', ['b2b', 'sez', 'b2cl', 'b2cs', 'exports', 'cdnr', 'cdnur', 'nil', 'hsn', 'documents'])]), tabs('/reports/gstr1', { ...object(data.query), from: data.from, to: data.to }, 'table', ['b2b', 'sez', 'b2cl', 'b2cs', 'exports', 'cdnr', 'cdnur', 'nil', 'hsn', 'documents']), table(selected.toUpperCase(), 'rows', columns), ...(['b2b', 'sez', 'b2cl', 'b2cs', 'exports', 'cdnr', 'cdnur'].includes(selected) ? [exportCsv('gstr1', data)] : []), table('Returns marked filed', 'filings', [col('returnType', 'code'), col('periodFrom', 'date'), col('periodTo', 'date'), col('filedOn', 'date'), col('arn', 'code')]), { ...form('Mark a return filed', '/gst/filings', [select('returnType', ['gstr1', 'gstr3b'], { optional: false }), field('periodFrom', 'date', { optional: false }), field('periodTo', 'date', { optional: false }), field('filedOn', 'date', { optional: false }), field('arn')]), note: 'Once marked, an invoice in that period is corrected by a credit or debit note, never cancelled. There is no undo.', roles: ADMIN }]
     },
   }),
   page({ path: '/reports/gstr3b', title: 'GSTR-3B', roles: OFFICE,

@@ -44,6 +44,7 @@ import {
 } from './stock'
 import { computeTaxes, isIntraState, tdsFor, templatesWithin } from './tax'
 import { checkOtherPerson } from './sod'
+import { inFiledReturn } from './gst-filings'
 import { fiscalYearOf, localToday, settingsWithin } from './years'
 
 /**
@@ -1009,6 +1010,10 @@ export async function cancelInvoice(actor: Actor, input: unknown) {
       const [inv] = await tx.select().from(invoices).where(eq(invoices.id, data.invoiceId)).for('update')
       if (!inv) throw new FinanceError(404, 'no_such_invoice', 'no such invoice')
       if (inv.docstatus !== 'submitted') throw new FinanceError(409, 'not_submitted', 'only a submitted invoice is cancelled')
+      // A sales invoice reported in a filed GSTR-1 is corrected by a credit note, never cancelled (ACC-05).
+      if (inv.kind === 'sales' && (await inFiledReturn(tx, inv.postingDate))) {
+        throw new FinanceError(409, 'gst_return_filed', 'this invoice is in a filed GSTR-1; raise a credit note instead')
+      }
       const voucherType = voucherTypeOf(inv.kind)
 
       const [settled] = await tx
