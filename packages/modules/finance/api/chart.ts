@@ -59,6 +59,7 @@ export const DEFAULT_CHART: readonly ChartRow[] = [
   { code: '2220', name: 'ESI payable', type: 'liability', purpose: 'esi_payable', subtype: 'tax', parent: '21' },
   { code: '2230', name: 'Professional tax payable', type: 'liability', purpose: 'pt_payable', subtype: 'tax', parent: '21' },
   { code: '2240', name: 'TDS on salaries payable', type: 'liability', purpose: 'salary_tds_payable', subtype: 'tax', parent: '21' },
+  { code: '2250', name: 'Gratuity provision', type: 'liability', purpose: 'gratuity_provision', subtype: 'provision', parent: '2' },
   { code: '2300', name: 'Expense claims payable', type: 'liability', purpose: 'expense_claims_payable', subtype: 'current_liability', parent: '21' },
   { code: '2400', name: 'GST payable', type: 'liability', purpose: 'gst_output', subtype: 'tax', parent: '21' },
   { code: '2410', name: 'TDS payable', type: 'liability', purpose: 'tds_payable', subtype: 'tax', parent: '21' },

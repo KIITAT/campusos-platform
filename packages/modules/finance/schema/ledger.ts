@@ -96,6 +96,7 @@ export const accountPurposeEnum = pgEnum('finance_account_purpose', [
   'esi_payable',
   'pt_payable',
   'salary_tds_payable',
+  'gratuity_provision',
 ])
 
 /**
