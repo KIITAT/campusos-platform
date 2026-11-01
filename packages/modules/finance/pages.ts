@@ -250,8 +250,8 @@ const legacyPages: PluginPage[] = [
       const today = await withTenant(actor.institutionId!, (tx) => localToday(tx, actor.institutionId!))
       const [ty, tm] = today.split('-').map(Number) as [number, number]
       const prev = tm === 1 ? { year: ty - 1, month: 12 } : { year: ty, month: tm - 1 }
-      const year = Number(param(req, 'year') ?? prev.year)
-      const month = Number(param(req, 'month') ?? prev.month)
+      const year = Number(param(req, 'year') || prev.year)
+      const month = Number(param(req, 'month') || prev.month)
       const checklist = await periodChecklist(actor as Actor, { year, month })
       return {
         checkMonth: `${year}-${String(month).padStart(2, '0')}`,

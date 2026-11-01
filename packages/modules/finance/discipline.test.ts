@@ -504,7 +504,7 @@ test('the Periods page loads when the optional year and month fields are blank (
   const b = await books()
   const page = pages.find((p) => p.path === '/periods')!
   const data = await page.load(b.admin, new Request('https://college.test/m/finance/periods?year=&month='))
-  assert.match(String(data.checkMonth), /^d{4}-d{2}$/)
+  assert.match(String(data.checkMonth), /^[0-9]{4}-[0-9]{2}$/)
 })
 
 test('billing a PO moves the amount from committed to spent', async () => {
