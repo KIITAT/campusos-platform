@@ -251,20 +251,29 @@ async function assertPurchaseWithinBudget(tx: Tx, tenant: string, o: typeof orde
   if (mine.size === 0) return
   const fy = await fiscalYearOf(tx, tenant, o.postingDate)
   const year = Number(fy.startsOn.slice(0, 4))
-  const others = await committedWithin(tx, { fy })
-  for (const [key, here] of mine) {
+  // Lock every hard budget row this order touches, in a fixed order, before reading what others have
+  // committed: a second submit then waits for the first to commit and reads it (READ COMMITTED).
+  const budgetOf = new Map<string, number>()
+  for (const key of [...mine.keys()].sort()) {
     const [costCenter, accountId] = key.split('|') as [string, string]
     const [budget] = await tx
       .select({ amountPaise: budgets.amountPaise })
       .from(budgets)
       .where(and(eq(budgets.year, year), eq(budgets.accountId, accountId), eq(budgets.costCenter, costCenter), eq(budgets.hardLimit, true)))
       .for('update')
-    if (!budget) continue
+    if (budget) budgetOf.set(key, budget.amountPaise)
+  }
+  if (budgetOf.size === 0) return
+  const others = await committedWithin(tx, { fy })
+  for (const [key, here] of mine) {
+    const limit = budgetOf.get(key)
+    if (limit === undefined) continue
+    const [costCenter, accountId] = key.split('|') as [string, string]
     const wouldBe = (await spentSoFar(tx, year, accountId, costCenter)) + (others.get(key) ?? 0) + here
-    if (wouldBe > budget.amountPaise) {
+    if (wouldBe > limit) {
       throw new FinanceError(409, 'over_budget', 'that would take a cost centre past its budget', {
         costCenter,
-        budgetPaise: budget.amountPaise,
+        budgetPaise: limit,
         wouldBePaise: wouldBe,
       })
     }
