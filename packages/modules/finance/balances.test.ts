@@ -58,6 +58,12 @@ const entry = (b: Books, over: Record<string, unknown> = {}) =>
     ...over,
   })
 
+/** The slice of a pooled connection these tests use. */
+interface Conn {
+  query(text: string, values?: unknown[]): Promise<{ rows: { id: string }[] }>
+  release(): void
+}
+
 /** Rows where the balance table and the journal disagree (as the owner, past RLS). */
 async function drift(tenant: string) {
   const res = await authDb.execute(sql`
@@ -114,9 +120,9 @@ test('two postings to the same account on the same day both count (REL-03)', asy
   const cash = await acct('cash')
   const income = await acct('fee_income')
 
-  const open: Awaited<ReturnType<typeof authDb.$client.connect>>[] = []
+  const open: Conn[] = []
   const post = async (ref: string, creditFirst: boolean) => {
-    const c = await authDb.$client.connect()
+    const c: Conn = await authDb.$client.connect()
     open.push(c)
     await c.query('begin')
     await c.query("select set_config('app.institution_id', $1, true)", [b.id])
@@ -134,7 +140,7 @@ test('two postings to the same account on the same day both count (REL-03)', asy
     for (const [account, d, cr] of lines) {
       await c.query(
         'insert into finance_journal_lines (institution_id, entry_id, account_id, debit_paise, credit_paise) values ($1, $2, $3, $4, $5)',
-        [b.id, rows[0].id, account, d, cr],
+        [b.id, rows[0]!.id, account, d, cr],
       )
     }
     return c
