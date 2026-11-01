@@ -64,6 +64,7 @@ jobs:
 
       - run: pnpm typecheck
       - run: pnpm lint
+      - run: pnpm lint:migrations
       - run: pnpm test
       - run: node --test scripts/module-catalog.test.mjs
       - run: node --import ./packages/db/node_modules/tsx/dist/loader.mjs --test scripts/demo-finance.test.ts
