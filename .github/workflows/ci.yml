@@ -70,6 +70,7 @@ jobs:
       - run: node --import ./packages/db/node_modules/tsx/dist/loader.mjs --test scripts/demo-finance.test.ts
       # Who may call each route, and who may read each student (SEC-16, SEC-07).
       - run: node --import ./packages/db/node_modules/tsx/dist/loader.mjs --test scripts/route-matrix.test.ts
+      - run: node --import ./packages/db/node_modules/tsx/dist/loader.mjs --test scripts/module-reference.test.ts
       - run: node --import ./packages/db/node_modules/tsx/dist/loader.mjs --test scripts/student-access.test.ts
       # Each module on core plus only what it declares (DATA-03), and the
       # P0-01 migrations applied as an upgrade over every module.
