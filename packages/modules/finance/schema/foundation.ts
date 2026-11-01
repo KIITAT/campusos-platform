@@ -45,6 +45,12 @@ export const settings = pgTable(
     stateCode: text('state_code'),
     pan: text(),
     tan: text(),
+    /** `regular`, or `composition` (P1-05a): a composition dealer charges no tax and files CMP-08. */
+    gstScheme: text('gst_scheme').$type<'regular' | 'composition'>().notNull().default('regular'),
+    /** How returns are filed: every month, or quarterly with monthly payment (QRMP). */
+    gstFiling: text('gst_filing').$type<'monthly' | 'quarterly'>().notNull().default('monthly'),
+    /** A composition dealer's tax on turnover, in basis points; null otherwise. */
+    compositionRateBp: integer('composition_rate_bp'),
     /** Invoice totals rounded to a whole currency unit, the difference posted apart. */
     roundInvoices: boolean('round_invoices').notNull().default(true),
     stockValuation: text('stock_valuation')
@@ -68,6 +74,12 @@ export const settings = pgTable(
     check('finance_settings_state', sql`state_code is null or state_code ~ '^[0-9]{2}$'`),
     check('finance_settings_pan', sql`pan is null or pan ~ '^[A-Z]{5}[0-9]{4}[A-Z]$'`),
     check('finance_settings_over_receipt', sql`over_receipt_bp between 0 and 10000`),
+    check('finance_settings_gst_scheme', sql`gst_scheme in ('regular', 'composition')`),
+    check('finance_settings_gst_filing', sql`gst_filing in ('monthly', 'quarterly')`),
+    check(
+      'finance_settings_composition',
+      sql`(gst_scheme = 'composition') = (composition_rate_bp is not null) and (composition_rate_bp is null or (composition_rate_bp between 2 and 10000 and composition_rate_bp % 2 = 0)) and (gst_scheme <> 'composition' or gst_filing = 'quarterly')`,
+    ),
     tenantPolicy('finance_settings'),
   ],
 )

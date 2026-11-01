@@ -4,6 +4,7 @@ import * as z from 'zod'
 import { ticked } from '@campusos/module-framework'
 import { accounts, entries, fiscalYears, lines, settings } from '../schema'
 import { FinanceError, named, requireConfigure, requireRead, type Actor, type Tx } from './core'
+import { parseDecimal } from './numbers'
 import { accountFor, postWithin, reverseWithin } from './operations'
 
 /**
@@ -27,6 +28,9 @@ const DEFAULTS = {
   stateCode: null,
   pan: null,
   tan: null,
+  gstScheme: 'regular' as const,
+  gstFiling: 'monthly' as const,
+  compositionRateBp: null,
   roundInvoices: true,
   stockValuation: 'moving_average' as const,
   allowNegativeStock: false,
@@ -75,6 +79,10 @@ export const updateSettingsSchema = z
     allowNegativeStock: z.preprocess(ticked, z.boolean()).optional(),
     overReceiptPercent: z.coerce.number().min(0).max(100).optional(),
     blockExpiredBatches: z.preprocess(ticked, z.boolean()).optional(),
+    gstScheme: z.enum(['regular', 'composition']).optional(),
+    gstFiling: z.enum(['monthly', 'quarterly']).optional(),
+    /** A percentage such as `1` or `0.5`; kept as basis points. */
+    compositionRate: optional(8),
   })
   .meta({ id: 'FinanceSettings' })
 
@@ -113,6 +121,18 @@ export async function updateSettings(actor: Actor, input: unknown) {
         throw new FinanceError(400, 'state_mismatch', 'a GSTIN begins with its state code')
       }
 
+      const gstScheme = data.gstScheme ?? current.gstScheme
+      const gstFiling = data.gstFiling ?? current.gstFiling
+      let compositionRateBp = current.compositionRateBp
+      if (data.compositionRate !== undefined) {
+        compositionRateBp = parseDecimal(data.compositionRate, 2)
+        if (compositionRateBp === null) throw new FinanceError(400, 'composition_rate', 'a composition rate is a percentage such as 1 or 0.5')
+      }
+      if (gstScheme !== 'composition') compositionRateBp = null
+      else if (compositionRateBp === null) {
+        throw new FinanceError(400, 'composition_rate', 'a composition dealer gives its tax rate (for example 1%)')
+      }
+
       const values = {
         baseCurrency: data.baseCurrency ?? current.baseCurrency,
         fiscalYearStartMonth: data.fiscalYearStartMonth ?? current.fiscalYearStartMonth,
@@ -129,6 +149,9 @@ export async function updateSettings(actor: Actor, input: unknown) {
         overReceiptBp:
           data.overReceiptPercent !== undefined ? Math.round(data.overReceiptPercent * 100) : current.overReceiptBp,
         blockExpiredBatches: data.blockExpiredBatches ?? current.blockExpiredBatches,
+        gstScheme,
+        gstFiling,
+        compositionRateBp,
         updatedAt: new Date(),
       }
       await tx
@@ -146,6 +169,22 @@ export async function updateSettings(actor: Actor, input: unknown) {
         reason: 'settings changed',
         detail: data as Record<string, unknown>,
       })
+      if (gstScheme !== current.gstScheme || gstFiling !== current.gstFiling || compositionRateBp !== current.compositionRateBp) {
+        await audit(tx, {
+          institutionId: tenant,
+          actorId: actor.id,
+          actorEmail: actor.email ?? null,
+          moduleId: 'finance',
+          action: 'settings.gst_registration',
+          entity: 'finance_settings',
+          entityId: tenant,
+          reason: 'GST scheme or filing frequency changed',
+          detail: {
+            before: { scheme: current.gstScheme, filing: current.gstFiling, rateBp: current.compositionRateBp },
+            after: { scheme: gstScheme, filing: gstFiling, rateBp: compositionRateBp },
+          },
+        })
+      }
       return { notice: 'Settings saved.' }
     }),
   )

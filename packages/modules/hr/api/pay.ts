@@ -4,6 +4,7 @@ import { postWithin } from '@campusos/module-finance/api'
 import {
   gratuityPayouts,
   gratuityRules,
+  gratuityValuations,
   payComponents,
   payrollArrears,
   payrollRuns,
@@ -352,6 +353,17 @@ export async function taxDeduction(
 
 // --- gratuity --------------------------------------------------------------
 
+/** One gratuity change at a time per institution: valuations and payouts both move the provision (P1-06d). */
+export async function lockGratuity(tx: Tx, institutionId: string) {
+  await tx.execute(sql`select pg_advisory_xact_lock(1213354066, hashtext(${`${institutionId}:gratuity`}::text))`)
+}
+
+/** The monthly wage a gratuity rule counts, from the components in force in the month of `to`. */
+export async function gratuityWage(tx: Tx, staffId: string, wageCodes: string[], to: string): Promise<number> {
+  const { components } = await payableComponents(tx, staffId, `${to.slice(0, 7)}-01`)
+  return components.filter((c) => c.kind === 'earning' && wageCodes.includes(c.code)).reduce((n, c) => n + c.amountPaise, 0)
+}
+
 export async function createGratuityRule(actor: Actor, input: unknown) {
   const tenant = requireAdmin(actor)
   const d = createGratuityRuleSchema.parse(input)
@@ -387,11 +399,7 @@ async function quote(tx: Tx, staffId: string, ruleId: string) {
   const [rule] = await tx.select().from(gratuityRules).where(eq(gratuityRules.id, ruleId))
   if (!rule) throw new HrError(404, 'no_such_rule', 'no such gratuity rule')
   const to = person.leftOn ?? new Date().toISOString().slice(0, 10)
-  const lastMonth = `${to.slice(0, 7)}-01`
-  const { components } = await payableComponents(tx, person.id, lastMonth)
-  const wage = components
-    .filter((c) => c.kind === 'earning' && rule.wageCodes.includes(c.code))
-    .reduce((n, c) => n + c.amountPaise, 0)
+  const wage = await gratuityWage(tx, person.id, rule.wageCodes, to)
   const years = serviceYears(person.joinedOn, to, rule.roundUpMonths)
   return {
     person,
@@ -423,13 +431,14 @@ export async function gratuityQuote(actor: Actor, staffId: string, ruleId: strin
  * Pay a gratuity on leaving: once per employment, computed rather than typed,
  * posted as a cost of employing people.
  *
- *   debit  employer contributions
+ *   debit  the gratuity provision once the institution values one (P1-06d), else employer contributions
  *   credit bank or cash
  */
 export async function payGratuity(actor: Actor, input: unknown) {
   const tenant = requireAdmin(actor)
   const d = payGratuitySchema.parse(input)
   return withTenant(tenant, async (tx) => {
+    await lockGratuity(tx, tenant)
     const q = await quote(tx, d.staffId, d.ruleId)
     if (!q.person.leftOn) throw new HrError(409, 'still_employed', 'gratuity is paid when an employment ends')
     if (!q.eligible) {
@@ -456,13 +465,16 @@ export async function payGratuity(actor: Actor, input: unknown) {
       .onConflictDoNothing()
       .returning()
     if (!row) throw new HrError(409, 'already_paid', 'gratuity for that employment has already been paid')
+    const [valued] = await tx.select({ id: gratuityValuations.id }).from(gratuityValuations).limit(1)
     await postWithin(tx, tenant, actor.id, {
       postingDate: d.paidOn,
       memo: `Gratuity, ${q.person.name} (${q.person.employeeCode})`,
       sourceModule: 'hr',
       sourceRef: `gratuity:${row.id}`,
       lines: [
-        { purpose: 'employer_cost', debitPaise: q.amountPaise, costCenter: q.person.department },
+        valued
+          ? { purpose: 'gratuity_provision', debitPaise: q.amountPaise }
+          : { purpose: 'employer_cost', debitPaise: q.amountPaise, costCenter: q.person.department },
         { purpose: d.paidFrom === 'cash' ? 'cash' : 'bank', creditPaise: q.amountPaise },
       ],
     })

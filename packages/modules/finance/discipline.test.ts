@@ -403,6 +403,7 @@ test('filings refuse overlap and odd periods', async () => {
   await markFiled(b.admin, APRIL)
   await refused(markFiled(b.admin, APRIL), 'return_already_filed', 409)
   await refused(markFiled(b.admin, { ...APRIL, periodFrom: '2026-04-02' }), 'bad_return_period', 400)
+  await updateSettings(b.admin, { gstFiling: 'quarterly' }) // a quarter is filed only by a QRMP institution (P1-05a D8)
   await markFiled(b.admin, { returnType: 'gstr1', periodFrom: '2026-07-01', periodTo: '2026-09-30', filedOn: '2026-10-25' })
 })
 

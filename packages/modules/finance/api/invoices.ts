@@ -23,6 +23,7 @@ import {
   lines as glLines,
   parties,
   partyLedger,
+  payments,
   receiptLines,
   stockLedger,
   tdsSections,
@@ -55,6 +56,7 @@ import {
 import { computeTaxes, isIntraState, tdsFor, templatesWithin } from './tax'
 import { checkOtherPerson } from './sod'
 import { inFiledReturn } from './gst-filings'
+import { inChallan } from './tds-returns'
 import { fiscalYearOf, localToday, settingsWithin } from './years'
 
 /**
@@ -392,7 +394,8 @@ export async function computeInvoice(
       serials: l.serials?.length ? l.serials : null,
       orderLineId: l.orderLineId ?? null,
       receiptLineId: l.receiptLineId ?? null,
-      itcEligible: l.itcEligible ?? true,
+      // A composition dealer claims no input tax credit (P1-05a D5): the tax posts to cost.
+      itcEligible: settings.gstScheme === 'composition' && draft.kind === 'purchase' ? false : (l.itcEligible ?? true),
     })
   }
 
@@ -405,6 +408,10 @@ export async function computeInvoice(
     intra,
     draft.kind,
   )
+  // A composition dealer may not collect tax on its supplies (P1-05a D4).
+  if (draft.kind === 'sales' && settings.gstScheme === 'composition' && rows.some((r) => r.tax !== 0)) {
+    throw new FinanceError(400, 'composition_no_tax', 'a composition dealer charges no GST: remove the tax from the lines')
+  }
   const fallbackTax = rows.some((r) => !r.accountId)
     ? await accountFor(tx, institutionId, draft.kind === 'sales' ? 'gst_output' : 'gst_input')
     : null
@@ -440,6 +447,7 @@ export async function computeInvoice(
   // section's thresholds; on a debit note, the share of what the bill deducted.
   let tdsSectionId: string | null = null
   let tdsPaise = 0
+  let tdsAdvancePaise = 0
   if (draft.kind === 'purchase') {
     tdsSectionId = draft.tdsSectionId ?? party.tdsSectionId ?? null
     if (tdsSectionId && foreign) {
@@ -460,6 +468,30 @@ export async function computeInvoice(
         fyEnd: fy.endsOn,
         excludeInvoiceId: invoiceId,
       })
+      // Tax already deducted on an advance to this supplier under the section, in the year, is not deducted twice (P1-05b D12).
+      if (tdsPaise > 0 && !draft.isReturn) {
+        const [paid] = await tx
+          .select({ tds: sql<number>`coalesce(sum(${payments.tdsPaise}), 0)::bigint` })
+          .from(payments)
+          .where(and(eq(payments.partyId, party.id), eq(payments.kind, 'pay'), eq(payments.docstatus, 'submitted'), eq(payments.tdsSectionId, tdsSectionId), sql`${payments.postingDate} between ${fy.startsOn} and ${fy.endsOn}`))
+        const [absorbed] = await tx
+          .select({ tds: sql<number>`coalesce(sum(${invoices.tdsAdvancePaise}), 0)::bigint` })
+          .from(invoices)
+          .where(
+            and(
+              eq(invoices.partyId, party.id),
+              eq(invoices.kind, 'purchase'),
+              eq(invoices.isReturn, false),
+              eq(invoices.docstatus, 'submitted'),
+              eq(invoices.tdsSectionId, tdsSectionId),
+              sql`${invoices.postingDate} between ${fy.startsOn} and ${fy.endsOn}`,
+              invoiceId ? sql`${invoices.id} <> ${invoiceId}` : undefined,
+            ),
+          )
+        const spare = Math.max(Number(paid?.tds ?? 0) - Number(absorbed?.tds ?? 0), 0)
+        tdsAdvancePaise = Math.min(tdsPaise, spare)
+        tdsPaise -= tdsAdvancePaise
+      }
     }
     if (tdsPaise > totalPaise) tdsPaise = totalPaise
   }
@@ -492,6 +524,7 @@ export async function computeInvoice(
       totalPaise,
       tdsSectionId,
       tdsPaise,
+      tdsAdvancePaise,
       costCenter: draft.costCenter ?? null,
       fundId: draft.fundId ?? null,
       memo: draft.memo ?? null,
@@ -1021,8 +1054,12 @@ export async function cancelInvoice(actor: Actor, input: unknown) {
       if (!inv) throw new FinanceError(404, 'no_such_invoice', 'no such invoice')
       if (inv.docstatus !== 'submitted') throw new FinanceError(409, 'not_submitted', 'only a submitted invoice is cancelled')
       // A sales invoice reported in a filed GSTR-1 is corrected by a credit note, never cancelled (ACC-05).
-      if (inv.kind === 'sales' && (await inFiledReturn(tx, inv.postingDate))) {
+      const [buyer] = inv.kind === 'sales' ? await tx.select().from(parties).where(eq(parties.id, inv.partyId)) : []
+      if (inv.kind === 'sales' && (await inFiledReturn(tx, inv.postingDate, !!buyer?.gstin && buyer.gstCategory !== 'overseas'))) {
         throw new FinanceError(409, 'gst_return_filed', 'this invoice is in a filed GSTR-1; raise a credit note instead')
+      }
+      if (inv.kind === 'purchase' && (await inChallan(tx, { invoiceId: inv.id }))) {
+        throw new FinanceError(409, 'tds_deposited', 'the tax deducted on this document has been deposited; void the challan first or raise a debit note')
       }
       const voucherType = voucherTypeOf(inv.kind)
 

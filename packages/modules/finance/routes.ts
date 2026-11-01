@@ -285,6 +285,23 @@ export const specs: RouteSpec[] = [
   get('reports', '/reports/funds', "Every fund's balance", (a, q) => api.fundBalances(a, q)),
   get('reports', '/reports/cost-centers', 'Income and expenditure by cost centre', (a, q) => api.costCenterReport(a, q)),
   get('reports', '/reports/gstr1', 'GSTR-1 tables for a period', (a, q) => api.gstr1(a, range(q))),
+  post('reports', '/tds/challans', 'Record a TDS challan against a month of deductions', api.recordChallan, api.recordChallanSchema),
+  post('reports', '/tds/challans/void', 'Void a TDS challan', api.voidChallan, api.voidChallanSchema),
+  get('reports', '/tds/challans', 'TDS challans recorded', (a) => api.listChallans(a)),
+  file('reports', '/tds/quarter', 'The TDS working statement for a quarter as CSV (fy, quarter, form)', (a, req) => {
+    const q = query(req)
+    return api.tdsQuarterFile(a, { fy: q.fy, quarter: q.quarter, form: q.form })
+  }),
+  file('reports', '/tds/certificate.pdf', 'The TDS statement for one payee and quarter, printed', (a, req) => {
+    const q = query(req)
+    return api.tdsCertificatePdf(a, { partyId: requiredParam(req, 'partyId'), fy: q.fy ?? '', quarter: q.quarter ?? '' })
+  }),
+  get('reports', '/tds/deductions', 'The deductions of a quarter (fy, quarter, form)', (a, q) => api.tdsDeductions(a, { fy: q.fy, quarter: q.quarter, form: q.form })),
+  get('reports', '/tds/interest', 'Interest on TDS deposited late', (a, q) => api.tdsInterest(a, { on: q.on })),
+  post('reports', '/gst/2b', 'Import a GSTR-2B JSON file (replaces that month)', api.import2b, api.import2bSchema),
+  get('reports', '/gst/2b', 'A month of GSTR-2B against the purchase bills', (a, _q, req) => api.match2b(a, { period: requiredParam(req, 'period') })),
+  get('reports', '/gst/2b/returns', 'GSTR-2B files imported', (a) => api.list2bReturns(a)),
+  get('reports', '/reports/cmp08', 'CMP-08 working for a quarter (composition dealers)', (a, q) => api.cmp08(a, range(q))),
   get('reports', '/reports/gstr3b', 'GSTR-3B summary for a period', (a, q) => api.gstr3b(a, range(q))),
   get('reports', '/reports/hsn', 'HSN/SAC summary', (a, q) => api.hsnReport(a, { kind: kind(q), ...range(q) })),
   get('reports', '/reports/register', 'Sales or purchase register', (a, q) => api.register(a, { kind: kind(q), ...range(q) })),

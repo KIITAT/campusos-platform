@@ -1,6 +1,8 @@
 import { sql } from 'drizzle-orm'
 import { withTenant } from '@campusos/db'
-import { requireRead, type Actor, type Tx } from './core'
+import { FinanceError, requireRead, type Actor, type Tx } from './core'
+import { periodKind } from './gst-filings'
+import { bpOf } from './numbers'
 import { settingsWithin } from './years'
 
 /**
@@ -432,4 +434,64 @@ export function toCsv(rows: Record<string, unknown>[], minorUnits = 2): string {
   }
   const head = keys.map((k) => k.replace(/Paise$/, '').replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase()))
   return [head.join(','), ...rows.map((r) => keys.map((k) => cell(k, r[k])).join(','))].join('\n')
+}
+
+/**
+ * CMP-08 working (P1-05a, composition scheme): the tax a composition dealer pays
+ * for one quarter, on turnover (exempt and non-GST supplies left out), plus any
+ * tax due under reverse charge. A working statement to check, not a return.
+ */
+export async function cmp08(actor: Actor, input: { from: string; to: string }) {
+  const tenant = requireRead(actor)
+  return withTenant(tenant, async (tx) => {
+    const s = await settingsWithin(tx, tenant)
+    if (s.gstScheme !== 'composition' || s.compositionRateBp === null) {
+      throw new FinanceError(409, 'not_composition', 'the institution is not a composition dealer')
+    }
+    if (periodKind(input.from, input.to) !== 'quarter') {
+      throw new FinanceError(400, 'bad_return_period', 'a CMP-08 covers one quarter: April-June, July-September, October-December or January-March')
+    }
+    const sales = await taxRows(tx, 'sales', input.from, input.to)
+    const purchases = await taxRows(tx, 'purchase', input.from, input.to)
+    const turnoverPaise = sales
+      .filter((r) => r.treatment === null || r.treatment === 'taxable')
+      .reduce((sum, r) => sum + sign(r) * r.taxable_paise, 0)
+    const reverseCharge = { igstPaise: 0, cgstPaise: 0, sgstPaise: 0, cessPaise: 0 }
+    for (const r of purchases.filter((p) => p.reverse_charge)) {
+      reverseCharge.igstPaise += sign(r) * r.igst
+      reverseCharge.cgstPaise += sign(r) * r.cgst
+      reverseCharge.sgstPaise += sign(r) * r.sgst
+      reverseCharge.cessPaise += sign(r) * r.cess
+    }
+    const cgstPaise = bpOf(turnoverPaise, s.compositionRateBp / 2)
+    const sgstPaise = cgstPaise
+    const totalPaise = cgstPaise + sgstPaise + reverseCharge.igstPaise + reverseCharge.cgstPaise + reverseCharge.sgstPaise + reverseCharge.cessPaise
+    return { from: input.from, to: input.to, turnoverPaise, rateBp: s.compositionRateBp, cgstPaise, sgstPaise, reverseCharge, totalPaise }
+  })
+}
+
+/**
+ * Submitted purchase bills with the tax of each (base currency, unsigned), one
+ * entry per bill: what GSTR-2B is matched against.
+ */
+export async function purchaseTaxByInvoice(tx: Tx, from: string, to: string) {
+  const rows = await taxRows(tx, 'purchase', from, to)
+  const info = await tx.execute(sql`
+    select id, bill_no, bill_date::text as bill_date from finance_invoices
+     where kind = 'purchase' and docstatus = 'submitted' and posting_date between ${from}::date and ${to}::date`)
+  const bills = new Map((info.rows as unknown as { id: string; bill_no: string | null; bill_date: string | null }[]).map((r) => [r.id, r]))
+  const out = new Map<
+    string,
+    { invoiceId: string; number: string; postingDate: string; billNo: string | null; billDate: string | null; isReturn: boolean; party: string; gstin: string | null; amounts: Bucket }
+  >()
+  for (const r of rows) {
+    let o = out.get(r.invoice_id)
+    if (!o) {
+      const b = bills.get(r.invoice_id)
+      o = { invoiceId: r.invoice_id, number: r.number, postingDate: r.posting_date, billNo: b?.bill_no ?? null, billDate: b?.bill_date ?? null, isReturn: r.is_return, party: r.party, gstin: r.gstin, amounts: empty() }
+      out.set(r.invoice_id, o)
+    }
+    add(o.amounts, r, 1)
+  }
+  return [...out.values()]
 }

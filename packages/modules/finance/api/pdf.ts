@@ -6,6 +6,7 @@ import { accounts, invoiceLines, invoices, invoiceTaxes, orderLines, orders, par
 import { FinanceError, requireRead, type Actor } from './core'
 import { amountInWords, formatDecimal, formatQty } from './numbers'
 import { minorUnitsOf } from './setup'
+import { TDS_FORMS, deductionsWithin } from './tds-returns'
 import { settingsWithin } from './years'
 
 /**
@@ -149,13 +150,16 @@ export async function invoicePdf(actor: Actor, invoiceId: string): Promise<{ byt
   })
   const { inv, party, ls, ts, orig, s, minor } = data
   const lh = await letterheadOf(tenant, s)
+  const billOfSupply = inv.kind === 'sales' && !inv.isReturn && s.gstScheme === 'composition'
   const title =
     inv.kind === 'sales'
       ? inv.isReturn
         ? 'CREDIT NOTE'
-        : ts.length
-          ? 'TAX INVOICE'
-          : 'INVOICE'
+        : billOfSupply
+          ? 'BILL OF SUPPLY'
+          : ts.length
+            ? 'TAX INVOICE'
+            : 'INVOICE'
       : inv.isReturn
         ? 'DEBIT NOTE'
         : 'PURCHASE BILL'
@@ -176,6 +180,10 @@ export async function invoicePdf(actor: Actor, invoiceId: string): Promise<{ byt
   }
   if (party.stateCode) {
     sh.text(`State code ${party.stateCode}`, M, 8)
+    sh.y -= 11
+  }
+  if (billOfSupply) {
+    sh.text('Composition taxable person, not eligible to collect tax on supplies.', M, 8)
     sh.y -= 11
   }
   const left = sh.y
@@ -409,4 +417,95 @@ export async function orderPdf(actor: Actor, orderId: string): Promise<{ bytes: 
   }
   signature(sh, lh)
   return { bytes: await sh.doc.save(), fileName: `${(o.number ?? 'order').replace(/[^a-zA-Z0-9._-]/g, '_')}.pdf` }
+}
+
+// --- TDS statement --------------------------------------------------------------------
+
+/**
+ * What the institution deducted from one payee in a quarter and the challan that
+ * deposited each deduction. The institution's record: the certificate a payee
+ * may rely on is issued from TRACES.
+ */
+export async function tdsCertificatePdf(actor: Actor, input: { partyId: string; fy: number | string; quarter: number | string }): Promise<{ bytes: Uint8Array; fileName: string }> {
+  const tenant = requireRead(actor)
+  const fy = Number(input.fy)
+  const quarter = Number(input.quarter)
+  if (!Number.isInteger(fy) || fy < 2000 || fy > 2100 || !Number.isInteger(quarter) || quarter < 1 || quarter > 4) {
+    throw new FinanceError(400, 'bad_period', 'give a fiscal year from 2000 to 2100 and a quarter from 1 to 4')
+  }
+  const from = [`${fy}-04-01`, `${fy}-07-01`, `${fy}-10-01`, `${fy + 1}-01-01`][quarter - 1]!
+  const to = [`${fy}-06-30`, `${fy}-09-30`, `${fy}-12-31`, `${fy + 1}-03-31`][quarter - 1]!
+  const data = await withTenant(tenant, async (tx) => {
+    const [party] = await tx.select().from(parties).where(eq(parties.id, input.partyId))
+    if (!party) throw new FinanceError(404, 'no_such_party', 'no such party')
+    const rows = (await deductionsWithin(tx, { from, to })).filter((d) => d.partyId === party.id)
+    if (rows.length === 0) throw new FinanceError(404, 'no_such_statement', 'no tax was deducted from that party in that quarter')
+    return { party, rows, s: await settingsWithin(tx, tenant) }
+  })
+  const { party, rows, s } = data
+  const lh = await letterheadOf(tenant, s)
+  const title = TDS_FORMS.certificate(fy)
+  const sh = await start(`TDS statement ${party.name} ${fy} Q${quarter}`, [lh, party, rows, title])
+  head(sh, lh, 'TDS STATEMENT')
+  sh.text(title, M, 11, sh.bold)
+  sh.y -= 16
+  sh.text(`Fiscal year ${fy}-${String((fy + 1) % 100).padStart(2, '0')}, quarter ${quarter} (${from} to ${to})`, M, 9, sh.font, faint)
+  sh.y -= 18
+  for (const [k, v] of [
+    ['Deductor', lh.name],
+    ['TAN', s.tan ?? 'not set'],
+    ['PAN', s.pan ?? 'not set'],
+    ['Deductee', party.name],
+    ['Deductee PAN', party.pan ?? 'PANNOTAVBL'],
+  ] as const) {
+    sh.text(k, M, 9, sh.font, faint)
+    sh.text(sh.fit(v, 380), M + 100, 10)
+    sh.y -= 14
+  }
+  sh.y -= 6
+  sh.line()
+  sh.y -= 12
+  const col = { section: M, doc: M + 48, date: M + 108, paid: M + 218, tds: M + 276, bsr: M + 288, serial: M + 342, dep: M + 384 }
+  const header = () => {
+    sh.text('Section', col.section, 8, sh.bold, faint)
+    sh.text('Document', col.doc, 8, sh.bold, faint)
+    sh.text('Date', col.date, 8, sh.bold, faint)
+    sh.right('Amount paid', col.paid + 52, 8, sh.bold, faint)
+    sh.right('TDS', col.tds + 0, 8, sh.bold, faint)
+    sh.text('BSR code', col.bsr, 8, sh.bold, faint)
+    sh.text('Serial', col.serial, 8, sh.bold, faint)
+    sh.text('Deposited on', col.dep, 8, sh.bold, faint)
+    sh.y -= 14
+  }
+  header()
+  let paid = 0
+  let tds = 0
+  for (const d of rows) {
+    sh.need(14)
+    sh.text(d.section ?? '', col.section, 8)
+    sh.text(sh.fit(d.number ?? '', 56, 8), col.doc, 8)
+    sh.text(d.postingDate, col.date, 8)
+    sh.right(money(d.paidPaise), col.paid + 52, 8)
+    sh.right(money(d.tdsPaise), col.tds + 0, 8)
+    if (d.bsrCode) {
+      sh.text(d.bsrCode, col.bsr, 8)
+      sh.text(d.challanSerial ?? '', col.serial, 8)
+      sh.text(d.depositedOn ?? '', col.dep, 8)
+    } else {
+      sh.text('not yet deposited', col.bsr, 8, sh.font, faint)
+    }
+    paid += d.paidPaise
+    tds += d.tdsPaise
+    sh.y -= 13
+  }
+  sh.line()
+  sh.y -= 12
+  sh.text('Total', col.section, 9, sh.bold)
+  sh.right(money(paid), col.paid + 52, 9, sh.bold)
+  sh.right(money(tds), col.tds + 0, 9, sh.bold)
+  sh.y -= 24
+  sh.text("The certificate a deductee may rely on is issued from TRACES; this statement is the institution's record.", M, 8, sh.font, faint)
+  sh.y -= 12
+  signature(sh, lh)
+  return { bytes: await sh.doc.save(), fileName: `tds-statement-${party.code.replace(/[^a-zA-Z0-9._-]/g, '_')}-${fy}-Q${quarter}.pdf` }
 }

@@ -28,8 +28,9 @@ import { parseDecimal, toBase } from './numbers'
 import { accountFor, postWithin, reverseWithin } from './operations'
 import { partyWithin, unapplyAdvances } from './parties'
 import { approvalsFor, assertApproved, minorUnitsOf, nextNumber, rateOn } from './setup'
+import { inChallan } from './tds-returns'
 import { checkOtherPerson } from './sod'
-import { localToday, settingsWithin } from './years'
+import { fiscalYearOf, localToday, settingsWithin } from './years'
 
 /**
  * Money in, money out, and money moved between the institution's own
@@ -112,7 +113,7 @@ function amountOf(v: string | undefined, what: string, places = 2): number {
   return n
 }
 
-async function bankAccountWithin(tx: Tx, accountId: string, what: string) {
+export async function bankAccountWithin(tx: Tx, accountId: string, what: string) {
   const [a] = await tx.select().from(accounts).where(eq(accounts.id, accountId))
   if (!a) throw new FinanceError(404, 'no_such_account', `no such account for ${what}`)
   if (a.isGroup) throw new FinanceError(400, 'group_account', `${a.name} is a group; choose one of its accounts`)
@@ -188,6 +189,9 @@ export async function savePayment(actor: Actor, input: unknown) {
       const bankChargesPaise = amountOf(data.bankCharges, 'the bank charges')
       if (tdsPaise && foreign) throw new FinanceError(400, 'tds_foreign', 'tax is deducted at source in the base currency only')
       if (tdsPaise && data.kind === 'transfer') throw new FinanceError(400, 'tds_transfer', 'a transfer deducts no tax')
+      if (tdsPaise > 0 && data.kind === 'pay' && !data.tdsSectionId) {
+        throw new FinanceError(400, 'tds_section_required', 'say which TDS section the tax was deducted under')
+      }
 
       // Allocations: as typed, or the oldest open invoices first.
       const allocations: { invoiceId: string; amountFc: number }[] = []
@@ -274,6 +278,10 @@ async function submitPaymentWithin(tx: Tx, actor: Actor, paymentId: string) {
   const [p] = await tx.select().from(payments).where(eq(payments.id, paymentId)).for('update')
   if (!p) throw new FinanceError(404, 'no_such_payment', 'no such payment')
   if (p.docstatus !== 'draft') throw new FinanceError(409, 'not_a_draft', 'that payment is not a draft')
+  // Tax on an advance and a bill's own deduction are worked out one at a time, under the supplier's lock (P1-05b D12).
+  if (p.kind === 'pay' && p.tdsPaise > 0 && p.partyId) {
+    await tx.select({ id: parties.id }).from(parties).where(eq(parties.id, p.partyId)).for('update')
+  }
   if (p.kind === 'pay') {
     if ((await checkOtherPerson(tx, actor, tenant, { creatorId: p.createdBy, act: 'submit', moduleId: 'finance', entity: 'finance_payments', entityId: paymentId, docType: 'payment_pay' })) === 'refused') {
       throw new FinanceError(403, 'separation_of_duties', 'you made this document, so someone else must submit it')
@@ -429,6 +437,25 @@ export async function cancelPayment(actor: Actor, input: unknown) {
       const [p] = await tx.select().from(payments).where(eq(payments.id, data.paymentId)).for('update')
       if (!p) throw new FinanceError(404, 'no_such_payment', 'no such payment')
       if (p.docstatus !== 'submitted') throw new FinanceError(409, 'not_submitted', 'only a submitted payment is cancelled')
+      if (p.kind === 'pay' && (await inChallan(tx, { paymentId: p.id }))) {
+        throw new FinanceError(409, 'tds_deposited', 'the tax deducted on this document has been deposited; void the challan first or raise a debit note')
+      }
+      // A bill that took credit for the tax deducted here would be left with no deduction at all (P1-05b review finding 2). The supplier lock is the one billing takes.
+      if (p.kind === 'pay' && p.tdsPaise > 0 && p.tdsSectionId && p.partyId) {
+        await tx.select({ id: parties.id }).from(parties).where(eq(parties.id, p.partyId)).for('update')
+        const fy = await fiscalYearOf(tx, tenant, p.postingDate)
+        const [row] = await tx.execute(sql`
+          select
+            (select coalesce(sum(tds_advance_paise), 0) from finance_invoices
+              where party_id = ${p.partyId} and kind = 'purchase' and is_return = false and docstatus = 'submitted'
+                and tds_section_id = ${p.tdsSectionId} and posting_date between ${fy.startsOn} and ${fy.endsOn})::bigint as absorbed,
+            (select coalesce(sum(tds_paise), 0) from finance_payments
+              where party_id = ${p.partyId} and kind = 'pay' and docstatus = 'submitted' and id <> ${p.id}
+                and tds_section_id = ${p.tdsSectionId} and posting_date between ${fy.startsOn} and ${fy.endsOn})::bigint as remaining`).then((r) => r.rows as { absorbed: string; remaining: string }[])
+        if (Number(row!.absorbed) > Number(row!.remaining)) {
+          throw new FinanceError(409, 'tds_absorbed', 'a bill has taken credit for the tax deducted on this payment; cancel that bill first')
+        }
+      }
       // What its advance was set against is opened again first.
       await unapplyAdvances(tx, tenant, actor.id, p.id)
       const own = await tx

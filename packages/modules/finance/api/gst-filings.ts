@@ -4,6 +4,7 @@ import * as z from 'zod'
 import { gstFilings } from '../schema'
 import { FinanceError, named, requireConfigure, requireRead, type Actor, type Tx } from './core'
 import { addMonths, monthEnd } from './numbers'
+import { settingsWithin } from './years'
 
 /**
  * GST returns marked filed (P1-04, ACC-05).
@@ -15,11 +16,23 @@ import { addMonths, monthEnd } from './numbers'
  */
 
 const MODULE = 'finance'
+
+/** The first month of each quarter of the Indian GST year: April, July, October, January. */
+export const QUARTER_START_MONTHS = [4, 7, 10, 1] as const
+
+/** Whether a period is exactly one calendar month, exactly one GST quarter, or neither. */
+export function periodKind(from: string, to: string): 'month' | 'quarter' | null {
+  if (!from.endsWith('-01')) return null
+  if (to === monthEnd(from)) return 'month'
+  const month = Number(from.slice(5, 7))
+  if ((QUARTER_START_MONTHS as readonly number[]).includes(month) && to === monthEnd(addMonths(from, 2))) return 'quarter'
+  return null
+}
 const isoDate = z.iso.date()
 
 export const gstFilingSchema = z
   .object({
-    returnType: z.enum(['gstr1', 'gstr3b']),
+    returnType: z.enum(['gstr1', 'gstr3b', 'iff', 'cmp08']),
     periodFrom: isoDate,
     periodTo: isoDate,
     filedOn: isoDate,
@@ -36,15 +49,18 @@ export async function markFiled(actor: Actor, input: unknown) {
   const tenant = requireConfigure(actor)
   const data = gstFilingSchema.parse(input)
 
-  // A month, or (from P1-05) a quarter: the first of a month to the last day of the same month or the one two later.
-  const monthly = data.periodTo === monthEnd(data.periodFrom)
-  const quarterly = data.periodTo === monthEnd(addMonths(data.periodFrom, 2))
-  if (!data.periodFrom.endsWith('-01') || !(monthly || quarterly)) {
-    throw new FinanceError(400, 'bad_return_period', 'a return covers a month, or a quarter from its first day to its last')
-  }
-
   return withTenant(tenant, (tx) =>
     named(async () => {
+      // What may be filed, and over what, depends on the institution's scheme (P1-05a D8).
+      const s = await settingsWithin(tx, tenant)
+      const rule = filingRule(s.gstScheme, s.gstFiling, data.returnType)
+      if (!rule) throw new FinanceError(400, 'bad_return_type', "that return is not filed under the institution's GST scheme")
+      const kind = periodKind(data.periodFrom, data.periodTo)
+      const month = Number(data.periodFrom.slice(5, 7))
+      const inQuarter = [3, 6, 9, 12].includes(month) ? 3 : 1 // the third month of a quarter takes no IFF
+      if (kind !== rule.kind || (rule.firstTwoOnly && inQuarter === 3)) {
+        throw new FinanceError(400, 'bad_return_period', `that period does not match how the institution files: ${rule.words}`)
+      }
       const overlap = await tx.execute(sql`
         select 1 from finance_gst_filings
          where return_type = ${data.returnType}
@@ -84,8 +100,29 @@ export async function listFilings(actor: Actor) {
   return withTenant(tenant, (tx) => tx.select().from(gstFilings).orderBy(desc(gstFilings.periodFrom)))
 }
 
-/** Whether a day falls inside a filed GSTR-1. */
-export async function inFiledReturn(tx: Tx, postingDate: string): Promise<boolean> {
-  const r = await tx.execute(sql`select 1 from finance_gst_filings where return_type = 'gstr1' and ${postingDate}::date between period_from and period_to`)
+/**
+ * The period a return covers for the institution's scheme, or null when that
+ * scheme does not file it (P1-05a D8).
+ */
+function filingRule(scheme: 'regular' | 'composition', filing: 'monthly' | 'quarterly', type: string) {
+  if (scheme === 'composition') return type === 'cmp08' ? { kind: 'quarter' as const, words: 'a quarter', firstTwoOnly: false } : null
+  if (type === 'gstr1' || type === 'gstr3b') {
+    return filing === 'quarterly'
+      ? { kind: 'quarter' as const, words: 'a quarter', firstTwoOnly: false }
+      : { kind: 'month' as const, words: 'a month', firstTwoOnly: false }
+  }
+  if (type === 'iff' && filing === 'quarterly') return { kind: 'month' as const, words: 'the first or second month of a quarter', firstTwoOnly: true }
+  return null
+}
+
+/**
+ * Whether a day falls inside a filed return that reports an invoice: any GSTR-1,
+ * or an IFF for an invoice to a registered buyer (b2b).
+ */
+export async function inFiledReturn(tx: Tx, postingDate: string, b2b: boolean): Promise<boolean> {
+  const r = await tx.execute(sql`
+    select 1 from finance_gst_filings
+     where ${postingDate}::date between period_from and period_to
+       and (return_type = 'gstr1' or (return_type = 'iff' and ${b2b}::boolean))`)
   return r.rows.length > 0
 }
