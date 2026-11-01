@@ -18,6 +18,7 @@ import {
   createItem,
   createParty,
   createStockEntry,
+  createTdsSection,
   loadIndiaPreset,
   makeReturn,
   markFiled,
@@ -398,4 +399,44 @@ test('filings refuse overlap and odd periods', async () => {
 test('only administrators mark a return filed', async () => {
   const b = await books()
   await refused(markFiled(b.clerk, APRIL), 'forbidden', 403)
+})
+
+// --- Step 6: TDS under a lock (ACC-06) ---------------------------------------------
+
+test('two bills submitted together deduct TDS once the year crosses the threshold (ACC-06)', async () => {
+  const b = await books()
+  const section = (await createTdsSection(b.admin, {
+    code: '194C', name: 'Contractors', ratePercent: '1', rateNoPanPercent: '20', thresholdSingle: '0', thresholdAnnual: '100000',
+  })) as { id: string }
+  const payee = (await createParty(b.clerk, { code: 'PAYEE', name: 'Payee', isSupplier: true, stateCode: '21', pan: 'ABCDE1234F', tdsSectionId: section.id })).id
+  const other = await supplier(b)
+  const bill = async (partyId: string, billNo: string) =>
+    ((await saveInvoice(b.clerk, { kind: 'purchase', partyId, postingDate: '2026-10-01', billNo, lines: [{ description: 'Work', qty: '1', rate: '60000' }] })) as { id: string }).id
+  // The numbering row for purchase bills must exist, so the barrier below can hold it.
+  await submitInvoice(b.admin, { invoiceId: await bill(other, 'O-1') })
+  const first = await bill(payee, 'P-1')
+  const second = await bill(payee, 'P-2')
+
+  let release!: () => void
+  const barrier = new Promise<void>((resolve) => (release = resolve))
+  let held!: () => void
+  const holding = new Promise<void>((resolve) => (held = resolve))
+  const hold = withTenant(b.id, async (tx) => {
+    await tx.execute(sql`select 1 from finance_series_counters where doc_type = 'purchase_invoice' for update`)
+    held()
+    await barrier
+  })
+  await holding
+  const one = submitInvoice(b.admin, { invoiceId: first })
+  const two = submitInvoice(b.admin2, { invoiceId: second })
+  await new Promise((resolve) => setTimeout(resolve, 700))
+  release()
+  await Promise.all([hold, one, two])
+
+  const rows = await withTenant(b.id, (tx) =>
+    tx.execute<{ tds_paise: string }>(sql`select tds_paise from finance_invoices where id in (${first}, ${second}) order by tds_paise`),
+  )
+  const tds = rows.rows.map((r) => Number(r.tds_paise))
+  assert.equal(tds[0], 0)
+  assert.equal(tds[0]! + tds[1]!, 120_000)
 })
