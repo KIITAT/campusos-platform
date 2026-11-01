@@ -208,7 +208,7 @@ test('staff see the 1001st application (DATA-01)', async () => {
   })
   const ids = new Set<string>()
   let after: string | null = null
-  let total = 0
+  let total: number | undefined
   do {
     const page = placement.applicationPage(new Request(`https://x/?n=500${after ? `&after=${after}` : ''}`), '')
     const result = await placement.applicationsPage(admin, page)

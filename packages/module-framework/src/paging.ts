@@ -87,6 +87,7 @@ export function finishPage<T extends { _cursor: string[] }>(rows: T[], page: Pag
   const shown = rows.slice(0, page.limit)
   const last = shown[shown.length - 1]
   return {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     rows: shown.map(({ _cursor, ...rest }) => rest),
     total,
     next: more && last ? encode({ s: page.sort, d: page.dir, k: last._cursor }) : null,

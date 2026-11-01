@@ -211,7 +211,7 @@ test('the general ledger closes correctly past 5000 lines (DATA-01)', async () =
   // pages carry the running balance across the cut
   let after: string | null = null
   let previous: number | null = null
-  let last = 0
+  let last: number | undefined
   let seen = 0
   do {
     const page = glPage(new Request(`https://x/?n=1000${after ? `&after=${after}` : ''}`), '')

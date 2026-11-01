@@ -402,6 +402,7 @@ export async function generalLedger(
       }
     })
     const total = Number(whole?.n ?? 0)
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     if (!page) return { account, from, to, openingPaise, lines: lines.map(({ _cursor, ...line }) => line), closingPaise, total, next: null as string | null }
     const done = finishPage(lines, page, total)
     return { account, from, to, openingPaise, lines: done.rows, closingPaise, total, next: done.next }
