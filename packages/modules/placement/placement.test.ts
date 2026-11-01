@@ -43,7 +43,7 @@ test('company to drive, application, selection rounds and student offer acceptan
   await placement.recordResult(campusData.admin, { applicationId: application.id, roundId: round.id, outcome: 'passed', note: 'Panel approved.' })
   const offer = await placement.issueOffer(campusData.admin, { applicationId: application.id, annualPaise: 120000000 })
   await placement.respondOffer(campusData.student, { offerId: offer.id, decision: 'accepted' })
-  assert.equal((await placement.workspace(campusData.student)).offers[0]!.status, 'accepted')
+  assert.equal((await placement.offersPage(campusData.student, placement.offerPage(new Request('https://x/'), ''))).rows[0]!.status, 'accepted')
   const statistics = await placement.statistics(campusData.admin)
   assert.equal(statistics.accepted, 1)
   assert.equal(statistics.applications, 1)
@@ -104,7 +104,7 @@ test('duplicate applications are idempotent and withdrawal is only by the applic
   const rows = await withTenant(campusData.institutionId, (tx) => tx.select().from(applications))
   assert.equal(rows.length, 1)
   assert.equal(rows[0]!.status, 'withdrawn')
-  assert.equal((await placement.workspace(campusData.other)).applications.length, 0)
+  assert.equal((await placement.applicationsPage(campusData.other, placement.applicationPage(new Request('https://x/'), ''))).rows.length, 0)
 })
 
 test('rounds enforce progression and rejected candidates cannot receive offers', async () => {
@@ -191,4 +191,43 @@ test('a result and an offer reach the student', async () => {
     ['Placement: through Interview', '/m/placement'],
     ['Placement offer: Graduate Engineer', '/m/placement'],
   ])
+})
+
+// --- paging (DATA-01) --------------------------------------------------------
+
+test('staff see the 1001st application (DATA-01)', async () => {
+  const campusData = await campus()
+  const { institutionId, admin, drive } = campusData
+  await placement.changeDrive(admin, { driveId: drive.id, status: 'open' })
+  await withTenant(institutionId, async (tx) => {
+    await tx.execute(sql`insert into users (id, institution_id, role, email, name)
+      select gen_random_uuid()::text, ${institutionId}, 'student', 'bulk' || g || '@bulk.test', 'Bulk ' || g from generate_series(1, 1005) g`)
+    await tx.execute(sql`insert into placement_applications (institution_id, drive_id, student_id, eligibility)
+      select ${institutionId}, ${drive.id}, u.id, '{"cgpa": null, "backlogs": 0, "checkedAt": "2026-01-01T00:00:00Z"}'::jsonb
+        from users u where u.email like 'bulk%@bulk.test' and u.institution_id = ${institutionId}`)
+  })
+  const ids = new Set<string>()
+  let after: string | null = null
+  let total = 0
+  do {
+    const page = placement.applicationPage(new Request(`https://x/?n=500${after ? `&after=${after}` : ''}`), '')
+    const result = await placement.applicationsPage(admin, page)
+    total = result.total
+    for (const row of result.rows) ids.add(row.id)
+    after = result.next
+  } while (after)
+  assert.equal(ids.size, 1005)
+  assert.equal(total, 1005)
+})
+
+test("a student's application page shows only their own (DATA-01)", async () => {
+  const campusData = await campus()
+  await placement.changeDrive(campusData.admin, { driveId: campusData.drive.id, status: 'open' })
+  await placement.apply(campusData.student, { driveId: campusData.drive.id })
+  await placement.apply(campusData.other, { driveId: campusData.drive.id })
+  const result = await placement.applicationsPage(campusData.student, placement.applicationPage(new Request('https://x/'), ''))
+  assert.equal(result.total, 1)
+  assert.ok(result.rows.every((row) => row.studentId === campusData.student.id))
+  const staff = await placement.applicationsPage(campusData.admin, placement.applicationPage(new Request('https://x/'), ''))
+  assert.equal(staff.total, 2)
 })
