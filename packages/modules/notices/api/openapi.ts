@@ -26,10 +26,14 @@ export const paths = {
       summary: 'The notice board as this reader sees it',
       description:
         'Anybody signed in gets what is published, current and addressed to their role. ' +
-        'Whoever may post also sees drafts.',
+        'Whoever may post also sees drafts. ' +
+        'Paged: q, sort (when or title), dir, n (at most 500), after (the next value of the previous answer).',
       tags: ['notices'],
       responses: {
-        '200': { description: 'OK', content: json(z.array(noticeRowSchema)) },
+        '200': {
+          description: 'OK',
+          content: json(z.object({ rows: z.array(noticeRowSchema), total: z.number().int(), next: z.string().nullable() })),
+        },
         ...gated,
       },
     },

@@ -29,7 +29,12 @@ after(async () => {
   await authDb.delete(institutions).where(eq(institutions.slug, 'notice-paging'))
 })
 
-const seed = (n: number) =>
+const seed = async (n: number) => {
+  await seedRows(n)
+  // A real table is analysed by autovacuum; one filled a moment ago is not, and the planner then sorts every row with its subqueries. The owner pool (authDb in the test environment) may analyse.
+  await authDb.execute(sql`analyze notices`)
+}
+const seedRows = (n: number) =>
   withTenant(inst, (tx) =>
     tx.execute(sql`insert into notices (institution_id, title, body, author_id, published_at)
       select ${inst}, 'N' || g, 'b', ${admin.id}, now() - (g || ' seconds')::interval

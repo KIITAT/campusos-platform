@@ -1,6 +1,20 @@
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm'
 import { audit, enqueueJob, users, withTenant } from '@campusos/db'
-import { ADMIN, readUpload, UploadError, type Role } from '@campusos/module-framework'
+import {
+  ADMIN,
+  cursorColumn,
+  finishPage,
+  keyset,
+  orderKeys,
+  readPage,
+  readUpload,
+  searchAny,
+  UploadError,
+  type Page,
+  type PageRequest,
+  type Role,
+  type SortSpec,
+} from '@campusos/module-framework'
 import { departments } from '@campusos/module-academic/schema'
 import { noticeAttachments, notices, notificationMandatory, notificationOptOuts, notifications } from '../schema'
 import {
@@ -541,74 +555,118 @@ export async function withdrawNotice(actor: Actor, input: unknown) {
   })
 }
 
-/**
- * The board, as this actor sees it. Drafts are visible to whoever may post;
- * everybody else sees what is published, current, and addressed to them.
- */
-export async function board(actor: Actor, includeDrafts = false): Promise<NoticeRow[]> {
-  const tenant = tenantOf(actor)
+/** What the reader may see: drafts for a poster who asks, else published, current and addressed to them. */
+function boardWhere(actor: Actor, includeDrafts: boolean) {
   const poster = canPost(actor.role)
+  return poster && includeDrafts
+    ? undefined
+    : and(
+        sql`${notices.publishedAt} is not null`,
+        sql`(${notices.expiresAt} is null or ${notices.expiresAt} > now())`,
+        poster
+          ? undefined
+          : sql`(cardinality(${notices.audienceRoles}) = 0
+                 or ${actor.role}::role = any(${notices.audienceRoles}))`,
+      )
+}
 
-  return withTenant(tenant, async (tx): Promise<NoticeRow[]> => {
+// -infinity sorts last under desc: an unpinned notice is never above a pinned one.
+const NOTICE_SORTS: SortSpec = {
+  when: {
+    dir: 'desc',
+    keys: [
+      { sql: sql`coalesce(${notices.pinned}, '-infinity'::timestamptz)`, type: 'timestamptz' },
+      { sql: sql`coalesce(${notices.publishedAt}, '-infinity'::timestamptz)`, type: 'timestamptz' },
+      { sql: sql`${notices.createdAt}`, type: 'timestamptz' },
+      { sql: sql`${notices.id}`, type: 'uuid' },
+    ],
+  },
+  title: { dir: 'asc', keys: [{ sql: sql`${notices.title}`, type: 'text' }, { sql: sql`${notices.id}`, type: 'uuid' }] },
+}
+export const noticePage = (req: Request, prefix: string) => readPage(req, prefix, NOTICE_SORTS, 'when')
+
+const noticeColumns = {
+  id: notices.id,
+  title: notices.title,
+  body: notices.body,
+  kind: notices.kind,
+  audienceRoles: notices.audienceRoles,
+  departmentCode: departments.code,
+  pinned: notices.pinned,
+  publishedAt: notices.publishedAt,
+  expiresAt: notices.expiresAt,
+  authorName: users.name,
+  reach: sql<number>`(select count(*) from ${notifications} n where n.notice_id = notices.id)`.mapWith(Number),
+  readCount: sql<number>`(select count(*) from ${notifications} n
+                           where n.notice_id = notices.id and n.read_at is not null)`.mapWith(Number),
+  files: sql<number>`(select count(*) from notice_attachments a where a.notice_id = notices.id)`.mapWith(Number),
+}
+
+const toRow = <R extends { pinned: Date | null; publishedAt: Date | null; expiresAt: Date | null }>(r: R) => ({
+  ...r,
+  pinned: r.pinned !== null,
+  publishedAt: r.publishedAt?.toISOString() ?? null,
+  expiresAt: r.expiresAt?.toISOString() ?? null,
+})
+
+/**
+ * The board, as this actor sees it, one page at a time. Drafts are visible to
+ * whoever may post; everybody else sees what is published, current, and
+ * addressed to them.
+ */
+export async function board(
+  actor: Actor,
+  includeDrafts = false,
+  page: PageRequest = noticePage(new Request('https://x/'), ''),
+): Promise<Page<NoticeRow>> {
+  const tenant = tenantOf(actor)
+  const keys = NOTICE_SORTS[page.sort]!.keys
+  const visible = and(boardWhere(actor, includeDrafts), searchAny(page.q, [sql`${notices.title}`, sql`${notices.body}`]))
+
+  return withTenant(tenant, async (tx): Promise<Page<NoticeRow>> => {
     const rows = await tx
-      .select({
-        id: notices.id,
-        title: notices.title,
-        body: notices.body,
-        kind: notices.kind,
-        audienceRoles: notices.audienceRoles,
-        departmentCode: departments.code,
-        pinned: notices.pinned,
-        publishedAt: notices.publishedAt,
-        expiresAt: notices.expiresAt,
-        authorName: users.name,
-        reach: sql<number>`(select count(*) from ${notifications} n where n.notice_id = notices.id)`.mapWith(
-          Number,
-        ),
-        readCount: sql<number>`(select count(*) from ${notifications} n
-                                 where n.notice_id = notices.id and n.read_at is not null)`.mapWith(
-          Number,
-        ),
-        files: sql<number>`(select count(*) from notice_attachments a where a.notice_id = notices.id)`.mapWith(Number),
-      })
+      .select({ ...noticeColumns, _cursor: cursorColumn(keys) })
       .from(notices)
       .leftJoin(departments, eq(departments.id, notices.departmentId))
       .leftJoin(users, eq(users.id, notices.authorId))
-      .where(
-        poster && includeDrafts
-          ? undefined
-          : and(
-              sql`${notices.publishedAt} is not null`,
-              sql`(${notices.expiresAt} is null or ${notices.expiresAt} > now())`,
-              poster
-                ? undefined
-                : sql`(cardinality(${notices.audienceRoles}) = 0
-                       or ${actor.role}::role = any(${notices.audienceRoles}))`,
-            ),
-      )
-      // `nulls last` explicitly: Postgres sorts NULLs first under DESC, which
-      // would put every unpinned notice above the pinned ones.
-      .orderBy(
-        sql`${notices.pinned} desc nulls last`,
-        sql`${notices.publishedAt} desc nulls last`,
-        desc(notices.createdAt),
-      )
-      .limit(200)
-
-    return rows.map((r) => ({
-      ...r,
-      pinned: r.pinned !== null,
-      publishedAt: r.publishedAt?.toISOString() ?? null,
-      expiresAt: r.expiresAt?.toISOString() ?? null,
-    }))
+      .where(and(visible, keyset(keys, page)))
+      .orderBy(...orderKeys(keys, page.dir))
+      .limit(page.limit + 1)
+    const [counted] = await tx
+      .select({ total: sql<number>`count(*)::int` })
+      .from(notices)
+      .where(visible)
+    return finishPage(rows.map(toRow), page, counted!.total)
   })
 }
 
+/** The drafts of this institution, for the "attach to a draft" picker. */
+export async function draftChoices(actor: Actor): Promise<{ value: string; label: string }[]> {
+  const tenant = tenantOf(actor)
+  // ponytail: unbounded; drafts are few. Page it if an office keeps hundreds.
+  const rows = await withTenant(tenant, (tx) =>
+    tx
+      .select({ value: notices.id, label: notices.title })
+      .from(notices)
+      .where(isNull(notices.publishedAt))
+      .orderBy(desc(notices.createdAt)),
+  )
+  return rows
+}
+
 export async function readNotice(actor: Actor, noticeId: string): Promise<NoticeRow> {
-  const all = await board(actor, canPost(actor.role))
-  const one = all.find((n) => n.id === noticeId)
-  if (!one) throw new NoticeError(404, 'no_such_notice', 'no such notice')
-  return one
+  const tenant = tenantOf(actor)
+  const [row] = await withTenant(tenant, (tx) =>
+    tx
+      .select(noticeColumns)
+      .from(notices)
+      .leftJoin(departments, eq(departments.id, notices.departmentId))
+      .leftJoin(users, eq(users.id, notices.authorId))
+      .where(and(boardWhere(actor, canPost(actor.role)), eq(notices.id, noticeId)))
+      .limit(1),
+  )
+  if (!row) throw new NoticeError(404, 'no_such_notice', 'no such notice')
+  return toRow(row)
 }
 
 // --- the notification centre -----------------------------------------------

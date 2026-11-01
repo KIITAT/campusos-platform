@@ -1,5 +1,5 @@
 import { flag, param, type PluginPage, type PluginSection } from '@campusos/module-framework'
-import { board, inbox, noticeView, preferences, type Actor } from './api'
+import { board, draftChoices, inbox, noticePage, noticeView, preferences, type Actor } from './api'
 
 const POSTERS = [
   'super_admin',
@@ -22,9 +22,11 @@ export const pages: PluginPage[] = [
     async load(actor, req) {
       const a = actor as Actor
       const canPost = (POSTERS as readonly string[]).includes(a.role)
-      const notices = await board(a, canPost && flag(req, 'drafts'))
+      const result = await board(a, canPost && flag(req, 'drafts'), noticePage(req, 'notices'))
+      const notices = result.rows
       return {
         canPost,
+        noticesPage: { total: result.total, next: result.next },
         notices: notices.map((n) => ({
           ...n,
           when: n.publishedAt ?? '',
@@ -34,9 +36,7 @@ export const pages: PluginPage[] = [
           seen: `${n.readCount} of ${n.reach}`,
           filesText: n.files ? String(n.files) : '',
         })),
-        drafts: notices
-          .filter((n) => !n.publishedAt)
-          .map((n) => ({ value: n.id, label: n.title })),
+        drafts: canPost ? await draftChoices(a) : [],
         all: notices.map((n) => ({ value: n.id, label: n.title })),
       }
     },
@@ -44,6 +44,7 @@ export const pages: PluginPage[] = [
       {
         kind: 'table',
         rows: 'notices',
+        paging: { data: 'noticesPage', sorts: ['title', 'when'] },
         empty: 'Nothing on the board.',
         columns: [
           { key: 'title', label: 'Notice', href: '/m/notices/notice?id={id}' },
