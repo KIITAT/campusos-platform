@@ -83,6 +83,7 @@ export const DEFAULT_CHART: readonly ChartRow[] = [
   { code: '5500', name: 'Depreciation', type: 'expense', purpose: 'depreciation_expense', subtype: 'depreciation', parent: '5' },
   { code: '5510', name: 'Loss or gain on disposal of assets', type: 'expense', purpose: 'asset_disposal', subtype: 'expense', parent: '5', cashFlow: 'investing' },
   { code: '5600', name: 'Bank charges', type: 'expense', purpose: 'bank_charges', subtype: 'expense', parent: '5' },
+  { code: '5610', name: 'Interest and fees on late TDS', type: 'expense', purpose: 'tds_interest', subtype: 'expense', parent: '5' },
   { code: '5900', name: 'Rounding off', type: 'expense', purpose: 'round_off', subtype: 'round_off', parent: '5' },
 ]
 

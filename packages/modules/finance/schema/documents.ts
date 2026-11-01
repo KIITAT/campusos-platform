@@ -135,6 +135,8 @@ export const invoices = pgTable(
     totalPaise: paise('total_paise').notNull().default(0),
     tdsSectionId: uuid('tds_section_id').references(() => tdsSections.id, { onDelete: 'restrict' }),
     tdsPaise: paise('tds_paise').notNull().default(0),
+    /** TDS already deducted on an advance to this party that this bill absorbed (P1-05b). */
+    tdsAdvancePaise: paise('tds_advance_paise').notNull().default(0),
     costCenter: text('cost_center'),
     fundId: uuid('fund_id').references(() => funds.id, { onDelete: 'restrict' }),
     memo: text(),
@@ -158,6 +160,7 @@ export const invoices = pgTable(
     index('finance_invoices_party').on(t.institutionId, t.partyId),
     index('finance_invoices_date').on(t.institutionId, t.postingDate),
     check('finance_invoices_kind', sql`kind in ('sales', 'purchase')`),
+    check('finance_invoices_tds_advance', sql`tds_advance_paise >= 0`),
     check('finance_invoices_return', sql`is_return = (return_against is not null)`),
     check('finance_invoices_numbered', sql`docstatus = 'draft' or number is not null`),
     check('finance_invoices_due', sql`due_date is null or due_date >= posting_date`),
