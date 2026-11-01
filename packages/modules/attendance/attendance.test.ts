@@ -10,6 +10,7 @@ import {
   currentQrFor,
   encodeQr,
   grantExcuse,
+  revokeExcuse,
   listPendingDevices,
   attendanceSummary,
   myAttendance,
@@ -147,7 +148,6 @@ beforeEach(async () => {
     await tx.delete(sessions)
     await tx.delete(devices)
     await tx.execute(sql`delete from notifications`)
-    await tx.execute(sql`delete from attendance_excuses`)
     since = new Date(Math.floor(Number((await tx.execute<{ ms: string }>(sql`select extract(epoch from clock_timestamp()) * 1000 as ms`)).rows[0]!.ms)))
   })
   // s1 has an approved device by default; s2 has none.
@@ -632,9 +632,13 @@ test('closing a session tells each absent student and their guardian', async () 
 
 test('an excused absentee is not told they were absent', async () => {
   const day = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10)
-  await grantExcuse(admin(), { studentId: ids.s2, fromOn: day, toOn: day, kind: 'medical', reason: 'fever, doctor’s note seen' })
-  await holdClass()
-  assert.equal((await inboxOf(ids.s2)).filter((m) => /^Absent from/.test(m.title)).length, 0)
+  const x = await grantExcuse(admin(), { studentId: ids.s2, fromOn: day, toOn: day, kind: 'medical', reason: 'fever, doctor’s note seen' })
+  try {
+    await holdClass()
+    assert.equal((await inboxOf(ids.s2)).filter((m) => /^Absent from/.test(m.title)).length, 0)
+  } finally {
+    await revokeExcuse(admin(), { excuseId: x.id, reason: 'test is over' })
+  }
 })
 
 test('falling below the minimum tells the student once', async () => {
