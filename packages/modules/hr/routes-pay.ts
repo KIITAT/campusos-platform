@@ -19,6 +19,8 @@ import {
   listWithheld,
   payGratuity,
   releasePayslip,
+  statutoryFile,
+  type FileKind,
   setPayrollSettings,
   setPtSlabs,
   setStatutoryIdentity,
@@ -30,6 +32,19 @@ const post = (path: string, fn: (a: Actor, body: unknown) => Promise<unknown>): 
   method: 'POST',
   path,
   handler: async (a, req) => fn(a as Actor, await jsonBody(req)),
+})
+
+/** A file built from stored payslips, offered as a download. */
+const fileRoute = (path: string, kind: FileKind): PluginRoute => ({
+  method: 'GET',
+  path,
+  raw: true,
+  handler: async (a, req) => {
+    const f = await statutoryFile(a as Actor, kind, requiredParam(req, 'period'))
+    return new Response(f.content, {
+      headers: { 'content-type': f.type, 'content-disposition': `attachment; filename="${f.name}"`, 'cache-control': 'no-store' },
+    })
+  },
 })
 
 /** What feeds a payslip: structures, tax, gratuity, withholding, runs, the part-month basis. */
@@ -55,6 +70,9 @@ export const payRoutes: PluginRoute[] = [
   post('/pay/withhold', withholdSalary),
   post('/pay/withhold/lift', liftWithholding),
   post('/pay/withheld/release', releasePayslip),
+  fileRoute('/payroll/ecr', 'ecr'),
+  fileRoute('/payroll/esi', 'esi'),
+  fileRoute('/payroll/bank-advice', 'bank-advice'),
   { method: 'GET', path: '/payroll/runs', handler: (a) => listRuns(a as Actor) },
   { method: 'GET', path: '/payroll/settings', handler: (a) => getPayrollSettings(a as Actor) },
   post('/payroll/settings', setPayrollSettings),

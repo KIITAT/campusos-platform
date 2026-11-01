@@ -56,7 +56,7 @@ async function april() {
   const e = await hire(c, 'C-1', 'Esi Person')
   await turnOn(c)
   await identity(c, a.id, { uan: '100200300401', bankAccount: '123456789012', bankIfsc: 'HDFC0001234' })
-  await identity(c, b.id, { uan: '100200300402', bankAccount: '223456789012', bankIfsc: 'HDFC0001234' })
+  await identity(c, b.id, { uan: '100200300402', esiExempt: true, bankAccount: '223456789012', bankIfsc: 'HDFC0001234' })
   await identity(c, e.id, { pfMember: false, esiNumber: '1234567890', bankAccount: '323456789012', bankIfsc: 'HDFC0001234' })
   await pay(c, a.id, 'basic', '40000')
   await pay(c, a.id, 'hra', '16000', 'excluded')
