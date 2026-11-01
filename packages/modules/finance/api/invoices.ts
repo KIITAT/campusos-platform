@@ -56,6 +56,7 @@ import {
 import { computeTaxes, isIntraState, tdsFor, templatesWithin } from './tax'
 import { checkOtherPerson } from './sod'
 import { inFiledReturn } from './gst-filings'
+import { inChallan } from './tds-returns'
 import { fiscalYearOf, localToday, settingsWithin } from './years'
 
 /**
@@ -1056,6 +1057,9 @@ export async function cancelInvoice(actor: Actor, input: unknown) {
       const [buyer] = inv.kind === 'sales' ? await tx.select().from(parties).where(eq(parties.id, inv.partyId)) : []
       if (inv.kind === 'sales' && (await inFiledReturn(tx, inv.postingDate, !!buyer?.gstin && buyer.gstCategory !== 'overseas'))) {
         throw new FinanceError(409, 'gst_return_filed', 'this invoice is in a filed GSTR-1; raise a credit note instead')
+      }
+      if (inv.kind === 'purchase' && (await inChallan(tx, { invoiceId: inv.id }))) {
+        throw new FinanceError(409, 'tds_deposited', 'the tax deducted on this document has been deposited; void the challan first or raise a debit note')
       }
       const voucherType = voucherTypeOf(inv.kind)
 

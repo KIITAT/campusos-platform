@@ -28,6 +28,7 @@ import { parseDecimal, toBase } from './numbers'
 import { accountFor, postWithin, reverseWithin } from './operations'
 import { partyWithin, unapplyAdvances } from './parties'
 import { approvalsFor, assertApproved, minorUnitsOf, nextNumber, rateOn } from './setup'
+import { inChallan } from './tds-returns'
 import { checkOtherPerson } from './sod'
 import { localToday, settingsWithin } from './years'
 
@@ -112,7 +113,7 @@ function amountOf(v: string | undefined, what: string, places = 2): number {
   return n
 }
 
-async function bankAccountWithin(tx: Tx, accountId: string, what: string) {
+export async function bankAccountWithin(tx: Tx, accountId: string, what: string) {
   const [a] = await tx.select().from(accounts).where(eq(accounts.id, accountId))
   if (!a) throw new FinanceError(404, 'no_such_account', `no such account for ${what}`)
   if (a.isGroup) throw new FinanceError(400, 'group_account', `${a.name} is a group; choose one of its accounts`)
@@ -436,6 +437,9 @@ export async function cancelPayment(actor: Actor, input: unknown) {
       const [p] = await tx.select().from(payments).where(eq(payments.id, data.paymentId)).for('update')
       if (!p) throw new FinanceError(404, 'no_such_payment', 'no such payment')
       if (p.docstatus !== 'submitted') throw new FinanceError(409, 'not_submitted', 'only a submitted payment is cancelled')
+      if (p.kind === 'pay' && (await inChallan(tx, { paymentId: p.id }))) {
+        throw new FinanceError(409, 'tds_deposited', 'the tax deducted on this document has been deposited; void the challan first or raise a debit note')
+      }
       // What its advance was set against is opened again first.
       await unapplyAdvances(tx, tenant, actor.id, p.id)
       const own = await tx

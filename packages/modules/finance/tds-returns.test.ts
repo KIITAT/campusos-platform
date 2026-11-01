@@ -244,14 +244,14 @@ const balance = async (b: Books, code: string) => (await trialBalance(b.admin)).
 test('a challan deposits the month and ties every deduction', async () => {
   const b = await books()
   const f = await april(b)
-  assert.equal(await balance(b, '2410'), -220_000, 'the tax deducted in April is payable')
+  assert.equal(await balance(b, '2410'), 220_000, 'the tax deducted in April is payable')
   const c = (await recordChallan(b.admin, { ...CHALLAN, accountId: f.bank })) as { id: string; tdsPaise: number; links: number }
   assert.equal(c.links, 4)
   assert.equal(c.tdsPaise, 220_000)
   assert.equal(await linkCount(b, c.id), 4)
   assert.equal(await balance(b, '2410'), 0)
   const tb = await trialBalance(b.admin)
-  assert.equal(tb.rows.reduce((s, r) => s + r.balancePaise, 0), 0, 'the books balance')
+  assert.equal(tb.differencePaise, 0, 'the books balance')
 })
 
 test('nothing left to deposit, and the same challan twice, are refused', async () => {
@@ -281,7 +281,7 @@ test('a deposited bill cannot be cancelled until the challan is voided', async (
   await voidChallan(b.admin, { challanId: c.id, reason: 'wrong serial' })
   await refused(voidChallan(b.admin, { challanId: c.id, reason: 'wrong serial' }), 'already_voided', 409)
   assert.equal(await linkCount(b, c.id), 0)
-  assert.equal(await balance(b, '2410'), -220_000, 'the deposit is reversed')
+  assert.equal(await balance(b, '2410'), 220_000, 'the deposit is reversed')
   await cancelInvoice(b.admin, { invoiceId: f.bills[0]!, reason: 'wrong supplier' })
   const voided = await withTenant(b.id, (tx) => tx.select().from(auditLog).where(eq(auditLog.action, 'tds.challan_voided')))
   assert.equal(voided.length, 1)
