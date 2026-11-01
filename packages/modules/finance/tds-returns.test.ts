@@ -221,6 +221,22 @@ test('an advance and a bill submitted together deduct the tax once', async () =>
   assert.equal(total, 100_000)
 })
 
+test("an advance's tax is counted as deducted when the annual threshold is crossed (review finding 1)", async () => {
+  const b = await books()
+  const section = (await createTdsSection(b.admin, { code: 'ANNX', name: 'Annual only', ratePercent: '10', rateNoPanPercent: '20', thresholdSingle: '0', thresholdAnnual: '50000' })) as { id: string }
+  const payee = (await createParty(b.clerk, { code: `Q${++n}`, name: 'Consultant', isSupplier: true, stateCode: '29', pan: 'ABCDE1234F', tdsSectionId: section.id })).id
+  const cash = await withTenant(b.id, (tx) => accountFor(tx, b.id, 'cash'))
+  const pay = await advance(b, { payee, cash, section: section.id })
+  await submitPayment(b.admin, { paymentId: pay.id })
+  const big = (await saveInvoice(b.clerk, { kind: 'purchase', partyId: payee, postingDate: '2026-04-20', billNo: 'Y-1', lines: [{ description: 'Advice', qty: '1', rate: '60000' }] })) as { id: string }
+  await submitInvoice(b.admin, { invoiceId: big.id })
+  assert.deepEqual(await tdsOf(b, big.id), { tds: 500_000, adv: 100_000 })
+  const next = await bill(b, payee, 'Y-2', '2026-04-25')
+  await submitInvoice(b.admin, { invoiceId: next })
+  // 10% of 70,000 is 7,000 in all: 1,000 on the advance, 5,000 on the first bill, 1,000 on this one.
+  assert.deepEqual(await tdsOf(b, next), { tds: 100_000, adv: 0 })
+})
+
 // --- the challan register ----------------------------------------------------
 
 const CHALLAN = { form: '26Q', month: '2026-04', depositedOn: '2026-05-06', bsrCode: '0510308', challanSerial: '00012' }
