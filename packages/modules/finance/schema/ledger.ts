@@ -333,7 +333,7 @@ export const gstFilings = pgTable(
   },
   (t) => [
     uniqueIndex('finance_gst_filings_period_start').on(t.institutionId, t.returnType, t.periodFrom),
-    check('finance_gst_filings_type', sql`return_type in ('gstr1', 'gstr3b')`),
+    check('finance_gst_filings_type', sql`return_type in ('gstr1', 'gstr3b', 'iff', 'cmp08')`),
     check('finance_gst_filings_period', sql`period_to >= period_from`),
     tenantPolicy('finance_gst_filings'),
   ],
