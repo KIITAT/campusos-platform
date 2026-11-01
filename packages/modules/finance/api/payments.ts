@@ -30,7 +30,7 @@ import { partyWithin, unapplyAdvances } from './parties'
 import { approvalsFor, assertApproved, minorUnitsOf, nextNumber, rateOn } from './setup'
 import { inChallan } from './tds-returns'
 import { checkOtherPerson } from './sod'
-import { localToday, settingsWithin } from './years'
+import { fiscalYearOf, localToday, settingsWithin } from './years'
 
 /**
  * Money in, money out, and money moved between the institution's own
@@ -439,6 +439,22 @@ export async function cancelPayment(actor: Actor, input: unknown) {
       if (p.docstatus !== 'submitted') throw new FinanceError(409, 'not_submitted', 'only a submitted payment is cancelled')
       if (p.kind === 'pay' && (await inChallan(tx, { paymentId: p.id }))) {
         throw new FinanceError(409, 'tds_deposited', 'the tax deducted on this document has been deposited; void the challan first or raise a debit note')
+      }
+      // A bill that took credit for the tax deducted here would be left with no deduction at all (P1-05b review finding 2). The supplier lock is the one billing takes.
+      if (p.kind === 'pay' && p.tdsPaise > 0 && p.tdsSectionId && p.partyId) {
+        await tx.select({ id: parties.id }).from(parties).where(eq(parties.id, p.partyId)).for('update')
+        const fy = await fiscalYearOf(tx, tenant, p.postingDate)
+        const [row] = await tx.execute(sql`
+          select
+            (select coalesce(sum(tds_advance_paise), 0) from finance_invoices
+              where party_id = ${p.partyId} and kind = 'purchase' and is_return = false and docstatus = 'submitted'
+                and tds_section_id = ${p.tdsSectionId} and posting_date between ${fy.startsOn} and ${fy.endsOn})::bigint as absorbed,
+            (select coalesce(sum(tds_paise), 0) from finance_payments
+              where party_id = ${p.partyId} and kind = 'pay' and docstatus = 'submitted' and id <> ${p.id}
+                and tds_section_id = ${p.tdsSectionId} and posting_date between ${fy.startsOn} and ${fy.endsOn})::bigint as remaining`).then((r) => r.rows as { absorbed: string; remaining: string }[])
+        if (Number(row!.absorbed) > Number(row!.remaining)) {
+          throw new FinanceError(409, 'tds_absorbed', 'a bill has taken credit for the tax deducted on this payment; cancel that bill first')
+        }
       }
       // What its advance was set against is opened again first.
       await unapplyAdvances(tx, tenant, actor.id, p.id)
