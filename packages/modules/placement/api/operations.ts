@@ -1,4 +1,5 @@
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { notify } from '@campusos/module-notices/api'
 import { users, withTenant } from '@campusos/db'
 import { gpaPolicyVersions } from '@campusos/module-academic/api'
 import { gradePointAverage } from '@campusos/module-academic/gpa'
@@ -174,7 +175,7 @@ export async function recordResult(actor: Actor, input: unknown) {
     const data = schemas.resultSchema.parse(input)
     const [round] = await tx.select().from(rounds).where(eq(rounds.id, data.roundId))
     if (!round) throw new DomainError(404, 'no_such_round', 'No matching selection round.')
-    await driveFor(tx, round.driveId)
+    const drive = await driveFor(tx, round.driveId)
     const application = await applicationFor(tx, data.applicationId)
     if (application.driveId !== round.driveId) throw new DomainError(409, 'wrong_round', 'This round belongs to another drive.')
     const existing = await tx.select().from(results).where(eq(results.applicationId, application.id))
@@ -189,6 +190,7 @@ export async function recordResult(actor: Actor, input: unknown) {
     const [result] = await tx.insert(results).values({ institutionId, ...data }).returning()
     await tx.update(applications).set({ status: data.outcome === 'passed' ? 'shortlisted' : 'rejected' }).where(eq(applications.id, application.id))
     await log(tx, actor, 'round.result', application.id, data.note)
+    await notify(tx, institutionId, { userIds: [application.studentId], moduleId: 'placement', title: data.outcome === 'passed' ? `Placement: through ${round.name}` : `Placement: not selected in ${round.name}`, body: `${drive.title}.`, link: '/m/placement' })
     return result!
   })
 }
@@ -213,6 +215,7 @@ export async function issueOffer(actor: Actor, input: unknown) {
     const [offer] = await tx.insert(offers).values({ institutionId, applicationId: application.id, studentId: application.studentId, annualPaise: String(data.annualPaise) }).returning()
     await tx.update(applications).set({ status: 'offered' }).where(eq(applications.id, application.id))
     await log(tx, actor, 'offer.issued', application.id, 'All selection rounds passed; offer issued')
+    await notify(tx, institutionId, { userIds: [application.studentId], moduleId: 'placement', title: `Placement offer: ${drive.title}`, body: 'Accept or decline it on the placement page.', link: '/m/placement' })
     return offer!
   })
 }

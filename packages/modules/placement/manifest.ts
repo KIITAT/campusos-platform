@@ -4,7 +4,7 @@ import { ADMIN, MEMBERS } from './api/core'
 export const manifest: ModuleManifest = {
   id: 'placement', name: 'Placement', version: '0.5.0',
   description: 'Employer drives, academic eligibility, student applications, selection rounds and audited offers.',
-  alwaysEnabled: false, dependsOn: ['academic'], pricing: { model: 'not_priced_yet', priceINR: null },
+  alwaysEnabled: false, dependsOn: ['academic', 'notices'], pricing: { model: 'not_priced_yet', priceINR: null },
   rolesWithAccess: MEMBERS, routeRoles: true, apiBasePath: '/api/v1/modules/placement',
   navEntries: [
     { label: 'Placements', href: '/m/placement', roles: MEMBERS },
