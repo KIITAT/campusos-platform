@@ -1,3 +1,4 @@
+/* global __ENV, __VU, __ITER -- k6 runtime globals */
 // Read-only load profile (P1-10a, decisions 339 and 340). Run against `next start`
 // on the host, with the load database seeded by scripts/load/seed.ts at LOAD_SCALE=full.
 import http from 'k6/http'
