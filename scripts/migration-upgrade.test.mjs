@@ -67,6 +67,7 @@ const NEW_FILES = new Set([
   'notices/0003_retention.sql',
   'admissions/0002_retention.sql',
   'hr/0016_retention.sql',
+  'hr/0017_documents_remittance.sql',
   'attendance/0004_retention.sql',
   'notices/0004_preferences.sql',
   'parents/0004_guardians_of.sql',

@@ -1944,6 +1944,77 @@ export const taxPreviousEmployment = pgTable(
   ],
 )
 
+/**
+ * Money actually paid to a statutory authority for one head and one month
+ * (P1-06c). Nothing is edited or deleted: a mistake is voided with a reason and
+ * entered again. The guard trigger lives in migration 0017.
+ */
+export const remittances = pgTable(
+  'hr_remittances',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    head: text().notNull(),
+    period: date().notNull(),
+    state: text(),
+    amountPaise: paise('amount_paise').notNull(),
+    paidOn: date('paid_on').notNull(),
+    paidFrom: text('paid_from').notNull(),
+    challanRef: text('challan_ref').notNull(),
+    bsrCode: text('bsr_code'),
+    challanSerial: text('challan_serial'),
+    note: text(),
+    remittedBy: text('remitted_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+    voidedAt: timestamp('voided_at', { withTimezone: true }),
+    voidedBy: text('voided_by').references(() => users.id, { onDelete: 'set null' }),
+    voidReason: text('void_reason'),
+  },
+  (t) => [
+    index('hr_remittances_period').on(t.institutionId, t.period, t.head),
+    uniqueIndex('hr_remittances_challan_once')
+      .on(t.institutionId, t.head, t.challanRef)
+      .where(sql`voided_at is null`),
+    check('hr_remittances_head', sql`head in ('pf', 'esi', 'pt', 'tds')`),
+    check('hr_remittances_period', sql`extract(day from period) = 1`),
+    check('hr_remittances_amount', sql`amount_paise > 0`),
+    check('hr_remittances_route', sql`paid_from in ('bank', 'cash')`),
+    check('hr_remittances_state_rule', sql`(head = 'pt') = (state is not null)`),
+    check('hr_remittances_tds_challan', sql`head <> 'tds' or (coalesce(bsr_code ~ '^[0-9]{7}$', false) and coalesce(challan_serial ~ '^[0-9]{5}$', false))`),
+    check('hr_remittances_challan_ref', sql`length(trim(challan_ref)) between 1 and 40`),
+    check('hr_remittances_void', sql`(voided_at is null and void_reason is null and voided_by is null) or (voided_at is not null and void_reason is not null)`),
+    tenantPolicy('hr_remittances'),
+  ],
+)
+
+/** A reissued payslip, kept as JSON (P1-06c). Append-only (trigger in migration 0017). */
+export const payslipReissues = pgTable(
+  'hr_payslip_reissues',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    staffId: uuid('staff_id')
+      .notNull()
+      .references(() => staff.id, { onDelete: 'no action' }),
+    period: date().notNull(),
+    originalId: uuid('original_id').notNull(),
+    snapshot: jsonb().notNull(),
+    reason: text().notNull(),
+    reversalEntryId: uuid('reversal_entry_id'),
+    replacementId: uuid('replacement_id').references(() => payslips.id, { onDelete: 'set null' }),
+    reissuedBy: text('reissued_by').references(() => users.id, { onDelete: 'set null' }),
+    reissuedAt: timestamp('reissued_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('hr_payslip_reissues_staff').on(t.staffId, t.period),
+    check('hr_payslip_reissues_period', sql`extract(day from period) = 1`),
+    check('hr_payslip_reissues_reason', sql`length(trim(reason)) >= 5`),
+    tenantPolicy('hr_payslip_reissues'),
+  ],
+)
+
+export type Remittance = typeof remittances.$inferSelect
+export type PayslipReissue = typeof payslipReissues.$inferSelect
 export type SalaryStructure = typeof salaryStructures.$inferSelect
 export type SalaryStructureLine = typeof salaryStructureLines.$inferSelect
 export type SalaryAssignment = typeof salaryAssignments.$inferSelect
