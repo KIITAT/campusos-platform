@@ -4,12 +4,14 @@ import {
   attachmentFile,
   board,
   createNotice,
-  emailNotice,
   inbox,
   markRead,
   noticeView,
+  preferences,
   publishNotice,
   removeAttachment,
+  setMandatory,
+  setPreference,
   withdrawNotice,
   type Actor,
 } from './api'
@@ -36,11 +38,6 @@ export const routes: PluginRoute[] = [
     handler: async (actor, req) => {
       await withdrawNotice(actor as Actor, await jsonBody(req))
     },
-  },
-  {
-    method: 'POST',
-    path: '/board/email',
-    handler: (actor, req) => emailNotice(actor as Actor, requiredParam(req, 'noticeId')),
   },
 
   {
@@ -89,5 +86,20 @@ export const routes: PluginRoute[] = [
     method: 'POST',
     path: '/inbox',
     handler: async (actor, req) => markRead(actor as Actor, await jsonBody(req)),
+  },
+  {
+    method: 'GET',
+    path: '/preferences',
+    handler: (actor) => preferences(actor as Actor),
+  },
+  {
+    method: 'POST',
+    path: '/preferences',
+    handler: async (actor, req) => setPreference(actor as Actor, await jsonBody(req)),
+  },
+  {
+    method: 'POST',
+    path: '/preferences/mandatory',
+    handler: async (actor, req) => setMandatory(actor as Actor, await jsonBody(req)),
   },
 ]

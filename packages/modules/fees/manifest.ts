@@ -5,7 +5,7 @@ export const manifest: ModuleManifest = {
   name: 'Fees & Finance',
   description:
     'Fee structures per programme and term, scholarships and waivers, payment recording with manual reconciliation, receipts and defaulter reporting.',
-  version: '0.12.0',
+  version: '0.13.0',
   alwaysEnabled: false,
   /**
    * finance, because every charge, payment, waiver and refund posts a balanced
@@ -13,7 +13,7 @@ export const manifest: ModuleManifest = {
    * it was never double entry; two sets of books that can disagree are worse
    * than one.
    */
-  dependsOn: ['academic', 'finance'],
+  dependsOn: ['academic', 'finance', 'notices'],
   /**
    * enrollment, softly: scholarships and charges work without it, and what
    * cannot work without it is anything keyed to a course being dropped on a

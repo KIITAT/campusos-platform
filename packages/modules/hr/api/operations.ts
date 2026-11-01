@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm'
+import { notify } from '@campusos/module-notices/api'
 import { audit, withTenant } from '@campusos/db'
 import {
   HrError,
@@ -275,6 +276,15 @@ export async function decideLeave(actor: Actor, input: unknown) {
       })
       .where(eq(leaveRequests.id, d.requestId))
       .returning()
+    if (person?.userId) {
+      await notify(tx, tenant, {
+        userIds: [person.userId],
+        moduleId: 'hr',
+        title: d.approve ? 'Leave approved' : 'Leave refused',
+        body: `${row.fromOn} to ${row.toOn}${d.note ? `: ${d.note}` : '.'}`,
+        link: '/m/hr/me',
+      })
+    }
     return updated!
   })
 }
@@ -462,6 +472,16 @@ function reasonOf(e: unknown): string {
 export async function generatePayroll(actor: Actor, input: unknown): Promise<PayrollRun> {
   const tenant = requireHr(actor)
   const d = generatePayrollSchema.parse(input)
+  return withTenant(tenant, (tx) => generatePayrollIn(tx, actor, tenant, d))
+}
+
+type GeneratePayrollInput = ReturnType<typeof generatePayrollSchema.parse>
+
+/**
+ * The body of a run, inside the caller's transaction (P1-06c): a reissue must
+ * delete a payslip and make its replacement atomically.
+ */
+export async function generatePayrollIn(tx: Tx, actor: Actor, tenant: string, d: GeneratePayrollInput): Promise<PayrollRun> {
   const period = d.period
   const monthEnd = new Date(
     Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)), 0),
@@ -469,7 +489,7 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
     .toISOString()
     .slice(0, 10)
 
-  return withTenant(tenant, async (tx): Promise<PayrollRun> => {
+  {
     // One run or payment per month at a time (ACC-25).
     await lockPayrollPeriod(tx, tenant, period)
     // And one run per ESI contribution period, so the months of a period decide coverage one after another (P1-06a review).
@@ -748,7 +768,7 @@ export async function generatePayroll(actor: Actor, input: unknown): Promise<Pay
       failed,
       arrears,
     }
-  })
+  }
 }
 
 /**

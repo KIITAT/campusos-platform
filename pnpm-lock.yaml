@@ -254,6 +254,9 @@ importers:
       '@campusos/module-framework':
         specifier: workspace:*
         version: link:../../module-framework
+      '@campusos/module-notices':
+        specifier: workspace:*
+        version: link:../notices
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@types/pg@8.23.1)(pg@8.23.0)
@@ -378,6 +381,9 @@ importers:
       '@campusos/module-framework':
         specifier: workspace:*
         version: link:../../module-framework
+      '@campusos/module-notices':
+        specifier: workspace:*
+        version: link:../notices
       '@campusos/money':
         specifier: workspace:*
         version: link:../../money
@@ -446,6 +452,9 @@ importers:
       '@campusos/module-framework':
         specifier: workspace:*
         version: link:../../module-framework
+      '@campusos/module-notices':
+        specifier: workspace:*
+        version: link:../notices
       '@campusos/money':
         specifier: workspace:*
         version: link:../../money
@@ -564,12 +573,18 @@ importers:
       '@campusos/module-framework':
         specifier: workspace:*
         version: link:../../module-framework
+      '@campusos/module-notices':
+        specifier: workspace:*
+        version: link:../notices
       '@campusos/money':
         specifier: workspace:*
         version: link:../../money
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@types/pg@8.23.1)(pg@8.23.0)
+      pdf-lib:
+        specifier: ^1.17.1
+        version: 1.17.1
       react:
         specifier: ^19.2.8
         version: 19.3.0
@@ -644,6 +659,9 @@ importers:
       '@campusos/module-hostel':
         specifier: workspace:*
         version: link:../hostel
+      '@campusos/module-notices':
+        specifier: workspace:*
+        version: link:../notices
       '@campusos/money':
         specifier: workspace:*
         version: link:../../money
@@ -752,6 +770,9 @@ importers:
       '@campusos/module-framework':
         specifier: workspace:*
         version: link:../../module-framework
+      '@campusos/module-notices':
+        specifier: workspace:*
+        version: link:../notices
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@types/pg@8.23.1)(pg@8.23.0)

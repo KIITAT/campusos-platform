@@ -4,8 +4,8 @@ export const manifest: ModuleManifest = {
   id: 'notices',
   name: 'Communication & Notices',
   description:
-    'Notice board and circulars scoped by role and department, plus the in-app notification centre every other module writes into. Email delivery when a provider is configured; SMS and WhatsApp are a separately priced channel module later.',
-  version: '0.7.0',
+    'Notice board and circulars scoped by role and department, plus the in-app notification centre every other module writes into, with per-person preferences and institution-mandatory categories.',
+  version: '0.8.0',
   // An institution with no way to tell its students anything is not a working
   // install, so this is part of the base product rather than an upsell.
   alwaysEnabled: true,
@@ -27,6 +27,7 @@ export const manifest: ModuleManifest = {
   navEntries: [
     { label: 'Notices', href: '/m/notices', roles: ['super_admin', 'institution_admin', 'hod', 'faculty', 'accounts_staff', 'library_staff', 'hostel_staff', 'student', 'parent'] },
     { label: 'Inbox', href: '/m/notices/inbox', roles: ['super_admin', 'institution_admin', 'hod', 'faculty', 'accounts_staff', 'library_staff', 'hostel_staff', 'student', 'parent'] },
+    { label: 'Notification settings', href: '/m/notices/preferences', roles: ['super_admin', 'institution_admin', 'hod', 'faculty', 'accounts_staff', 'library_staff', 'hostel_staff', 'student', 'parent'] },
   ],
 
   routeRoles: true,

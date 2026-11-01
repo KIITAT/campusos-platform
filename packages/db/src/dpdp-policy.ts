@@ -212,11 +212,15 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   hr_payroll_arrears: 'export',
   hr_pay_components: 'export',
   hr_payslips: 'export',
+  hr_payslip_reissues: 'export',
+  hr_remittances: 'export',
   hr_salary_payments: 'export',
   hr_salary_assignments: 'export',
   hr_salary_withholdings: 'export',
   hr_separations: 'export',
   hr_tax_elections: 'export',
+  hr_tax_declarations: 'export',
+  hr_tax_previous_employment: 'export',
   hr_shift_assignments: 'export',
   hr_shift_requests: 'export',
   hr_staff: 'export',
@@ -233,6 +237,7 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   notice_attachments: 'export',
   notices: 'export',
   notifications: 'export',
+  notification_opt_outs: 'export',
 
   // parents
   parent_guardian_invites: 'export',

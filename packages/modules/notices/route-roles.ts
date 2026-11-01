@@ -1,4 +1,4 @@
-import { MEMBERS, STAFF, type Role } from '@campusos/module-framework'
+import { ADMIN, MEMBERS, STAFF, type Role } from '@campusos/module-framework'
 
 /**
  * Who may call each route (decision 192). The host refuses every other role
@@ -11,11 +11,13 @@ export const routeRoles: Record<string, readonly Role[]> = {
   'POST /board': STAFF,
   'POST /board/publish': STAFF,
   'POST /board/withdraw': STAFF,
-  'POST /board/email': STAFF,
   'GET /board/notice': MEMBERS,
   'POST /board/attachments': STAFF,
   'POST /board/attachments/remove': STAFF,
   'GET /board/attachment': MEMBERS,
   'GET /inbox': MEMBERS,
   'POST /inbox': MEMBERS,
+  'GET /preferences': MEMBERS,
+  'POST /preferences': MEMBERS,
+  'POST /preferences/mandatory': ADMIN,
 }

@@ -1,5 +1,6 @@
 import { and, eq, isNull, sql } from 'drizzle-orm'
 import { audit, users, withTenant } from '@campusos/db'
+import { notify } from '@campusos/module-notices/api'
 import { assertCanAccessStudent, viewsOnBehalf, type Role, type ViewerScope } from '@campusos/module-framework'
 import {
   courses,
@@ -171,7 +172,57 @@ export async function closeSession(actor: Actor, input: unknown) {
       .where(and(eq(sessions.id, sessionId), isNull(sessions.closedAt)))
       .returning({ id: sessions.id })
     if (!row) throw new AttendanceError(404, 'no_open_session', 'no open session with that id')
+    await tellAbsentees(tx, tenant, sessionId)
   })
+}
+
+/**
+ * Tell each student who did not scan, and their guardians, that they were
+ * absent, and once more when this absence takes them below the minimum. Runs
+ * in the close, so the alert and the close stand or fall together. Not sent
+ * for an offline-held session (the scans sync after it) or for a day an
+ * excuse covers; a later override does not withdraw an alert already sent.
+ */
+async function tellAbsentees(tx: Tx, tenant: string, sessionId: string) {
+  const rules = await rulesOf(tx, tenant)
+  const rows = (await tx.execute(sql`
+    select u.id as student_id, coalesce(u.name, u.email) as name, c.code, c.title, cs.opened_at,
+           (select count(*)::int from attendance_sessions s where s.offering_id = o.id) as held,
+           (select count(*)::int from attendance_records r join attendance_sessions s on s.id = r.session_id
+             where s.offering_id = o.id and r.student_id = u.id) as present,
+           (select count(*)::int from attendance_sessions s
+             where s.offering_id = o.id
+               and not exists (select 1 from attendance_records r where r.session_id = s.id and r.student_id = u.id)
+               and exists (select 1 from attendance_excuses e where e.student_id = u.id and e.revoked_at is null
+                             and (e.offering_id is null or e.offering_id = o.id)
+                             and (s.opened_at at time zone ${rules.timeZone})::date between e.from_on and e.to_on)) as excused,
+           exists (select 1 from attendance_excuses e where e.student_id = u.id and e.revoked_at is null
+                     and (e.offering_id is null or e.offering_id = o.id)
+                     and (cs.opened_at at time zone ${rules.timeZone})::date between e.from_on and e.to_on) as excused_now
+      from attendance_sessions cs
+      join academic_offerings o on o.id = cs.offering_id
+      join academic_courses c on c.id = o.course_id
+      join academic_section_members m on m.section_id = o.section_id
+      join users u on u.id = m.user_id and u.role = 'student'
+     where cs.id = ${sessionId}
+       and not exists (select 1 from attendance_records r where r.session_id = cs.id and r.student_id = u.id)`)).rows as {
+    student_id: string; name: string; code: string; title: string; opened_at: string | Date
+    held: number; present: number; excused: number; excused_now: boolean
+  }[]
+  // ponytail: one notify per absentee (about four queries each); batch if a class passes a few hundred.
+  for (const r of rows) {
+    const when = new Date(r.opened_at).toLocaleString('en-IN', { timeZone: rules.timeZone, dateStyle: 'medium', timeStyle: 'short' })
+    const base = { offering_id: '', code: r.code, title: r.title, teacher: null, term: '', present: r.present }
+    const now = line({ ...base, held: r.held, excused: r.excused }, rules)
+    const before = line({ ...base, held: r.held - 1, excused: r.excused - (r.excused_now ? 1 : 0) }, rules)
+    if (!r.excused_now) {
+      await notify(tx, tenant, { userIds: [r.student_id], moduleId: 'attendance', title: `Absent from ${r.code}`, body: `${r.name} was absent from ${r.code} ${r.title} on ${when}.`, link: '/m/attendance/me', alsoGuardians: { link: '/m/parents' } })
+    }
+    if (now.short && !before.short) {
+      const back = Number.isFinite(now.needed) ? ` ${now.needed} classes in a row bring it back to ${rules.minimumPercent}%.` : ''
+      await notify(tx, tenant, { userIds: [r.student_id], moduleId: 'attendance', title: `Attendance below ${rules.minimumPercent}% in ${r.code}`, body: `${r.name}'s attendance in ${r.code} ${r.title} is ${now.percent}%.${back}`, link: '/m/attendance/me', alsoGuardians: { link: '/m/parents' } })
+    }
+  }
 }
 
 /**

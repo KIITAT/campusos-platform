@@ -29,6 +29,9 @@ import { ledger, overpaidPaise, type LedgerLine } from './ledger'
 import { postInvoice, postPayment, postRefund, postWaiverChange } from './posting'
 import { duesRoster, enrolledPrograms, notEnrolled, termRoster } from './enrolment'
 import { checkOtherPerson } from '@campusos/module-finance/api'
+import { notify } from '@campusos/module-notices/api'
+
+const rupees = (p: number) => '₹' + (p / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 const MODULE = 'fees'
 
@@ -606,6 +609,14 @@ export async function issueInvoices(actor: Actor, input: unknown) {
         version,
         chargedPaise: delta,
         waivedPaise,
+      })
+      await notify(tx, tenant, {
+        userIds: [s.studentId],
+        moduleId: 'fees',
+        title: `Fees invoiced for ${term.code}`,
+        body: `${rupees(delta)} has been invoiced for ${term.code}. See the fee account for what is due.`,
+        link: '/m/fees/me',
+        alsoGuardians: { link: '/m/parents' },
       })
     }
 

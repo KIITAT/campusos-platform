@@ -1,6 +1,6 @@
 {
   "name": "@campusos/module-attendance",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -23,6 +23,7 @@
     "@campusos/db": "workspace:*",
     "@campusos/module-academic": "workspace:*",
     "@campusos/module-framework": "workspace:*",
+    "@campusos/module-notices": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "react": "^19.2.8",
     "zod": "^4.4.3"

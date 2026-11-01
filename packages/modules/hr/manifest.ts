@@ -4,8 +4,8 @@ export const manifest: ModuleManifest = {
   id: 'hr',
   name: 'HR & Payroll',
   description:
-    'The whole of HR: staff records and their history (onboarding, transfers, promotions, separation and exit interviews), leave policies with allocation, carry-forward, earned and encashed days, shifts and rosters, recruitment from requisition to hire, appraisals with KRAs, goals and colleague feedback, expense claims and advances, and payroll from salary structures with configurable tax and gratuity, posting to the books. No statutory filing, and no statutory rate seeded: the institution enters its own.',
-  version: '0.13.0',
+    'The whole of HR: staff records and their history (onboarding, transfers, promotions, separation and exit interviews), leave policies with allocation, carry-forward, earned and encashed days, shifts and rosters, recruitment from requisition to hire, appraisals with KRAs, goals and colleague feedback, expense claims and advances, and payroll from salary structures with configurable tax and gratuity, posting to the books. Statutory files (ECR, ESI, bank advice, tax statements) and remittance records; no statutory rate is seeded: the institution enters its own.',
+  version: '0.15.0',
   alwaysEnabled: false,
   /**
    * finance, and nothing else. No academic module: a cook needs a payslip and
@@ -13,7 +13,7 @@ export const manifest: ModuleManifest = {
    * reach them is a cost the institution cannot see, and an institution running
    * payroll has books whether or not it has students.
    */
-  dependsOn: ['finance'],
+  dependsOn: ['finance', 'notices'],
   pricing: { model: 'not_priced_yet', priceINR: null },
 
   rolesWithAccess: ['super_admin', 'institution_admin', 'accounts_staff', 'hod', 'faculty', 'library_staff', 'hostel_staff'],
@@ -22,6 +22,8 @@ export const manifest: ModuleManifest = {
     { label: 'Staff', href: '/m/hr', roles: ['institution_admin', 'accounts_staff'] },
     { label: 'Leave', href: '/m/hr/leave', roles: ['institution_admin', 'accounts_staff'] },
     { label: 'Payroll', href: '/m/hr/payroll', roles: ['institution_admin', 'accounts_staff'] },
+    { label: 'Remittances', href: '/m/hr/payroll/remit', roles: ['institution_admin'] },
+    { label: 'Tax returns', href: '/m/hr/payroll/returns', roles: ['institution_admin'] },
     { label: 'Onboarding', href: '/m/hr/onboarding', roles: ['institution_admin', 'accounts_staff'] },
     { label: 'Employment history', href: '/m/hr/lifecycle', roles: ['institution_admin', 'accounts_staff'] },
     { label: 'Leave policy', href: '/m/hr/leave/policy', roles: ['institution_admin', 'accounts_staff'] },

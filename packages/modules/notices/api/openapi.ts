@@ -4,8 +4,10 @@ import {
   attachSchema,
   createNoticeSchema,
   inboxSchema,
+  mandatorySchema,
   markReadSchema,
   noticeRowSchema,
+  preferenceSchema,
   publishNoticeSchema,
   removeAttachmentSchema,
   withdrawNoticeSchema,
@@ -65,17 +67,6 @@ export const paths = {
       responses: { '204': { description: 'Withdrawn' }, ...gated },
     },
   },
-  [`${base}/board/email`]: {
-    post: {
-      summary: 'Send an email copy of a published notice',
-      description:
-        'Separate from publishing on purpose: publishing must not fail because a mail provider ' +
-        'is down, and the inbox is the delivery that matters. Without a provider configured this ' +
-        'reports that it sent nothing and changes nothing.',
-      tags: ['notices'],
-      responses: { '200': { description: 'OK' }, ...gated },
-    },
-  },
   [`${base}/board/notice`]: {
     get: {
       summary: 'One notice, whole: its text and the documents that go with it',
@@ -133,6 +124,31 @@ export const paths = {
       tags: ['notices'],
       requestBody: { content: json(markReadSchema) },
       responses: { '200': { description: 'Marked' }, ...gated },
+    },
+  },
+
+  [`${base}/preferences`]: {
+    get: {
+      summary: 'Your notification categories',
+      description: 'Every category with whether you muted it and whether the institution made it mandatory.',
+      tags: ['notices'],
+      responses: { '200': { description: 'OK' }, ...gated },
+    },
+    post: {
+      summary: 'Mute or unmute a category for yourself',
+      description: 'Refused with 409 for a category the institution has made mandatory.',
+      tags: ['notices'],
+      requestBody: { content: json(preferenceSchema) },
+      responses: { '200': { description: 'Saved' }, ...gated, '409': { description: 'The category is mandatory', content: json(err) } },
+    },
+  },
+  [`${base}/preferences/mandatory`]: {
+    post: {
+      summary: 'Make a category mandatory, or optional again',
+      description: 'Administrators only. Audited with the reason.',
+      tags: ['notices'],
+      requestBody: { content: json(mandatorySchema) },
+      responses: { '200': { description: 'Saved' }, ...gated },
     },
   },
 }

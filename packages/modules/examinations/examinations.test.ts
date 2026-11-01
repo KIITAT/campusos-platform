@@ -138,6 +138,7 @@ beforeEach(async () => {
   await withTenant(inst, async (tx) => {
     // exam_marks first: the delete guard refuses published rows, so exams go last.
     await tx.execute(sql`select set_config('app.audit_reason', 'test reset', true)`)
+    await tx.execute(sql`delete from notifications`)
     await tx.update(exams).set({ publishedAt: null, publishedBy: null })
     await tx.delete(examMarks)
     await tx.delete(exams)
@@ -632,4 +633,16 @@ test('another institution sees none of these exams', async () => {
   } finally {
     await authDb.delete(institutions).where(eq(institutions.slug, 'exam-other'))
   }
+})
+
+// --- alerts (P1-02) --------------------------------------------------------
+
+test('publishing results tells each student with a mark', async () => {
+  const e = await mkExam()
+  await enterMarks(A({}), { examId: e.id, marks: [{ studentId: ids.s1, obtained: 30 }] })
+  await publishExam(A({}), { examId: e.id })
+  const titles = async (id: string) =>
+    (await withTenant(inst, (tx) => tx.execute(sql`select title, link from notifications where user_id = ${id}`))).rows as { title: string; link: string }[]
+  assert.deepEqual((await titles(ids.s1)).map((t) => [t.title, t.link]), [['Results published: Midterm', '/m/examinations/me']])
+  assert.equal((await titles(ids.s2)).length, 0)
 })

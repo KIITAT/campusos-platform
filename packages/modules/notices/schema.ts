@@ -6,6 +6,7 @@ import {
   integer,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uuid,
@@ -95,7 +96,7 @@ export const notifications = pgTable(
     link: text(),
     noticeId: uuid('notice_id').references(() => notices.id, { onDelete: 'cascade' }),
     readAt: timestamp('read_at', { withTimezone: true }),
-    /** When an email copy went out, if a channel was configured at all. */
+    /** Unused since P1-02 (decision 280); kept so no data is dropped. */
     emailedAt: timestamp('emailed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -142,6 +143,29 @@ export const noticeAttachments = pgTable(
     check('notice_attachments_name', sql`length(trim(name)) between 1 and 200`),
     tenantPolicy('notice_attachments'),
   ],
+)
+
+/** A person who does not want a category in their inbox (P1-02). */
+export const notificationOptOuts = pgTable(
+  'notification_opt_outs',
+  {
+    institutionId: tenantId(),
+    userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    moduleId: text('module_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.moduleId] }), tenantPolicy('notification_opt_outs')],
+)
+
+/** A category the institution has made mandatory: opt-outs for it are ignored. */
+export const notificationMandatory = pgTable(
+  'notification_mandatory',
+  {
+    institutionId: tenantId(),
+    moduleId: text('module_id').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.institutionId, t.moduleId] }), tenantPolicy('notification_mandatory')],
 )
 
 export type Notice = typeof notices.$inferSelect

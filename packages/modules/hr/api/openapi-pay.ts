@@ -10,6 +10,9 @@ import {
   payGratuitySchema,
   payrollSettingsSchema,
   releasePayslipSchema,
+  reissueSchema,
+  remitSchema,
+  voidRemittanceSchema,
   setPreviousEmploymentSchema,
   setPtSlabsSchema,
   setTaxDeclarationsSchema,
@@ -40,6 +43,14 @@ const get = (summary: string, query: string[] = []) => ({
     tags: ['hr'],
     parameters: query.map((name) => ({ name, in: 'query', required: true, schema: { type: 'string' } })),
     responses: ok,
+  },
+})
+
+/** A downloadable file for a month; 409 `incomplete_details` lists whose records are short. */
+const file = (summary: string, type: string, query: string[] = ['period']) => ({
+  get: {
+    ...get(summary, query).get,
+    responses: { ...ok, '200': { description: 'OK', content: { [type]: {} } } },
   },
 })
 
@@ -98,6 +109,29 @@ export const payPaths = {
     releasePayslipSchema,
     'Audited, and posted as the salary liability being discharged.',
   ),
+  [`${base}/payroll/payslip.pdf`]: {
+    get: {
+      ...get('A payslip as a PDF: one’s own, or anyone’s for the office', ['payslipId']).get,
+      responses: { ...ok, '200': { description: 'OK', content: { 'application/pdf': {} } }, '404': { description: 'No such payslip', content: json(err) } },
+    },
+  },
+  [`${base}/payroll/reissue`]: post('Reissue a payslip: reverse its books entry and make a new one', reissueSchema, 'Refused once the month is paid, after the person has a later payslip, with advance recoveries on it, after a release of a held payslip, or once the month has been remitted.'),
+  [`${base}/payroll/tax-statement.pdf`]: {
+    get: {
+      ...get('A person’s annual tax statement (Form 16 Part B / Form 130)', ['staffId', 'taxYear']).get,
+      responses: { ...ok, '200': { description: 'OK', content: { 'application/pdf': {} } }, '404': { description: 'No such person or statement', content: json(err) } },
+    },
+  },
+  [`${base}/payroll/tds-quarter`]: file('The quarterly TDS working statement for the 24Q', 'text/csv', ['taxYear', 'quarter']),
+  [`${base}/payroll/dues`]: get('What each statutory head owes for a month, what was remitted and what is left', ['period']),
+  [`${base}/payroll/remittances`]: {
+    get: { ...get('Remittances, newest first, voided ones included', []).get, parameters: [{ name: 'period', in: 'query', required: false, schema: { type: 'string' } }] },
+    ...post('Record money paid to a statutory authority', remitSchema, 'Part payments are allowed. Refused beyond the balance, in the future, or for a challan reference already used. The first PF remittance of a month also posts the EPF administration minimum.'),
+  },
+  [`${base}/payroll/remittances/void`]: post('Void a remittance with a reason; its books entry is reversed', voidRemittanceSchema),
+  [`${base}/payroll/ecr`]: file('The provident fund ECR text file for a month', 'text/plain'),
+  [`${base}/payroll/esi`]: file('The ESI monthly contribution CSV for a month', 'text/csv'),
+  [`${base}/payroll/bank-advice`]: file('The salary transfer advice CSV for a month (non-withheld payslips)', 'text/csv'),
   [`${base}/payroll/runs`]: get('Every payroll run: when, by whom, for how much'),
   [`${base}/payroll/settings`]: {
     ...get('How a part month is paid'),

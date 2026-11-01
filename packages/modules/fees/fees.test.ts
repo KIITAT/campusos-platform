@@ -8,6 +8,7 @@ import {
   createFeeItem,
   duesReport,
   grantWaiver,
+  issueInvoices,
   listFeeItems,
   paymentForReceipt,
   paymentTrail,
@@ -153,6 +154,7 @@ beforeEach(async () => {
   await withTenant(inst, async (tx) => {
     // The guards refuse a silent delete, so the reset states its reason too.
     await tx.execute(sql`select set_config('app.audit_reason', 'test reset', true)`)
+    await tx.execute(sql`delete from notifications`)
     await tx.update(feePayments).set({ reconciledAt: null, reconciledBy: null })
     await tx.delete(feePayments)
     await tx.delete(feeWaivers)
@@ -577,4 +579,20 @@ test('a payment recorded while its student is being deleted is never lost (DATA-
   assert.equal(await deletion, 'refused')
   const kept = await authDb.select().from(feePayments).where(eq(feePayments.id, p.id))
   assert.equal(kept.length, 1, 'a recorded payment vanished with its student')
+})
+
+// --- alerts (P1-02) --------------------------------------------------------
+
+test('issuing an invoice tells the student', async () => {
+  await tuition()
+  const mine = async () =>
+    (await withTenant(inst, (tx) => tx.execute(sql`select title, body, link from notifications where user_id = ${ids.s1}`))).rows as { title: string; body: string; link: string }[]
+  await issueInvoices(admin(), { termId: ids.term })
+  const first = await mine()
+  assert.equal(first.length, 1)
+  assert.match(first[0]!.title, /^Fees invoiced for /)
+  assert.ok(first[0]!.body.startsWith('₹'))
+  assert.equal(first[0]!.link, '/m/fees/me')
+  await issueInvoices(admin(), { termId: ids.term })
+  assert.equal((await mine()).length, 1, 'nothing new, nothing sent')
 })

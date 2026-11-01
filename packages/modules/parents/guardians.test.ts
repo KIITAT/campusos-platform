@@ -341,6 +341,18 @@ test('a guardian link lapses at 18 unless the student keeps it', async () => {
   await setAge(ids.s1, null)
 })
 
+test('campusos_guardians_of returns verified, current guardians only', async () => {
+  const [par] = await authDb.insert(users).values({ email: `p-${crypto.randomUUID()}@family.test`, institutionId: inst, role: 'parent', name: 'Parent' }).returning({ id: users.id })
+  const [grown] = await authDb.insert(users).values({ email: 'grown@guardian-college.test', institutionId: inst, role: 'student', name: 'Grown' }).returning({ id: users.id })
+  await claimLink(admin(), { studentId: ids.s1, parentId: par!.id, relation: 'mother' })
+  await claimLink(guardianActor(par!.id), { studentId: ids.s2, relation: 'mother' })
+  await claimLink(admin(), { studentId: grown!.id, parentId: par!.id, relation: 'mother' })
+  await setAge(grown!.id, 20)
+  const who = `{${[ids.s1, ids.s2, grown!.id].join(',')}}`
+  const r = await withTenant(inst, (tx) => tx.execute<{ student_id: string; guardian_id: string }>(sql`select * from public.campusos_guardians_of(${who}::text[])`))
+  assert.deepEqual(r.rows.map((x) => [x.student_id, x.guardian_id]), [[ids.s1, par!.id]])
+})
+
 test('only an adult student renews, and only their own links', async () => {
   const { linkId } = await verifiedParent()
   await setAge(ids.s1, 16)

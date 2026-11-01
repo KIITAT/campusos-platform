@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm'
+import { notify } from '@campusos/module-notices/api'
 import { audit, users, withTenant } from '@campusos/db'
 import { logSensitiveRead } from '@campusos/db/sensitive-reads'
 import { assertCanAccessStudent, canAccessStudent, moduleEnabled, readUpload, UploadError, type Role } from '@campusos/module-framework'
@@ -458,10 +459,15 @@ export async function sendMessage(actor: Actor, input: unknown) {
   if (!studentId) throw new MentorError(400, 'no_student', 'say which student')
   return named(() =>
     withTenant(tenant, async (tx) => {
-      if (actor.role === 'student') {
-        if (!(await currentOf(tx, actor.id))) throw new MentorError(409, 'no_mentor', 'you have no mentor yet; the office assigns one')
-      }
+      const a = actor.role === 'student' ? await currentOf(tx, actor.id) : null
+      if (actor.role === 'student' && !a) throw new MentorError(409, 'no_mentor', 'you have no mentor yet; the office assigns one')
       const [m] = await tx.insert(messages).values({ institutionId: tenant, studentId, senderId: actor.id, body: d.body }).returning()
+      // The message text never goes into the notification.
+      if (a) {
+        await notify(tx, tenant, { userIds: [a.mentorId], moduleId: 'mentoring', title: 'A message from a mentee', body: 'Open your mentees to read it.', link: '/m/mentoring/mentees' })
+      } else {
+        await notify(tx, tenant, { userIds: [studentId], moduleId: 'mentoring', title: 'A message from your mentor', body: 'Open your mentoring page to read it.', link: '/m/mentoring/me' })
+      }
       return { id: m!.id, notice: 'Sent.' }
     }),
   )
@@ -633,6 +639,14 @@ export async function decideLeave(actor: Actor, input: unknown) {
         entity: 'mentor_leave_applications',
         entityId: l.id,
         reason: d.note ?? (d.decision === 'approve' ? 'approved' : 'refused'),
+      })
+      await notify(tx, tenant, {
+        userIds: [l.studentId],
+        moduleId: 'mentoring',
+        title: d.decision === 'approve' ? 'Leave approved' : 'Leave refused',
+        body: `${l.startsOn} to ${l.endsOn}${d.note ? `: ${d.note}` : '.'}`,
+        link: '/m/mentoring/me',
+        alsoGuardians: { link: '/m/parents' },
       })
       return {
         id: l.id,

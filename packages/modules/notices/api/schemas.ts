@@ -57,6 +57,23 @@ export const markReadSchema = z
   })
   .meta({ id: 'NotificationMarkRead' })
 
+export const preferenceSchema = z
+  .object({
+    moduleId: z.string().min(1).max(40),
+    muted: z.coerce.boolean(),
+  })
+  .strict()
+  .meta({ id: 'NotificationPreference' })
+
+export const mandatorySchema = z
+  .object({
+    moduleId: z.string().min(1).max(40),
+    mandatory: z.coerce.boolean(),
+    reason: z.string().trim().min(3).max(300),
+  })
+  .strict()
+  .meta({ id: 'NotificationMandatory' })
+
 // --- reads -----------------------------------------------------------------
 
 export const noticeRowSchema = z
@@ -96,8 +113,6 @@ export const inboxSchema = z
   .object({
     unread: z.number().int(),
     items: z.array(notificationRowSchema),
-    /** False when no mail provider is configured, so the UI can say so. */
-    emailConfigured: z.boolean(),
   })
   .meta({ id: 'NotificationInbox' })
 
