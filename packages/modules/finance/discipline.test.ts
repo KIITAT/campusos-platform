@@ -3,9 +3,14 @@ import assert from 'node:assert/strict'
 import { and, eq, like, sql } from 'drizzle-orm'
 import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
 import type { Role } from '@campusos/module-framework'
+import { specs } from './routes'
 import {
   FinanceError,
   accountFor,
+  cashMovements,
+  createFund,
+  incomeAndExpenditure,
+  trialBalance,
   budgetReport,
   cancelInvoice,
   closePeriod,
@@ -491,4 +496,53 @@ test('a soft budget only reports', async () => {
   await submitOrder(b.admin, { orderId: (await po('8000')).id })
   await submitOrder(b.admin, { orderId: (await po('3000')).id })
   assert.equal(((await row(b)) as { availablePaise: number }).availablePaise, -100_000)
+})
+
+// --- Step 8: report fixes (ACC-09, ACC-10, ACC-11) ---------------------------------
+
+test('cash shares add up to the cash moved (ACC-09)', async () => {
+  const b = await books()
+  const fund = (await createFund(b.admin, { code: 'F1', name: 'Fund one', kind: 'grant' })) as { id: string }
+  // 100 of cash in the fund, 200 more outside it, shared by three heads: 100 * 100 / 300 rounds to 33 three times.
+  await withTenant(b.id, (tx) =>
+    postWithin(tx, b.id, b.admin.id, {
+      memo: 'Receipts shared three ways',
+      sourceModule: 'test',
+      sourceRef: 'share-1',
+      postingDate: '2026-10-01',
+      lines: [
+        { purpose: 'cash', debitPaise: 10_000, creditPaise: 0, fundId: fund.id },
+        { purpose: 'cash', debitPaise: 20_000, creditPaise: 0 },
+        { purpose: 'fee_income', debitPaise: 0, creditPaise: 10_000 },
+        { purpose: 'fine_income', debitPaise: 0, creditPaise: 10_000 },
+        { purpose: 'sales_income', debitPaise: 0, creditPaise: 10_000 },
+      ],
+    }),
+  )
+  const r = await cashMovements(b.admin, { from: '2026-10-01', to: '2026-10-31', fundId: fund.id })
+  assert.equal(r.receipts.reduce((n, h) => n + h.receivedPaise, 0), 10_000)
+})
+
+test('a leap-day comparison does not fail (ACC-10)', async () => {
+  const b = await books()
+  const r = await incomeAndExpenditure(b.admin, { from: '2028-02-01', to: '2028-02-29', compare: true })
+  assert.ok(r)
+})
+
+test('the trial-balance route answers the report (ACC-11)', async () => {
+  const b = await books()
+  await withTenant(b.id, (tx) =>
+    postWithin(tx, b.id, b.admin.id, {
+      memo: 'Fees', sourceModule: 'test', sourceRef: 'tb-1', postingDate: '2026-10-01',
+      lines: [{ purpose: 'cash', debitPaise: 500, creditPaise: 0 }, { purpose: 'fee_income', debitPaise: 0, creditPaise: 500 }],
+    }),
+  )
+  const spec = specs.find((s) => s.method === 'GET' && s.path === '/trial-balance')!
+  const out = (await spec.handler(b.admin as never, new Request('http://x/trial-balance?from=2026-10-01&to=2026-10-31'))) as { totals: unknown; rows: { openingPaise: number }[] }
+  assert.ok(out.totals)
+  assert.ok(out.rows.length > 0 && 'openingPaise' in out.rows[0]!)
+  // The internal check keeps every account, moved or not, when a date filter applies.
+  const check = await trialBalance(b.admin, { from: new Date('2026-11-01'), to: new Date('2026-11-30') })
+  assert.ok(check.rows.length > 2, 'accounts with no movement in the period keep their row')
+  assert.equal(check.differencePaise, 0)
 })
