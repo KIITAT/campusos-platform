@@ -2,7 +2,7 @@ import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { audit, withTenant } from '@campusos/db'
 import * as z from 'zod'
 import { ticked } from '@campusos/module-framework'
-import { accounts, invoices, taxComponents, taxTemplates, tdsSections } from '../schema'
+import { accounts, invoices, parties, taxComponents, taxTemplates, tdsSections } from '../schema'
 import { FinanceError, named, requireConfigure, requireRead, type Actor, type Tx } from './core'
 import { accountFor, ensureDefaultChart } from './operations'
 import { bpOf, parseDecimal } from './numbers'
@@ -319,6 +319,8 @@ export async function tdsFor(
     excludeInvoiceId?: string
   },
 ): Promise<number> {
+  // Two bills for one supplier submitted together each saw the other's absence and both deducted nothing (ACC-06). The lock makes the second wait for the first.
+  await tx.select({ id: parties.id }).from(parties).where(eq(parties.id, input.partyId)).for('update')
   const [section] = await tx.select().from(tdsSections).where(eq(tdsSections.id, input.sectionId))
   if (!section) throw new FinanceError(404, 'no_such_tds_section', 'no such TDS section')
   const rate = input.hasPan ? section.rateBp : section.rateNoPanBp

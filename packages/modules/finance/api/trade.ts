@@ -3,6 +3,7 @@ import { amendDocument, cancelDocument, submitDocument, withTenant } from '@camp
 import * as z from 'zod'
 import { ticked } from '@campusos/module-framework'
 import {
+  budgets,
   invoiceLines,
   invoices,
   items,
@@ -20,12 +21,14 @@ import {
 import { FinanceError, named, requireOperate, requireRead, without, type Actor, type Tx } from './core'
 import { saveDraftWithin, submitWithin, type DraftLine } from './invoices'
 import { addMonths, bpOf, extend, formatDecimal, formatQty, mulDiv, parseDecimal, parseQty, toBase } from './numbers'
+import { committedWithin } from './encumbrance'
 import { accountFor, postWithin, reverseWithin } from './operations'
+import { spentSoFar } from './periods'
 import { partyWithin } from './parties'
 import { approvalsFor, assertApproved, minorUnitsOf, nextNumber, rateOn } from './setup'
 import { batchFor, defaultWarehouse, moveStock, reverseStock, serialList, stockLines, type Movement } from './stock'
 import { computeTaxes, isIntraState, templatesWithin } from './tax'
-import { localToday, settingsWithin } from './years'
+import { fiscalYearOf, localToday, settingsWithin } from './years'
 
 /**
  * Orders and the goods that move against them.
@@ -237,6 +240,46 @@ export function approvalViewOfOrder(o: typeof orders.$inferSelect, ls: (typeof o
   }
 }
 
+/**
+ * An enforced budget is checked when a purchase order is submitted, against what
+ * is spent and what other open orders have committed, this order included
+ * (ACC-12). The budget row is locked, so two orders submitted together cannot
+ * both fit in room for one.
+ */
+async function assertPurchaseWithinBudget(tx: Tx, tenant: string, o: typeof orders.$inferSelect) {
+  const mine = await committedWithin(tx, { orderId: o.id })
+  if (mine.size === 0) return
+  const fy = await fiscalYearOf(tx, tenant, o.postingDate)
+  const year = Number(fy.startsOn.slice(0, 4))
+  // Lock every hard budget row this order touches, in a fixed order, before reading what others have
+  // committed: a second submit then waits for the first to commit and reads it (READ COMMITTED).
+  const budgetOf = new Map<string, number>()
+  for (const key of [...mine.keys()].sort()) {
+    const [costCenter, accountId] = key.split('|') as [string, string]
+    const [budget] = await tx
+      .select({ amountPaise: budgets.amountPaise })
+      .from(budgets)
+      .where(and(eq(budgets.year, year), eq(budgets.accountId, accountId), eq(budgets.costCenter, costCenter), eq(budgets.hardLimit, true)))
+      .for('update')
+    if (budget) budgetOf.set(key, budget.amountPaise)
+  }
+  if (budgetOf.size === 0) return
+  const others = await committedWithin(tx, { fy })
+  for (const [key, here] of mine) {
+    const limit = budgetOf.get(key)
+    if (limit === undefined) continue
+    const [costCenter, accountId] = key.split('|') as [string, string]
+    const wouldBe = (await spentSoFar(tx, year, accountId, costCenter)) + (others.get(key) ?? 0) + here
+    if (wouldBe > limit) {
+      throw new FinanceError(409, 'over_budget', 'that would take a cost centre past its budget', {
+        costCenter,
+        budgetPaise: limit,
+        wouldBePaise: wouldBe,
+      })
+    }
+  }
+}
+
 async function submitOrderWithin(tx: Tx, actor: Actor, orderId: string) {
   const tenant = actor.institutionId!
   const [o] = await tx.select().from(orders).where(eq(orders.id, orderId)).for('update')
@@ -244,6 +287,7 @@ async function submitOrderWithin(tx: Tx, actor: Actor, orderId: string) {
   if (o.docstatus !== 'draft') throw new FinanceError(409, 'not_a_draft', 'that order is not a draft')
   const ls = await tx.select().from(orderLines).where(eq(orderLines.orderId, orderId)).orderBy(asc(orderLines.seq))
   if (o.kind === 'purchase_order') await assertApproved(tx, 'purchase_order', orderId, approvalViewOfOrder(o, ls), o.totalPaise)
+  if (o.kind === 'purchase_order') await assertPurchaseWithinBudget(tx, tenant, o)
   const number = await nextNumber(tx, tenant, o.kind, o.postingDate)
   await tx.update(orders).set({ number }).where(eq(orders.id, orderId))
   await submitDocument(tx, orders, orderId, { institutionId: tenant, actorId: actor.id, actorEmail: actor.email, moduleId: MODULE })

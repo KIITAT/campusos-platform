@@ -19,6 +19,7 @@ import { accountFor, postWithin, reverseWithin } from './operations'
 import { unapplyAdvances } from './parties'
 import { approvalsFor, assertApproved, minorUnitsOf, nextNumber } from './setup'
 import { checkOtherPerson } from './sod'
+import { refuseControlAccounts } from './subledgers'
 import { localToday, settingsWithin } from './years'
 
 /**
@@ -101,6 +102,7 @@ export async function saveJournal(actor: Actor, input: unknown) {
         .from(accounts)
         .where(inArray(accounts.id, typed.map((l) => l.accountId!)))
       const byId = new Map(accountRows.map((a) => [a.id, a]))
+      await refuseControlAccounts(tx, accountRows.map((a) => a.id), { stockOnly: true })
       const rows = []
       for (const [i, l] of typed.entries()) {
         const at = `line ${i + 1}`

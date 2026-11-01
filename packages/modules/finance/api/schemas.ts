@@ -188,7 +188,14 @@ export const periodsQuerySchema = z
   .meta({ id: 'FinancePeriodsQuery' })
 
 export const closePeriodSchema = z
-  .object({ year, month, reason: z.string().max(500).trim().optional() })
+  .object({
+    year,
+    month,
+    reason: z.string().max(500).trim().optional(),
+    /** Close despite failed checks (never the month being over); needs a reason of 10 to 300 characters. */
+    override: z.preprocess(ticked, z.boolean()).default(false),
+    overrideReason: z.string().trim().max(300).optional(),
+  })
   .meta({ id: 'FinanceClosePeriod' })
 
 export const reopenPeriodSchema = z
@@ -241,12 +248,17 @@ export const budgetReportSchema = z
         /** Debits less credits: a credit to an expense account is spending undone. */
         actualPaise: z.number().int(),
         remainingPaise: z.number().int(),
+        /** Open purchase orders not yet billed (ACC-12). */
+        committedPaise: z.number().int(),
+        /** Budget less spent less committed. */
+        availablePaise: z.number().int(),
         hardLimit: z.boolean(),
         overspent: z.boolean(),
       }),
     ),
     budgetedPaise: z.number().int(),
     spentPaise: z.number().int(),
+    committedPaise: z.number().int(),
     overspentCount: z.number().int(),
   })
   .meta({ id: 'FinanceBudgetReport' })

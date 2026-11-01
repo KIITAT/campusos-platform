@@ -606,44 +606,46 @@ export async function recordAssetEvent(actor: Actor, input: unknown) {
 
 // --- reading ------------------------------------------------------------------------
 
+/** The register's rows on a day, inside a transaction somebody opened (also read by the sub-ledger report). */
+export async function assetRowsWithin(tx: Tx, on: string, input: { categoryId?: string; status?: string } = {}) {
+  const rows = await tx
+    .select({
+      a: assets,
+      category: assetCategories.name,
+      custodian: users.name,
+      location: warehouses.name,
+      depreciated: sql<number>`(select coalesce(sum(d.amount_paise), 0) from finance_depreciation_schedule d where d.asset_id = "finance_assets"."id" and d.entry_id is not null and d.period_end <= ${on})::bigint`,
+      impaired: sql<number>`(select coalesce(sum(e.amount_paise), 0) from finance_asset_events e where e.asset_id = "finance_assets"."id" and e.kind = 'impairment' and e.on <= ${on})::bigint`,
+      disposedOn: sql<string | null>`(select min(e.on)::text from finance_asset_events e where e.asset_id = "finance_assets"."id" and e.kind in ('sold', 'scrapped'))`,
+    })
+    .from(assets)
+    .innerJoin(assetCategories, eq(assetCategories.id, assets.categoryId))
+    .leftJoin(users, eq(users.id, assets.custodianId))
+    .leftJoin(warehouses, eq(warehouses.id, assets.locationId))
+    .where(and(input.categoryId ? eq(assets.categoryId, input.categoryId) : undefined, sql`${assets.docstatus} <> 'cancelled'`))
+    .orderBy(asc(assets.number), asc(assets.name))
+  return rows
+    .map((r) => {
+      const accumulated = r.a.openingAccumulatedPaise + Number(r.depreciated) + Number(r.impaired)
+      const disposed = !!r.disposedOn && r.disposedOn <= on
+      return {
+        ...r.a,
+        category: r.category,
+        custodian: r.custodian,
+        location: r.location,
+        accumulatedPaise: disposed ? 0 : accumulated,
+        netPaise: disposed || r.a.docstatus === 'draft' ? 0 : r.a.grossPaise - accumulated,
+        status: r.a.docstatus === 'draft' ? 'draft' : disposed ? 'disposed' : 'in_use',
+        disposedOn: r.disposedOn,
+      }
+    })
+    .filter((r) => !input.status || r.status === input.status)
+}
+
 /** The fixed asset register on a day: cost, depreciation to date, and what is left. */
 export async function assetRegister(actor: Actor, input: { on?: string; categoryId?: string; status?: string } = {}) {
   const tenant = requireRead(actor)
-  return withTenant(tenant, async (tx) => {
-    const on = input.on ?? (await localToday(tx, tenant))
-    const rows = await tx
-      .select({
-        a: assets,
-        category: assetCategories.name,
-        custodian: users.name,
-        location: warehouses.name,
-        depreciated: sql<number>`(select coalesce(sum(d.amount_paise), 0) from finance_depreciation_schedule d where d.asset_id = "finance_assets"."id" and d.entry_id is not null and d.period_end <= ${on})::bigint`,
-        impaired: sql<number>`(select coalesce(sum(e.amount_paise), 0) from finance_asset_events e where e.asset_id = "finance_assets"."id" and e.kind = 'impairment' and e.on <= ${on})::bigint`,
-        disposedOn: sql<string | null>`(select min(e.on)::text from finance_asset_events e where e.asset_id = "finance_assets"."id" and e.kind in ('sold', 'scrapped'))`,
-      })
-      .from(assets)
-      .innerJoin(assetCategories, eq(assetCategories.id, assets.categoryId))
-      .leftJoin(users, eq(users.id, assets.custodianId))
-      .leftJoin(warehouses, eq(warehouses.id, assets.locationId))
-      .where(and(input.categoryId ? eq(assets.categoryId, input.categoryId) : undefined, sql`${assets.docstatus} <> 'cancelled'`))
-      .orderBy(asc(assets.number), asc(assets.name))
-    return rows
-      .map((r) => {
-        const accumulated = r.a.openingAccumulatedPaise + Number(r.depreciated) + Number(r.impaired)
-        const disposed = !!r.disposedOn && r.disposedOn <= on
-        return {
-          ...r.a,
-          category: r.category,
-          custodian: r.custodian,
-          location: r.location,
-          accumulatedPaise: disposed ? 0 : accumulated,
-          netPaise: disposed || r.a.docstatus === 'draft' ? 0 : r.a.grossPaise - accumulated,
-          status: r.a.docstatus === 'draft' ? 'draft' : disposed ? 'disposed' : 'in_use',
-          disposedOn: r.disposedOn,
-        }
-      })
-      .filter((r) => !input.status || r.status === input.status)
-  })
+  return withTenant(tenant, async (tx) => assetRowsWithin(tx, input.on ?? (await localToday(tx, tenant)), input))
 }
 
 export async function assetDetail(actor: Actor, assetId: string) {

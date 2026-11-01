@@ -76,8 +76,9 @@ export const specs: RouteSpec[] = [
   get('ledger', '/journal/lines', 'The lines of one entry', (a, q) => api.entryLines(a, q.entryId ?? '')),
   post('ledger', '/journal', 'Post one balanced entry by hand (administrators; the office uses journal vouchers)', api.postEntry, api.postEntrySchema),
   post('ledger', '/journal/reverse', 'Post the mirror image of an entry', api.reverseEntry, api.reverseEntrySchema),
-  get('ledger', '/trial-balance', 'Every account with its debits, credits and balance', (a, q) => api.trialBalance(a, { from: q.from, to: q.to })),
+  get('ledger', '/trial-balance', 'Trial balance with opening and closing, as a tree', (a, q) => api.trialBalanceReport(a, { from: q.from, to: q.to })),
   get('ledger', '/periods', 'Accounting months and whether each is open', (a, q) => api.listPeriods(a, { year: q.year })),
+  get('ledger', '/periods/checklist', 'What stands between a month and its close', (a, q) => api.periodChecklist(a, q)),
   post('ledger', '/periods/close', 'Close a month', api.closePeriod, api.closePeriodSchema),
   post('ledger', '/periods/reopen', 'Open a closed month again, with a reason', api.reopenPeriod, api.reopenPeriodSchema),
   get('ledger', '/budgets', 'Budget against actual by cost centre for a fiscal year', (a, q) => api.budgetReport(a, { year: q.year, costCenter: q.costCenter })),
@@ -269,6 +270,9 @@ export const specs: RouteSpec[] = [
 
   // --- reports ---------------------------------------------------------------------
   get('reports', '/reports/trial-balance', 'Trial balance with opening and closing, as a tree', (a, q) => api.trialBalanceReport(a, q)),
+  get('reports', '/reports/subledgers', 'Each sub-ledger beside its control account', (a, q) => api.subledgerReport(a, { on: q.on })),
+  post('reports', '/gst/filings', 'Mark a GST return filed for a period', api.markFiled, api.gstFilingSchema),
+  get('reports', '/gst/filings', 'GST returns marked filed', (a) => api.listFilings(a)),
   get('reports', '/reports/income-expenditure', 'Income and expenditure for a period', (a, q) => api.incomeAndExpenditure(a, { ...q, compare: q.compare === 'true' })),
   get('reports', '/reports/balance-sheet', 'The balance sheet on a day', (a, q) => api.balanceSheet(a, q)),
   get('reports', '/reports/cash', 'Receipts and payments, and the cash flow statement', (a, q) => api.cashMovements(a, q)),

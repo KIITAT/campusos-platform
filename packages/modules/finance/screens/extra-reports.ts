@@ -1,10 +1,10 @@
 import type { PluginColumn, PluginPage, PluginSection } from '@campusos/module-framework'
 import { formatPaise } from '@campusos/money'
-import { OFFICE } from './kit'
-import { chooseRecord, col, context, dateFields, display, field, filter, href, linkCol, moneyCols, object, page, read, rows, select, shortcuts, str, table, tabs, type Data } from './screen-kit'
+import { ADMIN, OFFICE } from './kit'
+import { chooseRecord, col, context, dateFields, display, field, filter, form, href, linkCol, moneyCols, object, page, read, rows, select, shortcuts, str, table, tabs, type Data } from './screen-kit'
 
 export const extraReportLinks = [
-  ['Aging of receivables and payables', '/reports/aging'], ['Funds and grants', '/reports/funds'], ['Fund statement', '/reports/fund'], ['Cost centres', '/reports/cost-centers'], ['GST and TDS', '/reports/gst'], ['Stock balance', '/stock/balance'], ['Stock ledger', '/stock/ledger'], ['Stores against books', '/stock/against-books'], ['Asset register', '/assets'], ['Depreciation', '/depreciation'],
+  ['Aging of receivables and payables', '/reports/aging'], ['Funds and grants', '/reports/funds'], ['Sub-ledgers against the books', '/reports/subledgers'], ['Fund statement', '/reports/fund'], ['Cost centres', '/reports/cost-centers'], ['GST and TDS', '/reports/gst'], ['Stock balance', '/stock/balance'], ['Stock ledger', '/stock/ledger'], ['Stores against books', '/stock/against-books'], ['Asset register', '/assets'], ['Depreciation', '/depreciation'],
 ].map(([label, path]) => ({ label: label!, href: `/m/finance${path}` }))
 const gstLinks = [['GSTR-1', '/reports/gstr1'], ['GSTR-3B', '/reports/gstr3b'], ['HSN / SAC summary', '/reports/hsn'], ['Sales and purchase register', '/reports/register'], ['TDS', '/reports/tds']]
 const taxColumns = () => moneyCols('taxablePaise', 'igstPaise', 'cgstPaise', 'sgstPaise', 'cessPaise')
@@ -22,6 +22,20 @@ export const extraReportPages: PluginPage[] = [
       return { ...data, ...report, query, rows: rows(report.rows).map(row => ({ ...row, ...flatten(row.buckets) })), invoices: query.partyId ? rows(report.rows).flatMap(row => rows(row.invoices)) : [], footer: { name: 'Total', ...flatten(report.totals), advancePaise: report.advancePaise, totalPaise: report.totalPaise } }
     },
     sections: data => [filter('/reports/aging', data, [select('side', ['receivable', 'payable'], { value: 'receivable' }), ...dateFields('on'), select('partyId', 'parties')]), table('Aging by party', 'rows', [linkCol('name', '/party', 'partyId'), ...(Array.isArray(data.bucketLabels) ? data.bucketLabels : []).map((label, index) => col(`bucket${index}`, 'money', { label: str(label) })), ...moneyCols('advancePaise', 'totalPaise')], { footer: 'footer' }), ...(object(data.query).partyId ? [table('Open invoices', 'invoices', [linkCol('number', '/invoice'), col('postingDate', 'date'), col('dueDate', 'date'), col('days', 'days'), ...moneyCols('openPaise')])] : []), exportCsv('aging', data)],
+  }),
+  page({ path: '/reports/subledgers', title: 'Sub-ledgers against the books', roles: OFFICE,
+    async load(actor, request) {
+      const data = await context(actor, request)
+      const report = object(await read(actor, '/reports/subledgers', { on: data.on }))
+      const list = rows(report.rows).map(row => ({ ...row, differs: Number(row.differencePaise) !== 0 }))
+      return { ...data, rows: list, checked: list.length, differing: list.filter(row => row.differs).length }
+    },
+    sections: data => [
+      filter('/reports/subledgers', data, dateFields('on')),
+      { kind: 'figures', figures: [{ label: 'Ledgers checked', value: String(data.checked) }, { label: 'Differences', value: String(data.differing), tone: Number(data.differing) ? 'due' : 'clear' }] },
+      { kind: 'note', text: 'Fee receivables reconcile to the fee ledger in P1-03.' },
+      table('Each sub-ledger against its control account', 'rows', [col('ledger', 'status'), col('code', 'code'), col('name'), ...moneyCols('subledgerPaise', 'booksPaise'), col('differencePaise', 'money', { label: 'Difference', alertWhen: 'differs' })]),
+    ],
   }),
   page({ path: '/reports/funds', title: 'Fund balances', roles: OFFICE,
     async load(actor, request) { const data = await context(actor, request); return { ...data, rows: rows(await read(actor, '/reports/funds', { on: data.on })) } },
@@ -46,9 +60,10 @@ export const extraReportPages: PluginPage[] = [
     async load(actor, request) {
       const data = await context(actor, request)
       const report = object(await read(actor, '/reports/gstr1', { from: data.from, to: data.to }))
+      const filings = rows(await read(actor, '/gst/filings', {}))
       const tables = ['b2b', 'sez', 'b2cl', 'b2cs', 'exports', 'cdnr', 'cdnur', 'nil', 'hsn', 'documents']
       const selected = tables.includes(str(object(data.query).table)) ? str(object(data.query).table) : 'b2b'
-      return { ...data, query: { ...object(data.query), table: selected }, selected, rows: (selected === 'nil' ? [object(report.nil)] : rows(report[selected])).map(row => display(row, data)) }
+      return { ...data, query: { ...object(data.query), table: selected }, selected, filings, rows: (selected === 'nil' ? [object(report.nil)] : rows(report[selected])).map(row => display(row, data)) }
     },
     sections: data => {
       const selected = str(data.selected || 'b2b')
@@ -57,7 +72,7 @@ export const extraReportPages: PluginPage[] = [
       if (selected === 'nil') columns = moneyCols('nilRatedPaise', 'exemptPaise', 'nonGstPaise')
       if (selected === 'hsn') columns = hsnColumns()
       if (selected === 'documents') columns = [col('nature'), col('first'), col('last'), col('total'), col('cancelled')]
-      return [filter('/reports/gstr1', data, [...dateFields('from', 'to'), select('table', ['b2b', 'sez', 'b2cl', 'b2cs', 'exports', 'cdnr', 'cdnur', 'nil', 'hsn', 'documents'])]), tabs('/reports/gstr1', { ...object(data.query), from: data.from, to: data.to }, 'table', ['b2b', 'sez', 'b2cl', 'b2cs', 'exports', 'cdnr', 'cdnur', 'nil', 'hsn', 'documents']), table(selected.toUpperCase(), 'rows', columns), ...(['b2b', 'sez', 'b2cl', 'b2cs', 'exports', 'cdnr', 'cdnur'].includes(selected) ? [exportCsv('gstr1', data)] : [])]
+      return [filter('/reports/gstr1', data, [...dateFields('from', 'to'), select('table', ['b2b', 'sez', 'b2cl', 'b2cs', 'exports', 'cdnr', 'cdnur', 'nil', 'hsn', 'documents'])]), tabs('/reports/gstr1', { ...object(data.query), from: data.from, to: data.to }, 'table', ['b2b', 'sez', 'b2cl', 'b2cs', 'exports', 'cdnr', 'cdnur', 'nil', 'hsn', 'documents']), table(selected.toUpperCase(), 'rows', columns), ...(['b2b', 'sez', 'b2cl', 'b2cs', 'exports', 'cdnr', 'cdnur'].includes(selected) ? [exportCsv('gstr1', data)] : []), table('Returns marked filed', 'filings', [col('returnType', 'code'), col('periodFrom', 'date'), col('periodTo', 'date'), col('filedOn', 'date'), col('arn', 'code')]), { ...form('Mark a return filed', '/gst/filings', [select('returnType', ['gstr1', 'gstr3b'], { optional: false }), field('periodFrom', 'date', { optional: false }), field('periodTo', 'date', { optional: false }), field('filedOn', 'date', { optional: false }), field('arn')]), note: 'Once marked, an invoice in that period is corrected by a credit or debit note, never cancelled. There is no undo.', roles: ADMIN }]
     },
   }),
   page({ path: '/reports/gstr3b', title: 'GSTR-3B', roles: OFFICE,

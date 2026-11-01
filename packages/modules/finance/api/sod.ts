@@ -12,7 +12,7 @@ import { named, requireConfigure, requireRead, type Actor, type Tx } from './cor
  * with one accountant, which lifts the rule and leaves a trail of every use.
  */
 
-export type SodAct = 'approve' | 'submit' | 'reconcile' | 'refund' | 'pay_payroll'
+export type SodAct = 'approve' | 'submit' | 'reconcile' | 'refund' | 'pay_payroll' | 'reopen'
 
 export const singleOfficerSchema = z
   .object({

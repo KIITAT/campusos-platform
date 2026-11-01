@@ -14,6 +14,7 @@ import {
 import { FinanceError, named, requireConfigure, requireOperate, requireRead, type Actor, type Tx } from './core'
 import { daysBetween } from './numbers'
 import { postWithin } from './operations'
+import { refuseControlAccounts } from './subledgers'
 import { parseStatement, StatementError, type ColumnMapping } from './statements'
 
 /**
@@ -409,6 +410,7 @@ async function postFromLineWithin(
   other: { accountId: string; costCenter?: string | null; partyId?: string | null; memo?: string | null },
 ) {
   const tenant = actor.institutionId!
+  await refuseControlAccounts(tx, [other.accountId])
   const bank = await bankWithin(tx, line.bankAccountId)
   const amount = line.depositPaise || line.withdrawalPaise
   const deposit = line.depositPaise > 0

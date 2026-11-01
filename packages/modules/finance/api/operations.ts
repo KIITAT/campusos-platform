@@ -3,6 +3,7 @@ import { audit, withTenant } from '@campusos/db'
 import { accounts, budgets, entries, lines } from '../schema'
 import { DEFAULT_CHART, normalSide } from './chart'
 import { spentSoFar } from './periods'
+import { refuseControlAccounts } from './subledgers'
 import { fiscalYearStart, localToday } from './years'
 import {
   FinanceError,
@@ -337,7 +338,12 @@ export async function postEntry(actor: Actor, input: unknown) {
   if (!canPost(actor.role)) throw new FinanceError(403, 'forbidden', 'not permitted')
   const data = postEntrySchema.parse(input)
 
-  return withTenant(tenant, (tx) => postWithin(tx, tenant, actor.id, data))
+  return withTenant(tenant, async (tx) => {
+    // A control account's balance is its sub-ledger's total: a raw line breaks that (ACC-02).
+    const ids = await resolveAccounts(tx, tenant, data.lines)
+    await refuseControlAccounts(tx, [...ids.values()])
+    return postWithin(tx, tenant, actor.id, data)
+  })
 }
 
 /**
@@ -643,31 +649,45 @@ export async function entryLines(actor: Actor, entryId: string) {
  * rather than a silent report. Groups are left out: their balance is their
  * accounts', and listing both would count it twice.
  */
+/**
+ * Movement totals for the debits-equal-credits check. The trial balance people
+ * read is `trialBalanceReport`.
+ */
 export async function trialBalance(actor: Actor, input: unknown = {}) {
   const tenant = tenantOf(actor)
   if (!canRead(actor.role)) throw new FinanceError(403, 'forbidden', 'not permitted')
   const { from, to } = trialBalanceSchema.parse(input)
 
   return withTenant(tenant, async (tx) => {
+    // By the day each entry counts on, not the instant it was typed. The dates
+    // filter the movement, not the accounts, so an account with no movement keeps its row.
     const within = [
-      // By the day each entry counts on, not the instant it was typed.
       from ? gte(entries.postingDate, from.toISOString().slice(0, 10)) : undefined,
       to ? lte(entries.postingDate, to.toISOString().slice(0, 10)) : undefined,
     ].filter(Boolean)
+    const moved = tx
+      .select({
+        accountId: lines.accountId,
+        debit: sql<number>`sum(${lines.debitPaise})`.as('debit'),
+        credit: sql<number>`sum(${lines.creditPaise})`.as('credit'),
+      })
+      .from(lines)
+      .innerJoin(entries, eq(entries.id, lines.entryId))
+      .where(and(...within))
+      .groupBy(lines.accountId)
+      .as('moved')
 
     const rows = await tx
       .select({
         code: accounts.code,
         name: accounts.name,
         type: accounts.type,
-        debitPaise: sql<number>`coalesce(sum(${lines.debitPaise}), 0)::bigint`,
-        creditPaise: sql<number>`coalesce(sum(${lines.creditPaise}), 0)::bigint`,
+        debitPaise: sql<number>`coalesce(${moved.debit}, 0)::bigint`,
+        creditPaise: sql<number>`coalesce(${moved.credit}, 0)::bigint`,
       })
       .from(accounts)
-      .leftJoin(lines, eq(lines.accountId, accounts.id))
-      .leftJoin(entries, eq(entries.id, lines.entryId))
-      .where(and(eq(accounts.isGroup, false), ...within))
-      .groupBy(accounts.id, accounts.code, accounts.name, accounts.type)
+      .leftJoin(moved, eq(moved.accountId, accounts.id))
+      .where(eq(accounts.isGroup, false))
       .orderBy(asc(accounts.code))
 
     const accountRows = rows.map((r) => ({
