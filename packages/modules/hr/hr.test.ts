@@ -103,6 +103,7 @@ before(async () => {
 beforeEach(async () => {
   await withTenant(inst, async (tx) => {
     await tx.execute(sql`select set_config('app.audit_reason', 'test reset', true)`)
+    await tx.execute(sql`delete from notifications`)
     await tx.delete(payslips)
     await tx.delete(payComponents)
     await tx.delete(leaveRequests)
@@ -582,4 +583,17 @@ test('deleting a staff record does not delete their payslips (DATA-09)', async (
   await assert.rejects(() => authDb.delete(staff).where(eq(staff.id, s.id)), saysDb(/foreign key/))
   const kept = await withTenant(inst, (tx) => tx.select().from(payslips).where(eq(payslips.staffId, s.id)))
   assert.equal(kept.length, 1)
+})
+
+// --- alerts (P1-02) --------------------------------------------------------
+
+test('a leave decision tells the staff member', async () => {
+  const s = await hire({ userId: ids.fac })
+  const r = await requestLeave(teacher(), {
+    staffId: s.id, leaveTypeId: casual, fromOn: '2026-04-06', toOn: '2026-04-08',
+    reason: 'family function at home',
+  })
+  await decideLeave(admin(), { requestId: r.id, approve: true, note: 'fine' })
+  const got = (await withTenant(inst, (tx) => tx.execute(sql`select title, body, link from notifications where user_id = ${ids.fac}`))).rows as { title: string; body: string; link: string }[]
+  assert.deepEqual(got.map((g) => [g.title, g.body, g.link]), [['Leave approved', '2026-04-06 to 2026-04-08: fine', '/m/hr/me']])
 })

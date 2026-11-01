@@ -242,3 +242,29 @@ test('leave: asked for as KIIT’s form asks, decided by the mentor, and handed 
   await leaveDocument(c.asha, med.id)
   assert.equal((await reads()).length, 2, "the student's own document is not")
 })
+
+// --- alerts (P1-02) --------------------------------------------------------
+
+const inboxOf = async (c: Awaited<ReturnType<typeof campus>>, id: string) =>
+  (await withTenant(c.id, (tx) => tx.execute(sql`select title, body, link from notifications where user_id = ${id} order by created_at`))).rows as { title: string; body: string; link: string }[]
+
+test('a mentor’s leave decision tells the student', async () => {
+  const c = await campus()
+  await assignMentor(c.admin, { studentIds: [c.asha.id], mentorId: c.rout.id })
+  const home = await leaveFor(c)
+  await decideLeave(c.rout, { applicationId: home.id, decision: 'reject', note: 'not this week' })
+  const got = await inboxOf(c, c.asha.id)
+  assert.equal(got.length, 1)
+  assert.equal(got[0]!.title, 'Leave refused')
+  assert.ok(got[0]!.body.endsWith(': not this week'))
+  assert.equal(got[0]!.link, '/m/mentoring/me')
+})
+
+test('a message tells the other side without its text', async () => {
+  const c = await campus()
+  await assignMentor(c.admin, { studentIds: [c.asha.id], mentorId: c.rout.id })
+  await sendMessage(c.asha, { body: 'Could we meet about the backlog paper?' })
+  assert.deepEqual((await inboxOf(c, c.rout.id)).map((g) => [g.title, g.body]), [['A message from a mentee', 'Open your mentees to read it.']])
+  await sendMessage(c.rout, { studentId: c.asha.id, body: 'Thursday at 3, my cabin' })
+  assert.deepEqual((await inboxOf(c, c.asha.id)).map((g) => [g.title, g.body]), [['A message from your mentor', 'Open your mentoring page to read it.']])
+})
