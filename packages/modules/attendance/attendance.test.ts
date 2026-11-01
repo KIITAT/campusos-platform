@@ -9,6 +9,7 @@ import {
   closeSession,
   currentQrFor,
   encodeQr,
+  grantExcuse,
   listPendingDevices,
   attendanceSummary,
   myAttendance,
@@ -18,6 +19,7 @@ import {
   registerDevice,
   roster,
   scan,
+  setAttendanceRules,
   setGeofence,
   type Actor,
 } from './api'
@@ -144,6 +146,8 @@ beforeEach(async () => {
     await tx.delete(records)
     await tx.delete(sessions)
     await tx.delete(devices)
+    await tx.execute(sql`delete from notifications`)
+    await tx.execute(sql`delete from attendance_excuses`)
     since = new Date(Math.floor(Number((await tx.execute<{ ms: string }>(sql`select extract(epoch from clock_timestamp()) * 1000 as ms`)).rows[0]!.ms)))
   })
   // s1 has an approved device by default; s2 has none.
@@ -594,5 +598,55 @@ test('a session id from another institution is not readable', async () => {
     )
   } finally {
     await authDb.delete(institutions).where(eq(institutions.slug, 'att-other2'))
+  }
+})
+
+// --- alerts (P1-02) --------------------------------------------------------
+
+const inboxOf = async (id: string) =>
+  (await withTenant(inst, (tx) => tx.execute(sql`select title, link from notifications where user_id = ${id} order by created_at`))).rows as { title: string; link: string }[]
+
+/** A parent the office has verified for the student. */
+async function guardianOf(studentId: string) {
+  const [par] = await authDb.insert(users).values({ email: `par-${crypto.randomUUID()}@att.test`, institutionId: inst, role: 'parent', name: 'Par' }).returning({ id: users.id })
+  await authDb.execute(sql`insert into parent_links (institution_id, parent_id, student_id, relation, verified_at) values (${inst}, ${par!.id}, ${studentId}, 'mother', now())`)
+  return par!.id
+}
+
+/** s1 scans, s2 is absent, then the class is closed. */
+async function holdClass() {
+  const s = await openSession(A({}), { slotId: ids.slot })
+  await scanAs(ids.s1, await liveQr(s.id))
+  await closeSession(A({}), { sessionId: s.id })
+  return s
+}
+
+test('closing a session tells each absent student and their guardian', async () => {
+  const par = await guardianOf(ids.s2)
+  await holdClass()
+  const mine = await inboxOf(ids.s2)
+  assert.deepEqual(mine.filter((m) => /^Absent from/.test(m.title)).map((m) => [m.title, m.link]), [['Absent from CS301', '/m/attendance/me']])
+  assert.deepEqual((await inboxOf(par)).filter((m) => /^Absent from/.test(m.title)).map((m) => m.link), ['/m/parents'])
+  assert.equal((await inboxOf(ids.s1)).filter((m) => /^Absent from/.test(m.title)).length, 0)
+})
+
+test('an excused absentee is not told they were absent', async () => {
+  const day = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10)
+  await grantExcuse(admin(), { studentId: ids.s2, fromOn: day, toOn: day, kind: 'medical', reason: 'fever, doctor’s note seen' })
+  await holdClass()
+  assert.equal((await inboxOf(ids.s2)).filter((m) => /^Absent from/.test(m.title)).length, 0)
+})
+
+test('falling below the minimum tells the student once', async () => {
+  await setAttendanceRules(admin(), { minimumPercent: 75, excusedCounts: 'true' })
+  const first = await openSession(A({}), { slotId: ids.slot })
+  await override(A({}), { sessionId: first.id, studentId: ids.s2, reason: 'verified in person, handset left at home' })
+  await closeSession(A({}), { sessionId: first.id })
+  const low = async () => (await inboxOf(ids.s2)).filter((m) => /^Attendance below 75% in CS301/.test(m.title)).length
+  assert.equal(await low(), 0)
+  for (const want of [1, 1]) {
+    const s = await openSession(A({}), { slotId: ids.slot })
+    await closeSession(A({}), { sessionId: s.id })
+    assert.equal(await low(), want)
   }
 })
