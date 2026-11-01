@@ -387,3 +387,10 @@ export async function tdsInterest(actor: Actor, input: { on?: string } = {}) {
     return { on, rows, totalPaise: rows.reduce((n, r) => n + r.interestPaise, 0) }
   })
 }
+
+/** The quarter's deductions as rows, for the returns page. */
+export async function tdsDeductions(actor: Actor, input: unknown) {
+  const tenant = requireRead(actor)
+  const q = quarterOf(input)
+  return withTenant(tenant, async (tx) => ({ ...q, rows: await deductionsWithin(tx, { from: q.from, to: q.to, form: q.form }) }))
+}

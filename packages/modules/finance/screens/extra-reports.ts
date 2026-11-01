@@ -6,7 +6,7 @@ import { chooseRecord, col, context, dateFields, display, field, filter, form, h
 export const extraReportLinks = [
   ['Aging of receivables and payables', '/reports/aging'], ['Funds and grants', '/reports/funds'], ['Sub-ledgers against the books', '/reports/subledgers'], ['Fund statement', '/reports/fund'], ['Cost centres', '/reports/cost-centers'], ['GST and TDS', '/reports/gst'], ['Stock balance', '/stock/balance'], ['Stock ledger', '/stock/ledger'], ['Stores against books', '/stock/against-books'], ['Asset register', '/assets'], ['Depreciation', '/depreciation'],
 ].map(([label, path]) => ({ label: label!, href: `/m/finance${path}` }))
-const gstLinks = [['GSTR-1', '/reports/gstr1'], ['GSTR-3B', '/reports/gstr3b'], ['CMP-08 (composition)', '/reports/cmp08'], ['GSTR-2B matching', '/gst/2b'], ['HSN / SAC summary', '/reports/hsn'], ['Sales and purchase register', '/reports/register'], ['TDS', '/reports/tds']]
+const gstLinks = [['GSTR-1', '/reports/gstr1'], ['GSTR-3B', '/reports/gstr3b'], ['CMP-08 (composition)', '/reports/cmp08'], ['TDS returns', '/tds'], ['GSTR-2B matching', '/gst/2b'], ['HSN / SAC summary', '/reports/hsn'], ['Sales and purchase register', '/reports/register'], ['TDS', '/reports/tds']]
 const taxColumns = () => moneyCols('taxablePaise', 'igstPaise', 'cgstPaise', 'sgstPaise', 'cessPaise')
 const hsnColumns = () => [col('hsnSac'), col('uom'), col('qtyMilliText', undefined, { label: 'Quantity' }), ...taxColumns()]
 const exportCsv = (report: string, data: Data): PluginSection => ({ kind: 'links', links: [{ label: 'Download CSV', href: `/api/v1/modules/finance/reports/export.csv?${new URLSearchParams({ ...Object.fromEntries(Object.entries(object(data.query)).map(([key, value]) => [key, str(value)])), report, from: str(data.from), to: str(data.to), on: str(data.on) })}` }] })
@@ -96,6 +96,31 @@ export const extraReportPages: PluginPage[] = [
       ] }
     },
     sections: data => [{ kind: 'note', text: 'CampusOS files nothing: check this against the portal before you file. A quarter runs April-June, July-September, October-December or January-March; turnover leaves out exempt and non-GST supplies.' }, filter('/reports/cmp08', data, dateFields('from', 'to')), table('CMP-08', 'figures', [col('label'), ...moneyCols('amountPaise')])],
+  }),
+  page({ path: '/tds', title: 'TDS returns', roles: OFFICE,
+    async load(actor, request) {
+      const data = await context(actor, request)
+      const query = object(data.query)
+      const month = new Date().getUTCMonth() + 1
+      const fy = Number(query.fy) || (month >= 4 ? new Date().getUTCFullYear() : new Date().getUTCFullYear() - 1)
+      const quarter = Number(query.quarter) || 1
+      const form = str(query.form) || '26Q'
+      const deductions = object(await read(actor, '/tds/deductions', { fy: String(fy), quarter: String(quarter), form }))
+      const challans: Data[] = rows(await read(actor, '/tds/challans')).map((row): Data => ({ ...row, status: row.voidedAt ? 'void' : 'live' }))
+      const interest = object(await read(actor, '/tds/interest'))
+      const csvQuery = new URLSearchParams({ fy: String(fy), quarter: String(quarter), form }).toString()
+      return { ...data, query: { ...query, fy: String(fy), quarter: String(quarter), form }, deductions: rows(deductions.rows).map(row => ({ ...row, statement: 'Statement', statementHref: `/api/v1/modules/finance/tds/certificate.pdf?partyId=${str(row.partyId)}&fy=${fy}&quarter=${quarter}`, deposit: row.bsrCode ? `${str(row.bsrCode)} / ${str(row.challanSerial)}` : 'not yet deposited' })), challans, liveChallans: challans.filter(row => !row.voidedAt).map(row => ({ value: str(row.id), label: `${str(row.form)} ${str(row.month).slice(0, 7)} ${str(row.bsrCode)}/${str(row.challanSerial)}` })), lateRows: rows(interest.rows), lateTotal: [{ interestPaise: interest.totalPaise ?? 0 }], csvLinks: [{ label: 'Download the working statement (CSV)', href: `/api/v1/modules/finance/tds/quarter?${csvQuery}` }] }
+    },
+    sections: data => [
+      { kind: 'note', text: 'CampusOS files nothing: check this against TRACES before you file. A challan deposits one month of one form (26Q for residents, 27Q for non-residents, by GST category). Interest counts a month and a half percent for each month or part month a deposit is late; late deduction and the late-filing fee are not worked out.' },
+      filter('/tds', data, [field('fy', 'number'), select('quarter', ['1', '2', '3', '4']), select('form', ['26Q', '27Q'])]),
+      { kind: 'links', links: data.csvLinks as { label: string; href: string }[] },
+      table('Deductions of the quarter', 'deductions', [col('postingDate', 'date'), col('party'), col('pan'), col('section'), col('number', undefined, { label: 'Document' }), ...moneyCols('paidPaise', 'tdsPaise'), col('deposit', undefined, { label: 'Challan (BSR / serial)' }), col('statement', undefined, { href: '{statementHref}', label: 'Statement' })]),
+      table('Late deposit interest', 'lateRows', [col('party'), col('section'), col('document'), col('deductedOn', 'date'), col('dueOn', 'date'), col('depositedOn', 'date'), ...moneyCols('tdsPaise'), col('months'), ...moneyCols('interestPaise')], { empty: 'No deposit is late.' }),
+      table('Challans', 'challans', [col('form'), col('month', 'date'), col('depositedOn', 'date'), col('bsrCode'), col('challanSerial'), ...moneyCols('tdsPaise', 'interestPaise', 'feePaise'), col('status', 'status'), col('voidReason')]),
+      { ...form('Record a challan', '/tds/challans', [select('form', ['26Q', '27Q'], { optional: false }), field('month', 'text', { optional: false, hint: 'Month of the deductions, as YYYY-MM' }), field('depositedOn', 'date', { optional: false }), field('bsrCode', 'text', { optional: false }), field('challanSerial', 'text', { optional: false }), field('interest', 'money'), field('fee', 'money'), select('accountId', 'cashBank', { optional: false })]), roles: ADMIN },
+      { ...form('Void a challan', '/tds/challans/void', [select('challanId', 'liveChallans', { optional: false }), field('reason', 'textarea', { optional: false })]), note: 'Voiding reverses the deposit and frees its deductions to be deposited again.', roles: ADMIN },
+    ],
   }),
   page({ path: '/gst/2b', title: 'GSTR-2B against the books', roles: OFFICE,
     async load(actor, request) {

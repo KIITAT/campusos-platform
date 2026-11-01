@@ -296,6 +296,7 @@ export const specs: RouteSpec[] = [
     const q = query(req)
     return api.tdsCertificatePdf(a, { partyId: requiredParam(req, 'partyId'), fy: q.fy ?? '', quarter: q.quarter ?? '' })
   }),
+  get('reports', '/tds/deductions', 'The deductions of a quarter (fy, quarter, form)', (a, q) => api.tdsDeductions(a, { fy: q.fy, quarter: q.quarter, form: q.form })),
   get('reports', '/tds/interest', 'Interest on TDS deposited late', (a, q) => api.tdsInterest(a, { on: q.on })),
   post('reports', '/gst/2b', 'Import a GSTR-2B JSON file (replaces that month)', api.import2b, api.import2bSchema),
   get('reports', '/gst/2b', 'A month of GSTR-2B against the purchase bills', (a, _q, req) => api.match2b(a, { period: requiredParam(req, 'period') })),
