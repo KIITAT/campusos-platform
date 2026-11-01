@@ -233,6 +233,7 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   notice_attachments: 'export',
   notices: 'export',
   notifications: 'export',
+  notification_opt_outs: 'export',
 
   // parents
   parent_guardian_invites: 'export',
