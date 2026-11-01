@@ -328,7 +328,8 @@ export async function tdsFor(
   const [prior] = await tx
     .select({
       net: sql<number>`coalesce(sum(case when ${invoices.isReturn} then -1 else 1 end * (${invoices.netFc}::numeric * ${invoices.exchangeRate}))::bigint, 0)`,
-      deducted: sql<number>`coalesce(sum(case when ${invoices.isReturn} then -${invoices.tdsPaise} else ${invoices.tdsPaise} end), 0)::bigint`,
+      // The part of a bill's tax that an advance had already paid (P1-05b D12) is tax deducted too.
+      deducted: sql<number>`coalesce(sum(case when ${invoices.isReturn} then -${invoices.tdsPaise} else ${invoices.tdsPaise} + ${invoices.tdsAdvancePaise} end), 0)::bigint`,
     })
     .from(invoices)
     .where(
