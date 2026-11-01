@@ -6,10 +6,11 @@ import { chooseRecord, col, context, dateFields, display, field, filter, form, h
 export const extraReportLinks = [
   ['Aging of receivables and payables', '/reports/aging'], ['Funds and grants', '/reports/funds'], ['Sub-ledgers against the books', '/reports/subledgers'], ['Fund statement', '/reports/fund'], ['Cost centres', '/reports/cost-centers'], ['GST and TDS', '/reports/gst'], ['Stock balance', '/stock/balance'], ['Stock ledger', '/stock/ledger'], ['Stores against books', '/stock/against-books'], ['Asset register', '/assets'], ['Depreciation', '/depreciation'],
 ].map(([label, path]) => ({ label: label!, href: `/m/finance${path}` }))
-const gstLinks = [['GSTR-1', '/reports/gstr1'], ['GSTR-3B', '/reports/gstr3b'], ['CMP-08 (composition)', '/reports/cmp08'], ['HSN / SAC summary', '/reports/hsn'], ['Sales and purchase register', '/reports/register'], ['TDS', '/reports/tds']]
+const gstLinks = [['GSTR-1', '/reports/gstr1'], ['GSTR-3B', '/reports/gstr3b'], ['CMP-08 (composition)', '/reports/cmp08'], ['GSTR-2B matching', '/gst/2b'], ['HSN / SAC summary', '/reports/hsn'], ['Sales and purchase register', '/reports/register'], ['TDS', '/reports/tds']]
 const taxColumns = () => moneyCols('taxablePaise', 'igstPaise', 'cgstPaise', 'sgstPaise', 'cessPaise')
 const hsnColumns = () => [col('hsnSac'), col('uom'), col('qtyMilliText', undefined, { label: 'Quantity' }), ...taxColumns()]
 const exportCsv = (report: string, data: Data): PluginSection => ({ kind: 'links', links: [{ label: 'Download CSV', href: `/api/v1/modules/finance/reports/export.csv?${new URLSearchParams({ ...Object.fromEntries(Object.entries(object(data.query)).map(([key, value]) => [key, str(value)])), report, from: str(data.from), to: str(data.to), on: str(data.on) })}` }] })
+const sumTax = (amounts: unknown) => { const a = object(amounts); return Object.keys(a).length ? Number(a.igstPaise) + Number(a.cgstPaise) + Number(a.sgstPaise) + Number(a.cessPaise) : null }
 const fundColumns = [col('code'), col('name', undefined, { href: '/m/finance/reports/fund?fundId={fundId}' }), col('kind'), ...moneyCols('sanctionedPaise', 'receivedPaise', 'spentPaise', 'balancePaise')]
 
 export const extraReportPages: PluginPage[] = [
@@ -95,6 +96,23 @@ export const extraReportPages: PluginPage[] = [
       ] }
     },
     sections: data => [{ kind: 'note', text: 'CampusOS files nothing: check this against the portal before you file. A quarter runs April-June, July-September, October-December or January-March; turnover leaves out exempt and non-GST supplies.' }, filter('/reports/cmp08', data, dateFields('from', 'to')), table('CMP-08', 'figures', [col('label'), ...moneyCols('amountPaise')])],
+  }),
+  page({ path: '/gst/2b', title: 'GSTR-2B against the books', roles: OFFICE,
+    async load(actor, request) {
+      const data = await context(actor, request)
+      const imported = rows(await read(actor, '/gst/2b/returns'))
+      const period = str(object(data.query).period) || str(imported[0]?.period)
+      const report = period ? object(await read(actor, '/gst/2b', { period }).catch((error: { code?: string }) => { if (error?.code === 'no_2b') return {}; throw error })) : {}
+      const summary = object(report.summary)
+      return { ...data, query: { ...object(data.query), period }, periodOptions: imported.map(row => ({ value: str(row.period), label: str(row.period) })), matches: rows(report.rows).map(row => ({ ...row, booksTax: sumTax(row.books), twoBTax: sumTax(row.gstr2b), booksTaxable: object(row.books).taxablePaise ?? null, twoBTaxable: object(row.gstr2b).taxablePaise ?? null })), counts: [{ matched: summary.matched ?? 0, differs: summary.differs ?? 0, notInBooks: summary.notInBooks ?? 0, notIn2b: summary.notIn2b ?? 0 }] }
+    },
+    sections: data => [
+      { kind: 'note', text: 'CampusOS files nothing: check this against the portal before you file. Only B2B invoices and credit or debit notes are read from the file; other sections are counted when you import. A bill matches on supplier GSTIN, kind of document and number (case, punctuation and padding zeros ignored), within one rupee on each figure.' },
+      { ...form('Import a GSTR-2B file', '/gst/2b', [field('file', 'file', { optional: false, accept: '.json,application/json' })]), note: 'Importing a month again replaces it.' },
+      filter('/gst/2b', data, [select('period', 'periodOptions', { optional: false })]),
+      table('Matches by status', 'counts', [col('matched'), col('differs'), col('notInBooks'), col('notIn2b')]),
+      table('GSTR-2B against the purchase bills', 'matches', [col('status'), col('supplierGstin'), col('supplier'), col('docNumber', undefined, { label: 'Document' }), col('docDate', 'date'), col('booksTaxable', 'money'), col('twoBTaxable', 'money'), col('booksTax', 'money'), col('twoBTax', 'money'), col('itcAvailable', 'bool')], { empty: 'Nothing to compare: import a GSTR-2B file for the month.' }),
+    ],
   }),
   ...['hsn', 'register'].map(report => page({ path: `/reports/${report}`, title: report === 'hsn' ? 'HSN / SAC summary' : 'Sales and purchase register', roles: OFFICE,
     async load(actor, request) { const data = await context(actor, request); const query = { kind: 'sales', ...object(data.query) }; return { ...data, query, rows: rows(await read(actor, `/reports/${report}`, { ...query, from: data.from, to: data.to })).map(row => display(row, data)) } },

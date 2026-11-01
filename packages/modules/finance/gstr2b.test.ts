@@ -48,7 +48,7 @@ async function books(): Promise<Books> {
     .values([
       { email: `adm@${tag}.test`, institutionId: id, role: 'institution_admin', name: 'Adm' },
       { email: `acc@${tag}.test`, institutionId: id, role: 'accounts_staff', name: 'Acc' },
-      { email: `tch@${tag}.test`, institutionId: id, role: 'teacher', name: 'Tch' },
+      { email: `tch@${tag}.test`, institutionId: id, role: 'student', name: 'Stu' },
     ])
     .returning({ id: users.id })
   const who = (at: number, role: Role): Actor => ({ id: people[at]!.id, email: `${at}@${tag}.test`, role, institutionId: id })
@@ -58,7 +58,7 @@ async function books(): Promise<Books> {
   await updateSettings(admin, { gstin: OUR_GSTIN, stateCode: '29' })
   const supplier = (await createParty(clerk, { code: `S${++n}`, name: 'Paper Mart', isSupplier: true, stateCode: '27', gstin: SUPPLIER_GSTIN })).id
   const gst18 = await withTenant(id, async (tx) => (await tx.select().from(taxTemplates).where(eq(taxTemplates.name, 'GST 18%')))[0]!.id)
-  return { id, admin, clerk, teacher: who(2, 'teacher'), supplier, gst18 }
+  return { id, admin, clerk, teacher: who(2, 'student'), supplier, gst18 }
 }
 
 after(async () => {
@@ -186,11 +186,11 @@ test('refusals', async () => {
   await refused(match2b(b.clerk, { period: '2026-07' }), 'no_2b', 404)
 })
 
-test('a clerk imports; a teacher cannot', async () => {
+test('a clerk imports; a student cannot', async () => {
   assert.deepEqual(routeRoles['POST /gst/2b'], OFFICE)
   assert.deepEqual(routeRoles['GET /gst/2b'], OFFICE)
   assert.deepEqual(routeRoles['GET /gst/2b/returns'], OFFICE)
-  assert.ok(!OFFICE.includes('teacher'))
+  assert.ok(!OFFICE.includes('student'))
   void ADMIN
   const b = await books()
   await refused(import2b(b.teacher, { file: twoB('042026', [{ num: 'X-1' }]) }), 'forbidden', 403)

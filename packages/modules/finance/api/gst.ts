@@ -469,3 +469,29 @@ export async function cmp08(actor: Actor, input: { from: string; to: string }) {
     return { from: input.from, to: input.to, turnoverPaise, rateBp: s.compositionRateBp, cgstPaise, sgstPaise, reverseCharge, totalPaise }
   })
 }
+
+/**
+ * Submitted purchase bills with the tax of each (base currency, unsigned), one
+ * entry per bill: what GSTR-2B is matched against.
+ */
+export async function purchaseTaxByInvoice(tx: Tx, from: string, to: string) {
+  const rows = await taxRows(tx, 'purchase', from, to)
+  const info = await tx.execute(sql`
+    select id, bill_no, bill_date::text as bill_date from finance_invoices
+     where kind = 'purchase' and docstatus = 'submitted' and posting_date between ${from}::date and ${to}::date`)
+  const bills = new Map((info.rows as unknown as { id: string; bill_no: string | null; bill_date: string | null }[]).map((r) => [r.id, r]))
+  const out = new Map<
+    string,
+    { invoiceId: string; number: string; postingDate: string; billNo: string | null; billDate: string | null; isReturn: boolean; party: string; gstin: string | null; amounts: Bucket }
+  >()
+  for (const r of rows) {
+    let o = out.get(r.invoice_id)
+    if (!o) {
+      const b = bills.get(r.invoice_id)
+      o = { invoiceId: r.invoice_id, number: r.number, postingDate: r.posting_date, billNo: b?.bill_no ?? null, billDate: b?.bill_date ?? null, isReturn: r.is_return, party: r.party, gstin: r.gstin, amounts: empty() }
+      out.set(r.invoice_id, o)
+    }
+    add(o.amounts, r, 1)
+  }
+  return [...out.values()]
+}
