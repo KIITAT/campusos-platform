@@ -20,6 +20,7 @@ import {
   withdrawNotice,
   type Actor,
 } from './api'
+import { plugin } from './plugin'
 import { noticeAttachments, notices, notifications } from './schema'
 
 // The audit trail is append-only (AUD-01): a reset cannot empty it, so each
@@ -326,6 +327,11 @@ test('without a mail provider, emailing reports that it sent nothing', async () 
   } finally {
     if (before !== undefined) process.env.RESEND_API_KEY = before
   }
+})
+
+test('no email path remains', async () => {
+  assert.equal('emailConfigured' in (await inbox(student(ids.s1))), false)
+  assert.equal(plugin.routes.some((r) => r.path === '/board/email'), false)
 })
 
 // --- tenancy ---------------------------------------------------------------
