@@ -5,12 +5,17 @@ import { authDb, institutions, users, withTenant } from '@campusos/db'
 import {
   accountFor,
   createParty,
+  dayBook,
+  dayBookPage,
+  generalLedger,
+  glPage,
   invoicePage,
   journalPage,
   listInvoices,
   listJournals,
   listPayments,
   paymentPage,
+  postWithin,
   saveInvoice,
   savePayment,
   setSingleOfficer,
@@ -54,6 +59,24 @@ after(async () => {
 
 /** A table filled a moment ago has no statistics, and the planner then plans badly; autovacuum does this in life. */
 const analyse = (table: string) => authDb.execute(sql.raw(`analyze ${table}`))
+
+/**
+ * Drop an institution's invoices without the row-by-row foreign-key checks.
+ * finance_invoices points at itself twice (return_against, amended_from) with
+ * no index on either column, so deleting 100,000 invoices one check at a time
+ * scans the table 100,000 times (minutes). The owner connection may skip the
+ * checks; where it may not, the ordinary cascade in `after` still cleans up.
+ */
+async function dropInvoices(b: Books) {
+  try {
+    await authDb.transaction(async (tx) => {
+      await tx.execute(sql`set local session_replication_role = replica`)
+      await tx.execute(sql`delete from finance_invoices where institution_id = ${b.id}`)
+    })
+  } catch {
+    /* not permitted here: leave it to the cascade */
+  }
+}
 
 const seedInvoices = (b: Books, count: number) =>
   withTenant(b.id, (tx) =>
@@ -116,20 +139,24 @@ test('an open-status filter pages exactly the open invoices (DATA-01, regression
 
 test('a hundred thousand invoices page in under 500 ms (DATA-01)', async () => {
   const b = await books()
-  await seedInvoices(b, 100_000)
-  await analyse('finance_invoices')
-  const first = invoicePage(new Request('https://x/?n=20'), '')
-  const warm = await listInvoices(b.admin, { kind: 'sales' }, first)
-  assert.ok(warm.next)
-  const t0 = performance.now()
-  const p1 = await listInvoices(b.admin, { kind: 'sales' }, first)
-  const t1 = performance.now()
-  const p2 = await listInvoices(b.admin, { kind: 'sales' }, invoicePage(new Request(`https://x/?n=20&after=${p1.next}`), ''))
-  const t2 = performance.now()
-  console.log(`invoices 100k: first page ${(t1 - t0).toFixed(0)} ms, next page ${(t2 - t1).toFixed(0)} ms`)
-  assert.equal(p2.rows.length, 20)
-  assert.ok(t1 - t0 < 500, 'first page')
-  assert.ok(t2 - t1 < 500, 'next page')
+  try {
+    await seedInvoices(b, 100_000)
+    await analyse('finance_invoices')
+    const first = invoicePage(new Request('https://x/?n=20'), '')
+    const warm = await listInvoices(b.admin, { kind: 'sales' }, first)
+    assert.ok(warm.next)
+    const t0 = performance.now()
+    const p1 = await listInvoices(b.admin, { kind: 'sales' }, first)
+    const t1 = performance.now()
+    const p2 = await listInvoices(b.admin, { kind: 'sales' }, invoicePage(new Request(`https://x/?n=20&after=${p1.next}`), ''))
+    const t2 = performance.now()
+    console.log(`invoices 100k: first page ${(t1 - t0).toFixed(0)} ms, next page ${(t2 - t1).toFixed(0)} ms`)
+    assert.equal(p2.rows.length, 20)
+    assert.ok(t1 - t0 < 500, 'first page')
+    assert.ok(t2 - t1 < 500, 'next page')
+  } finally {
+    await dropInvoices(b)
+  }
 })
 
 test('payments and journal vouchers page past 1000 (DATA-01)', async () => {
@@ -149,3 +176,77 @@ test('payments and journal vouchers page past 1000 (DATA-01)', async () => {
   assert.deepEqual(receipts.totals, [1005])
 })
 
+
+// --- general ledger and day book (DATA-01) -----------------------------------
+
+async function postedBooks(count: number) {
+  const b = await books()
+  const receivable = await withTenant(b.id, async (tx) => {
+    for (let i = 0; i < count; i += 100) {
+      for (let j = i; j < Math.min(i + 100, count); j++) {
+        await postWithin(tx, b.id, b.admin.id, {
+          memo: `Fee ${j}`,
+          sourceModule: 'fees',
+          sourceRef: `ref:${j}`,
+          postingDate: '2026-10-01',
+          lines: [
+            { purpose: 'fees_receivable', debitPaise: 100 },
+            { purpose: 'fee_income', creditPaise: 100 },
+          ],
+        })
+      }
+    }
+    return accountFor(tx, b.id, 'fees_receivable')
+  })
+  return { b, receivable }
+}
+
+test('the general ledger closes correctly past 5000 lines (DATA-01)', async () => {
+  const { b, receivable } = await postedBooks(5100)
+  const gl = await generalLedger(b.admin, { accountId: receivable, from: '2026-10-01', to: '2026-10-01' })
+  assert.equal(gl.lines.length, 5100)
+  assert.equal(gl.closingPaise, gl.openingPaise + 510_000)
+  assert.equal(gl.total, 5100)
+
+  // pages carry the running balance across the cut
+  let after: string | null = null
+  let previous: number | null = null
+  let last = 0
+  let seen = 0
+  do {
+    const page = glPage(new Request(`https://x/?n=1000${after ? `&after=${after}` : ''}`), '')
+    const p = await generalLedger(b.admin, { accountId: receivable, from: '2026-10-01', to: '2026-10-01' }, page)
+    assert.equal(p.total, 5100)
+    assert.equal(p.closingPaise, gl.closingPaise)
+    assert.equal(p.openingPaise, gl.openingPaise)
+    if (previous !== null) assert.equal(p.lines[0]!.balancePaise, previous + 100, 'the balance runs on across the cut')
+    previous = p.lines[p.lines.length - 1]!.balancePaise
+    last = previous
+    seen += p.lines.length
+    after = p.next
+  } while (after)
+  assert.equal(seen, 5100)
+  assert.equal(last, gl.closingPaise)
+})
+
+test('the day book pages by entry (DATA-01)', async () => {
+  const { b } = await postedBooks(120)
+  const seen = new Set<string>()
+  let after: string | null = null
+  let pages = 0
+  do {
+    const page = dayBookPage(new Request(`https://x/?n=50${after ? `&after=${after}` : ''}`), '')
+    const book = await dayBook(b.admin, { from: '2026-10-01', to: '2026-10-01' }, page)
+    assert.equal(book.total, 120)
+    assert.ok(book.entries.length <= 50)
+    for (const e of book.entries) {
+      assert.ok(!seen.has(e.id), 'no entry on two pages')
+      assert.equal(e.lines.length, 2, 'an entry keeps both its lines')
+      seen.add(e.id)
+    }
+    pages++
+    after = book.next
+  } while (after)
+  assert.equal(seen.size, 120)
+  assert.equal(pages, 3)
+})
