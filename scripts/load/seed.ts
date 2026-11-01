@@ -123,8 +123,11 @@ async function main() {
           await owner.query('commit')
           log({ slug, upTo: to })
         }
+        // The triggers were off for the bulk insert: rebuild the daily balances from the lines (P1-10b, REL-03).
+        const rebuilt = await owner.query('select finance_rebuild_daily_balances($1::uuid) as n', [id])
+        log({ slug, balances: Number(rebuilt.rows[0].n) })
       }
-      await owner.query('analyze finance_journal_entries, finance_journal_lines')
+      await owner.query('analyze finance_journal_entries, finance_journal_lines, finance_daily_balances')
     } finally {
       owner.release()
     }
