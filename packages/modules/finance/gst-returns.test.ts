@@ -7,6 +7,7 @@ import { printedText } from '@campusos/module-framework/pdf'
 import { taxTemplates } from './schema'
 import {
   FinanceError,
+  cancelInvoice,
   cmp08,
   createParty,
   getSettings,
@@ -14,6 +15,7 @@ import {
   invoiceDetail,
   loadIndiaPreset,
   makeReturn,
+  markFiled,
   refusal,
   saveInvoice,
   submitInvoice,
@@ -223,4 +225,46 @@ test('CMP-08 adds up the quarter', async () => {
   await refused(cmp08(b.clerk, { from: '2026-04-01', to: '2026-04-30' }), 'bad_return_period', 400)
   const regular = await books()
   await refused(cmp08(regular.clerk, { from: '2026-04-01', to: '2026-06-30' }), 'not_composition', 409)
+})
+
+// --- return periods follow the scheme ----------------------------------------
+
+const filing = (returnType: string, periodFrom: string, periodTo: string) => ({ returnType, periodFrom, periodTo, filedOn: '2026-08-20' })
+
+test('a monthly regular filer files by month, with no IFF', async () => {
+  const b = await books()
+  await markFiled(b.admin, filing('gstr1', '2026-04-01', '2026-04-30'))
+  await refused(markFiled(b.admin, filing('gstr1', '2026-07-01', '2026-09-30')), 'bad_return_period', 400)
+  await refused(markFiled(b.admin, filing('iff', '2026-04-01', '2026-04-30')), 'bad_return_type', 400)
+  await refused(markFiled(b.admin, filing('cmp08', '2026-04-01', '2026-06-30')), 'bad_return_type', 400)
+})
+
+test('a QRMP filer files GSTR-1 by quarter and IFF in the first two months', async () => {
+  const b = await books()
+  await updateSettings(b.admin, { gstFiling: 'quarterly' })
+  await markFiled(b.admin, filing('gstr1', '2026-04-01', '2026-06-30'))
+  await markFiled(b.admin, filing('iff', '2026-04-01', '2026-04-30'))
+  await refused(markFiled(b.admin, filing('iff', '2026-06-01', '2026-06-30')), 'bad_return_period', 400)
+  await refused(markFiled(b.admin, filing('gstr1', '2026-05-01', '2026-05-31')), 'bad_return_period', 400)
+})
+
+test('a composition dealer files CMP-08 by quarter and no GSTR-1', async () => {
+  const { b } = await compositionBooks()
+  await markFiled(b.admin, filing('cmp08', '2026-04-01', '2026-06-30'))
+  await refused(markFiled(b.admin, filing('gstr1', '2026-04-01', '2026-06-30')), 'bad_return_type', 400)
+  await refused(markFiled(b.admin, filing('cmp08', '2026-04-01', '2026-04-30')), 'bad_return_period', 400)
+})
+
+test('an IFF filing stops a B2B invoice being cancelled, not a B2C one', async () => {
+  const b = await books()
+  await updateSettings(b.admin, { gstFiling: 'quarterly' })
+  const sale = async (gstin: string | undefined) => {
+    const c = await createParty(b.clerk, { code: `C${++n}`, name: `Customer ${n}`, isCustomer: true, stateCode: '27', gstin })
+    return (await saveInvoice(b.clerk, { kind: 'sales', partyId: c.id, postingDate: '2026-04-10', lines: [{ description: 'Hire', qty: '1', rate: '100' }], submit: true })) as { id: string }
+  }
+  const registered = await sale('27ABCDE1234F1Z5')
+  const unregistered = await sale(undefined)
+  await markFiled(b.admin, filing('iff', '2026-04-01', '2026-04-30'))
+  await refused(cancelInvoice(b.admin, { invoiceId: registered.id, reason: 'wrong party' }), 'gst_return_filed', 409)
+  await cancelInvoice(b.admin, { invoiceId: unregistered.id, reason: 'wrong party' })
 })
