@@ -46,7 +46,7 @@ GET /api/v1/modules/academic/imports                                     SI.....
 GET /api/v1/modules/academic/imports/template                            SI........ gate
 POST /api/v1/modules/academic/imports/run                                SI........ gate
 
-## admissions 0.4.0
+## admissions 0.5.0
 GET /api/v1/modules/admissions/enquiries                                 SI........ op
 GET /api/v1/modules/admissions/applications                              SI........ op
 POST /api/v1/modules/admissions/enquiries                                SI........ op
@@ -71,7 +71,7 @@ GET /api/v1/modules/alumni/imports                                       SI.....
 GET /api/v1/modules/alumni/imports/template                              SI........ gate
 POST /api/v1/modules/alumni/imports/run                                  SI........ gate
 
-## attendance 0.7.0
+## attendance 0.8.0
 POST /api/v1/modules/attendance/scan/signed                              .......s.. op
 POST /api/v1/modules/attendance/devices/key                              .......s.. op
 GET /api/v1/modules/attendance/devices/mine                              .......s.. gate
@@ -257,7 +257,7 @@ GET /api/v1/modules/fees/ledger                                          SIH.A..
 GET /api/v1/modules/fees/dues                                            SI..A..... gate
 GET /api/v1/modules/fees/receipt.pdf                                     SI..A..s.. gate
 
-## finance 0.10.0
+## finance 0.11.0
 GET /api/v1/modules/finance/accounts                                     SI..A..... op
 POST /api/v1/modules/finance/accounts                                    SI........ op
 POST /api/v1/modules/finance/accounts/update                             SI........ op
@@ -268,6 +268,7 @@ POST /api/v1/modules/finance/journal                                     SI.....
 POST /api/v1/modules/finance/journal/reverse                             SI........ op
 GET /api/v1/modules/finance/trial-balance                                SI..A..... op
 GET /api/v1/modules/finance/periods                                      SI..A..... op
+GET /api/v1/modules/finance/periods/checklist                            SI........ op
 POST /api/v1/modules/finance/periods/close                               SI........ op
 POST /api/v1/modules/finance/periods/reopen                              SI........ op
 GET /api/v1/modules/finance/budgets                                      SI..A..... op
@@ -429,6 +430,9 @@ POST /api/v1/modules/finance/bank-rules/delete                           SI..A..
 POST /api/v1/modules/finance/bank-rules/apply                            SI..A..... op
 GET /api/v1/modules/finance/bank/reconciliation                          SI..A..... op
 GET /api/v1/modules/finance/reports/trial-balance                        SI..A..... op
+GET /api/v1/modules/finance/reports/subledgers                           SI..A..... op
+POST /api/v1/modules/finance/gst/filings                                 SI........ op
+GET /api/v1/modules/finance/gst/filings                                  SI..A..... op
 GET /api/v1/modules/finance/reports/income-expenditure                   SI..A..... op
 GET /api/v1/modules/finance/reports/balance-sheet                        SI..A..... op
 GET /api/v1/modules/finance/reports/cash                                 SI..A..... op
@@ -477,7 +481,7 @@ GET /api/v1/modules/hostel/imports                                       SI....O
 GET /api/v1/modules/hostel/imports/template                              SI....O... gate
 POST /api/v1/modules/hostel/imports/run                                  SI....O... gate
 
-## hr 0.11.0
+## hr 0.12.0
 GET /api/v1/modules/hr/staff                                             SI..A..... op
 POST /api/v1/modules/hr/staff                                            SI........ op
 POST /api/v1/modules/hr/staff/end                                        SI........ op
@@ -641,7 +645,7 @@ GET /api/v1/modules/mentoring/imports                                    SIH....
 GET /api/v1/modules/mentoring/imports/template                           SIH....... gate
 POST /api/v1/modules/mentoring/imports/run                               SIH....... gate
 
-## notices 0.6.0
+## notices 0.7.0
 GET /api/v1/modules/notices/board                                        SIHFALOsp. gate
 POST /api/v1/modules/notices/board                                       SIHFALO... op
 POST /api/v1/modules/notices/board/publish                               SIHFALO... op
