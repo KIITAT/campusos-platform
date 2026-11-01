@@ -107,16 +107,16 @@ async function main() {
           await owner.query('set local session_replication_role = replica')
           await owner.query(
             `insert into finance_journal_entries (id, institution_id, occurred_at, posting_date, memo, source_module, source_ref)
-             select md5($1::text || ':' || i)::uuid, $1, (date '2021-04-01' + (i % 1826))::timestamptz, date '2021-04-01' + (i % 1826), 'Load entry', 'load', 'load:' || i
+             select md5($1::uuid::text || ':' || i)::uuid, $1::uuid, (date '2021-04-01' + (i % 1826)::int)::timestamptz, date '2021-04-01' + (i % 1826)::int, 'Load entry', 'load', 'load:' || i
                from generate_series($2::bigint, $3::bigint) i`,
             [id, from, to],
           )
           await owner.query(
             `insert into finance_journal_lines (institution_id, entry_id, account_id, debit_paise, credit_paise)
-             select $1, md5($1::text || ':' || i)::uuid, a.acc[1 + (i % a.n)::int], 100 + (i * 7919) % 1000000, 0
+             select $1::uuid, md5($1::uuid::text || ':' || i)::uuid, a.acc[1 + (i % a.n)::int], 100 + (i * 7919) % 1000000, 0
                from generate_series($2::bigint, $3::bigint) i, ${ACCOUNTS}
              union all
-             select $1, md5($1::text || ':' || i)::uuid, a.acc[1 + ((i + 1 + i % 3) % a.n)::int], 0, 100 + (i * 7919) % 1000000
+             select $1::uuid, md5($1::uuid::text || ':' || i)::uuid, a.acc[1 + ((i + 1 + i % 3) % a.n)::int], 0, 100 + (i * 7919) % 1000000
                from generate_series($2::bigint, $3::bigint) i, ${ACCOUNTS}`,
             [id, from, to],
           )
