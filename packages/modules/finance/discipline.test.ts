@@ -11,6 +11,7 @@ import {
   createBankAccount,
   importStatement,
   reopenPeriod,
+  setSeries,
   setSingleOfficer,
   updateSettings,
   createItem,
@@ -331,4 +332,30 @@ test('single-officer mode lets one administrator reopen, on the trail', async ()
   const done = await reopenPeriod(b.admin, { ...MONTH, reason: 'late supplier bill' })
   assert.equal(done.status, 'open')
   assert.ok((await trail(b, 'sod.single_officer_used')).length >= 1)
+})
+
+// --- Step 4: Rule 46 numbering, series lock and audit (ACC-04) ---------------------
+
+test('a sales series longer than 16 characters is refused (ACC-04)', async () => {
+  const b = await books()
+  await refused(setSeries(b.admin, { docType: 'sales_invoice', prefix: 'CAMPUS-INV/{FY}/', padding: 5 }), 'series_too_long', 400)
+  await refused(setSeries(b.admin, { docType: 'sales_invoice', prefix: 'SI#{FYS}', padding: 4 }), 'series_characters', 400)
+  await setSeries(b.admin, { docType: 'sales_invoice', prefix: 'SI/{FYS}/', padding: 5 })
+})
+
+test('the series is locked once a number is issued this year, and every change is audited', async () => {
+  const b = await books()
+  const c = await customer(b)
+  const service = await createItem(b.clerk, { code: 'SVC', name: 'Service', nature: 'service' })
+  await setSeries(b.admin, { docType: 'sales_invoice', prefix: 'SI/{FYS}/', padding: 5 })
+  await saveInvoice(b.clerk, { kind: 'sales', partyId: c, postingDate: '2026-10-01', lines: [{ itemId: service.id, qty: '1', rate: '100' }], submit: true })
+  await refused(setSeries(b.admin, { docType: 'sales_invoice', prefix: 'S/{FYS}/', padding: 4 }), 'series_in_use', 409)
+  const rows = await trail(b, 'series.set')
+  assert.equal(rows.length, 1)
+  assert.equal((rows[0]!.detail as { after: { prefix: string } }).after.prefix, 'SI/{FYS}/')
+})
+
+test('a non-GST series keeps its freedom', async () => {
+  const b = await books()
+  await setSeries(b.admin, { docType: 'journal', prefix: 'JOURNAL-VOUCHER/{FY}/', padding: 6 })
 })
