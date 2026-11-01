@@ -5,7 +5,7 @@ export const manifest: ModuleManifest = {
   name: 'HR & Payroll',
   description:
     'The whole of HR: staff records and their history (onboarding, transfers, promotions, separation and exit interviews), leave policies with allocation, carry-forward, earned and encashed days, shifts and rosters, recruitment from requisition to hire, appraisals with KRAs, goals and colleague feedback, expense claims and advances, and payroll from salary structures with configurable tax and gratuity, posting to the books. Statutory files (ECR, ESI, bank advice, tax statements) and remittance records; no statutory rate is seeded: the institution enters its own.',
-  version: '0.16.0',
+  version: '0.17.0',
   alwaysEnabled: false,
   /**
    * finance, and nothing else. No academic module: a cook needs a payslip and
