@@ -1,7 +1,17 @@
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
 import { amendDocument, cancelDocument, submitDocument, withTenant } from '@campusos/db'
 import * as z from 'zod'
-import { ticked } from '@campusos/module-framework'
+import {
+  cursorColumn,
+  finishPage,
+  keyset,
+  orderKeys,
+  readPage,
+  searchAny,
+  ticked,
+  type PageRequest,
+  type SortSpec,
+} from '@campusos/module-framework'
 import {
   accounts,
   invoices,
@@ -476,29 +486,54 @@ export async function deletePayment(actor: Actor, input: unknown) {
   )
 }
 
+const PAYMENT_SORTS: SortSpec = {
+  date: {
+    dir: 'desc',
+    keys: [
+      { sql: sql`${payments.postingDate}`, type: 'date' },
+      { sql: sql`${payments.createdAt}`, type: 'timestamptz' },
+      { sql: sql`${payments.id}`, type: 'uuid' },
+    ],
+  },
+  number: { dir: 'asc', keys: [{ sql: sql`coalesce(${payments.number}, '')`, type: 'text' }, { sql: sql`${payments.id}`, type: 'uuid' }] },
+}
+export const paymentPage = (req: Request, prefix: string) => readPage(req, prefix, PAYMENT_SORTS, 'date')
+
 export async function listPayments(
   actor: Actor,
-  input: { kind?: 'receive' | 'pay' | 'transfer'; partyId?: string; status?: string; from?: string; to?: string } = {},
+  input: { kind?: 'receive' | 'pay' | 'transfer'; partyId?: string; status?: string; q?: string; from?: string; to?: string } = {},
+  page: PageRequest = paymentPage(new Request('https://x/'), ''),
 ) {
   const tenant = requireRead(actor)
   return withTenant(tenant, async (tx) => {
+    const keys = PAYMENT_SORTS[page.sort]!.keys
+    const filter = and(
+      input.kind ? eq(payments.kind, input.kind) : undefined,
+      input.partyId ? eq(payments.partyId, input.partyId) : undefined,
+      input.status ? eq(payments.docstatus, input.status as 'draft') : undefined,
+      input.from ? sql`${payments.postingDate} >= ${input.from}` : undefined,
+      input.to ? sql`${payments.postingDate} <= ${input.to}` : undefined,
+      searchAny(input.q?.trim() || page.q, [sql`${payments.number}`, sql`${parties.name}`]),
+    )
     const rows = await tx
-      .select({ p: payments, partyName: parties.name, accountName: accounts.name })
+      .select({ p: payments, partyName: parties.name, accountName: accounts.name, _cursor: cursorColumn(keys) })
       .from(payments)
       .leftJoin(parties, eq(parties.id, payments.partyId))
       .innerJoin(accounts, eq(accounts.id, payments.accountId))
-      .where(
-        and(
-          input.kind ? eq(payments.kind, input.kind) : undefined,
-          input.partyId ? eq(payments.partyId, input.partyId) : undefined,
-          input.status ? eq(payments.docstatus, input.status as 'draft') : undefined,
-          input.from ? sql`${payments.postingDate} >= ${input.from}` : undefined,
-          input.to ? sql`${payments.postingDate} <= ${input.to}` : undefined,
-        ),
-      )
-      .orderBy(desc(payments.postingDate), desc(payments.createdAt))
-      .limit(1000)
-    return rows.map((r) => ({ ...r.p, partyName: r.partyName, accountName: r.accountName }))
+      .where(and(filter, keyset(keys, page)))
+      .orderBy(...orderKeys(keys, page.dir))
+      .limit(page.limit + 1)
+    const [counted] = await tx
+      .select({ total: sql<number>`count(*)::int` })
+      .from(payments)
+      .leftJoin(parties, eq(parties.id, payments.partyId))
+      .innerJoin(accounts, eq(accounts.id, payments.accountId))
+      .where(filter)
+    return finishPage(
+      rows.map((r) => ({ ...r.p, partyName: r.partyName, accountName: r.accountName, _cursor: r._cursor })),
+      page,
+      counted!.total,
+    )
   })
 }
 

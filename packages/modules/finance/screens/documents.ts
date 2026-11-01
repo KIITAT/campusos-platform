@@ -60,16 +60,21 @@ export function documentPages(spec: DocumentSpec): PluginPage[] {
       async load(actor, request) {
         const query = Object.fromEntries(new URL(request.url).searchParams)
         const kind = query.kind || spec.kinds?.[0]
-        const list = rows(await read(actor, spec.base, { ...query, kind }))
+        const result = await read(actor, spec.base, { ...query, kind, q: query['rows.q'] ?? query.q, sort: query['rows.sort'] === 'postingDate' ? 'date' : query['rows.sort'], dir: query['rows.dir'], n: query['rows.n'], after: query['rows.after'] })
+        // The invoice, payment and voucher lists answer a page; the others, an array.
+        const paged = !Array.isArray(result)
+        const list = rows(paged ? object(result).rows : result)
         const data = await context(actor, request, spec.scope)
-        return { ...data, query: { ...query, kind }, rows: list.map(row => ({ ...display(row, data), overdue: row.status === 'overdue' })) }
+        return { ...data, query: { ...query, kind }, rows: list.map(row => ({ ...display(row, data), overdue: row.status === 'overdue' })),
+          rowsPage: paged ? { total: Number(object(result).total), next: object(result).next ?? null } : undefined }
       },
       sections: data => [
         ...(spec.kinds ? [tabs(spec.base, object(data.query), 'kind', spec.kinds)] : []),
-        filter(spec.base, data, [...(spec.kinds ? [select('kind', spec.kinds)] : []), field('status'), ...(spec.filters ?? [select('partyId', 'parties'), ...dateFields('from', 'to'), field('q')])]),
+        filter(spec.base, data, [...(spec.kinds ? [select('kind', spec.kinds)] : []), field('status'), ...(spec.filters ?? [select('partyId', 'parties'), ...dateFields('from', 'to')])]),
         ...(spec.path === '/invoice' ? [tabs(spec.base, object(data.query), 'status', ['', 'draft', 'open', 'overdue', 'paid', 'cancelled', 'return'])] : []),
         shortcuts('Create', [{ label: `New ${spec.title.toLowerCase()}`, href: href(`${spec.path}/new`, { kind: object(data.query).kind }) }]),
-        table(spec.title, 'rows', spec.listColumns ?? [linkCol('number', spec.path), col('postingDate', 'date'), col('partyName'), col('kind'), col('totalFcText', undefined, { label: 'Total' }), col('status', 'status'), col('docstatus', 'status')]),
+        table(spec.title, 'rows', spec.listColumns ?? [linkCol('number', spec.path), col('postingDate', 'date'), col('partyName'), col('kind'), col('totalFcText', undefined, { label: 'Total' }), col('status', 'status'), col('docstatus', 'status')],
+          object(data).rowsPage ? { paging: { data: 'rowsPage', sorts: ['postingDate', 'number'] } } : {}),
       ],
     }),
     page({ path: `${spec.path}/new`, title: `New ${spec.title.toLowerCase()}`, roles,

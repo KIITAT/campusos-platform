@@ -1,7 +1,17 @@
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
 import { amendDocument, cancelDocument, submitDocument, withTenant } from '@campusos/db'
 import * as z from 'zod'
-import { ticked } from '@campusos/module-framework'
+import {
+  cursorColumn,
+  finishPage,
+  keyset,
+  orderKeys,
+  readPage,
+  searchAny,
+  ticked,
+  type PageRequest,
+  type SortSpec,
+} from '@campusos/module-framework'
 import { accounts, journalLines, journals, lines as glLines, parties, partyLedger } from '../schema'
 import { FinanceError, named, requireOperate, requireRead, without, type Actor, type Tx } from './core'
 import { parseDecimal, toBase } from './numbers'
@@ -335,24 +345,48 @@ export async function deleteJournal(actor: Actor, input: unknown) {
   )
 }
 
-export async function listJournals(actor: Actor, input: { kind?: string; status?: string } = {}) {
+const JOURNAL_SORTS: SortSpec = {
+  date: {
+    dir: 'desc',
+    keys: [
+      { sql: sql`${journals.postingDate}`, type: 'date' },
+      { sql: sql`${journals.createdAt}`, type: 'timestamptz' },
+      { sql: sql`${journals.id}`, type: 'uuid' },
+    ],
+  },
+  number: { dir: 'asc', keys: [{ sql: sql`coalesce(${journals.number}, '')`, type: 'text' }, { sql: sql`${journals.id}`, type: 'uuid' }] },
+}
+export const journalPage = (req: Request, prefix: string) => readPage(req, prefix, JOURNAL_SORTS, 'date')
+
+export async function listJournals(
+  actor: Actor,
+  input: { kind?: string; status?: string; q?: string } = {},
+  page: PageRequest = journalPage(new Request('https://x/'), ''),
+) {
   const tenant = requireRead(actor)
   return withTenant(tenant, async (tx) => {
+    const keys = JOURNAL_SORTS[page.sort]!.keys
+    const filter = and(
+      input.kind ? eq(journals.kind, input.kind as 'journal') : undefined,
+      input.status ? eq(journals.docstatus, input.status as 'draft') : undefined,
+      searchAny(input.q?.trim() || page.q, [sql`${journals.number}`, sql`${journals.memo}`, sql`${journals.reference}`]),
+    )
     const rows = await tx
       .select({
         j: journals,
         totalPaise: sql<number>`(select coalesce(sum(l.debit_paise), 0) from finance_journal_voucher_lines l where l.journal_id = "finance_journals"."id")::bigint`,
+        _cursor: cursorColumn(keys),
       })
       .from(journals)
-      .where(
-        and(
-          input.kind ? eq(journals.kind, input.kind as 'journal') : undefined,
-          input.status ? eq(journals.docstatus, input.status as 'draft') : undefined,
-        ),
-      )
-      .orderBy(desc(journals.postingDate), desc(journals.createdAt))
-      .limit(1000)
-    return rows.map((r) => ({ ...r.j, totalPaise: Number(r.totalPaise) }))
+      .where(and(filter, keyset(keys, page)))
+      .orderBy(...orderKeys(keys, page.dir))
+      .limit(page.limit + 1)
+    const [counted] = await tx.select({ total: sql<number>`count(*)::int` }).from(journals).where(filter)
+    return finishPage(
+      rows.map((r) => ({ ...r.j, totalPaise: Number(r.totalPaise), _cursor: r._cursor })),
+      page,
+      counted!.total,
+    )
   })
 }
 
