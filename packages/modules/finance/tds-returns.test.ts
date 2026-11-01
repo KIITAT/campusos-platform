@@ -1,11 +1,15 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { like, sql } from 'drizzle-orm'
-import { authDb, institutions, users, withTenant } from '@campusos/db'
+import { eq, like, sql } from 'drizzle-orm'
+import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
 import type { Role } from '@campusos/module-framework'
 import {
   FinanceError,
   accountFor,
+  cancelInvoice,
+  recordChallan,
+  trialBalance,
+  voidChallan,
   createParty,
   createTdsSection,
   loadIndiaPreset,
@@ -209,4 +213,105 @@ test('an advance and a bill submitted together deduct the tax once', async () =>
     return (r.rows[0] as { total: number }).total
   })
   assert.equal(total, 100_000)
+})
+
+// --- the challan register ----------------------------------------------------
+
+const CHALLAN = { form: '26Q', month: '2026-04', depositedOn: '2026-05-06', bsrCode: '0510308', challanSerial: '00012' }
+
+/** April's deductions: three bills under two sections and one advance, 2,200 of tax. */
+async function april(b: Books) {
+  const d = await deducting(b)
+  const contractors = (await createTdsSection(b.admin, { code: 'CONTX', name: 'Contractors', ratePercent: '1', rateNoPanPercent: '20', thresholdSingle: '0', thresholdAnnual: '0' })) as { id: string }
+  const builder = (await createParty(b.clerk, { code: `B${++n}`, name: 'Builder', isSupplier: true, stateCode: '29', pan: 'BBBBB1234B', tdsSectionId: contractors.id })).id
+  const advancee = (await createParty(b.clerk, { code: `V${++n}`, name: 'Visiting expert', isSupplier: true, stateCode: '29', pan: 'CCCCC1234C', tdsSectionId: d.section })).id
+  const advanceId = (await savePayment(b.clerk, { kind: 'pay', partyId: advancee, postingDate: '2026-04-08', accountId: d.cash, amount: '4500', tds: '500', tdsSectionId: d.section })) as { id: string }
+  await submitPayment(b.admin, { paymentId: advanceId.id })
+  const make = async (partyId: string, no: string, rate: string) => {
+    const id = ((await saveInvoice(b.clerk, { kind: 'purchase', partyId, postingDate: '2026-04-15', billNo: no, lines: [{ description: 'Work', qty: '1', rate }] })) as { id: string }).id
+    await submitInvoice(b.admin, { invoiceId: id })
+    return id
+  }
+  const bills = [await make(d.payee, 'K-1', '10000'), await make(d.payee, 'K-2', '5000'), await make(builder, 'K-3', '20000')]
+  const bank = await withTenant(b.id, (tx) => accountFor(tx, b.id, 'bank'))
+  return { ...d, builder, bills, advanceId: advanceId.id, bank }
+}
+
+const linkCount = (b: Books, challanId: string) =>
+  withTenant(b.id, async (tx) => Number(((await tx.execute(sql`select count(*)::int as c from finance_tds_challan_links where challan_id = ${challanId}`)).rows[0] as { c: number }).c))
+const balance = async (b: Books, code: string) => (await trialBalance(b.admin)).rows.find((r) => r.code === code)?.balancePaise ?? 0
+
+test('a challan deposits the month and ties every deduction', async () => {
+  const b = await books()
+  const f = await april(b)
+  assert.equal(await balance(b, '2410'), -220_000, 'the tax deducted in April is payable')
+  const c = (await recordChallan(b.admin, { ...CHALLAN, accountId: f.bank })) as { id: string; tdsPaise: number; links: number }
+  assert.equal(c.links, 4)
+  assert.equal(c.tdsPaise, 220_000)
+  assert.equal(await linkCount(b, c.id), 4)
+  assert.equal(await balance(b, '2410'), 0)
+  const tb = await trialBalance(b.admin)
+  assert.equal(tb.rows.reduce((s, r) => s + r.balancePaise, 0), 0, 'the books balance')
+})
+
+test('nothing left to deposit, and the same challan twice, are refused', async () => {
+  const b = await books()
+  const f = await april(b)
+  await recordChallan(b.admin, { ...CHALLAN, accountId: f.bank })
+  await refused(recordChallan(b.admin, { ...CHALLAN, challanSerial: '00013', accountId: f.bank }), 'nothing_due', 409)
+  // May has a deduction of its own, so only the repeated challan details are wrong.
+  const may = ((await saveInvoice(b.clerk, { kind: 'purchase', partyId: f.payee, postingDate: '2026-05-12', billNo: 'M-1', lines: [{ description: 'Work', qty: '1', rate: '1000' }] })) as { id: string }).id
+  await submitInvoice(b.admin, { invoiceId: may })
+  await refused(recordChallan(b.admin, { ...CHALLAN, month: '2026-05', accountId: f.bank }), 'duplicate_challan', 409)
+})
+
+test('interest and fee on a challan are an expense', async () => {
+  const b = await books()
+  const f = await april(b)
+  await recordChallan(b.admin, { ...CHALLAN, interest: '50', fee: '0', accountId: f.bank })
+  assert.equal(await balance(b, '5610'), 5_000)
+})
+
+test('a deposited bill cannot be cancelled until the challan is voided', async () => {
+  const b = await books()
+  const f = await april(b)
+  const c = (await recordChallan(b.admin, { ...CHALLAN, accountId: f.bank })) as { id: string }
+  await refused(cancelInvoice(b.admin, { invoiceId: f.bills[0]!, reason: 'wrong supplier' }), 'tds_deposited', 409)
+  await refused(voidChallan(b.admin, { challanId: c.id, reason: 'no' }), 'void_reason', 400)
+  await voidChallan(b.admin, { challanId: c.id, reason: 'wrong serial' })
+  await refused(voidChallan(b.admin, { challanId: c.id, reason: 'wrong serial' }), 'already_voided', 409)
+  assert.equal(await linkCount(b, c.id), 0)
+  assert.equal(await balance(b, '2410'), -220_000, 'the deposit is reversed')
+  await cancelInvoice(b.admin, { invoiceId: f.bills[0]!, reason: 'wrong supplier' })
+  const voided = await withTenant(b.id, (tx) => tx.select().from(auditLog).where(eq(auditLog.action, 'tds.challan_voided')))
+  assert.equal(voided.length, 1)
+})
+
+test('a voided challan can be recorded again', async () => {
+  const b = await books()
+  const f = await april(b)
+  const c = (await recordChallan(b.admin, { ...CHALLAN, accountId: f.bank })) as { id: string }
+  await voidChallan(b.admin, { challanId: c.id, reason: 'wrong serial' })
+  const again = (await recordChallan(b.admin, { ...CHALLAN, accountId: f.bank })) as { links: number }
+  assert.equal(again.links, 4)
+})
+
+test('a 27Q challan does not pick up a 26Q deduction', async () => {
+  const b = await books()
+  const f = await april(b)
+  const abroad = (await createParty(b.clerk, { code: `X${++n}`, name: 'Foreign advisor', isSupplier: true, gstCategory: 'overseas', pan: 'DDDDD1234D', tdsSectionId: f.section })).id
+  const id = ((await saveInvoice(b.clerk, { kind: 'purchase', partyId: abroad, postingDate: '2026-04-20', billNo: 'F-1', lines: [{ description: 'Advice', qty: '1', rate: '10000' }] })) as { id: string }).id
+  await submitInvoice(b.admin, { invoiceId: id })
+  const resident = (await recordChallan(b.admin, { ...CHALLAN, accountId: f.bank })) as { links: number }
+  assert.equal(resident.links, 4, 'the overseas bill is not among them')
+  const overseas = (await recordChallan(b.admin, { ...CHALLAN, form: '27Q', challanSerial: '00099', accountId: f.bank })) as { links: number; tdsPaise: number }
+  assert.equal(overseas.links, 1)
+  assert.equal(overseas.tdsPaise, 100_000)
+})
+
+test('only an administrator records a challan, and not for a future day', async () => {
+  const b = await books()
+  const f = await april(b)
+  await refused(recordChallan(b.clerk, { ...CHALLAN, accountId: f.bank }), 'forbidden', 403)
+  await refused(recordChallan(b.admin, { ...CHALLAN, depositedOn: '2099-01-01', accountId: f.bank }), 'future_date', 409)
 })
