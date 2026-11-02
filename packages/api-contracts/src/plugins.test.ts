@@ -147,7 +147,8 @@ test('the whole product still answers the same number of endpoints', () => {
   // P1-05a: +4 (finance: CMP-08 working, GSTR-2B import, match, imports read). P1-05b: +7 (finance: TDS challans record, void, read; quarter CSV; deductions; interest; certificate PDF)
   // P2-16: +22 (crm: pipeline, lead detail, settings; 19 writes for leads, activities, conversion, erasure and settings)
   // P2-14: +27 (projects: projects, members, stages, milestones, tasks, timesheets, cost rates, billing, costing, profitability)
-  assert.equal(total, 811, `expected 811 endpoints across all modules, found ${total}`)
+  // MG-65 (Odoo parity): +10 (crm: forecast, report, duplicates; notes, scripts, script delete, team auto-assign, capture, import, merge)
+  assert.equal(total, 821, `expected 821 endpoints across all modules, found ${total}`)
 })
 
 test('a longer path is never swallowed by a shorter one', () => {

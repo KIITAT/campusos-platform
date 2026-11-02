@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm'
 import { audit, type withTenant } from '@campusos/db'
 import { ADMIN, STAFF, type PluginActor, type Role } from '@campusos/module-framework'
 
@@ -29,3 +30,7 @@ export function refuse(error: unknown): unknown {
   const hit = name ? UNIQUE[name] : undefined
   return hit ? new CrmError(409, hit[0], hit[1]) : error
 }
+
+/** One line in a lead's history (the "chatter"). Never carries contact data: only what happened. */
+export const trail = (tx: Tx, institutionId: string, leadId: string, authorId: string, body: string) =>
+  tx.execute(sql`insert into crm_notes (institution_id, lead_id, kind, body, author_id) values (${institutionId}::uuid, ${leadId}::uuid, 'system', ${body}, ${authorId})`)

@@ -17,7 +17,7 @@ test('the pipeline, lead and settings screens offer each role only what its stat
   await team(c.admin, 'Team One', c.manager.id, [c.rep.id])
   const item = await createItem(c.clerk, { code: 'SVC', name: 'Service', nature: 'service' }) as { id: string }
   validatePlugin(plugin)
-  assert.deepEqual(pages.map(p => p.path), ['/', '/lead', '/settings'])
+  assert.deepEqual(pages.map(p => p.path), ['/', '/lead', '/settings', '/report'])
   const [pipeline, detail, config] = pages as [PluginPage, PluginPage, PluginPage]
   const seen = new Map<string, PluginForm>()
   const collect = async (actor: typeof c.rep, page: PluginPage, id = '') => {
@@ -41,7 +41,7 @@ test('the pipeline, lead and settings screens offer each role only what its stat
   assert.deepEqual(await collect(c.outsider, pipeline), [])
   assert.deepEqual(await collect(c.rep, pipeline), ['/leads'])
   const l = await createLead(c.rep, { kind: 'lead', title: 'Page lead', source: 'website', itemId: item.id, expectedValue: '500' })
-  assert.deepEqual((await collect(c.rep, detail, l.id)).sort(), ['/activities', '/leads/assign', '/leads/lost', '/leads/qualify', '/leads/update'].sort())
+  assert.deepEqual((await collect(c.rep, detail, l.id)).sort(), ['/activities', '/leads/assign', '/leads/lost', '/leads/qualify', '/leads/update', '/notes'].sort())
   await qualifyLead(c.rep, { leadId: l.id })
   await createActivity(c.rep, { leadId: l.id, kind: 'call', summary: 'Ring them', dueAt: '2030-01-01T10:00' })
   assert.ok((await collect(c.rep, detail, l.id)).includes('/leads/stage'))
@@ -61,6 +61,10 @@ test('the pipeline, lead and settings screens offer each role only what its stat
   await reopenLead(c.rep, { leadId: l2.id })
   // Another team's manager never sees the lead; the detail load is refused.
   await assert.rejects(() => detail.load(c.rep2, new Request('http://company.test/m/crm/lead?id=' + l.id)))
+  const d1 = await createLead(c.rep, { kind: 'lead', title: 'Dup one', source: 'website', email: 'dup@x.test' })
+  await createLead(c.rep, { kind: 'lead', title: 'Dup two', source: 'website', email: 'dup@x.test' })
+  assert.ok((await collect(c.rep, detail, d1.id)).includes('/leads/merge'))
+  await collect(c.admin, pipeline)
   await collect(c.admin, config)
   await collect(c.manager, config)
   assert.deepEqual([...seen.keys()].sort(), specs.filter(r => r.method === 'POST').map(r => r.path).sort())

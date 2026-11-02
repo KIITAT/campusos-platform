@@ -2,17 +2,19 @@ import * as z from 'zod'
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { users, withTenant } from '@campusos/db'
 import { ticked } from '@campusos/module-framework'
-import { leads, lostReasons, stages, teamMembers, teams } from '../schema'
+import { activityScripts, leads, lostReasons, stages, teamMembers, teams } from '../schema'
 import { ADMIN, STAFF, CrmError, log, refuse, tenant, type Actor, type Tx } from './core'
 
-export const stageSchema = z.object({ name: z.string().trim().min(1).max(60), seq: z.coerce.number().int().min(1).max(999) })
+const probability = z.coerce.number().int().min(0).max(100)
+export const stageSchema = z.object({ name: z.string().trim().min(1).max(60), seq: z.coerce.number().int().min(1).max(999), probability: z.preprocess(v => (v === '' ? undefined : v), probability.optional()) })
 export const stageUpdateSchema = z.object({
   stageId: z.uuid(), name: z.string().trim().min(1).max(60).optional(), seq: z.preprocess(v => (v === '' ? undefined : v), z.coerce.number().int().min(1).max(999).optional()),
-  archived: z.preprocess(ticked, z.boolean()).optional(),
+  archived: z.preprocess(ticked, z.boolean()).optional(), probability: z.preprocess(v => (v === '' ? undefined : v), probability.optional()),
 })
 export const reasonSchema = z.object({ name: z.string().trim().min(2).max(120) })
 export const reasonArchiveSchema = z.object({ reasonId: z.uuid() })
 export const teamSchema = z.object({ name: z.string().trim().min(2).max(80), managerId: z.string().min(1) })
+export const autoAssignSchema = z.object({ teamId: z.uuid(), autoAssign: z.preprocess(ticked, z.boolean()) })
 export const memberSchema = z.object({ teamId: z.uuid(), userId: z.string().min(1) })
 
 /**
@@ -39,8 +41,8 @@ export async function isSalesperson(tx: Tx, userId: string): Promise<boolean> {
 }
 /** The first lead in an institution brings the default stages and lost reasons. */
 export async function ensureDefaults(tx: Tx, institutionId: string) {
-  await tx.execute(sql`insert into crm_stages (institution_id, name, seq)
-    select ${institutionId}::uuid, n, s from (values ('New', 10), ('Qualified', 20), ('Proposition', 30), ('Negotiation', 40)) v(n, s)
+  await tx.execute(sql`insert into crm_stages (institution_id, name, seq, probability)
+    select ${institutionId}::uuid, n, s, p from (values ('New', 10, 10), ('Qualified', 20, 30), ('Proposition', 30, 60), ('Negotiation', 40, 80)) v(n, s, p)
     where not exists (select 1 from crm_stages where institution_id = ${institutionId}::uuid) on conflict do nothing`)
   await tx.execute(sql`insert into crm_lost_reasons (institution_id, name)
     select ${institutionId}::uuid, n from (values ('Too expensive'), ('Not interested'), ('Chose a competitor')) v(n)
@@ -58,7 +60,7 @@ export async function createStage(actor: Actor, input: unknown) {
   const institutionId = tenant(actor, ADMIN)
   const data = stageSchema.parse(input)
   return withTenant(institutionId, tx => run(async () => {
-    const [row] = await tx.insert(stages).values({ institutionId, ...data }).returning({ id: stages.id })
+    const [row] = await tx.insert(stages).values({ institutionId, name: data.name, seq: data.seq, probability: data.probability ?? 10 }).returning({ id: stages.id })
     await log(tx, actor, 'stage.created', row!.id, 'Pipeline stage added')
     return { id: row!.id, notice: 'Saved.' }
   }))
@@ -69,7 +71,7 @@ export async function updateStage(actor: Actor, input: unknown) {
   return withTenant(institutionId, tx => run(async () => {
     const [row] = await tx.select().from(stages).where(eq(stages.id, data.stageId)).for('update')
     if (!row) throw new CrmError(404, 'not_found', 'No such stage.')
-    await tx.update(stages).set({ ...(data.name ? { name: data.name } : {}), ...(data.seq ? { seq: data.seq } : {}), ...(data.archived === undefined ? {} : { archivedAt: data.archived ? new Date() : null }) }).where(eq(stages.id, row.id))
+    await tx.update(stages).set({ ...(data.name ? { name: data.name } : {}), ...(data.seq ? { seq: data.seq } : {}), ...(data.probability === undefined ? {} : { probability: data.probability }), ...(data.archived === undefined ? {} : { archivedAt: data.archived ? new Date() : null }) }).where(eq(stages.id, row.id))
     await log(tx, actor, 'stage.updated', row.id, 'Pipeline stage changed')
     return { id: row.id, notice: 'Saved.' }
   }))
@@ -103,6 +105,16 @@ export async function createTeam(actor: Actor, input: unknown) {
     return { id: row!.id, notice: 'Saved.' }
   }))
 }
+export async function setAutoAssign(actor: Actor, input: unknown) {
+  const institutionId = tenant(actor, ADMIN)
+  const data = autoAssignSchema.parse(input)
+  return withTenant(institutionId, async tx => {
+    const [row] = await tx.update(teams).set({ autoAssign: data.autoAssign }).where(eq(teams.id, data.teamId)).returning({ id: teams.id })
+    if (!row) throw new CrmError(404, 'not_found', 'No such team.')
+    await log(tx, actor, 'team.auto_assign', row.id, data.autoAssign ? 'Round-robin assignment switched on' : 'Round-robin assignment switched off')
+    return { id: row.id, notice: 'Saved.' }
+  })
+}
 export async function addTeamMember(actor: Actor, input: unknown) {
   const institutionId = tenant(actor, ADMIN)
   const data = memberSchema.parse(input)
@@ -131,13 +143,14 @@ export async function removeTeamMember(actor: Actor, input: unknown) {
 export async function settings(actor: Actor) {
   return withTenant(tenant(actor), async tx => {
     await ownersOf(tx, actor)
-    const [stageRows, reasonRows, teamRows, memberRows] = await Promise.all([
-      tx.select({ id: stages.id, name: stages.name, seq: stages.seq, archived: sql<boolean>`${stages.archivedAt} is not null` }).from(stages).orderBy(asc(stages.seq)),
+    const [stageRows, reasonRows, teamRows, memberRows, scriptRows] = await Promise.all([
+      tx.select({ id: stages.id, name: stages.name, seq: stages.seq, probability: stages.probability, archived: sql<boolean>`${stages.archivedAt} is not null` }).from(stages).orderBy(asc(stages.seq)),
       tx.select({ id: lostReasons.id, name: lostReasons.name, archived: sql<boolean>`${lostReasons.archivedAt} is not null` }).from(lostReasons).orderBy(asc(lostReasons.name)),
-      tx.select({ id: teams.id, name: teams.name, managerId: teams.managerId, managerName: users.name }).from(teams).innerJoin(users, eq(users.id, teams.managerId)).orderBy(asc(teams.name)),
+      tx.select({ id: teams.id, name: teams.name, managerId: teams.managerId, managerName: users.name, autoAssign: teams.autoAssign }).from(teams).innerJoin(users, eq(users.id, teams.managerId)).orderBy(asc(teams.name)),
       tx.select({ teamId: teamMembers.teamId, userId: teamMembers.userId, name: users.name }).from(teamMembers).innerJoin(users, eq(users.id, teamMembers.userId)).orderBy(asc(users.name)),
+      tx.select({ id: activityScripts.id, afterKind: activityScripts.afterKind, nextKind: activityScripts.nextKind, afterDays: activityScripts.afterDays, summary: activityScripts.summary }).from(activityScripts).orderBy(asc(activityScripts.afterKind)),
     ])
-    return { stages: stageRows, reasons: reasonRows, teams: teamRows.map(team => ({ ...team, members: memberRows.filter(m => m.teamId === team.id).map(m => ({ userId: m.userId, name: m.name })) })) }
+    return { scripts: scriptRows, stages: stageRows, reasons: reasonRows, teams: teamRows.map(team => ({ ...team, members: memberRows.filter(m => m.teamId === team.id).map(m => ({ userId: m.userId, name: m.name })) })) }
   })
 }
 

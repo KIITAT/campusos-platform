@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm'
-import { bigint, check, date, foreignKey, index, integer, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
+import { bigint, boolean, check, date, foreignKey, index, integer, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
 import { institutions, tenantPolicy, users } from '@campusos/db'
 import { orders, parties } from '@campusos/module-finance/schema'
 
@@ -8,9 +8,9 @@ const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull(
 
 export const stages = pgTable('crm_stages', {
   id: uuid().primaryKey().defaultRandom(), institutionId: tenantId(), name: text().notNull(), seq: integer().notNull(),
-  archivedAt: timestamp('archived_at', { withTimezone: true }), createdAt: createdAt(),
+  probability: integer().notNull().default(10), archivedAt: timestamp('archived_at', { withTimezone: true }), createdAt: createdAt(),
 }, table => [
-  uniqueIndex('crm_stages_name').on(table.institutionId, table.name), uniqueIndex('crm_stages_tenant_id').on(table.institutionId, table.id),
+  check('crm_stage_probability', sql`probability between 0 and 100`), uniqueIndex('crm_stages_name').on(table.institutionId, table.name), uniqueIndex('crm_stages_tenant_id').on(table.institutionId, table.id),
   check('crm_stage_name_text', sql`length(trim(name)) between 1 and 60`), check('crm_stage_seq', sql`seq between 1 and 999`), tenantPolicy('crm_stages'),
 ])
 export const lostReasons = pgTable('crm_lost_reasons', {
@@ -21,7 +21,7 @@ export const lostReasons = pgTable('crm_lost_reasons', {
   check('crm_lost_reason_name_text', sql`length(trim(name)) between 2 and 120`), tenantPolicy('crm_lost_reasons'),
 ])
 export const teams = pgTable('crm_teams', {
-  id: uuid().primaryKey().defaultRandom(), institutionId: tenantId(), name: text().notNull(), managerId: text('manager_id').notNull().references(() => users.id), createdAt: createdAt(),
+  id: uuid().primaryKey().defaultRandom(), institutionId: tenantId(), name: text().notNull(), managerId: text('manager_id').notNull().references(() => users.id), autoAssign: boolean('auto_assign').notNull().default(false), createdAt: createdAt(),
 }, table => [
   uniqueIndex('crm_teams_name').on(table.institutionId, table.name), uniqueIndex('crm_teams_tenant_id').on(table.institutionId, table.id),
   index('crm_teams_manager').on(table.institutionId, table.managerId), check('crm_team_name_text', sql`length(trim(name)) between 2 and 80`), tenantPolicy('crm_teams'),
@@ -35,7 +35,7 @@ export const teamMembers = pgTable('crm_team_members', {
 ])
 export const leads = pgTable('crm_leads', {
   id: uuid().primaryKey().defaultRandom(), institutionId: tenantId(), kind: text().notNull().default('lead'), status: text().notNull().default('open'),
-  title: text().notNull(), company: text(), contactName: text('contact_name'), email: text(), phone: text(), gstin: text(), source: text().notNull(), notes: text(),
+  title: text().notNull(), company: text(), contactName: text('contact_name'), email: text(), phone: text(), gstin: text(), source: text().notNull(), notes: text(), priority: integer().notNull().default(0),
   ownerId: text('owner_id').notNull().references(() => users.id), stageId: uuid('stage_id'), itemId: uuid('item_id'),
   expectedValuePaise: bigint('expected_value_paise', { mode: 'number' }), expectedClose: date('expected_close'),
   lostReasonId: uuid('lost_reason_id'), lostNote: text('lost_note'),
@@ -51,7 +51,7 @@ export const leads = pgTable('crm_leads', {
   check('crm_lead_source', sql`source in ('website','referral','event','cold_call','existing_customer','other')`),
   check('crm_lead_stage', sql`(kind = 'lead') = (stage_id is null)`), check('crm_lead_won', sql`status <> 'won' or (kind = 'opportunity' and won_at is not null)`),
   check('crm_lead_lost', sql`(status = 'lost') = (lost_reason_id is not null)`), check('crm_lead_converted', sql`party_id is null or (status = 'won' and converted_at is not null)`),
-  check('crm_lead_value', sql`expected_value_paise is null or expected_value_paise >= 0`),
+  check('crm_lead_priority', sql`priority between 0 and 3`), check('crm_lead_value', sql`expected_value_paise is null or expected_value_paise >= 0`),
   check('crm_lead_gstin', sql`gstin is null or gstin ~ '^[0-9]{2}[A-Z0-9]{10}[0-9A-Z]Z[0-9A-Z]$'`), tenantPolicy('crm_leads'),
 ])
 export const activities = pgTable('crm_activities', {
@@ -62,6 +62,22 @@ export const activities = pgTable('crm_activities', {
   foreignKey({ columns: [table.institutionId, table.leadId], foreignColumns: [leads.institutionId, leads.id] }).onDelete('cascade'),
   index('crm_activities_lead').on(table.institutionId, table.leadId),
   index('crm_activities_due_reminders').on(table.remindAt).where(sql`reminded_at IS NULL AND done_at IS NULL AND remind_at IS NOT NULL`),
-  check('crm_activity_kind', sql`kind in ('call','meeting','task')`), check('crm_activity_summary', sql`length(summary) between 1 and 500`),
+  check('crm_activity_kind', sql`kind in ('call','meeting','task','email','quotation')`), check('crm_activity_summary', sql`length(summary) between 1 and 500`),
   check('crm_activity_remind', sql`remind_at is null or remind_at <= due_at`), tenantPolicy('crm_activities'),
+])
+export const notes = pgTable('crm_notes', {
+  id: uuid().primaryKey().defaultRandom(), institutionId: tenantId(), leadId: uuid('lead_id').notNull(), kind: text().notNull().default('note'), body: text().notNull(),
+  authorId: text('author_id').notNull().references(() => users.id), createdAt: createdAt(),
+}, table => [
+  foreignKey({ columns: [table.institutionId, table.leadId], foreignColumns: [leads.institutionId, leads.id] }).onDelete('cascade'),
+  index('crm_notes_lead').on(table.institutionId, table.leadId, table.createdAt),
+  check('crm_note_kind', sql`kind in ('note','system')`), check('crm_note_body', sql`length(body) between 1 and 4000`), tenantPolicy('crm_notes'),
+])
+export const activityScripts = pgTable('crm_activity_scripts', {
+  id: uuid().primaryKey().defaultRandom(), institutionId: tenantId(), afterKind: text('after_kind').notNull(), nextKind: text('next_kind').notNull(),
+  afterDays: integer('after_days').notNull().default(1), summary: text().notNull(), createdAt: createdAt(),
+}, table => [
+  uniqueIndex('crm_activity_scripts_after').on(table.institutionId, table.afterKind),
+  check('crm_script_kinds', sql`after_kind in ('call','meeting','task','email','quotation') and next_kind in ('call','meeting','task','email','quotation')`),
+  check('crm_script_days', sql`after_days between 0 and 90`), check('crm_script_summary', sql`length(summary) between 1 and 500`), tenantPolicy('crm_activity_scripts'),
 ])

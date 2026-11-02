@@ -130,6 +130,8 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   // worked a lead, never the contact's data (decision 405).
   crm_leads: { only: ['id', 'kind', 'status', 'owner_id', 'created_by', 'created_at'] },
   crm_activities: { only: ['id', 'lead_id', 'kind', 'due_at', 'done_at', 'assignee_id', 'created_by', 'created_at'] },
+  crm_notes: { only: ['id', 'lead_id', 'kind', 'author_id', 'created_at'] },
+  crm_activity_scripts: 'export',
   crm_teams: 'export',
   crm_team_members: 'export',
 

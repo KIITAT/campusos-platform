@@ -3,12 +3,13 @@ import { eq, sql } from 'drizzle-orm'
 import { withTenant } from '@campusos/db'
 import { notify } from '@campusos/module-notices/api'
 import { activities } from '../schema'
-import { CrmError, log, tenant, type Actor, type Tx } from './core'
+import { CrmError, log, tenant, trail, type Actor, type Tx } from './core'
 import { assertNotErased, assertOpen, visibleLead } from './leads'
 
+export const KINDS = ['call', 'meeting', 'task', 'email', 'quotation'] as const
 const REMIND = { none: null, '15m': '15 minutes', '1h': '1 hour', '1d': '1 day' } as const
 export const activitySchema = z.object({
-  leadId: z.uuid(), kind: z.enum(['call', 'meeting', 'task']), summary: z.string().trim().min(1).max(500),
+  leadId: z.uuid(), kind: z.enum(KINDS), summary: z.string().trim().min(1).max(500),
   dueAt: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/), remindBefore: z.enum(['none', '15m', '1h', '1d']).default('15m'),
   assigneeId: z.preprocess(v => (v === '' ? undefined : v), z.string().min(1).optional()),
 })
@@ -45,11 +46,20 @@ export async function completeActivity(actor: Actor, input: unknown) {
     await tx.update(activities).set({ doneAt: new Date() }).where(eq(activities.id, activity.id))
     await tx.execute(sql`update crm_leads set updated_at = now() where id = ${activity.leadId}`)
     await log(tx, actor, 'activity.done', activity.id, 'Sales activity completed')
-    return { id: activity.id, notice: 'Saved.', next: '/m/crm/lead?id=' + activity.leadId }
+    await trail(tx, institutionId, activity.leadId, actor.id, 'Completed ' + activity.kind)
+    // The sales script: finishing one kind of activity plans the next (Odoo's "next activity").
+    const planned = (await tx.execute(sql`
+      insert into crm_activities (institution_id, lead_id, kind, summary, due_at, assignee_id, created_by)
+      select ${institutionId}::uuid, l.id, s.next_kind, s.summary, now() + make_interval(days => s.after_days), ${activity.assigneeId}, ${actor.id}
+        from crm_activity_scripts s join crm_leads l on l.institution_id = s.institution_id and l.id = ${activity.leadId}::uuid
+       where s.after_kind = ${activity.kind} and l.status = 'open' and l.erased_at is null
+      returning id`)).rows as { id: string }[]
+    if (planned[0]) await trail(tx, institutionId, activity.leadId, actor.id, 'Planned the next activity from the sales script')
+    return { id: activity.id, notice: planned[0] ? 'Saved. The next activity is planned.' : 'Saved.', next: '/m/crm/lead?id=' + activity.leadId }
   })
 }
 
-const KIND_LABEL: Record<string, string> = { call: 'A call', meeting: 'A meeting', task: 'A task' }
+const KIND_LABEL: Record<string, string> = { call: 'A call', meeting: 'A meeting', task: 'A task', email: 'An e-mail', quotation: 'A quotation' }
 /** D400: no lead title, contact or summary; a notification outlives the lead's erasure. */
 export function reminderText(kind: string, at: Date): string {
   const zone = { timeZone: 'Asia/Kolkata' }

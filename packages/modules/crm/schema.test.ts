@@ -4,7 +4,7 @@ import { sql } from 'drizzle-orm'
 import { authDb, withTenant } from '@campusos/db'
 import { college } from './test-support.test'
 
-const TABLES = ['crm_stages', 'crm_lost_reasons', 'crm_teams', 'crm_team_members', 'crm_leads', 'crm_activities']
+const TABLES = ['crm_stages', 'crm_lost_reasons', 'crm_teams', 'crm_team_members', 'crm_leads', 'crm_activities', 'crm_notes', 'crm_activity_scripts']
 
 async function seed(c: Awaited<ReturnType<typeof college>>) {
   const i = c.id, u = c.admin.id
