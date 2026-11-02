@@ -105,6 +105,9 @@ importers:
       '@campusos/module-placement':
         specifier: workspace:*
         version: link:../modules/placement
+      '@campusos/module-projects':
+        specifier: workspace:*
+        version: link:../modules/projects
       '@campusos/module-quizzes':
         specifier: workspace:*
         version: link:../modules/quizzes
