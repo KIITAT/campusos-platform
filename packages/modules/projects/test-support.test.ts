@@ -2,9 +2,10 @@ import { after } from 'node:test'
 import { randomUUID } from 'node:crypto'
 import { inArray, sql } from 'drizzle-orm'
 import { authDb, institutions, users, withTenant } from '@campusos/db'
+import type { PluginActor, Role } from '@campusos/module-framework'
 import { createCostCenter, createParty, localToday } from '@campusos/module-finance/api'
 
-type Actor = { id: string; role: string; institutionId: string; email: string }
+export type Actor = PluginActor & { institutionId: string; email: string; role: Role }
 export type Office = Awaited<ReturnType<typeof office>>
 
 const created: string[] = []
@@ -21,7 +22,7 @@ export async function office() {
   const roles = ['institution_admin', 'accounts_staff', 'faculty', 'faculty', 'faculty', 'student'] as const
   const names = ['Admin', 'Accounts', 'Manager', 'Worker', 'Outsider', 'Student']
   const people = await authDb.insert(users).values(roles.map((role, i) => ({ role, institutionId: id, email: `${names[i]!.toLowerCase()}@${slug}.test`, name: names[i] }))).returning()
-  const actor = (i: number): Actor => ({ id: people[i]!.id, role: roles[i]!, institutionId: id, email: people[i]!.email })
+  const actor = (i: number): Actor => ({ id: people[i]!.id, role: roles[i]!, institutionId: id, email: people[i]!.email ?? '' })
   const [admin, accounts, manager, worker, outsider, student] = [0, 1, 2, 3, 4, 5].map(actor) as [Actor, Actor, Actor, Actor, Actor, Actor]
   await createCostCenter(admin, { code: 'PRJ', name: 'Project' })
   const customer = ((await createParty(accounts, { code: 'C1', name: 'Client One', isCustomer: true })) as { id: string }).id

@@ -10,7 +10,11 @@ const TABLES = [
   'projects_milestones', 'projects_projects', 'projects_stages', 'projects_tasks', 'projects_timesheets',
 ]
 
-const says = (re: RegExp) => (e: unknown) => re.test(String((e as Error).cause ?? e))
+/** A database refusal whose message or constraint name matches. */
+const says = (re: RegExp) => (e: unknown) => {
+  const cause = (e as { cause?: { constraint?: string } }).cause
+  return re.test(String(cause ?? e)) || re.test(cause?.constraint ?? '')
+}
 
 /** Owner inserts: a project on PRJ with a stage, a task and one line of time. */
 async function seed(o: Office, status: 'submitted' | 'approved' = 'submitted') {
