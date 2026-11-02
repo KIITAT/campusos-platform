@@ -70,3 +70,24 @@ export async function actions(o: Office, from: string) {
      order by at, id`)
   return r.rows.map((x) => x.action)
 }
+
+let counter = 0
+
+/** A valid createProject input on the PRJ cost centre; `over` replaces fields. */
+export function projectInput(o: Office, over: Record<string, unknown> = {}) {
+  counter += 1
+  return {
+    code: 'P' + counter, name: 'Project ' + counter, managerId: o.manager.id, costCenter: 'PRJ', startsOn: o.last.first,
+    billable: true, partyId: o.customer, billingRate: '1500', ...over,
+  }
+}
+
+/** A project the accounts office made, with the worker on it; the stage ids by name. */
+export async function project(o: Office, over: Record<string, unknown> = {}) {
+  const api = await import('./api')
+  const made = await api.createProject(o.accounts, projectInput(o, over)) as { id: string }
+  await api.addMember(o.manager, { projectId: made.id, userId: o.worker.id })
+  const detail = await api.projectDetail(o.accounts, made.id)
+  const stage = (name: string) => detail.stages.find((s: { name: string }) => s.name === name)!.id as string
+  return { id: made.id, todo: stage('To do'), doing: stage('In progress'), done: stage('Done') }
+}
