@@ -618,7 +618,7 @@ export async function reconciliation(
         eq(glLines.accountId, bank.accountId),
         lte(entries.postingDate, input.on),
         sql`${money} > 0`,
-        sql`not exists (select 1 from finance_bank_statement_lines s where s.matched_line_id = ${glLines.id} and s.txn_date <= ${input.on}::date)`,
+        sql`not exists (select 1 from finance_bank_statement_lines s where s.matched_line_id = finance_journal_lines.id and s.txn_date <= ${input.on}::date)`,
       )
       const found = await tx
         .select({
