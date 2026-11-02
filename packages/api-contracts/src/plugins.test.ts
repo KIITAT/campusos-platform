@@ -27,6 +27,7 @@ import alumni from '@campusos/module-alumni/plugin'
 import crm from '@campusos/module-crm/plugin'
 import helpdesk from '@campusos/module-helpdesk/plugin'
 import placement from '@campusos/module-placement/plugin'
+import projects from '@campusos/module-projects/plugin'
 import transport from '@campusos/module-transport/plugin'
 
 /**
@@ -60,6 +61,7 @@ const PLUGINS: Plugin[] = [
   crm,
   helpdesk,
   placement,
+  projects,
   transport,
 ]
 
@@ -144,7 +146,9 @@ test('the whole product still answers the same number of endpoints', () => {
   // P1-04: +4 (finance: GST filing mark, reopen request, close checklist, subledger report). P1-06c: +11 (hr: ECR, ESI file, bank advice, payslip PDF, dues, remittances read/record/void, reissue, tax statement, 24Q working statement)
   // P1-05a: +4 (finance: CMP-08 working, GSTR-2B import, match, imports read). P1-05b: +7 (finance: TDS challans record, void, read; quarter CSV; deductions; interest; certificate PDF)
   // P2-16: +22 (crm: pipeline, lead detail, settings; 19 writes for leads, activities, conversion, erasure and settings)
-  assert.equal(total, 794, `expected 794 endpoints across all modules, found ${total}`)
+  // P2-14: +27 (projects: projects, members, stages, milestones, tasks, timesheets, cost rates, billing, costing, profitability)
+  // MG-65 (Odoo parity): +10 (crm: forecast, report, duplicates; notes, scripts, script delete, team auto-assign, capture, import, merge)
+  assert.equal(total, 821, `expected 821 endpoints across all modules, found ${total}`)
 })
 
 test('a longer path is never swallowed by a shorter one', () => {

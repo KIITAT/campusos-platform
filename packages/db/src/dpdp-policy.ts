@@ -260,6 +260,17 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   placement_officers: 'export',
   placement_results: 'export',
 
+  // projects (P2-14): work and billing records, kept (decision 221).
+  projects_billings: 'export',
+  projects_cost_rates: 'export',
+  projects_costings: 'export',
+  projects_idempotency_keys: 'exclude',
+  projects_members: 'export',
+  projects_milestones: 'export',
+  projects_projects: 'export',
+  projects_tasks: 'export',
+  projects_timesheets: 'export',
+
   // quiz
   quiz_attempts: 'export',
   quiz_extensions: 'export',
@@ -305,6 +316,9 @@ export function retentionBasis(table: string): string {
   }
   if (table.startsWith('hr_')) {
     return 'an employment and payroll record, kept for the period labour and tax law requires'
+  }
+  if (table.startsWith('projects_')) {
+    return 'a work and billing record, kept for the period tax and accounting law requires'
   }
   return "the institution's own record, kept with the person's name and contact details removed"
 }
