@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import {
+  bigint,
   boolean,
   check,
   date,
@@ -9,6 +10,7 @@ import {
   smallint,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
   type AnyPgColumn,
@@ -265,6 +267,32 @@ export const lines = pgTable(
       sql`debit_paise >= 0 and credit_paise >= 0 and (debit_paise = 0) <> (credit_paise = 0)`,
     ),
     tenantPolicy('finance_journal_lines'),
+  ],
+)
+
+/**
+ * Daily sums of the journal's lines (P1-10b, REL-03), kept by the trigger
+ * `finance_lines_balances`; never written by code. `finance_rebuild_daily_balances`
+ * recomputes a tenant's rows from the journal. The statements sum these rows.
+ */
+export const dailyBalances = pgTable(
+  'finance_daily_balances',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    accountId: uuid('account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    postingDate: date('posting_date').notNull(),
+    fundId: uuid('fund_id'),
+    costCenter: text('cost_center'),
+    closing: boolean().notNull(),
+    debitPaise: bigint('debit_paise', { mode: 'number' }).notNull(),
+    creditPaise: bigint('credit_paise', { mode: 'number' }).notNull(),
+  },
+  (t) => [
+    unique('finance_daily_balances_key').on(t.institutionId, t.accountId, t.postingDate, t.fundId, t.costCenter, t.closing).nullsNotDistinct(),
+    tenantPolicy('finance_daily_balances'),
   ],
 )
 

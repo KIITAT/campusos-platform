@@ -307,6 +307,11 @@ test('results: nothing while open, nothing below the threshold, and a teacher se
   assert.equal(w.summary.owed, 7, 'Asha, Bilal and Dev for two classes, Chen for one')
   assert.equal(w.summary.given, 4)
   assert.deepEqual(w.pending.map((p) => p.name).sort(), ['Bilal', 'Chen', 'Dev'])
+
+  // The window's per-class figures are the ones a class's own read gives (read once, summarised per class).
+  const byClass = new Map(w.classes.map((x) => [x.offeringId, x]))
+  assert.equal(byClass.get(c.offeringId)!.mean, r.scaleMean)
+  assert.equal(byClass.get(c.otherOfferingId)!.resultText, 'too few (1 of 3 needed)')
 })
 
 test('a window cannot publish results from fewer than three (AUD-10)', async () => {
