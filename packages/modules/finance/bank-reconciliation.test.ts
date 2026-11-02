@@ -1,8 +1,9 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { like } from 'drizzle-orm'
-import { authDb, institutions, users } from '@campusos/db'
+import { eq, like } from 'drizzle-orm'
+import { authDb, institutions, users, withTenant } from '@campusos/db'
 import { createBankAccount, importStatement, postEntry, reconciliation, reconciliationPage, type Actor } from './api'
+import { bankAccounts } from './schema'
 
 /**
  * The bank reconciliation's totals cover every line while its lists are pages
@@ -49,6 +50,10 @@ test('the reconciliation\'s totals cover every line while its lists are paged (R
   const b = await books()
   const ba = (await createBankAccount(b.admin, { bankName: 'State Bank', accountNumber: '1234567890', ifsc: 'SBIN0001234' })) as { id: string }
 
+  // The bank account has a ledger account of its own; the postings go to it by id.
+  const [bankRow] = await withTenant(b.id, (tx) => tx.select().from(bankAccounts).where(eq(bankAccounts.id, ba.id)))
+  const bankLedger = bankRow!.accountId
+
   for (let i = 0; i < PAYMENTS; i++) {
     await postEntry(b.admin, {
       memo: `Payment ${i}`,
@@ -57,7 +62,7 @@ test('the reconciliation\'s totals cover every line while its lists are paged (R
       postingDate: date(day(i)),
       lines: [
         { purpose: 'purchase_expense', debitPaise: amount(i) },
-        { purpose: 'bank', creditPaise: amount(i) },
+        { accountId: bankLedger, creditPaise: amount(i) },
       ],
     })
   }
@@ -68,7 +73,7 @@ test('the reconciliation\'s totals cover every line while its lists are paged (R
       sourceRef: `rec:${r}`,
       postingDate: date(r),
       lines: [
-        { purpose: 'bank', debitPaise: 20_000 * r },
+        { accountId: bankLedger, debitPaise: 20_000 * r },
         { purpose: 'fee_income', creditPaise: 20_000 * r },
       ],
     })
