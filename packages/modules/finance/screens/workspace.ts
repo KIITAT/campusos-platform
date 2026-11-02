@@ -12,7 +12,7 @@ export const workspacePage = screen({
       { label: 'Owed to us', value: formatPaise(data.receivablePaise ?? 0) }, { label: 'We owe', value: formatPaise(data.payablePaise ?? 0) },
       { label: (data.surplusPaise ?? 0) < 0 ? 'Deficit so far' : 'Surplus so far', value: formatPaise(Math.abs(data.surplusPaise ?? 0)), tone: (data.surplusPaise ?? 0) < 0 ? 'due' : 'clear', href: `${ROOT}/reports/income-expenditure` },
     ] },
-    { kind: 'chart', title: 'Income and expenditure by month', type: 'bar', rows: 'months', x: 'month', unit: 'money', series: [{ key: 'incomePaise', label: 'Income' }, { key: 'expensePaise', label: 'Expenditure' }], empty: 'No postings this year yet.' },
+    { kind: 'chart', title: 'Income and expenditure by month', type: 'area', rows: 'months', x: 'month', unit: 'money', series: [{ key: 'incomePaise', label: 'Income' }, { key: 'expensePaise', label: 'Expenditure' }], empty: 'No postings this year yet.' },
     { kind: 'shortcuts', title: 'Statements and ledgers', items: reportLinks },
     { kind: 'shortcuts', title: 'Keep the books', items: [
       { label: 'Chart of accounts', href: `${ROOT}/accounts`, description: 'The account tree and posting purposes' },

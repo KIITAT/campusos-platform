@@ -53,6 +53,16 @@ export const myAttendancePage: PluginPage = {
         ],
       },
     ]
+    out.push({
+      kind: 'chart',
+      title: 'Attendance by subject',
+      type: 'bar',
+      rows: 'rows',
+      x: 'courseCode',
+      max: 100,
+      series: [{ key: 'percent', label: 'Attendance %' }],
+      empty: 'No classes this term.',
+    })
     if (short.length) {
       out.push({
         kind: 'note',
