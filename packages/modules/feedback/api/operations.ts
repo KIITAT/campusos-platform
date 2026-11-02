@@ -432,14 +432,22 @@ async function aggregate(tx: Tx, w: Window, offeringId: string | null | undefine
     sql`select count(*)::int as n from feedback_responses r where r.window_id = ${w.id} and ${scope}`,
   )
   const count = n?.n ?? 0
-  if (count < w.minResponses) return { responses: count, shown: false, questions: [] as Aggregate[], scaleMean: null as number | null }
-  const raw = await rows<{ question_id: string; score: number | null; choice: string | null; comment: string | null }>(
+  if (count < w.minResponses) return summarise(w, f!, qs, count, [])
+  const raw = await rows<RawAnswer>(
     tx,
     sql`select a.question_id, a.score, a.choice, a.comment
           from feedback_answers a join feedback_responses r on r.id = a.response_id
          where r.window_id = ${w.id} and ${scope}
          order by a.comment nulls last, a.choice nulls last, a.score nulls last`,
   )
+  return summarise(w, f!, qs, count, raw)
+}
+
+type RawAnswer = { question_id: string; score: number | null; choice: string | null; comment: string | null }
+
+/** What the answers of one class (or the whole window) add up to; the same figures whichever way they were read (REL-04). */
+function summarise(w: Window, f: typeof forms.$inferSelect, qs: Question[], count: number, raw: RawAnswer[]) {
+  if (count < w.minResponses) return { responses: count, shown: false, questions: [] as Aggregate[], scaleMean: null as number | null }
   const out: Aggregate[] = qs.map((q: Question) => {
     const mine = raw.filter((a) => a.question_id === q.id)
     const scores = mine.map((a) => a.score).filter((s): s is number => s !== null)
@@ -458,7 +466,7 @@ async function aggregate(tx: Tx, w: Window, offeringId: string | null | undefine
       mean: q.kind === 'scale' && scores.length ? round2(scores.reduce((a, b) => a + b, 0) / scores.length) : null,
       spread:
         q.kind === 'scale'
-          ? Array.from({ length: f!.scalePoints }, (_, i) => ({ label: String(i + 1), count: scores.filter((s) => s === i + 1).length }))
+          ? Array.from({ length: f.scalePoints }, (_, i) => ({ label: String(i + 1), count: scores.filter((s) => s === i + 1).length }))
           : q.kind === 'choice'
             ? q.options.map((o) => ({ label: o, count: mine.filter((a) => a.choice === o).length }))
             : [],
@@ -517,9 +525,34 @@ export async function windowView(actor: Actor, windowId: string) {
            group by p.offering_id, c.code, c.title, s.label, fu.name, fu.email
            order by c.code nulls first, s.label`,
     )
+    // A closed window's answers are read once, then summarised per class (REL-04).
+    const grouped = new Map<string, RawAnswer[]>()
+    const counts = new Map<string, number>()
+    let qs: Question[] = []
+    if (closed) {
+      qs = await tx.select().from(questions).where(eq(questions.formId, w.formId)).orderBy(asc(questions.position))
+      for (const r of await rows<{ offering_id: string | null; n: number }>(
+        tx,
+        sql`select r.offering_id, count(*)::int as n from feedback_responses r where r.window_id = ${w.id} group by r.offering_id`,
+      ))
+        counts.set(r.offering_id ?? '', r.n)
+      for (const r of await rows<RawAnswer & { offering_id: string | null }>(
+        tx,
+        sql`select r.offering_id, a.question_id, a.score, a.choice, a.comment
+              from feedback_answers a join feedback_responses r on r.id = a.response_id
+             where r.window_id = ${w.id}
+             order by a.comment nulls last, a.choice nulls last, a.score nulls last`,
+      )) {
+        const key = r.offering_id ?? ''
+        const list = grouped.get(key)
+        if (list) list.push(r)
+        else grouped.set(key, [r])
+      }
+    }
     const results = []
     for (const c of classes) {
-      const a = closed ? await aggregate(tx, w, f!.audience === 'teaching' ? c.offering_id : null) : null
+      const key = f!.audience === 'teaching' ? (c.offering_id ?? '') : ''
+      const a = closed ? summarise(w, f!, qs, counts.get(key) ?? 0, grouped.get(key) ?? []) : null
       results.push({
         offeringId: c.offering_id,
         course: c.course ? `${c.course} ${c.title}` : 'Every student',

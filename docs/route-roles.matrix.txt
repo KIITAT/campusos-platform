@@ -219,7 +219,7 @@ GET /api/v1/modules/examinations/imports                                 SIHF...
 GET /api/v1/modules/examinations/imports/template                        SIHF...... gate
 POST /api/v1/modules/examinations/imports/run                            SIHF...... gate
 
-## feedback 0.4.0
+## feedback 0.5.0
 GET /api/v1/modules/feedback/forms                                       SIH....... op
 POST /api/v1/modules/feedback/forms                                      SIH....... op
 GET /api/v1/modules/feedback/form                                        SIH....... gate
@@ -281,7 +281,7 @@ GET /api/v1/modules/fees/ledger                                          SIH.A..
 GET /api/v1/modules/fees/dues                                            SI..A..... gate
 GET /api/v1/modules/fees/receipt.pdf                                     SI..A..s.. gate
 
-## finance 0.14.0
+## finance 0.15.0
 GET /api/v1/modules/finance/accounts                                     SI..A..... op
 POST /api/v1/modules/finance/accounts                                    SI........ op
 POST /api/v1/modules/finance/accounts/update                             SI........ op
@@ -652,7 +652,7 @@ GET /api/v1/modules/hr/imports                                           SI.....
 GET /api/v1/modules/hr/imports/template                                  SI........ gate
 POST /api/v1/modules/hr/imports/run                                      SI........ gate
 
-## library 0.10.0
+## library 0.11.0
 GET /api/v1/modules/library/titles                                       SIHF.L.s.. gate
 POST /api/v1/modules/library/titles                                      SI...L.... op
 GET /api/v1/modules/library/copies                                       SIHF.L.s.. gate
@@ -738,7 +738,7 @@ GET /api/v1/modules/placement/imports                                    SIHF...
 GET /api/v1/modules/placement/imports/template                           SIHF...... gate
 POST /api/v1/modules/placement/imports/run                               SIHF...... gate
 
-## quizzes 0.4.0
+## quizzes 0.5.0
 GET /api/v1/modules/quizzes/courses                                      SIHF...... op
 GET /api/v1/modules/quizzes/questions                                    SIHF...... gate
 POST /api/v1/modules/quizzes/questions                                   SIHF...... op

@@ -12,7 +12,8 @@ import { fiscalBounds, localToday, settingsWithin } from './years'
  * The books, read: the statements an auditor signs and the reports an
  * accounts office lives in.
  *
- * Everything here is a sum of journal lines by posting date -- no report
+ * Everything here is a sum of journal lines by posting date, read from the daily
+ * balances the journal's trigger keeps (REL-03) where a report needs only totals -- no report
  * keeps figures of its own, so no two reports can disagree. Income and
  * expenditure leave out the entries that close a year, which only move the
  * year's result into retained surplus; the balance sheet keeps them, and so
@@ -31,22 +32,21 @@ interface Filters {
 }
 
 const filterSql = (f: Filters) =>
-  sql`${f.fundId ? sql`and l.fund_id = ${f.fundId}::uuid` : sql``} ${f.costCenter ? sql`and l.cost_center = ${f.costCenter}` : sql``}`
+  sql`${f.fundId ? sql`and b.fund_id = ${f.fundId}::uuid` : sql``} ${f.costCenter ? sql`and b.cost_center = ${f.costCenter}` : sql``}`
 
-/** Per account: debits and credits before `from`, between `from` and `to`, signed by kind. */
+/** Per account: debits and credits before `from`, between `from` and `to`, from the daily balances (REL-03). */
 async function movements(tx: Tx, from: string | null, to: string, f: Filters & { closing?: boolean } = {}) {
   const res = await tx.execute(sql`
-    select l.account_id,
-           coalesce(sum(l.debit_paise) filter (where ${from}::date is not null and e.posting_date < ${from}::date), 0)::bigint as od,
-           coalesce(sum(l.credit_paise) filter (where ${from}::date is not null and e.posting_date < ${from}::date), 0)::bigint as oc,
-           coalesce(sum(l.debit_paise) filter (where ${from}::date is null or e.posting_date >= ${from}::date), 0)::bigint as pd,
-           coalesce(sum(l.credit_paise) filter (where ${from}::date is null or e.posting_date >= ${from}::date), 0)::bigint as pc
-      from finance_journal_lines l
-      join finance_journal_entries e on e.id = l.entry_id
-     where e.posting_date <= ${to}::date
-       ${f.closing === false ? sql`and ${NOT_CLOSING}` : sql``}
+    select b.account_id,
+           coalesce(sum(b.debit_paise) filter (where ${from}::date is not null and b.posting_date < ${from}::date), 0)::bigint as od,
+           coalesce(sum(b.credit_paise) filter (where ${from}::date is not null and b.posting_date < ${from}::date), 0)::bigint as oc,
+           coalesce(sum(b.debit_paise) filter (where ${from}::date is null or b.posting_date >= ${from}::date), 0)::bigint as pd,
+           coalesce(sum(b.credit_paise) filter (where ${from}::date is null or b.posting_date >= ${from}::date), 0)::bigint as pc
+      from finance_daily_balances b
+     where b.posting_date <= ${to}::date
+       ${f.closing === false ? sql`and not b.closing` : sql``}
        ${filterSql(f)}
-     group by l.account_id`)
+     group by b.account_id`)
   return new Map(
     (res.rows as { account_id: string; od: number; oc: number; pd: number; pc: number }[]).map((r) => [
       r.account_id,
