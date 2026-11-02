@@ -14,8 +14,8 @@ import {
 } from './core'
 import { PROJECT_SORTS } from './projects'
 
-const costingSchema = z.object({ projectId: z.uuid(), period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/) })
-const reverseSchema = z.object({ costingId: z.uuid(), reason: text(5, 200) })
+export const costingSchema = z.object({ projectId: z.uuid(), period: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/) })
+export const reverseSchema = z.object({ costingId: z.uuid(), reason: text(5, 200) })
 const profitabilitySchema = z.object({ from: optionalDate, to: optionalDate })
 
 /** The last day of the month a period (YYYY-MM) names. */

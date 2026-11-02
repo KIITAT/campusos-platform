@@ -14,8 +14,8 @@ import {
   type Actor, type Tx,
 } from './core'
 
-const costRateSchema = z.object({ userId: text(1, 64), effectiveFrom: z.iso.date(), hourlyCost: text(1, 24), homeCostCenter: optional(80) })
-const billingSchema = z.object({ projectId: z.uuid(), through: optionalDate })
+export const costRateSchema = z.object({ userId: text(1, 64), effectiveFrom: z.iso.date(), hourlyCost: text(1, 24), homeCostCenter: optional(80) })
+export const billingSchema = z.object({ projectId: z.uuid(), through: optionalDate })
 const listBillingsQuery = z.object({ projectId: optionalId })
 
 export async function setCostRate(actor: Actor, input: unknown) {

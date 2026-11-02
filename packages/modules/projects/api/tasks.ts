@@ -12,14 +12,14 @@ import {
   type Actor, type Tx,
 } from './core'
 
-const stageSchema = z.object({
+export const stageSchema = z.object({
   projectId: z.uuid(),
   name: text(1, 60),
   seq: z.coerce.number().int().min(1).max(999),
   closes: z.preprocess(ticked, z.boolean()).default(false),
 })
-const milestoneSchema = z.object({ projectId: z.uuid(), name: text(2, 120), dueOn: optionalDate })
-const taskSchema = z.object({
+export const milestoneSchema = z.object({ projectId: z.uuid(), name: text(2, 120), dueOn: optionalDate })
+export const taskSchema = z.object({
   projectId: z.uuid(),
   title: text(2, 200),
   description: optional(4000),
@@ -28,7 +28,9 @@ const taskSchema = z.object({
   deadline: optionalDate,
   milestoneId: optionalId,
 })
-const taskUpdateSchema = taskSchema.omit({ projectId: true }).extend({ taskId: z.uuid(), stageId: z.uuid() })
+export const taskUpdateSchema = taskSchema.omit({ projectId: true }).extend({ taskId: z.uuid(), stageId: z.uuid() })
+
+export const reachSchema = z.object({ milestoneId: z.uuid() })
 
 export async function addStage(actor: Actor, input: unknown) {
   const institutionId = tenant(actor, STAFF)
@@ -54,7 +56,7 @@ export async function addMilestone(actor: Actor, input: unknown) {
 
 export async function reachMilestone(actor: Actor, input: unknown) {
   const institutionId = tenant(actor, STAFF)
-  const data = z.object({ milestoneId: z.uuid() }).parse(input)
+  const data = reachSchema.parse(input)
   return withTenant(institutionId, (tx) => named(async () => {
     const [milestone] = await tx.select().from(milestones).where(eq(milestones.id, data.milestoneId)).for('update')
     if (!milestone) throw new ProjectsError(404, 'no_such_milestone', 'No such milestone on this project.')

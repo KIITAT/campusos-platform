@@ -28,8 +28,8 @@ export const projectSchema = z.object({
   fundId: optionalId,
 })
 export const projectUpdateSchema = projectSchema.omit({ code: true, costCenter: true, startsOn: true }).extend({ projectId: z.uuid() })
-const statusSchema = z.object({ projectId: z.uuid(), status: z.enum(['active', 'closed']) })
-const memberSchema = z.object({ projectId: z.uuid(), userId: text(1, 64) })
+export const statusSchema = z.object({ projectId: z.uuid(), status: z.enum(['active', 'closed']) })
+export const memberSchema = z.object({ projectId: z.uuid(), userId: text(1, 64) })
 const listSchema = z.object({ status: optionalEnum(['active', 'closed']) })
 
 export const PROJECT_SORTS: SortSpec = {

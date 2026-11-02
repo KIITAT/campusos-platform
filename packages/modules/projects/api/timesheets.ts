@@ -12,13 +12,13 @@ import {
   tenant, text, type Actor, type Tx,
 } from './core'
 
-const logSchema = z.object({
+export const logSchema = z.object({
   taskId: z.uuid(), userId: optional(64), workDate: z.iso.date(), minutes: z.coerce.number().int(), description: text(2, 500),
 })
-const editSchema = z.object({ lineId: z.uuid(), workDate: z.iso.date(), minutes: z.coerce.number().int(), description: text(2, 500) })
-const lineSchema = z.object({ lineId: z.uuid() })
-const decideSchema = z.object({ ids: z.array(z.uuid()).min(1).max(200), decision: z.enum(['approved', 'rejected']), note: optional(300) })
-const reopenSchema = z.object({ lineId: z.uuid(), reason: text(5, 300) })
+export const editSchema = z.object({ lineId: z.uuid(), workDate: z.iso.date(), minutes: z.coerce.number().int(), description: text(2, 500) })
+export const lineSchema = z.object({ lineId: z.uuid() })
+export const decideSchema = z.object({ ids: z.array(z.uuid()).min(1).max(200), decision: z.enum(['approved', 'rejected']), note: optional(300) })
+export const reopenSchema = z.object({ lineId: z.uuid(), reason: text(5, 300) })
 const timesheetQuery = z.object({
   projectId: optionalId, taskId: optionalId, userId: optional(64),
   status: optionalEnum(['submitted', 'approved', 'rejected']), queue: optionalEnum(['approvals', 'reopenable']),
