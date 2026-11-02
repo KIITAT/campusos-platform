@@ -125,6 +125,27 @@ test('an enquiry that never became a student is anonymised after a year', async 
   assert.equal((await q(`select reason from admissions_applications where enquiry_id = $1`, [Z])).rows[0].reason, 'late')
 })
 
+test('a CRM lead idle for two years is anonymised', async () => {
+  const lead = async (daysAgo: number) => {
+    const l = uid()
+    await q(
+      `insert into crm_leads (id, institution_id, title, email, contact_name, source, owner_id, created_by, updated_at)
+       values ($1, $2, 'Idle deal', $3, 'Contact', 'website', $4, $4, now() - $5 * interval '1 day')`,
+      [l, I, `${l}@lead.test`, id.F, daysAgo],
+    )
+    await q(`insert into crm_activities (institution_id, lead_id, kind, summary, due_at, assignee_id, created_by) values ($1, $2, 'call', 'Ring them', now(), $3, $3)`, [I, l, id.F])
+    return l
+  }
+  const [old, fresh] = [await lead(800), await lead(10)]
+  await purgeExpired({ institutionId: I })
+  const row = async (l: string) => (await q(`select title, email, contact_name, erased_at is not null as erased from crm_leads where id = $1`, [l])).rows[0]
+  assert.deepEqual(await row(old), { title: '[erased]', email: null, contact_name: null, erased: true })
+  assert.equal((await row(fresh)).title, 'Idle deal')
+  const summary = async (l: string) => (await q(`select summary from crm_activities where lead_id = $1`, [l])).rows[0].summary
+  assert.equal(await summary(old), '[erased]')
+  assert.equal(await summary(fresh), 'Ring them')
+})
+
 test('an applicant who was not hired is anonymised a year after the opening closed', async () => {
   const requisition = uid()
   await q(`insert into hr_job_requisitions (id, institution_id, designation, positions, reason, status) values ($1, $2, 'Lecturer', 1, 'growth', 'approved')`, [requisition, I])

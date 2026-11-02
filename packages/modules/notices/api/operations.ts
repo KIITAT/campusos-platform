@@ -89,6 +89,7 @@ export const NOTIFICATION_CATEGORIES: Record<string, string> = {
   mentoring: 'Mentoring and student leave',
   placement: 'Placement',
   care: 'Student care',
+  crm: 'Sales CRM',
 }
 
 const unknownCategory = () => new NoticeError(400, 'unknown_category', 'no such notification category')
