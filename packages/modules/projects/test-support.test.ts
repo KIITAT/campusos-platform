@@ -91,3 +91,17 @@ export async function project(o: Office, over: Record<string, unknown> = {}) {
   const stage = (name: string) => detail.stages.find((s: { name: string }) => s.name === name)!.id as string
   return { id: made.id, todo: stage('To do'), doing: stage('In progress'), done: stage('Done') }
 }
+
+/** Tasks A and B on P; the worker logs 480 minutes on days 1 to 3 on A and days 4 and 5 on B; the manager approves all five. */
+export async function week(o: Office, p: { id: string }) {
+  const api = await import('./api')
+  const a = await api.createTask(o.manager, { projectId: p.id, title: 'Task A', assigneeId: o.worker.id }) as { id: string }
+  const b = await api.createTask(o.manager, { projectId: p.id, title: 'Task B', assigneeId: o.worker.id }) as { id: string }
+  const ids: string[] = []
+  for (const [i, task] of [a, a, a, b, b].entries()) {
+    const line = await api.logTime(o.worker, { taskId: task.id, workDate: o.last.days[i], minutes: 480, description: 'Work ' + i }) as { id: string }
+    ids.push(line.id)
+  }
+  await api.decideTime(o.manager, { ids, decision: 'approved' })
+  return ids
+}
