@@ -38,6 +38,7 @@
     "@campusos/module-notices": "workspace:*",
     "@campusos/module-parents": "workspace:*",
     "@campusos/module-placement": "workspace:*",
+    "@campusos/module-projects": "workspace:*",
     "@campusos/module-quizzes": "workspace:*",
     "@campusos/module-skills": "workspace:*",
     "@campusos/module-timetable": "workspace:*",
