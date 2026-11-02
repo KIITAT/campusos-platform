@@ -34,7 +34,7 @@ test('a week of approved time invoices once through the books (MG-63)', async ()
   const lines = await owner<{ qty_milli: number; cost_center: string }>(sql`
     select qty_milli::int, cost_center from finance_invoice_lines where invoice_id = ${invoices[0]!.id} order by qty_milli desc`)
   assert.deepEqual(lines.map((l) => [l.qty_milli, l.cost_center]), [[24000, 'PRJ'], [16000, 'PRJ']])
-  const marked = await owner<{ n: number }>(sql`select count(*)::int as n from projects_timesheets where billing_id = ${b.id} and id = any(${ids}::uuid[])`)
+  const marked = await owner<{ n: number }>(sql`select count(*)::int as n from projects_timesheets where billing_id = ${b.id} and id in (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`)
   assert.equal(marked[0]!.n, 5)
   await refused(billProject(o.accounts, { projectId: p.id }), 'nothing_to_bill')
   assert.equal((await trialBalance(o.admin)).differencePaise, 0)
