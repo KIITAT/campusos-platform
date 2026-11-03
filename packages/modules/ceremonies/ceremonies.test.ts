@@ -16,6 +16,7 @@ import {
   recordCompletion,
   type Actor as AcademicActor,
 } from '@campusos/module-academic/api'
+import { studentPrograms } from '@campusos/module-academic/schema'
 import {
   CeremonyError,
   certificateDocument,
@@ -156,6 +157,26 @@ test('eligibility is queued, not worked out inside the request (REL-04)', async 
   const job = plugin.jobs!.find((j) => j.kind === 'ceremonies.eligibility')!
   await withTenant(c.id, (tx) => job.run(c.admin as never, tx, { ceremonyId: e.id }))
   assert.ok((await listCandidates(c.admin, e.id)).length > 0)
+})
+
+test('a ceremony past the 65,535-parameter limit of one insert is still worked out (REL-04, review HIGH)', async () => {
+  const c = await campus()
+  const e = await ceremonyFor(c)
+  const [declared] = await withTenant(c.id, (tx) => tx.select().from(studentPrograms).where(eq(studentPrograms.studentId, c.done.id)))
+  const extra = 5_500 // 12 parameters a candidate row: one insert holds at most 5,461
+  for (let from = 0; from < extra; from += 1_000) {
+    const people = await authDb
+      .insert(users)
+      .values(Array.from({ length: Math.min(1_000, extra - from) }, (_, k) => ({ email: `bulk${from + k}@${SLUG}${n}.test`, institutionId: c.id, role: 'student' as const, name: `Bulk ${from + k}` })))
+      .returning({ id: users.id })
+    await withTenant(c.id, (tx) =>
+      tx.insert(studentPrograms).values(people.map((p) => ({ institutionId: c.id, studentId: p.id, programId: declared!.programId, curriculumId: declared!.curriculumId }))),
+    )
+  }
+  const run = await eligibility(c, e)
+  assert.equal(run.audited, extra + 2)
+  const [row] = await withTenant(c.id, (tx) => tx.select({ count: sql<number>`count(*)::int` }).from(candidates).where(eq(candidates.ceremonyId, e.id)))
+  assert.equal(row!.count, extra + 2)
 })
 
 test('the list is whoever reads a graduating programme, and cleared means the degree audit says complete', async () => {
