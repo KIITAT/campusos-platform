@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
 import { eq, sql } from 'drizzle-orm'
+import pg from 'pg'
 import * as database from './index'
 
 let tenant: string
@@ -116,4 +117,49 @@ test('an executing transaction cannot be stolen after its lease expires', async 
     assert.equal(await database.claimJob(tenant, 'competing-worker'), null)
   } finally { release() }
   await running
+})
+
+async function freshInstitution(slug: string, suspended = false) {
+  const [inst] = await database.authDb.insert(database.institutions).values({ slug, name: slug, allowedEmailDomains: [], suspendedAt: suspended ? new Date() : null }).returning()
+  const [person] = await database.authDb.insert(database.users).values({ institutionId: inst!.id, email: `${slug}@example.test`, role: 'institution_admin' }).returning()
+  return { id: inst!.id, actorId: person!.id }
+}
+
+const enqueueIn = (t: { id: string; actorId: string }, key: string, runAfter?: Date) =>
+  database.withTenant(t.id, (tx) => database.enqueueJob(tx, { institutionId: t.id, actorId: t.actorId, kind: 'test.discovery', dedupeKey: key, payload: {}, runAfter }))
+
+test('tenants with due work are found without a binding (REL-05)', async () => {
+  const active = await freshInstitution('jobs-due-active')
+  const suspended = await freshInstitution('jobs-due-suspended', true)
+  const later = await freshInstitution('jobs-due-later')
+  try {
+    await enqueueIn(active, 'now')
+    await enqueueIn(suspended, 'now')
+    await enqueueIn(later, 'later', new Date(Date.now() + 3_600_000))
+    const found = await database.dueTenants()
+    assert.ok(found.includes(active.id))
+    assert.ok(!found.includes(suspended.id))
+    assert.ok(!found.includes(later.id))
+  } finally {
+    for (const slug of ['jobs-due-active', 'jobs-due-suspended', 'jobs-due-later']) await database.authDb.delete(database.institutions).where(eq(database.institutions.slug, slug))
+  }
+})
+
+test('finished jobs are purged after their time, live ones never (REL-05)', async () => {
+  const t = await freshInstitution('jobs-purge')
+  const c = new pg.Client({ connectionString: process.env.MIGRATION_DATABASE_URL })
+  await c.connect()
+  try {
+    const ids: string[] = []
+    for (const key of ['old-succeeded', 'new-succeeded', 'old-dead', 'live']) ids.push((await enqueueIn(t, key)).id)
+    await c.query(`update background_jobs set status = 'succeeded', completed_at = now() - interval '8 days' where id = $1`, [ids[0]])
+    await c.query(`update background_jobs set status = 'succeeded', completed_at = now() - interval '1 day' where id = $1`, [ids[1]])
+    await c.query(`update background_jobs set status = 'dead', completed_at = now() - interval '31 days' where id = $1`, [ids[2]])
+    assert.ok((await database.purgeJobs()) >= 2)
+    const { rows } = await c.query<{ id: string }>('select id from background_jobs where institution_id = $1', [t.id])
+    assert.deepEqual(rows.map((r) => r.id).sort(), [ids[1], ids[3]].sort())
+  } finally {
+    await c.end()
+    await database.authDb.delete(database.institutions).where(eq(database.institutions.slug, 'jobs-purge'))
+  }
 })
