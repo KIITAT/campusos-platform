@@ -35,6 +35,7 @@ import {
   type Actor,
 } from './api'
 import { attempts, questions, quizzes, responses } from './schema'
+import { plugin } from './plugin'
 
 /**
  * Phase I: a quiz is authored from a bank, taken, and scored by the machine --
@@ -415,6 +416,27 @@ test('time up: late answers are refused, and the clock submits what was saved', 
   const [row] = await withTenant(c.id, (tx) => tx.select().from(attempts).where(eq(attempts.id, a.id)))
   assert.equal(row!.autoSubmitted, true)
   assert.equal(row!.submittedAt?.getTime(), row!.deadline.getTime())
+})
+
+test('the clock submits an expired attempt with nobody looking (REL-07)', async () => {
+  const c = await campus()
+  const other = await campus()
+  const { quizId, item } = await quizFor(c)
+  const mine = await startAttempt(c.asha, { quizId })
+  await saveAnswers(c.asha, { attemptId: mine.id, [`q_${item.capital}`]: 'b' })
+  await expire(mine.id, 120)
+  const otherQuiz = await quizFor(other)
+  const theirs = await startAttempt(other.asha, { quizId: otherQuiz.quizId })
+  await expire(theirs.id, 120)
+
+  const job = plugin.jobs!.find((j) => j.kind === 'quizzes.finalise-expired')!
+  assert.deepEqual(await withTenant(c.id, (tx) => job.run({} as never, tx, {})), { finalised: 1 })
+  const [row] = await withTenant(c.id, (tx) => tx.select().from(attempts).where(eq(attempts.id, mine.id)))
+  assert.equal(row!.autoSubmitted, true)
+  assert.equal(row!.submittedAt?.getTime(), row!.deadline.getTime())
+  assert.deepEqual(await withTenant(c.id, (tx) => job.run({} as never, tx, {})), { finalised: 0 })
+  const [untouched] = await withTenant(other.id, (tx) => tx.select().from(attempts).where(eq(attempts.id, theirs.id)))
+  assert.equal(untouched!.submittedAt, null)
 })
 
 test('answers are shown only as the quiz allows; a teacher always sees them', async () => {

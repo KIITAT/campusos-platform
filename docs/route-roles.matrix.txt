@@ -71,7 +71,7 @@ GET /api/v1/modules/alumni/imports                                       SI.....
 GET /api/v1/modules/alumni/imports/template                              SI........ gate
 POST /api/v1/modules/alumni/imports/run                                  SI........ gate
 
-## attendance 0.10.0
+## attendance 0.11.0
 POST /api/v1/modules/attendance/scan/signed                              .......s.. op
 POST /api/v1/modules/attendance/devices/key                              .......s.. op
 GET /api/v1/modules/attendance/devices/mine                              .......s.. gate
@@ -101,7 +101,7 @@ POST /api/v1/modules/attendance/devices/approve                          SI.....
 POST /api/v1/modules/attendance/geofences                                SI........ op
 GET /api/v1/modules/attendance/me                                        .......s.. gate
 
-## care 0.7.0
+## care 0.8.0
 GET /api/v1/modules/care/home                                            .......s.. op
 GET /api/v1/modules/care/instruments                                     .......s.. gate
 GET /api/v1/modules/care/check                                           .......s.. gate
@@ -147,6 +147,30 @@ GET /api/v1/modules/ceremonies/certificate                               SIH....
 GET /api/v1/modules/ceremonies/certificate.pdf                           SIH....s.. gate
 GET /api/v1/modules/ceremonies/verify                                    SIHF...... gate
 
+## crm 0.1.0
+GET /api/v1/modules/crm/settings                                         SIHFALO... op
+GET /api/v1/modules/crm/pipeline                                         SIHFALO... op
+GET /api/v1/modules/crm/leads/detail                                     SIHFALO... op
+POST /api/v1/modules/crm/stages                                          SI........ op
+POST /api/v1/modules/crm/stages/update                                   SI........ op
+POST /api/v1/modules/crm/lost-reasons                                    SI........ op
+POST /api/v1/modules/crm/lost-reasons/archive                            SI........ op
+POST /api/v1/modules/crm/teams                                           SI........ op
+POST /api/v1/modules/crm/teams/members                                   SI........ op
+POST /api/v1/modules/crm/teams/members/remove                            SI........ op
+POST /api/v1/modules/crm/leads                                           SIHFALO... op
+POST /api/v1/modules/crm/leads/update                                    SIHFALO... op
+POST /api/v1/modules/crm/leads/qualify                                   SIHFALO... op
+POST /api/v1/modules/crm/leads/stage                                     SIHFALO... op
+POST /api/v1/modules/crm/leads/assign                                    SIHFALO... op
+POST /api/v1/modules/crm/leads/won                                       SIHFALO... op
+POST /api/v1/modules/crm/leads/lost                                      SIHFALO... op
+POST /api/v1/modules/crm/leads/reopen                                    SIHFALO... op
+POST /api/v1/modules/crm/activities                                      SIHFALO... op
+POST /api/v1/modules/crm/activities/done                                 SIHFALO... op
+POST /api/v1/modules/crm/leads/convert                                   SIHFALO... op
+POST /api/v1/modules/crm/leads/erase                                     SI........ op
+
 ## enrollment 0.4.0
 POST /api/v1/modules/enrollment/register                                 SIH....s.. gate
 POST /api/v1/modules/enrollment/drop                                     SIH....s.. gate
@@ -157,7 +181,7 @@ GET /api/v1/modules/enrollment/registrations                             SIHF...
 GET /api/v1/modules/enrollment/credit-load                               SIHF...s.. gate
 GET /api/v1/modules/enrollment/events                                    SIH....s.. gate
 
-## examinations 0.13.0
+## examinations 0.14.0
 GET /api/v1/modules/examinations/exams                                   SIHF...... gate
 POST /api/v1/modules/examinations/exams                                  SIHF...... op
 POST /api/v1/modules/examinations/exams/publish                          SIHF...... op
@@ -195,7 +219,7 @@ GET /api/v1/modules/examinations/imports                                 SIHF...
 GET /api/v1/modules/examinations/imports/template                        SIHF...... gate
 POST /api/v1/modules/examinations/imports/run                            SIHF...... gate
 
-## feedback 0.4.0
+## feedback 0.5.0
 GET /api/v1/modules/feedback/forms                                       SIH....... op
 POST /api/v1/modules/feedback/forms                                      SIH....... op
 GET /api/v1/modules/feedback/form                                        SIH....... gate
@@ -216,7 +240,7 @@ GET /api/v1/modules/feedback/give                                        .......
 POST /api/v1/modules/feedback/give                                       .......s.. op
 GET /api/v1/modules/feedback/completion                                  SIHF...s.. gate
 
-## fees 0.16.0
+## fees 0.17.0
 GET /api/v1/modules/fees/bank-accounts                                   SI..A..s.. gate
 POST /api/v1/modules/fees/bank-accounts                                  SI........ op
 POST /api/v1/modules/fees/bank-accounts/retire                           SI........ op
@@ -257,7 +281,7 @@ GET /api/v1/modules/fees/ledger                                          SIH.A..
 GET /api/v1/modules/fees/dues                                            SI..A..... gate
 GET /api/v1/modules/fees/receipt.pdf                                     SI..A..s.. gate
 
-## finance 0.14.0
+## finance 0.15.0
 GET /api/v1/modules/finance/accounts                                     SI..A..... op
 POST /api/v1/modules/finance/accounts                                    SI........ op
 POST /api/v1/modules/finance/accounts/update                             SI........ op
@@ -472,7 +496,7 @@ POST /api/v1/modules/helpdesk/cases/messages                             SIHFALO
 POST /api/v1/modules/helpdesk/cases/resolve                              SIHFALOs.. op
 POST /api/v1/modules/helpdesk/cases/reopen                               SIHFALOs.. op
 
-## hostel 0.7.0
+## hostel 0.8.0
 GET /api/v1/modules/hostel/blocks                                        SI....O... gate
 POST /api/v1/modules/hostel/blocks                                       SI....O... op
 GET /api/v1/modules/hostel/rooms                                         SI....O... op
@@ -492,7 +516,7 @@ GET /api/v1/modules/hostel/imports                                       SI....O
 GET /api/v1/modules/hostel/imports/template                              SI....O... gate
 POST /api/v1/modules/hostel/imports/run                                  SI....O... gate
 
-## hr 0.18.0
+## hr 0.19.0
 GET /api/v1/modules/hr/staff                                             SI..A..... op
 POST /api/v1/modules/hr/staff                                            SI........ op
 POST /api/v1/modules/hr/staff/end                                        SI........ op
@@ -628,7 +652,7 @@ GET /api/v1/modules/hr/imports                                           SI.....
 GET /api/v1/modules/hr/imports/template                                  SI........ gate
 POST /api/v1/modules/hr/imports/run                                      SI........ gate
 
-## library 0.10.0
+## library 0.11.0
 GET /api/v1/modules/library/titles                                       SIHF.L.s.. gate
 POST /api/v1/modules/library/titles                                      SI...L.... op
 GET /api/v1/modules/library/copies                                       SIHF.L.s.. gate
@@ -648,7 +672,7 @@ GET /api/v1/modules/library/imports                                      SI...L.
 GET /api/v1/modules/library/imports/template                             SI...L.... gate
 POST /api/v1/modules/library/imports/run                                 SI...L.... gate
 
-## mentoring 0.13.0
+## mentoring 0.14.0
 GET /api/v1/modules/mentoring/assignments                                SIH....... op
 POST /api/v1/modules/mentoring/assign                                    SIH....... op
 POST /api/v1/modules/mentoring/assignments/end                           SIH....... op
@@ -669,7 +693,7 @@ GET /api/v1/modules/mentoring/imports                                    SIH....
 GET /api/v1/modules/mentoring/imports/template                           SIH....... gate
 POST /api/v1/modules/mentoring/imports/run                               SIH....... gate
 
-## notices 0.9.0
+## notices 0.10.0
 GET /api/v1/modules/notices/board                                        SIHFALOsp. gate
 POST /api/v1/modules/notices/board                                       SIHFALO... op
 POST /api/v1/modules/notices/board/publish                               SIHFALO... op
@@ -684,7 +708,7 @@ GET /api/v1/modules/notices/preferences                                  SIHFALO
 POST /api/v1/modules/notices/preferences                                 SIHFALOsp. op
 POST /api/v1/modules/notices/preferences/mandatory                       SI........ op
 
-## parents 0.13.0
+## parents 0.14.0
 GET /api/v1/modules/parents/links                                        SI........ op
 POST /api/v1/modules/parents/links                                       SI......p. gate
 POST /api/v1/modules/parents/links/decide                                SI........ op
@@ -697,7 +721,7 @@ POST /api/v1/modules/parents/guardians/withdraw                          SI.....
 GET /api/v1/modules/parents/children                                     SI......p. gate
 GET /api/v1/modules/parents/child                                        SI......p. gate
 
-## placement 0.7.0
+## placement 0.8.0
 GET /api/v1/modules/placement/workspace                                  SI.....s.. op
 GET /api/v1/modules/placement/statistics                                 SI........ op
 POST /api/v1/modules/placement/officers                                  SI........ op
@@ -714,7 +738,36 @@ GET /api/v1/modules/placement/imports                                    SIHF...
 GET /api/v1/modules/placement/imports/template                           SIHF...... gate
 POST /api/v1/modules/placement/imports/run                               SIHF...... gate
 
-## quizzes 0.3.0
+## projects 0.1.0
+GET /api/v1/modules/projects/projects                                    SIHFALO... op
+GET /api/v1/modules/projects/projects/detail                             SIHFALO... op
+POST /api/v1/modules/projects/projects                                   SI..A..... op
+POST /api/v1/modules/projects/projects/update                            SI..A..... op
+POST /api/v1/modules/projects/projects/status                            SI..A..... op
+POST /api/v1/modules/projects/members                                    SIHFALO... op
+POST /api/v1/modules/projects/members/remove                             SIHFALO... op
+POST /api/v1/modules/projects/stages                                     SIHFALO... op
+POST /api/v1/modules/projects/milestones                                 SIHFALO... op
+POST /api/v1/modules/projects/milestones/reached                         SIHFALO... op
+GET /api/v1/modules/projects/tasks                                       SIHFALO... op
+POST /api/v1/modules/projects/tasks                                      SIHFALO... op
+POST /api/v1/modules/projects/tasks/update                               SIHFALO... op
+GET /api/v1/modules/projects/timesheets                                  SIHFALO... op
+POST /api/v1/modules/projects/timesheets                                 SIHFALO... op
+POST /api/v1/modules/projects/timesheets/update                          SIHFALO... op
+POST /api/v1/modules/projects/timesheets/delete                          SIHFALO... op
+POST /api/v1/modules/projects/timesheets/decide                          SIHFALO... op
+POST /api/v1/modules/projects/timesheets/reopen                          SIHFALO... op
+GET /api/v1/modules/projects/cost-rates                                  SI..A..... op
+POST /api/v1/modules/projects/cost-rates                                 SI..A..... op
+GET /api/v1/modules/projects/billings                                    SI..A..... op
+POST /api/v1/modules/projects/billings                                   SI..A..... op
+GET /api/v1/modules/projects/costings                                    SI..A..... op
+POST /api/v1/modules/projects/costings                                   SI..A..... op
+POST /api/v1/modules/projects/costings/reverse                           SI..A..... op
+GET /api/v1/modules/projects/profitability                               SI..A..... op
+
+## quizzes 0.5.0
 GET /api/v1/modules/quizzes/courses                                      SIHF...... op
 GET /api/v1/modules/quizzes/questions                                    SIHF...... gate
 POST /api/v1/modules/quizzes/questions                                   SIHF...... op

@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, lte, sql } from 'drizzle-orm'
 import { withTenant } from '@campusos/db'
-import { readUpload } from '@campusos/module-framework'
+import { cursorColumn, finishPage, keyset, orderKeys, readPage, readUpload, type KeyColumn, type PageRequest } from '@campusos/module-framework'
 import * as z from 'zod'
 import {
   accounts,
@@ -568,66 +568,110 @@ export async function listStatements(actor: Actor, bankAccountId: string) {
   )
 }
 
+const LINE_KEYS: KeyColumn[] = [
+  { sql: sql`${entries.postingDate}`, type: 'date' },
+  { sql: sql`${glLines.id}`, type: 'uuid' },
+]
+const STATEMENT_KEYS: KeyColumn[] = [
+  { sql: sql`${bankStatementLines.txnDate}`, type: 'date' },
+  { sql: sql`${bankStatementLines.id}`, type: 'uuid' },
+]
+
+type ReconciliationList = 'notPresented' | 'notCredited' | 'bankOnly'
+
+/** One list of the reconciliation, read as a page of 50 in date order (the totals do not depend on it). */
+export const reconciliationPage = (req: Request, prefix: ReconciliationList) =>
+  readPage(req, prefix, { date: { dir: 'asc', keys: prefix === 'bankOnly' ? STATEMENT_KEYS : LINE_KEYS } }, 'date', 50)
+
+const firstPages = (): Record<ReconciliationList, PageRequest> => {
+  const req = new Request('https://x/')
+  return { notPresented: reconciliationPage(req, 'notPresented'), notCredited: reconciliationPage(req, 'notCredited'), bankOnly: reconciliationPage(req, 'bankOnly') }
+}
+
 /**
  * The bank reconciliation statement on a day: the balance in the books, what
  * the books have that the bank has not yet shown (cheques issued and not
  * presented, deposits not yet credited), what the bank has shown that the
  * books do not have yet, and the balance the bank should be showing.
+ * The totals cover every line; the three lists are pages of 50.
  */
-export async function reconciliation(actor: Actor, input: { bankAccountId: string; on: string }) {
+export async function reconciliation(
+  actor: Actor,
+  input: { bankAccountId: string; on: string },
+  pages: Record<ReconciliationList, PageRequest> = firstPages(),
+) {
   const tenant = requireRead(actor)
   return withTenant(tenant, async (tx) => {
     const bank = await bankWithin(tx, input.bankAccountId)
-    const [books] = await tx
-      .select({ v: sql<number>`coalesce(sum(${glLines.debitPaise} - ${glLines.creditPaise}), 0)::bigint` })
-      .from(glLines)
-      .innerJoin(entries, eq(entries.id, glLines.entryId))
-      .where(and(eq(glLines.accountId, bank.accountId), lte(entries.postingDate, input.on)))
-    const booksPaise = Number(books?.v ?? 0)
+    // The books' balance on the day, from the daily balances the journal's trigger keeps.
+    const booksRow = (
+      await tx.execute(
+        sql`select coalesce(sum(debit_paise - credit_paise), 0)::bigint as v from finance_daily_balances where account_id = ${bank.accountId} and posting_date <= ${input.on}::date`,
+      )
+    ).rows[0] as { v: string }
+    const booksPaise = Number(booksRow.v)
 
     // In the books by the day, and not cleared by a statement line dated by then.
-    const notCleared = (
-      await tx
+    const bookList = async (side: 'credit' | 'debit', page: PageRequest) => {
+      const money = side === 'credit' ? glLines.creditPaise : glLines.debitPaise
+      const where = and(
+        eq(glLines.accountId, bank.accountId),
+        lte(entries.postingDate, input.on),
+        sql`${money} > 0`,
+        sql`not exists (select 1 from finance_bank_statement_lines s where s.matched_line_id = finance_journal_lines.id and s.txn_date <= ${input.on}::date)`,
+      )
+      const found = await tx
         .select({
           id: glLines.id,
           debitPaise: glLines.debitPaise,
           creditPaise: glLines.creditPaise,
           memo: entries.memo,
           postingDate: entries.postingDate,
-          clearedOn: sql<string | null>`(select s.txn_date::text from finance_bank_statement_lines s where s.matched_line_id = "finance_journal_lines"."id")`,
+          _cursor: cursorColumn(LINE_KEYS),
         })
         .from(glLines)
         .innerJoin(entries, eq(entries.id, glLines.entryId))
-        .where(and(eq(glLines.accountId, bank.accountId), lte(entries.postingDate, input.on)))
-    ).filter((p) => !p.clearedOn || p.clearedOn > input.on)
-    const notPresented = notCleared.filter((p) => p.creditPaise > 0)
-    const notCredited = notCleared.filter((p) => p.debitPaise > 0)
+        .where(and(where, keyset(LINE_KEYS, page)))
+        .orderBy(...orderKeys(LINE_KEYS, page.dir))
+        .limit(page.limit + 1)
+      const [counted] = await tx
+        .select({ n: sql<number>`count(*)::int`, paise: sql<string>`coalesce(sum(${money}), 0)::bigint` })
+        .from(glLines)
+        .innerJoin(entries, eq(entries.id, glLines.entryId))
+        .where(where)
+      const done = finishPage(found, page, Number(counted?.n ?? 0))
+      return { rows: done.rows, page: { total: done.total, next: done.next }, paise: Number(counted?.paise ?? 0) }
+    }
+    const notPresented = await bookList('credit', pages.notPresented)
+    const notCredited = await bookList('debit', pages.notCredited)
 
     // On the statement by the day, and in the books not at all (or only later).
-    const bankOnly = (
-      await tx
-        .select({ line: bankStatementLines, bookedOn: entries.postingDate })
-        .from(bankStatementLines)
-        .leftJoin(glLines, eq(glLines.id, bankStatementLines.matchedLineId))
-        .leftJoin(entries, eq(entries.id, glLines.entryId))
-        .where(
-          and(
-            eq(bankStatementLines.bankAccountId, bank.id),
-            lte(bankStatementLines.txnDate, input.on),
-            sql`${bankStatementLines.status} <> 'ignored'`,
-          ),
-        )
+    const bankOnlyWhere = and(
+      eq(bankStatementLines.bankAccountId, bank.id),
+      lte(bankStatementLines.txnDate, input.on),
+      sql`${bankStatementLines.status} <> 'ignored'`,
+      sql`(${bankStatementLines.matchedLineId} is null or exists (
+        select 1 from finance_journal_lines jl join finance_journal_entries je on je.id = jl.entry_id
+         where jl.id = ${bankStatementLines.matchedLineId} and je.posting_date > ${input.on}::date))`,
     )
-      .filter((r) => !r.bookedOn || r.bookedOn > input.on)
-      .map((r) => r.line)
+    const bankOnlyFound = await tx
+      .select({ line: bankStatementLines, _cursor: cursorColumn(STATEMENT_KEYS) })
+      .from(bankStatementLines)
+      .where(and(bankOnlyWhere, keyset(STATEMENT_KEYS, pages.bankOnly)))
+      .orderBy(...orderKeys(STATEMENT_KEYS, pages.bankOnly.dir))
+      .limit(pages.bankOnly.limit + 1)
+    const [bankOnlyCounted] = await tx
+      .select({ n: sql<number>`count(*)::int`, net: sql<string>`coalesce(sum(${bankStatementLines.depositPaise} - ${bankStatementLines.withdrawalPaise}), 0)::bigint` })
+      .from(bankStatementLines)
+      .where(bankOnlyWhere)
+    const bankOnlyDone = finishPage(
+      bankOnlyFound.map((r) => ({ ...r.line, _cursor: r._cursor })),
+      pages.bankOnly,
+      Number(bankOnlyCounted?.n ?? 0),
+    )
+    const bankOnlyNetPaise = Number(bankOnlyCounted?.net ?? 0)
 
-    const sum = (xs: { debitPaise?: number; creditPaise?: number }[], k: 'debitPaise' | 'creditPaise') =>
-      xs.reduce((n, x) => n + (x[k] ?? 0), 0)
-    const expectedPaise =
-      booksPaise +
-      sum(notPresented, 'creditPaise') -
-      sum(notCredited, 'debitPaise') +
-      bankOnly.reduce((n, l) => n + l.depositPaise - l.withdrawalPaise, 0)
+    const expectedPaise = booksPaise + notPresented.paise - notCredited.paise + bankOnlyNetPaise
 
     const [last] = await tx
       .select({ balance: bankStatementLines.balancePaise, txnDate: bankStatementLines.txnDate })
@@ -645,9 +689,15 @@ export async function reconciliation(actor: Actor, input: { bankAccountId: strin
     return {
       on: input.on,
       booksPaise,
-      notPresented,
-      notCredited,
-      bankOnly,
+      notPresented: notPresented.rows,
+      notPresentedPage: notPresented.page,
+      notPresentedPaise: notPresented.paise,
+      notCredited: notCredited.rows,
+      notCreditedPage: notCredited.page,
+      notCreditedPaise: notCredited.paise,
+      bankOnly: bankOnlyDone.rows,
+      bankOnlyPage: { total: bankOnlyDone.total, next: bankOnlyDone.next },
+      bankOnlyNetPaise,
       expectedBankPaise: expectedPaise,
       statementPaise: last?.balance ?? null,
       differencePaise: last?.balance === undefined || last?.balance === null ? null : last.balance - expectedPaise,

@@ -623,7 +623,7 @@ async function finalise(tx: Tx, attemptId: string, auto: boolean) {
 }
 
 /** Attempts whose time is up and grace spent, submitted by the clock. */
-async function finaliseExpired(tx: Tx, where: { quizId?: string; studentId?: string }) {
+export async function finaliseExpired(tx: Tx, where: { quizId?: string; studentId?: string }) {
   const due = await tx
     .select({ id: attempts.id })
     .from(attempts)
@@ -1050,13 +1050,11 @@ export async function saveAnswers(actor: Actor, input: unknown) {
       if (ids.some((id) => !a.itemOrder.includes(id))) {
         throw new QuizError(400, 'quiz_response_item', 'that question is not on this quiz')
       }
-      for (const id of ids) {
-        const v = given[id]
-        const value = isBlank(v) ? null : v
+      if (ids.length) {
         await tx
           .insert(responses)
-          .values({ institutionId: tenant, attemptId: a.id, itemId: id, answer: value })
-          .onConflictDoUpdate({ target: [responses.attemptId, responses.itemId], set: { answer: value } })
+          .values(ids.map((id) => ({ institutionId: tenant, attemptId: a.id, itemId: id, answer: isBlank(given[id]) ? null : given[id] })))
+          .onConflictDoUpdate({ target: [responses.attemptId, responses.itemId], set: { answer: sql`excluded.answer` } })
       }
       if (!d.finish) {
         return { saved: ids.length, notice: `Saved ${ids.length} answer${ids.length === 1 ? '' : 's'}. Not submitted yet.` }

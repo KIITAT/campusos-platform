@@ -126,6 +126,15 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   ceremony_events: 'export',
   ceremony_holds: 'export',
 
+  // crm (P2-16): a contact is not a user. A staff member's export shows that they owned or
+  // worked a lead, never the contact's data (decision 405).
+  crm_leads: { only: ['id', 'kind', 'status', 'owner_id', 'created_by', 'created_at'] },
+  crm_activities: { only: ['id', 'lead_id', 'kind', 'due_at', 'done_at', 'assignee_id', 'created_by', 'created_at'] },
+  crm_notes: { only: ['id', 'lead_id', 'kind', 'author_id', 'created_at'] },
+  crm_activity_scripts: 'export',
+  crm_teams: 'export',
+  crm_team_members: 'export',
+
   // enrollment
   enrollment_registration_events: 'export',
   enrollment_registrations: 'export',
@@ -251,6 +260,17 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   placement_officers: 'export',
   placement_results: 'export',
 
+  // projects (P2-14): work and billing records, kept (decision 221).
+  projects_billings: 'export',
+  projects_cost_rates: 'export',
+  projects_costings: 'export',
+  projects_idempotency_keys: 'exclude',
+  projects_members: 'export',
+  projects_milestones: 'export',
+  projects_projects: 'export',
+  projects_tasks: 'export',
+  projects_timesheets: 'export',
+
   // quiz
   quiz_attempts: 'export',
   quiz_extensions: 'export',
@@ -296,6 +316,9 @@ export function retentionBasis(table: string): string {
   }
   if (table.startsWith('hr_')) {
     return 'an employment and payroll record, kept for the period labour and tax law requires'
+  }
+  if (table.startsWith('projects_')) {
+    return 'a work and billing record, kept for the period tax and accounting law requires'
   }
   return "the institution's own record, kept with the person's name and contact details removed"
 }

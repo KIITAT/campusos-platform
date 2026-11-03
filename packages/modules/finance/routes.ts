@@ -265,8 +265,12 @@ export const specs: RouteSpec[] = [
   post('bank', '/bank-rules', 'Add a bank rule', api.createBankRule, api.bankRuleSchema),
   post('bank', '/bank-rules/delete', 'Remove a bank rule', api.deleteBankRule),
   post('bank', '/bank-rules/apply', 'Post and match every unmatched line a rule recognises', api.applyRules),
-  get('bank', '/bank/reconciliation', 'The bank reconciliation statement on a day', (a, q) =>
-    api.reconciliation(a, { bankAccountId: q.bankAccountId ?? '', on: q.on ?? today() })),
+  get('bank', '/bank/reconciliation', 'The bank reconciliation statement on a day', (a, q, req) =>
+    api.reconciliation(a, { bankAccountId: q.bankAccountId ?? '', on: q.on ?? today() }, {
+      notPresented: api.reconciliationPage(req, 'notPresented'),
+      notCredited: api.reconciliationPage(req, 'notCredited'),
+      bankOnly: api.reconciliationPage(req, 'bankOnly'),
+    })),
 
   // --- reports ---------------------------------------------------------------------
   get('reports', '/reports/trial-balance', 'Trial balance with opening and closing, as a tree', (a, q) => api.trialBalanceReport(a, q)),

@@ -2,7 +2,7 @@ import type { PluginPage } from '@campusos/module-framework'
 import { withTenant } from '@campusos/db'
 import { eq } from 'drizzle-orm'
 import { formatPaise } from '@campusos/money'
-import { FinanceError, requireRead } from '../api'
+import { FinanceError, reconciliation as readReconciliation, reconciliationPage as pageOf, requireRead } from '../api'
 import { bankStatementLines } from '../schema'
 import { ADMIN, as, OFFICE } from './kit'
 import { chooseRecord, col, context, dateFields, display, field, filter, form, hidden, href, linkCol, moneyCols, object, page, read, rows, select, shortcuts, str, table, tabs, textFields } from './screen-kit'
@@ -58,10 +58,10 @@ export const bankPages: PluginPage[] = [
     sections: () => [table('Rules', 'rows', [col('contains'), col('direction'), col('accountCode'), col('accountName'), col('costCenter'), col('priority'), col('bankAccountId')]), form('Add bank rule', '/bank-rules', [select('bankAccountId', 'bankOptions'), field('contains', 'text', { optional: false }), select('direction', ['in', 'out', 'any'], { value: 'any' }), select('accountId', 'accounts', { optional: false }), select('costCenter', 'costCenters'), field('priority', 'number', { value: '100' })]), form('Delete bank rule', '/bank-rules/delete', [select('ruleId', 'ruleOptions', { optional: false })])],
   }),
   page({ path: '/bank/reconciliation', title: 'Bank reconciliation', roles: OFFICE,
-    async load(actor, request) { const data = await context(actor, request); const query = object(data.query); return { ...data, bankOptions: rows(await read(actor, '/bank-accounts')).map(row => ({ value: str(row.id), label: `${row.bankName} ${row.accountNumber}` })), report: query.bankAccountId ? await read(actor, '/bank/reconciliation', { bankAccountId: query.bankAccountId, on: data.on }) : null } },
+    async load(actor, request) { const data = await context(actor, request); const query = object(data.query); return { ...data, bankOptions: rows(await read(actor, '/bank-accounts')).map(row => ({ value: str(row.id), label: `${row.bankName} ${row.accountNumber}` })), report: query.bankAccountId ? await readReconciliation(as(actor), { bankAccountId: str(query.bankAccountId), on: str(data.on) }, { notPresented: pageOf(request, 'notPresented'), notCredited: pageOf(request, 'notCredited'), bankOnly: pageOf(request, 'bankOnly') }) : null } },
     sections: data => {
       const report = object(data.report)
-      return [filter('/bank/reconciliation', data, [select('bankAccountId', 'bankOptions', { optional: false }), ...dateFields('on')]), ...(data.report ? [{ kind: 'figures' as const, figures: ['booksPaise', 'expectedBankPaise', 'statementPaise', 'differencePaise'].map(key => ({ label: field(key.replace('Paise', '')).label, value: report[key] === null ? 'No statement balance' : formatPaise(Number(report[key] ?? 0)), ...(key === 'differencePaise' && report[key] ? { tone: 'due' as const } : {}) })) }, ...['notPresented', 'notCredited', 'bankOnly'].map(key => table(field(key).label, key, key === 'bankOnly' ? lineColumns : [col('postingDate', 'date'), col('memo'), ...moneyCols('debitPaise', 'creditPaise')]))] : [chooseRecord])]
+      return [filter('/bank/reconciliation', data, [select('bankAccountId', 'bankOptions', { optional: false }), ...dateFields('on')]), ...(data.report ? [{ kind: 'figures' as const, figures: ['booksPaise', 'expectedBankPaise', 'statementPaise', 'differencePaise'].map(key => ({ label: field(key.replace('Paise', '')).label, value: report[key] === null ? 'No statement balance' : formatPaise(Number(report[key] ?? 0)), ...(key === 'differencePaise' && report[key] ? { tone: 'due' as const } : {}) })) }, ...['notPresented', 'notCredited', 'bankOnly'].map(key => table(field(key).label, key, key === 'bankOnly' ? lineColumns : [col('postingDate', 'date'), col('memo'), ...moneyCols('debitPaise', 'creditPaise')], { paging: { data: `${key}Page`, sorts: [] } }))] : [chooseRecord])]
     },
   }),
 ]
