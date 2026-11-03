@@ -11,7 +11,7 @@ export function moduleReference(plugins) {
     'Generated from the current plugin manifests, page declarations and OpenAPI fragments.',
     'Page roles are navigation gates, not a substitute for the operation’s per-record authorization.',
     'Every endpoint below has a route declaration checked by the central API-contract suite.',
-    'For test procedures use [module workflows](../testing/modules.md); for user-facing background see [features](../../features.md).', '',
+    'Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.', '',
     '| Module | Version | Pages | API routes | Dependencies |', '|---|---|---:|---:|---|',
     ...plugins.map((plugin) => `| [${escape(plugin.manifest.name)}](#${plugin.manifest.id}) | ${plugin.manifest.version} | ${plugin.pages?.length ?? 0} | ${plugin.routes.length} | ${plugin.manifest.dependsOn.join(', ') || 'None'} |`), '',
   ]

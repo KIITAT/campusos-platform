@@ -120,6 +120,13 @@
       "when": 1793458603225,
       "tag": "0016_retention_and_breaches",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793725041871,
+      "tag": "0017_job_tenants",
+      "breakpoints": true
     }
   ]
 }

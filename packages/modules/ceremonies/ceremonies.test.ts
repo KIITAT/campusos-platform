@@ -16,6 +16,7 @@ import {
   recordCompletion,
   type Actor as AcademicActor,
 } from '@campusos/module-academic/api'
+import { studentPrograms } from '@campusos/module-academic/schema'
 import {
   CeremonyError,
   certificateDocument,
@@ -36,6 +37,7 @@ import {
   verifyCertificate,
   type Actor,
 } from './api'
+import { plugin } from './plugin'
 import { candidates, certificates } from './schema'
 
 /**
@@ -130,6 +132,13 @@ async function ceremonyFor(c: Campus, status: 'planning' | 'open' | 'held' = 'op
   return e
 }
 
+/** Queue the audit as the route does, then run the job as the worker would (REL-04). */
+async function eligibility(c: Campus, e: { id: string }) {
+  await runEligibility(c.admin, { ceremonyId: e.id })
+  const job = plugin.jobs!.find((j) => j.kind === 'ceremonies.eligibility')!
+  return withTenant(c.id, (tx) => job.run(c.admin as never, tx, { ceremonyId: e.id })) as Promise<{ audited: number; eligible: number }>
+}
+
 before(async () => {
   await authDb.delete(institutions).where(like(institutions.slug, `${SLUG}%`))
 })
@@ -137,13 +146,45 @@ after(async () => {
   await authDb.delete(institutions).where(like(institutions.slug, `${SLUG}%`))
 })
 
+test('eligibility is queued, not worked out inside the request (REL-04)', async () => {
+  const c = await campus()
+  const e = await ceremonyFor(c)
+  const queued = await runEligibility(c.admin, { ceremonyId: e.id })
+  assert.equal(queued.queued, true)
+  assert.ok(queued.jobId)
+  assert.match(queued.notice, /Refresh this page in a minute/)
+  assert.equal((await listCandidates(c.admin, e.id)).length, 0, 'nothing is worked out in the request')
+  const job = plugin.jobs!.find((j) => j.kind === 'ceremonies.eligibility')!
+  await withTenant(c.id, (tx) => job.run(c.admin as never, tx, { ceremonyId: e.id }))
+  assert.ok((await listCandidates(c.admin, e.id)).length > 0)
+})
+
+test('a ceremony past the 65,535-parameter limit of one insert is still worked out (REL-04, review HIGH)', async () => {
+  const c = await campus()
+  const e = await ceremonyFor(c)
+  const [declared] = await withTenant(c.id, (tx) => tx.select().from(studentPrograms).where(eq(studentPrograms.studentId, c.done.id)))
+  const extra = 5_500 // 12 parameters a candidate row: one insert holds at most 5,461
+  for (let from = 0; from < extra; from += 1_000) {
+    const people = await authDb
+      .insert(users)
+      .values(Array.from({ length: Math.min(1_000, extra - from) }, (_, k) => ({ email: `bulk${from + k}@${SLUG}${n}.test`, institutionId: c.id, role: 'student' as const, name: `Bulk ${from + k}` })))
+      .returning({ id: users.id })
+    await withTenant(c.id, (tx) =>
+      tx.insert(studentPrograms).values(people.map((p) => ({ institutionId: c.id, studentId: p.id, programId: declared!.programId, curriculumId: declared!.curriculumId }))),
+    )
+  }
+  const run = await eligibility(c, e)
+  assert.equal(run.audited, extra + 2)
+  const [row] = await withTenant(c.id, (tx) => tx.select({ count: sql<number>`count(*)::int` }).from(candidates).where(eq(candidates.ceremonyId, e.id)))
+  assert.equal(row!.count, extra + 2)
+})
+
 test('the list is whoever reads a graduating programme, and cleared means the degree audit says complete', async () => {
   const c = await campus()
   const e = await ceremonyFor(c)
-  const run = await runEligibility(c.admin, { ceremonyId: e.id })
+  const run = await eligibility(c, e)
   assert.equal(run.audited, 2, 'the MCA student is not graduating at a B.Tech ceremony')
   assert.equal(run.eligible, 1)
-  assert.match(run.notice, /1 cleared/)
 
   const list = await listCandidates(c.admin, e.id)
   const asha = list.find((x) => x.studentId === c.done.id)!
@@ -165,7 +206,7 @@ test('the list is whoever reads a graduating programme, and cleared means the de
 test('certificates go to the cleared and are refused, by name, to the rest', async () => {
   const c = await campus()
   const e = await ceremonyFor(c)
-  await runEligibility(c.admin, { ceremonyId: e.id })
+  await eligibility(c, e)
   const out = await issueCertificates(c.admin, { ceremonyId: e.id })
   assert.equal(out.issued, 1)
   assert.equal(out.skipped.length, 1)
@@ -185,7 +226,7 @@ test('certificates go to the cleared and are refused, by name, to the rest', asy
 test('the database refuses a certificate the audit did not clear, even with the module bypassed', async () => {
   const c = await campus()
   const e = await ceremonyFor(c)
-  await runEligibility(c.admin, { ceremonyId: e.id })
+  await eligibility(c, e)
   const [bilal] = await withTenant(c.id, (tx) => tx.select().from(candidates).where(eq(candidates.studentId, c.short.id)))
   const forge = (audit: Record<string, unknown>) =>
     withTenant(c.id, (tx) =>
@@ -216,7 +257,7 @@ test('the database refuses a certificate the audit did not clear, even with the 
 test('the audit is taken again at issue: a grade withdrawn since eligibility stops the certificate', async () => {
   const c = await campus()
   const e = await ceremonyFor(c)
-  await runEligibility(c.admin, { ceremonyId: e.id })
+  await eligibility(c, e)
 
   // A mark found to be wrong after the list was drawn up.
   const [row] = (await listCompletions(c.admin as AcademicActor, { studentId: c.done.id })).filter((x) => x.courseId === c.courses.b)
@@ -231,7 +272,7 @@ test('the audit is taken again at issue: a grade withdrawn since eligibility sto
 test('a hold stops the certificate until it is cleared, and both are audited', async () => {
   const c = await campus()
   const e = await ceremonyFor(c)
-  await runEligibility(c.admin, { ceremonyId: e.id })
+  await eligibility(c, e)
   const asha = (await listCandidates(c.admin, e.id)).find((x) => x.studentId === c.done.id)!
   const hold = await placeHold(c.admin, { candidateId: asha.id, reason: 'library books not returned' })
 
@@ -248,7 +289,7 @@ test('a hold stops the certificate until it is cleared, and both are audited', a
 test('no certificates while planning; a ceremony only moves forward', async () => {
   const c = await campus()
   const e = await ceremonyFor(c, 'planning')
-  await runEligibility(c.admin, { ceremonyId: e.id })
+  await eligibility(c, e)
   await assert.rejects(issueCertificates(c.admin, { ceremonyId: e.id }), (x) => code(x) === 'ceremony_certificate_planning')
   await setCeremonyStatus(c.admin, { ceremonyId: e.id, status: 'open' })
   await assert.rejects(setCeremonyStatus(c.admin, { ceremonyId: e.id, status: 'open' }), (x) => code(x) === 'ceremony_status_forward')
@@ -262,7 +303,7 @@ test('no certificates while planning; a ceremony only moves forward', async () =
 test('revoke needs a reason; a revoked certificate is reissued under a new serial naming the old', async () => {
   const c = await campus()
   const e = await ceremonyFor(c)
-  await runEligibility(c.admin, { ceremonyId: e.id })
+  await eligibility(c, e)
   await issueCertificates(c.admin, { ceremonyId: e.id })
   const [cert] = await withTenant(c.id, (tx) => tx.select().from(certificates))
 
@@ -287,7 +328,7 @@ test('revoke needs a reason; a revoked certificate is reissued under a new seria
 test('a submitted certificate cannot be edited in place', async () => {
   const c = await campus()
   const e = await ceremonyFor(c)
-  await runEligibility(c.admin, { ceremonyId: e.id })
+  await eligibility(c, e)
   await issueCertificates(c.admin, { ceremonyId: e.id })
   await assert.rejects(
     withTenant(c.id, (tx) => tx.update(certificates).set({ studentName: 'Somebody Else' })),
@@ -298,7 +339,7 @@ test('a submitted certificate cannot be edited in place', async () => {
 test('the graduand replies while replies are open, within the guest limit, and only once cleared', async () => {
   const c = await campus()
   const e = await ceremonyFor(c)
-  await runEligibility(c.admin, { ceremonyId: e.id })
+  await eligibility(c, e)
 
   await assert.rejects(respond(c.short, { ceremonyId: e.id, attendance: 'in_person', guests: 1 }), (x) => code(x) === 'not_eligible')
   await assert.rejects(respond(c.outsider, { ceremonyId: e.id, attendance: 'in_person' }), (x) => code(x) === 'not_a_candidate')
@@ -317,7 +358,7 @@ test('the graduand replies while replies are open, within the guest limit, and o
 test('check-in by a marshal, once, and only for the cleared', async () => {
   const c = await campus()
   const e = await ceremonyFor(c, 'held')
-  await runEligibility(c.admin, { ceremonyId: e.id })
+  await eligibility(c, e)
   const list = await listCandidates(c.admin, e.id)
   const asha = list.find((x) => x.studentId === c.done.id)!
   const bilal = list.find((x) => x.studentId === c.short.id)!
@@ -331,7 +372,7 @@ test('check-in by a marshal, once, and only for the cleared', async () => {
 test('a student sees their own standing and certificate, not anybody else\'s', async () => {
   const c = await campus()
   const e = await ceremonyFor(c)
-  await runEligibility(c.admin, { ceremonyId: e.id })
+  await eligibility(c, e)
   await issueCertificates(c.admin, { ceremonyId: e.id })
   const [cert] = await withTenant(c.id, (tx) => tx.select().from(certificates))
 
@@ -353,7 +394,7 @@ test('a student sees their own standing and certificate, not anybody else\'s', a
 test('the certificate prints, as a PDF', async () => {
   const c = await campus()
   const e = await ceremonyFor(c)
-  await runEligibility(c.admin, { ceremonyId: e.id })
+  await eligibility(c, e)
   await issueCertificates(c.admin, { ceremonyId: e.id })
   const [cert] = await withTenant(c.id, (tx) => tx.select().from(certificates))
   const { bytes } = await certificateDocument(c.done, cert!.id)
@@ -365,7 +406,7 @@ test('another institution sees none of it', async () => {
   const c = await campus()
   const d = await campus()
   const e = await ceremonyFor(c)
-  await runEligibility(c.admin, { ceremonyId: e.id })
+  await eligibility(c, e)
   await issueCertificates(c.admin, { ceremonyId: e.id })
   const seen = await withTenant(d.id, (tx) => tx.select().from(certificates))
   assert.equal(seen.length, 0)
@@ -376,7 +417,7 @@ test('a certificate prints an Odia name (UX-01)', async () => {
   const c = await campus()
   await authDb.update(users).set({ name: 'ଅଭିଷେକ / अभिषेक' }).where(eq(users.id, c.done.id))
   const e = await ceremonyFor(c)
-  await runEligibility(c.admin, { ceremonyId: e.id })
+  await eligibility(c, e)
   assert.equal((await issueCertificates(c.admin, { ceremonyId: e.id })).issued, 1)
   const [cert] = await withTenant(c.id, (tx) => tx.select().from(certificates))
   const doc = await certificateDocument(c.admin, cert!.id)
@@ -387,7 +428,7 @@ test('a name that cannot be printed is not issued a certificate (UX-01)', async 
   const c = await campus()
   await authDb.update(users).set({ name: 'Asha 😀' }).where(eq(users.id, c.done.id))
   const e = await ceremonyFor(c)
-  await runEligibility(c.admin, { ceremonyId: e.id })
+  await eligibility(c, e)
   const out = await issueCertificates(c.admin, { ceremonyId: e.id })
   assert.equal(out.issued, 0)
   const skipped = out.skipped.find((x) => x.name === 'Asha 😀')!
