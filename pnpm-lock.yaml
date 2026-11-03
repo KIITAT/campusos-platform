@@ -111,6 +111,9 @@ importers:
       '@campusos/module-quizzes':
         specifier: workspace:*
         version: link:../modules/quizzes
+      '@campusos/module-reports':
+        specifier: workspace:*
+        version: link:../modules/reports
       '@campusos/module-skills':
         specifier: workspace:*
         version: link:../modules/skills

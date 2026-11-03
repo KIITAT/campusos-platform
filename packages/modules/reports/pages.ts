@@ -56,6 +56,7 @@ function builder(ds: Dataset, v: Record<string, string> = {}): PluginField[] {
   ]
 }
 
+const dataset = (x: unknown) => (x && !Array.isArray(x) && Array.isArray((x as Dataset).columns) ? (x as Dataset) : null)
 const rows = (items: object[]) => items.map((r) => Object.fromEntries(Object.entries(r).map(([k, x]) => [k, x == null ? '' : String(x)])))
 
 export const pages: PluginPage[] = [
@@ -105,7 +106,7 @@ export const pages: PluginPage[] = [
       return { chosen, datasetOptions: list.map((d) => ({ value: d.id, label: d.label })), columnOptions: chosen ? opt(chosen.columns) : [], filterRows: [], measureRows: [] }
     },
     sections: (data) => {
-      const ds = data.chosen as Dataset | null
+      const ds = dataset(data.chosen)
       if (!ds) {
         return [
           { kind: 'note', text: 'Choose what the report is about. Only datasets of modules switched on here are offered.' },
@@ -187,7 +188,7 @@ export const pages: PluginPage[] = [
       }
     },
     sections: (data) => {
-      const ds = data.ds as Dataset | null
+      const ds = dataset(data.ds)
       const report = data.report as { id: string }
       if (!ds) return [{ kind: 'note', tone: 'warn', text: 'That dataset is not available here: its module is not enabled or no longer provides it.' }]
       return [{ kind: 'form', title: 'Edit report', path: '/reports/update', submit: 'Save changes', placement: 'inline', fields: [{ name: 'id', label: '', kind: 'hidden', value: report.id }, ...builder(ds, data.values as Record<string, string>)] }]
