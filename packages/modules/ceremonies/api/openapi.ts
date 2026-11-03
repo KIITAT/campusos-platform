@@ -49,7 +49,7 @@ export const paths = {
   [`${base}/ceremonies/eligibility`]: post(
     'Audit everybody graduating at a ceremony',
     ceremonyRefSchema,
-    "Runs the academic module's degree audit for every live or completed declaration in the ceremony's programmes and records what it found. Eligible means the audit says complete; nobody is added or cleared by hand.",
+    "Queues a job that runs the academic module's degree audit for every live or completed declaration in the ceremony's programmes and records what it found. Eligible means the audit says complete; nobody is added or cleared by hand.",
   ),
   [`${base}/candidates`]: get('The list: each student, what the audit found, holds, reply, check-in, certificate', ['ceremonyId']),
   [`${base}/holds`]: {

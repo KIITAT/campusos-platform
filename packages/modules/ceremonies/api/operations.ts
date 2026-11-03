@@ -4,6 +4,7 @@ import {
   amendDocument,
   audit,
   cancelDocument,
+  enqueueJob,
   institutions,
   submitDocument,
   users,
@@ -11,7 +12,7 @@ import {
 } from '@campusos/db'
 import { assertCanAccessStudent, type Role } from '@campusos/module-framework'
 import { MissingGlyphError, unprintable } from '@campusos/module-framework/pdf'
-import { degreeAudit, type DegreeAudit } from '@campusos/module-academic/api'
+import { degreeAudit, degreeAuditWithin, type DegreeAudit } from '@campusos/module-academic/api'
 import { programs, studentPrograms } from '@campusos/module-academic/schema'
 import { candidates, ceremonies, certificates, holds, type Candidate } from '../schema'
 import { certificatePdf } from './certificate-pdf'
@@ -161,8 +162,10 @@ const snapshot = (a: DegreeAudit) => ({
 })
 
 /**
- * Run the degree audit for everybody reading a programme graduating at this
- * ceremony, and record what it found.
+ * Queue the degree audit for everybody reading a programme graduating at this
+ * ceremony. A ceremony at a university audits thousands of graduands, so the
+ * work runs as a job (REL-04); this call only refuses a closed ceremony and
+ * answers at once.
  *
  * Nobody is added by hand and nobody is marked eligible by hand: the list is
  * whoever holds a live or completed declaration in those programmes, and
@@ -172,71 +175,87 @@ const snapshot = (a: DegreeAudit) => ({
 export async function runEligibility(actor: Actor, input: unknown) {
   const tenant = requireOffice(actor)
   const d = ceremonyRefSchema.parse(input)
-
-  const pool = await withTenant(tenant, async (tx) => {
+  const job = await withTenant(tenant, async (tx) => {
     const c = await ceremonyIn(tx, d.ceremonyId)
     if (c.status === 'closed') throw new CeremonyError(409, 'ceremony_closed', 'that ceremony is closed')
-    return tx
-      .select({
-        studentProgramId: studentPrograms.id,
-        studentId: studentPrograms.studentId,
-        programCode: programs.code,
-        programName: programs.name,
-      })
-      .from(studentPrograms)
-      .innerJoin(programs, eq(programs.id, studentPrograms.programId))
-      .where(
-        and(
-          inArray(studentPrograms.status, ['active', 'completed']),
-          c.programIds.length ? inArray(studentPrograms.programId, c.programIds) : undefined,
-        ),
-      )
+    return enqueueJob(tx, {
+      institutionId: tenant,
+      actorId: actor.id,
+      kind: 'ceremonies.eligibility',
+      dedupeKey: `eligibility:${d.ceremonyId}:${Math.floor(Date.now() / 60000)}`,
+      payload: { ceremonyId: d.ceremonyId },
+    })
   })
+  return {
+    queued: true as const,
+    jobId: job.id,
+    notice: 'Eligibility is being worked out. Refresh this page in a minute to see who is cleared.',
+  }
+}
+
+/** The audit itself, inside the job's transaction: every graduand, one write at the end. */
+export async function eligibilityWithin(tx: Tx, actor: Actor, ceremonyId: string) {
+  const tenant = requireOffice(actor)
+  const c = await ceremonyIn(tx, ceremonyId)
+  if (c.status === 'closed') throw new CeremonyError(409, 'ceremony_closed', 'that ceremony is closed')
+  const pool = await tx
+    .select({
+      studentProgramId: studentPrograms.id,
+      studentId: studentPrograms.studentId,
+      programCode: programs.code,
+      programName: programs.name,
+    })
+    .from(studentPrograms)
+    .innerJoin(programs, eq(programs.id, studentPrograms.programId))
+    .where(
+      and(
+        inArray(studentPrograms.status, ['active', 'completed']),
+        c.programIds.length ? inArray(studentPrograms.programId, c.programIds) : undefined,
+      ),
+    )
 
   let eligible = 0
   const now = new Date()
+  const rows: (typeof candidates.$inferInsert)[] = []
   for (const p of pool) {
     // The academic module's own audit, as this office would read it there.
-    const a = await degreeAudit(actor, { studentId: p.studentId, studentProgramId: p.studentProgramId })
+    const a = await degreeAuditWithin(tx, actor, { studentId: p.studentId, studentProgramId: p.studentProgramId })
     if (a.complete) eligible++
-    await withTenant(tenant, (tx) =>
-      tx
-        .insert(candidates)
-        .values({
-          institutionId: tenant,
-          ceremonyId: d.ceremonyId,
-          studentId: p.studentId,
-          studentProgramId: p.studentProgramId,
-          programCode: p.programCode,
-          programName: p.programName,
-          creditsEarned: a.creditsEarned,
-          creditsRequired: a.totalCredits,
-          cgpa: a.cgpa === null ? null : a.cgpa.toFixed(2),
-          eligible: a.complete,
-          shortOf: a.complete ? null : shortOf(a),
-          auditedAt: now,
-        })
-        .onConflictDoUpdate({
-          target: [candidates.ceremonyId, candidates.studentId],
-          set: {
-            studentProgramId: p.studentProgramId,
-            programCode: p.programCode,
-            programName: p.programName,
-            creditsEarned: a.creditsEarned,
-            creditsRequired: a.totalCredits,
-            cgpa: a.cgpa === null ? null : a.cgpa.toFixed(2),
-            eligible: a.complete,
-            shortOf: a.complete ? null : shortOf(a),
-            auditedAt: now,
-          },
-        }),
-    )
+    rows.push({
+      institutionId: tenant,
+      ceremonyId,
+      studentId: p.studentId,
+      studentProgramId: p.studentProgramId,
+      programCode: p.programCode,
+      programName: p.programName,
+      creditsEarned: a.creditsEarned,
+      creditsRequired: a.totalCredits,
+      cgpa: a.cgpa === null ? null : a.cgpa.toFixed(2),
+      eligible: a.complete,
+      shortOf: a.complete ? null : shortOf(a),
+      auditedAt: now,
+    })
   }
-  return {
-    audited: pool.length,
-    eligible,
-    notice: `Audited ${pool.length} student${pool.length === 1 ? '' : 's'}: ${eligible} cleared to graduate, ${pool.length - eligible} not yet.`,
+  if (rows.length) {
+    await tx
+      .insert(candidates)
+      .values(rows)
+      .onConflictDoUpdate({
+        target: [candidates.ceremonyId, candidates.studentId],
+        set: {
+          studentProgramId: sql`excluded.student_program_id`,
+          programCode: sql`excluded.program_code`,
+          programName: sql`excluded.program_name`,
+          creditsEarned: sql`excluded.credits_earned`,
+          creditsRequired: sql`excluded.credits_required`,
+          cgpa: sql`excluded.cgpa`,
+          eligible: sql`excluded.eligible`,
+          shortOf: sql`excluded.short_of`,
+          auditedAt: sql`excluded.audited_at`,
+        },
+      })
   }
+  return { audited: pool.length, eligible }
 }
 
 export async function listCandidates(actor: Actor, ceremonyId: string) {
