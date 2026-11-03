@@ -24,3 +24,15 @@ export async function fixture(modules: string[] = ['finance', 'fees', 'hr', 'not
   const [admin, clerk, teacher, student] = [0, 1, 2, 3].map(actor) as [Actor, Actor, Actor, Actor]
   return { id, admin, clerk, teacher, student }
 }
+
+/** Owner seeds one submitted sales invoice (triggers off, as the DPDP tests do). */
+export async function seedInvoice(f: Fixture, date = '2026-10-05', paise = 100000, party = 'Customer') {
+  await authDb.transaction(async (tx) => {
+    await tx.execute(sql`set local session_replication_role = replica`)
+    const p = await tx.execute<{ id: string }>(sql`
+      insert into finance_parties (institution_id, code, name) values (${f.id}, ${'C' + Math.random().toString(36).slice(2, 8)}, ${party}) returning id`)
+    await tx.execute(sql`
+      insert into finance_invoices (institution_id, kind, party_id, posting_date, currency, total_paise, docstatus)
+      values (${f.id}, 'sales', ${p.rows[0]!.id}, ${date}, 'INR', ${paise}, 'submitted')`)
+  })
+}
