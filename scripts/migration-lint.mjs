@@ -8,24 +8,33 @@ import { pathToFileURL } from 'node:url'
 
 export const RULES = [
   ['drop table', /\bdrop\s+table\b/],
-  ['drop column', /\bdrop\s+column\b/],
+  // COLUMN is optional in Postgres, so any ALTER TABLE ... DROP that is not a
+  // constraint, default, NOT NULL, identity or generated expression drops a column.
+  ['drop column', /\balter\s+table\b[^;]*?\bdrop\s+(?!constraint\b|default\b|not\b|identity\b|expression\b)\S/],
   ['drop view', /\bdrop\s+(materialized\s+)?view\b/],
   ['drop function', /\bdrop\s+function\b/],
   ['drop type', /\bdrop\s+type\b/],
   ['drop schema', /\bdrop\s+schema\b/],
-  ['rename', /\brename\s+(to|column)\b/],
-  ['set not null', /\balter\s+column\s+\S+\s+set\s+not\s+null\b/],
-  ['column type change', /\balter\s+column\s+\S+\s+(set\s+data\s+)?type\b/],
+  ['rename', /\brename\s+(?!constraint\b)(to\b|column\b|\S+\s+to\b)/],
+  ['set not null', /\balter\s+(column\s+)?\S+\s+set\s+not\s+null\b/],
+  ['column type change', /\balter\s+(column\s+)?\S+\s+(set\s+data\s+)?type\b/],
   ['truncate', /\btruncate\b/],
   [
     'not null column without default',
-    /\badd\s+column\s+(if\s+not\s+exists\s+)?[^;,]*\bnot\s+null\b(?![^;,]*\bdefault\b)/,
+    /\badd\s+(column\s+)?(if\s+not\s+exists\s+)?(?!constraint\b)[^;,]*\bnot\s+null\b(?![^;,]*\bdefault\b)/,
   ],
 ]
 
+// String literals, quoted identifiers and comments in one pass, so a `--` inside a
+// string does not swallow the rest of the line and a block comment hides nothing.
+// Dollar-quoted bodies stay: a DO block runs what it contains.
+const LEXEMES = /'(?:[^']|'')*'|"(?:[^"]|"")*"|--[^\n]*|\/\*[\s\S]*?\*\//g
+
 export function lintSql(text) {
   if (/^-- campusos:contract (.{10,})$/m.test(text)) return []
-  const sql = text.replace(/--[^\n]*/g, '').toLowerCase()
+  let sql = text.replace(LEXEMES, (m) => (m[0] === "'" ? "''" : m[0] === '"' ? 'q' : ' ')).toLowerCase()
+  // Parenthesised groups (type arguments, check expressions) never decide a rule.
+  for (let prev; prev !== sql; ) [prev, sql] = [sql, sql.replace(/\([^()]*\)/g, ' ')]
   return RULES.filter(([, re]) => re.test(sql)).map(([name]) => name)
 }
 
