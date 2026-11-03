@@ -236,10 +236,11 @@ export async function eligibilityWithin(tx: Tx, actor: Actor, ceremonyId: string
       auditedAt: now,
     })
   }
-  if (rows.length) {
+  // 12 parameters a row; one statement may bind at most 65,535, so write in chunks.
+  for (let from = 0; from < rows.length; from += 1_000) {
     await tx
       .insert(candidates)
-      .values(rows)
+      .values(rows.slice(from, from + 1_000))
       .onConflictDoUpdate({
         target: [candidates.ceremonyId, candidates.studentId],
         set: {
