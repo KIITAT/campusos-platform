@@ -37,6 +37,8 @@ UPDATE public.users SET email = 'person+' || id || '@staging.invalid' WHERE id N
 
 DELETE FROM public.device_tokens;
 DELETE FROM public."verificationToken";
+-- An invitation nobody accepted is linked to no user, so the erasure never reached it.
+UPDATE public.invitations SET email = 'person+' || id || '@staging.invalid';
 
 SET LOCAL session_replication_role = replica;
 UPDATE public.audit_log SET detail = NULL, actor_email = NULL, reason = 'redacted for staging';
