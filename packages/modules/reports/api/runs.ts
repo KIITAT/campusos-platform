@@ -1,7 +1,7 @@
 import * as z from 'zod'
 import { sql } from 'drizzle-orm'
 import { withTenant } from '@campusos/db'
-import { readFacts, withTenantRead, type ReadTx } from '@campusos/db/replica'
+import { readFacts, reportPoolPublished, withTenantRead, type ReadTx } from '@campusos/db/replica'
 import { datasetById, datasets } from './catalog'
 import { compile, specSchema, type OutColumn } from './compile'
 import { loadReport, mustView, tenant, STAFF, type Actor, type Tx } from './core'
@@ -41,12 +41,24 @@ export async function execRows(tx: ReadTx, query: ReturnType<typeof sql>, column
 
 const timedOut = (e: unknown) => (e as { code?: string }).code === '57014' || (e as { cause?: { code?: string } }).cause?.code === '57014'
 
-/** Read the report's data on the report pool, in a read-only transaction (decision 438). Throws ReportsError. */
-export async function read(institutionId: string, report: Report, today = istToday()) {
+/**
+ * Read the report's data on the report pool, in a read-only transaction (decision 438). Throws ReportsError.
+ * `within` is a job's transaction: with no report pool, the read runs in a savepoint of it rather than on a
+ * second primary connection, because a job handler gets one connection of the worker's five (decision 469;
+ * review P2-05 HIGH-2). That path is not read-only; the compiled query is a select over `reporting` views.
+ */
+export async function read(institutionId: string, report: Report, today = istToday(), within?: Tx) {
   const spec = specSchema.safeParse(report.spec)
   if (!spec.success) throw reportStale(spec.error.issues[0]?.message ?? 'The report definition is not valid.')
+  const run = <T>(fn: (tx: ReadTx) => Promise<T>): Promise<T> =>
+    within && !reportPoolPublished()
+      ? within.transaction(async (sp) => {
+        await sp.execute(sql`select set_config('statement_timeout', '25000', true)`)
+        return fn(sp as unknown as ReadTx)
+      })
+      : withTenantRead(institutionId, fn)
   try {
-    return await withTenantRead(institutionId, async (tx) => {
+    return await run(async (tx) => {
       const ds = datasetById(await datasets(tx, institutionId), report.dataset)
       if (!ds) throw datasetUnavailable()
       let compiled
@@ -75,7 +87,7 @@ export async function runInto(tx: Tx, institutionId: string, report: Report, tri
   const startedAt = new Date()
   let out: Awaited<ReturnType<typeof read>> | null = null
   let errorCode: string | null = null
-  try { out = await read(institutionId, report) } catch (e) {
+  try { out = await read(institutionId, report, istToday(), tx) } catch (e) {
     if (trigger === 'manual') throw e
     errorCode = e instanceof ReportsError && FAILED.has(e.code) ? e.code : 'failed'
   }

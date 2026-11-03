@@ -16,6 +16,9 @@ export function publishReportPool(url: string): void {
   g.__campusosReportPool ??= new Pool({ connectionString: url, max: 3, connectionTimeoutMillis: 5000, statement_timeout: 30000, application_name: 'campusos-reports' })
 }
 
+/** Whether the host published a report pool; without one, report reads share the primary pool. */
+export const reportPoolPublished = (): boolean => g.__campusosReportPool !== undefined
+
 let cached: { pool: Pool; db: ReturnType<typeof drizzle<typeof schema>> } | null = null
 const readDb = () => {
   const pool = g.__campusosReportPool ?? corePool
