@@ -27,7 +27,7 @@ export const specs: RouteSpec[] = [
   post('/reports', 'Build a report over a dataset', async (a, i) => saved(await api.createReport(a, api.fromForm(i))), api.reportSchema),
   post('/reports/update', 'Change a report', async (a, i) => saved(await api.updateReport(a, api.fromForm(i))), api.updateSchema),
   post('/reports/archive', 'Archive a report', async (a, i) => ({ ...(await api.archiveReport(a, i)), notice: 'Report archived.', next: '/m/reports/reports' }), api.idSchema),
-  post('/reports/run', 'Run a report now and keep the result', async (a, i) => { const r = await api.runReport(a, i as { id: string }); return { ...r, notice: `Report run: ${r.rowCount} rows.` } }, api.idSchema),
+  post('/reports/run', 'Run a report now and keep the result', async (a, i) => { const r = await api.runReport(a, i); return { ...r, notice: `Report run: ${r.rowCount} rows.` } }, api.idSchema),
   { method: 'GET', path: '/runs/csv', summary: 'Download a stored run as CSV', raw: true, handler: (a, req) => api.runCsv(a, idParam(req)) },
   { method: 'GET', path: '/reports/parquet', summary: 'Export a report as a Parquet file (administrators)', raw: true, handler: (a, req) => api.exportParquet(a, idParam(req)) },
   { method: 'GET', path: '/dashboard', summary: 'The reports marked for your dashboard, from their latest runs', handler: (a) => api.dashboard(a) },

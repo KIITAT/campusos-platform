@@ -1,10 +1,11 @@
+import * as z from 'zod'
 import { sql } from 'drizzle-orm'
 import { withTenant } from '@campusos/db'
 import { readFacts, withTenantRead, type ReadTx } from '@campusos/db/replica'
 import { datasetById, datasets } from './catalog'
 import { compile, specSchema, type OutColumn } from './compile'
 import { loadReport, mustView, tenant, STAFF, type Actor, type Tx } from './core'
-import { ReportsError, datasetUnavailable, reportArchived, reportStale, reportTimeout } from './errors'
+import { ReportsError, datasetUnavailable, reportArchived, reportNotFound, reportStale, reportTimeout } from './errors'
 import { KEEP_RUNS } from './limits'
 import { istToday } from './schedule'
 import { runs, type Report } from '../schema'
@@ -78,6 +79,13 @@ export async function runInto(tx: Tx, institutionId: string, report: Report, tri
     if (trigger === 'manual') throw e
     errorCode = e instanceof ReportsError && FAILED.has(e.code) ? e.code : 'failed'
   }
+  return store(tx, institutionId, report, trigger, runBy, startedAt, out, errorCode)
+}
+
+async function store(
+  tx: Tx, institutionId: string, report: Report, trigger: 'manual' | 'schedule', runBy: string | null, startedAt: Date,
+  out: Awaited<ReturnType<typeof read>> | null, errorCode: string | null,
+): Promise<RunResult> {
   const [run] = await tx.insert(runs).values({
     institutionId, reportId: report.id, trigger, runBy, startedAt, finishedAt: new Date(),
     status: out ? 'ok' : 'failed', errorCode,
@@ -93,12 +101,21 @@ export async function runInto(tx: Tx, institutionId: string, report: Report, tri
   }
 }
 
-export async function runReport(actor: Actor, input: { id: string }, trigger: 'manual' | 'schedule' = 'manual'): Promise<RunResult> {
+/**
+ * A manual run. The read runs with no primary transaction open: holding one while the read waits for a
+ * second connection from the same pool starves it when no replica is configured (review P2-05 HIGH-1).
+ */
+export async function runReport(actor: Actor, input: unknown): Promise<RunResult> {
   const institutionId = tenant(actor, STAFF)
-  return withTenant(institutionId, async (tx) => {
-    const report = await loadReport(tx, institutionId, input.id)
-    mustView(actor, report)
-    if (report.archivedAt) throw reportArchived()
-    return runInto(tx, institutionId, report, trigger, actor.id)
+  const id = z.uuid().safeParse((input as { id?: unknown } | null)?.id)
+  if (!id.success) throw reportNotFound()
+  const report = await withTenant(institutionId, async (tx) => {
+    const r = await loadReport(tx, institutionId, id.data)
+    mustView(actor, r)
+    if (r.archivedAt) throw reportArchived()
+    return r
   })
+  const startedAt = new Date()
+  const out = await read(institutionId, report)
+  return withTenant(institutionId, (tx) => store(tx, institutionId, report, 'manual', actor.id, startedAt, out, null))
 }
