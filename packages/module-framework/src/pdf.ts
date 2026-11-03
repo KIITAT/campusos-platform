@@ -1,7 +1,7 @@
 import 'regenerator-runtime/runtime.js' // @pdf-lib/fontkit's Indic shaper calls a global regeneratorRuntime
 import { existsSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import fontkit from '@pdf-lib/fontkit'
 import {
   PDFDocument,
@@ -94,7 +94,7 @@ export function runsOf(text: string): { script: Script; text: string }[] {
 function fontDir(): string {
   return (
     (globalThis as { __campusosFontDir?: string }).__campusosFontDir ??
-    fileURLToPath(new URL('../fonts/', import.meta.url))
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'fonts')
   )
 }
 
