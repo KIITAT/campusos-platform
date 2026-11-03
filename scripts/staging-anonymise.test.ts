@@ -19,6 +19,7 @@ const sql = readFileSync(join(resolve(import.meta.dirname), 'staging-anonymise.s
 let client: InstanceType<typeof Client>
 let inst: string
 let userId: string
+let staffId: string
 
 before(async () => {
   await authDb.delete(institutions).where(eq(institutions.slug, 'p111-anon'))
@@ -26,6 +27,9 @@ before(async () => {
   inst = row!.id
   const [user] = await authDb.insert(users).values({ institutionId: inst, email: 'asha@p111.test', role: 'student' as never, name: 'Asha Verma' }).returning()
   userId = user!.id
+  // Platform staff have no institution (P1-11 blocker 1).
+  const [staff] = await authDb.insert(users).values({ institutionId: null, email: 'root@p111.test', role: 'super_admin' as never, name: 'Ravi Root' }).returning()
+  staffId = staff!.id
   client = new Client({ connectionString: process.env.MIGRATION_DATABASE_URL })
   await client.connect()
   await client.query(
@@ -33,9 +37,15 @@ before(async () => {
      values ($1, $2, 'asha@p111.test', 'core', 'test', 'user', $2, 'because', $3)`,
     [inst, userId, JSON.stringify({ after: { name: 'Asha Verma' } })],
   )
+  // An invitation nobody accepted keeps only the invitee's address (review finding 5).
+  await client.query(
+    `insert into invitations (institution_id, email, role, token_hash, expires_at) values ($1, 'kavya@p111.test', 'student', md5(random()::text), now() + interval '1 day')`,
+    [inst],
+  )
 })
 
 after(async () => {
+  await authDb.delete(users).where(eq(users.id, staffId))
   await client.end()
   await authDb.delete(institutions).where(eq(institutions.slug, 'p111-anon'))
 })
@@ -66,6 +76,12 @@ test('anonymises inside the transaction', async () => {
       assert.equal(r.actor_email, null)
     }
     assert.equal((await client.query('select count(*)::int as n from device_tokens')).rows[0].n, 0)
+    const staff = (await client.query('select name, email from users where id = $1', [staffId])).rows[0]
+    assert.equal(staff.name, `Person ${staffId.slice(0, 8)}`)
+    assert.match(staff.email, /@staging.invalid$/)
+    const invited = (await client.query('select email from invitations where institution_id = $1', [inst])).rows
+    assert.equal(invited.length, 1)
+    assert.match(invited[0].email, /@staging.invalid$/)
   } finally {
     await client.query('ROLLBACK')
   }
