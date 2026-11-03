@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url'
 export const HOST_API = 1
 export const SHARED = [
   '@campusos/db', '@campusos/db/jobs', '@campusos/db/sensitive-reads',
-  '@campusos/module-framework', '@campusos/module-framework/pdf', '@campusos/money',
+  '@campusos/module-framework', '@campusos/money',
   'drizzle-orm', 'drizzle-orm/pg-core', 'zod',
 ]
 const ROOT = resolve(import.meta.dirname, '..')

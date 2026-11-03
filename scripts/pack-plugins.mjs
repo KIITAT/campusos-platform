@@ -53,6 +53,9 @@ const OUT = join(ROOT, 'dist', 'plugins')
 // Imports of a shared library become a shim that reads the host's copy, and
 // fails at load -- not on the first request that needs it -- if the host lacks
 // the library or one of its names (P1-10d, D4).
+// The timetable solver re-imports its own module in a worker thread, which has
+// no host to lend libraries (P1-10d); it keeps its own copies.
+const NO_HOST_LIBS = new Set(['timetable'])
 const shims = new Map()
 const hostLibs = () => ({
   name: 'host-libs',
@@ -112,7 +115,7 @@ async function packOne(id, versionTag) {
     target: 'node22',
     // Node builtins only. Everything else travels with the plugin.
     packages: 'bundle',
-    plugins: [hostLibs(), stubPg],
+    plugins: NO_HOST_LIBS.has(id) ? [stubPg] : [hostLibs(), stubPg],
     // Readable in a stack trace from a production incident. The archive is a
     // few hundred kilobytes either way, and a minified plugin is a plugin
     // nobody can debug at an institution that has no source access.
