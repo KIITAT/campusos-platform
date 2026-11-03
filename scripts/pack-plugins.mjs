@@ -11,6 +11,7 @@ import {
 import { join, resolve } from 'node:path'
 import { build } from 'esbuild'
 import { packDirectory } from './archive.mjs'
+import { RESOLVE_DIR, SHARED, banner, exportNames, publishPackHost, stubPg } from './host-libs.mjs'
 
 /**
  * Turn every module into a plugin archive the host can download and install.
@@ -26,11 +27,12 @@ import { packDirectory } from './archive.mjs'
  *   server.mjs       the bundled API: operations, routes, OpenAPI fragment
  *   migrations/*.sql the SQL that builds this module's tables
  *
- * Everything is bundled, including @campusos/db and drizzle. That is the whole
- * point: a plugin must load under plain Node at an institution with no
- * toolchain, no package manager and no source. Leaving dependencies external
- * would mean resolving TypeScript-source workspace packages at runtime, which
- * Node cannot do.
+ * Everything is bundled except the shared libraries of host-libs.mjs (@campusos/db,
+ * the module framework, money, drizzle, zod): those come from the host through
+ * globalThis.__campusosHost, so 25 plugins do not carry 25 copies of them. The rest
+ * is bundled because a plugin must load under plain Node at an institution with
+ * no toolchain, no package manager and no source. An archive built this way
+ * does not load on a host older than this change (P1-10d).
  *
  * The one thing a plugin must not bring its own of is the connection pool. Two
  * pools against the same database would double the connections and make "how
@@ -48,50 +50,36 @@ const ROOT = resolve(import.meta.dirname, '..')
 const MODULES = join(ROOT, 'packages', 'modules')
 const OUT = join(ROOT, 'dist', 'plugins')
 
-/**
- * The driver is never used inside a plugin -- the host's pool arrives through
- * the global -- so it is replaced by something that says so loudly if that
- * assumption ever stops holding.
- *
- * `types` is the exception, and it is not optional: drizzle's node-postgres
- * driver does `const { Pool, types } = pg` at module load and then calls
- * `types.getTypeParser` for every column it does not special-case. A stub
- * without it left `types` undefined, and the first query any installed module
- * ran died on `Cannot read properties of undefined (reading 'builtins')` --
- * which nothing caught, because loading a plugin and querying through one are
- * different things and only the first was ever tested.
- *
- * pg-types is safe to carry: OID constants and pure functions over strings,
- * sharing no state with a connection. The pool remains the only live object
- * that crosses the boundary.
- */
-const PG_STUB = `
-import types from 'pg-types'
-
-export class Pool {
-  constructor() {
-    throw new Error(
-      'a plugin must not open its own connection pool; the host publishes one',
-    )
-  }
-}
-export class Client extends Pool {}
-export { types }
-export default { Pool, Client, types }
-`
-
-const stubPg = {
-  name: 'stub-pg',
+// Imports of a shared library become a shim that reads the host's copy, and
+// fails at load -- not on the first request that needs it -- if the host lacks
+// the library or one of its names (P1-10d, D4).
+const shims = new Map()
+const hostLibs = () => ({
+  name: 'host-libs',
   setup(build) {
-    build.onResolve({ filter: /^pg$/ }, () => ({ path: 'pg', namespace: 'stub-pg' }))
-    build.onLoad({ filter: /.*/, namespace: 'stub-pg' }, () => ({
-      contents: PG_STUB,
-      loader: 'js',
-      // pg-types is resolved from this repository, which is where it is
-      // installed; a synthetic module has no directory of its own.
-      resolveDir: ROOT,
-    }))
+    build.onResolve({ filter: /^(@campusos[/](db|module-framework|money)|drizzle-orm|zod)([/].*)?$/ }, (args) =>
+      SHARED.includes(args.path) ? { path: args.path, namespace: 'host-lib' } : undefined,
+    )
+    build.onLoad({ filter: /.*/, namespace: 'host-lib' }, async (args) => {
+      if (!shims.has(args.path)) shims.set(args.path, shim(args.path, await exportNames(args.path, RESOLVE_DIR)))
+      return { contents: shims.get(args.path), loader: 'js' }
+    })
   },
+})
+
+function shim(spec, names) {
+  const s = JSON.stringify(spec)
+  return [
+    'const host = globalThis.__campusosHost',
+    "if (!host || host.api !== 1) throw new Error('this module needs a CampusOS host that provides its libraries (host API 1)')",
+    `const m = host.modules[${s}]`,
+    `if (!m) throw new Error('the host does not provide ' + ${s})`,
+    ...names.map(
+      (n, i) =>
+        `if (!(${JSON.stringify(n)} in m)) throw new Error("the host's " + ${s} + " lacks " + ${JSON.stringify(n)}); const __h${i} = m[${JSON.stringify(n)}]`,
+    ),
+    `export { ${names.map((n, i) => `__h${i} as ${n}`).join(', ')} }`,
+  ].join(String.fromCharCode(10))
 }
 
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex')
@@ -124,23 +112,13 @@ async function packOne(id, versionTag) {
     target: 'node22',
     // Node builtins only. Everything else travels with the plugin.
     packages: 'bundle',
-    plugins: [stubPg],
+    plugins: [hostLibs(), stubPg],
     // Readable in a stack trace from a production incident. The archive is a
     // few hundred kilobytes either way, and a minified plugin is a plugin
     // nobody can debug at an institution that has no source access.
     minify: false,
     sourcemap: false,
-    // ESM output has no ambient `require`, so esbuild emits a shim that throws
-    // on any CommonJS dependency reaching for a Node builtin -- `pg-types`
-    // reaches for `stream`. Giving the bundle a real one costs two lines and
-    // covers the class rather than this instance. Only builtins can arrive
-    // here: everything else is bundled.
-    banner: {
-      js: [
-        "import { createRequire as __campusosCreateRequire } from 'node:module'",
-        'const require = __campusosCreateRequire(import.meta.url)',
-      ].join('\n'),
-    },
+    banner,
     logLevel: 'warning',
   })
 
@@ -195,6 +173,7 @@ async function packOne(id, versionTag) {
   return { ...meta, archive: name, sha256: digest }
 }
 
+await publishPackHost()
 const versionTag = version()
 rmSync(OUT, { recursive: true, force: true })
 mkdirSync(OUT, { recursive: true })
