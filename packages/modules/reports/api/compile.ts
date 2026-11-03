@@ -74,7 +74,7 @@ export function rupeesToPaise(v: string): string | null {
 const NUMBER = /^-?\d{1,15}(\.\d{1,6})?$/
 
 const select = (id: SQL | Name, kind: Kind): SQL =>
-  kind === 'money' ? sql`${id}::bigint` : kind === 'number' ? sql`${id}::float8` : kind === 'date' ? sql`to_char(${id}, 'YYYY-MM-DD')` : id
+  kind === 'money' ? sql`${id}::bigint` : kind === 'number' ? sql`${id}::float8` : kind === 'date' ? sql`to_char(${id}, 'YYYY-MM-DD')` : sql`${id}`
 
 function condition(f: Spec['filters'][number], kind: Kind, label: string, today: string): SQL {
   const id = sql.identifier(f.column)
