@@ -10,23 +10,25 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | [Academic Core](#academic) | 0.9.0 | 7 | 42 | None |
 | [Admissions](#admissions) | 0.5.0 | 3 | 9 | academic |
 | [Alumni and events](#alumni) | 0.4.0 | 4 | 12 | None |
-| [Attendance & QR](#attendance) | 0.10.0 | 7 | 28 | academic, notices |
-| [Student Care](#care) | 0.7.0 | 7 | 24 | academic, notices |
+| [Attendance & QR](#attendance) | 0.11.0 | 7 | 28 | academic, notices |
+| [Student Care](#care) | 0.8.0 | 7 | 24 | academic, notices |
 | [Ceremonies](#ceremonies) | 0.4.0 | 5 | 18 | academic |
+| [Sales CRM](#crm) | 0.2.0 | 4 | 32 | finance, notices |
 | [Enrollment](#enrollment) | 0.4.0 | 3 | 8 | academic |
-| [Examinations & Grading](#examinations) | 0.13.0 | 9 | 36 | academic, notices |
-| [Feedback](#feedback) | 0.4.0 | 8 | 19 | academic |
-| [Fees & Finance](#fees) | 0.16.0 | 10 | 39 | academic, finance, notices |
-| [Finance & Books](#finance) | 0.14.0 | 92 | 204 | None |
+| [Examinations & Grading](#examinations) | 0.14.0 | 9 | 36 | academic, notices |
+| [Feedback](#feedback) | 0.5.0 | 8 | 19 | academic |
+| [Fees & Finance](#fees) | 0.17.0 | 10 | 39 | academic, finance, notices |
+| [Finance & Books](#finance) | 0.15.0 | 92 | 204 | None |
 | [Helpdesk and grievance](#helpdesk) | 0.4.0 | 2 | 7 | None |
-| [Hostel](#hostel) | 0.7.0 | 5 | 18 | academic |
-| [HR & Payroll](#hr) | 0.18.0 | 18 | 134 | finance, notices |
-| [Library](#library) | 0.10.0 | 5 | 18 | academic |
-| [Mentoring](#mentoring) | 0.13.0 | 6 | 19 | academic, notices |
-| [Communication & Notices](#notices) | 0.9.0 | 4 | 13 | academic |
-| [Parent Portal](#parents) | 0.13.0 | 4 | 11 | academic |
-| [Placement](#placement) | 0.7.0 | 8 | 15 | academic, notices |
-| [Quizzes](#quizzes) | 0.3.0 | 7 | 22 | academic |
+| [Hostel](#hostel) | 0.8.0 | 5 | 18 | academic |
+| [HR & Payroll](#hr) | 0.19.0 | 18 | 134 | finance, notices |
+| [Library](#library) | 0.11.0 | 5 | 18 | academic |
+| [Mentoring](#mentoring) | 0.14.0 | 6 | 19 | academic, notices |
+| [Communication & Notices](#notices) | 0.10.0 | 4 | 13 | academic |
+| [Parent Portal](#parents) | 0.14.0 | 4 | 11 | academic |
+| [Placement](#placement) | 0.8.0 | 8 | 15 | academic, notices |
+| [Projects and timesheets](#projects) | 0.1.0 | 6 | 27 | finance |
+| [Quizzes](#quizzes) | 0.5.0 | 7 | 22 | academic |
 | [Skills](#skills) | 0.4.0 | 5 | 12 | None |
 | [Timetable](#timetable) | 0.6.0 | 12 | 42 | academic |
 | [Transport](#transport) | 0.3.0 | 4 | 12 | None |
@@ -304,6 +306,64 @@ Source: `campusos-platform/packages/modules/ceremonies/`.
 | `GET /api/v1/modules/ceremonies/certificate` | One certificate; a student sees only their own | `certificateId` (query) |
 | `GET /api/v1/modules/ceremonies/certificate.pdf` | The certificate to print (binary response) | `certificateId` (query) |
 | `GET /api/v1/modules/ceremonies/verify` | Check a certificate by the code printed on it | `code` (query) |
+
+<a id="crm"></a>
+## Sales CRM
+
+Leads, opportunities, a sales pipeline and conversion to a finance customer and quotation.
+
+Module roles: `institution_admin`, `super_admin`, `hod`, `faculty`, `accounts_staff`, `library_staff`, `hostel_staff`.
+Source: `campusos-platform/packages/modules/crm/`.
+
+### Screens
+
+| Path | Page | Roles |
+|---|---|---|
+| `/m/crm` | Sales pipeline | institution_admin, super_admin, hod, faculty, accounts_staff, library_staff, hostel_staff |
+| `/m/crm/lead` | Lead | institution_admin, super_admin, hod, faculty, accounts_staff, library_staff, hostel_staff |
+| `/m/crm/settings` | Sales settings | institution_admin, super_admin, hod, faculty, accounts_staff, library_staff, hostel_staff |
+| `/m/crm/report` | Forecast and team report | institution_admin, super_admin, hod, faculty, accounts_staff, library_staff, hostel_staff |
+
+### Operations
+
+| Method and path | Operation | Body fields / query parameters |
+|---|---|---|
+| `GET /api/v1/modules/crm/settings` | Stages, lost reasons and teams | See runtime OpenAPI schema |
+| `GET /api/v1/modules/crm/pipeline` | The pipeline, one page at a time | `q` (query), `sort` (query), `dir` (query), `n` (query), `after` (query), `kind` (query), `status` (query) |
+| `GET /api/v1/modules/crm/leads/detail` | Read a lead with its activities | `id` (query) |
+| `GET /api/v1/modules/crm/forecast` | Open pipeline by stage and by expected-close month, total and probability-weighted | See runtime OpenAPI schema |
+| `GET /api/v1/modules/crm/report` | Team performance: open, won, lost, win rate and why deals were lost | See runtime OpenAPI schema |
+| `GET /api/v1/modules/crm/leads/duplicates` | Open leads that share a lead's e-mail, phone or company | See runtime OpenAPI schema |
+| `POST /api/v1/modules/crm/stages` | Add a pipeline stage | `name`, `seq`, `probability` |
+| `POST /api/v1/modules/crm/stages/update` | Rename, reorder or archive a stage | `stageId`, `name`, `seq`, `archived`, `probability` |
+| `POST /api/v1/modules/crm/lost-reasons` | Add a lost reason | `name` |
+| `POST /api/v1/modules/crm/lost-reasons/archive` | Archive a lost reason | `reasonId` |
+| `POST /api/v1/modules/crm/teams` | Create a sales team | `name`, `managerId` |
+| `POST /api/v1/modules/crm/teams/members` | Add a team member | `teamId`, `userId` |
+| `POST /api/v1/modules/crm/teams/members/remove` | Remove a team member | `teamId`, `userId` |
+| `POST /api/v1/modules/crm/notes` | Add a note to a lead's history | `leadId`, `body` |
+| `POST /api/v1/modules/crm/scripts` | Plan the next activity after one kind finishes | `afterKind`, `nextKind`, `afterDays`, `summary` |
+| `POST /api/v1/modules/crm/scripts/delete` | Remove a next-activity script | `scriptId` |
+| `POST /api/v1/modules/crm/teams/auto-assign` | Switch a team's round-robin assignment on or off | `teamId`, `autoAssign` |
+| `POST /api/v1/modules/crm/leads/capture` | Record a lead from outside and give it to the next salesperson | `title`, `company`, `contactName`, `email`, `phone`, `gstin`, `source`, `notes`, `expectedValue`, `expectedClose`, `priority`, `teamId` |
+| `POST /api/v1/modules/crm/leads/import` | Import up to 500 leads | `rows`, `csv`, `teamId` |
+| `POST /api/v1/modules/crm/leads/merge` | Merge a duplicate lead into another | `keepId`, `mergeId` |
+| `POST /api/v1/modules/crm/leads` | Record a lead or an opportunity | `kind`, `title`, `company`, `contactName`, `email`, `phone`, `gstin`, `source`, `notes`, `ownerId`, `itemId`, `expectedValue`, `expectedClose`, `priority` |
+| `POST /api/v1/modules/crm/leads/update` | Change an open lead | `company`, `contactName`, `email`, `phone`, `gstin`, `notes`, `itemId`, `expectedValue`, `expectedClose`, `priority`, `title`, `source`, `leadId` |
+| `POST /api/v1/modules/crm/leads/qualify` | Qualify a lead as an opportunity | `leadId` |
+| `POST /api/v1/modules/crm/leads/stage` | Move an opportunity to a stage | `leadId`, `stageId` |
+| `POST /api/v1/modules/crm/leads/assign` | Give a lead to another owner | `leadId`, `ownerId` |
+| `POST /api/v1/modules/crm/leads/won` | Mark an opportunity won | `leadId` |
+| `POST /api/v1/modules/crm/leads/lost` | Mark a lead lost, with a reason | `leadId`, `reasonId`, `lostNote` |
+| `POST /api/v1/modules/crm/leads/reopen` | Reopen a lost or unconverted won opportunity | `leadId` |
+| `POST /api/v1/modules/crm/activities` | Schedule a call, meeting or task | `leadId`, `kind`, `summary`, `dueAt`, `remindBefore`, `assigneeId` |
+| `POST /api/v1/modules/crm/activities/done` | Complete an activity | `activityId` |
+| `POST /api/v1/modules/crm/leads/convert` | Convert a won opportunity to a customer and a draft quotation | `leadId`, `partyId`, `createNew`, `code` |
+| `POST /api/v1/modules/crm/leads/erase` | Erase a contact on request (DPDP) | `leadId`, `reason` |
+
+### Background jobs
+
+- `crm.activity-reminders`: explicitly queued; roles institution_admin, accounts_staff, super_admin.
 
 <a id="enrollment"></a>
 ## Enrollment
@@ -1263,6 +1323,57 @@ Source: `campusos-platform/packages/modules/placement/`.
 | `GET /api/v1/modules/placement/imports/template` | A CSV template: the header and one example row (binary response) | `id` (query) |
 | `POST /api/v1/modules/placement/imports/run` | Check a CSV file, or with apply import it: all rows or none | `importId`, `file`, `csv`, `apply` |
 
+<a id="projects"></a>
+## Projects and timesheets
+
+Projects with stages, milestones and tasks. Staff log time against tasks; the project manager approves it; the accounts office bills approved time through the books once and costs it to the project's cost centre; profitability is read from the ledger.
+
+Module roles: `institution_admin`, `super_admin`, `hod`, `faculty`, `accounts_staff`, `library_staff`, `hostel_staff`.
+Source: `campusos-platform/packages/modules/projects/`.
+
+### Screens
+
+| Path | Page | Roles |
+|---|---|---|
+| `/m/projects` | Projects | institution_admin, super_admin, hod, faculty, accounts_staff, library_staff, hostel_staff |
+| `/m/projects/project` | Project | institution_admin, super_admin, hod, faculty, accounts_staff, library_staff, hostel_staff |
+| `/m/projects/task` | Task | institution_admin, super_admin, hod, faculty, accounts_staff, library_staff, hostel_staff |
+| `/m/projects/timesheets` | Timesheets | institution_admin, super_admin, hod, faculty, accounts_staff, library_staff, hostel_staff |
+| `/m/projects/money` | Billing and costs | institution_admin, super_admin, accounts_staff |
+| `/m/projects/profitability` | Project profitability | institution_admin, super_admin, accounts_staff |
+
+### Operations
+
+| Method and path | Operation | Body fields / query parameters |
+|---|---|---|
+| `GET /api/v1/modules/projects/projects` | List the projects you can see | `q` (query), `sort` (query), `dir` (query), `n` (query), `after` (query), `status` (query) |
+| `GET /api/v1/modules/projects/projects/detail` | Read a project with its members, stages and milestones | `id` (query) |
+| `POST /api/v1/modules/projects/projects` | Create a project on a cost centre | `code`, `name`, `description`, `managerId`, `costCenter`, `startsOn`, `endsOn`, `billable`, `partyId`, `billingRate`, `taxTemplateId`, `fundId` |
+| `POST /api/v1/modules/projects/projects/update` | Change a project's details | `name`, `description`, `managerId`, `endsOn`, `billable`, `partyId`, `billingRate`, `taxTemplateId`, `fundId`, `projectId` |
+| `POST /api/v1/modules/projects/projects/status` | Close or reopen a project | `projectId`, `status` |
+| `POST /api/v1/modules/projects/members` | Add a member to a project | `projectId`, `userId` |
+| `POST /api/v1/modules/projects/members/remove` | Remove a member from a project | `projectId`, `userId` |
+| `POST /api/v1/modules/projects/stages` | Add a stage to a project | `projectId`, `name`, `seq`, `closes` |
+| `POST /api/v1/modules/projects/milestones` | Add a milestone | `projectId`, `name`, `dueOn` |
+| `POST /api/v1/modules/projects/milestones/reached` | Mark a milestone reached | `milestoneId` |
+| `GET /api/v1/modules/projects/tasks` | List a project's tasks | `q` (query), `sort` (query), `dir` (query), `n` (query), `after` (query), `projectId` (query) |
+| `POST /api/v1/modules/projects/tasks` | Add a task | `projectId`, `title`, `description`, `stageId`, `assigneeId`, `deadline`, `milestoneId` |
+| `POST /api/v1/modules/projects/tasks/update` | Change a task | `title`, `description`, `stageId`, `assigneeId`, `deadline`, `milestoneId`, `taskId` |
+| `GET /api/v1/modules/projects/timesheets` | List time you can see | `q` (query), `sort` (query), `dir` (query), `n` (query), `after` (query), `projectId` (query), `taskId` (query), `userId` (query), `status` (query), `queue` (query) |
+| `POST /api/v1/modules/projects/timesheets` | Log time against a task | `taskId`, `userId`, `workDate`, `minutes`, `description` |
+| `POST /api/v1/modules/projects/timesheets/update` | Change time not yet approved | `lineId`, `workDate`, `minutes`, `description` |
+| `POST /api/v1/modules/projects/timesheets/delete` | Delete time not yet approved | `lineId` |
+| `POST /api/v1/modules/projects/timesheets/decide` | Approve or reject time | `ids`, `decision`, `note` |
+| `POST /api/v1/modules/projects/timesheets/reopen` | Reopen approved time that is neither billed nor costed | `lineId`, `reason` |
+| `GET /api/v1/modules/projects/cost-rates` | List hourly cost rates | `q` (query), `sort` (query), `dir` (query), `n` (query), `after` (query), `userId` (query) |
+| `POST /api/v1/modules/projects/cost-rates` | Set a person's hourly cost from a day | `userId`, `effectiveFrom`, `hourlyCost`, `homeCostCenter` |
+| `GET /api/v1/modules/projects/billings` | List billings | `q` (query), `sort` (query), `dir` (query), `n` (query), `after` (query), `projectId` (query) |
+| `POST /api/v1/modules/projects/billings` | Bill a project's approved time, once per idempotency key | `projectId`, `through`, `Idempotency-Key` (header) |
+| `GET /api/v1/modules/projects/costings` | List costings | `q` (query), `sort` (query), `dir` (query), `n` (query), `after` (query), `projectId` (query), `open` (query) |
+| `POST /api/v1/modules/projects/costings` | Cost a project's approved time for a month, once per idempotency key | `projectId`, `period`, `Idempotency-Key` (header) |
+| `POST /api/v1/modules/projects/costings/reverse` | Reverse a costing | `costingId`, `reason` |
+| `GET /api/v1/modules/projects/profitability` | Project income, expense and margin from the books | `q` (query), `sort` (query), `dir` (query), `n` (query), `after` (query), `from` (query), `to` (query) |
+
 <a id="quizzes"></a>
 ## Quizzes
 
@@ -1309,6 +1420,10 @@ Source: `campusos-platform/packages/modules/quizzes/`.
 | `POST /api/v1/modules/quizzes/attempts/submit` | Submit an attempt to be scored | `attemptId` |
 | `GET /api/v1/modules/quizzes/attempt` | One attempt | `attemptId` (query) |
 | `POST /api/v1/modules/quizzes/responses/override` | Change the machine's mark on one answer, with a reason | `responseId`, `awarded`, `reason` |
+
+### Background jobs
+
+- `quizzes.finalise-expired`: explicitly queued; roles institution_admin, accounts_staff, super_admin.
 
 <a id="skills"></a>
 ## Skills
