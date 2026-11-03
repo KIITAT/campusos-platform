@@ -28,6 +28,24 @@ test('each rule refuses its statement', () => {
   }
 })
 
+// Review finding 6: Postgres makes COLUMN optional, a type can carry a comma, and
+// comments and string literals must not hide or swallow a statement.
+test('the forms that once slipped through are refused', () => {
+  for (const [name, sql] of [
+    ['drop column', 'ALTER TABLE x DROP y;'],
+    ['drop column', 'ALTER TABLE x DROP IF EXISTS y;'],
+    ['rename', 'ALTER TABLE x RENAME y TO z;'],
+    ['set not null', 'ALTER TABLE x ALTER y SET NOT NULL;'],
+    ['column type change', 'ALTER TABLE x ALTER y TYPE int;'],
+    ['not null column without default', 'ALTER TABLE x ADD COLUMN amount numeric(10,2) NOT NULL;'],
+    ['not null column without default', 'ALTER TABLE x ADD amount int NOT NULL;'],
+    ['drop table', "INSERT INTO t VALUES ('--'); DROP TABLE x;"],
+    ['drop table', 'DROP /* quiet */ TABLE x;'],
+  ]) {
+    assert.deepEqual(lintSql(sql), [name], sql)
+  }
+})
+
 test('expand statements pass', () => {
   for (const sql of [
     'CREATE TABLE x (id int not null);',
@@ -36,6 +54,12 @@ test('expand statements pass', () => {
     'DROP POLICY IF EXISTS p ON x;',
     'DROP TRIGGER IF EXISTS t ON x;',
     'CREATE INDEX i ON x(y);',
+    'ALTER TABLE x DROP CONSTRAINT c;',
+    'ALTER TABLE x ALTER COLUMN y DROP DEFAULT;',
+    'ALTER TABLE x ALTER COLUMN y DROP NOT NULL;',
+    'ALTER TABLE x ADD CONSTRAINT c CHECK (y IS NOT NULL);',
+    'ALTER TABLE x RENAME CONSTRAINT a TO b;',
+    "COMMENT ON TABLE x IS 'we never drop table x';",
   ]) {
     assert.deepEqual(lintSql(sql), [], sql)
   }
