@@ -270,6 +270,9 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   projects_projects: 'export',
   projects_tasks: 'export',
   projects_timesheets: 'export',
+  // reports (P2-05): definitions kept, stored results excluded and purged after 90 days (decision 443).
+  reports_reports: 'export',
+  reports_runs: 'exclude',
 
   // quiz
   quiz_attempts: 'export',
@@ -317,6 +320,7 @@ export function retentionBasis(table: string): string {
   if (table.startsWith('hr_')) {
     return 'an employment and payroll record, kept for the period labour and tax law requires'
   }
+  if (table.startsWith('reports_')) return 'a report definition the institution keeps; stored results are deleted after 90 days'
   if (table.startsWith('projects_')) {
     return 'a work and billing record, kept for the period tax and accounting law requires'
   }
