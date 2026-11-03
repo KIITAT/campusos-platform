@@ -12,7 +12,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:18-alpine
+        image: postgres:18-alpine@sha256:10a5c69a83035ab5239f5620d708520e8b28f5aa1f2b20143e6024532edadfb5
         env:
           POSTGRES_DB: campusos
           POSTGRES_USER: postgres
@@ -36,7 +36,7 @@ jobs:
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: 24
+          node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # Known-vulnerable production dependencies fail the build (OPS-02).
@@ -64,12 +64,15 @@ jobs:
 
       - run: pnpm typecheck
       - run: pnpm lint
+      - run: pnpm lint:migrations
       - run: pnpm test
       - run: node --test scripts/module-catalog.test.mjs
       - run: node --import ./packages/db/node_modules/tsx/dist/loader.mjs --test scripts/demo-finance.test.ts
       # Who may call each route, and who may read each student (SEC-16, SEC-07).
       - run: node --import ./packages/db/node_modules/tsx/dist/loader.mjs --test scripts/route-matrix.test.ts
+      - run: node --import ./packages/db/node_modules/tsx/dist/loader.mjs --test scripts/module-reference.test.ts
       - run: node --import ./packages/db/node_modules/tsx/dist/loader.mjs --test scripts/student-access.test.ts
+      - run: node --import ./packages/db/node_modules/tsx/dist/loader.mjs --test scripts/staging-anonymise.test.ts
       # Each module on core plus only what it declares (DATA-03), and the
       # P0-01 migrations applied as an upgrade over every module.
       - run: node --test scripts/install-alone.test.mjs
