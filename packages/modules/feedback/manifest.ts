@@ -5,7 +5,7 @@ export const manifest: ModuleManifest = {
   name: 'Feedback',
   description:
     'Questionnaires the institution writes, opened to students in windows each term: on every class and its teacher, before the mid-semester and at the end, and on facilities and the curriculum. Anonymous by construction; results shown only once enough have answered.',
-  version: '0.5.0',
+  version: '0.6.0',
   alwaysEnabled: false,
   dependsOn: ['academic'],
   softDependsOn: [],
