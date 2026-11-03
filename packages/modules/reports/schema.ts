@@ -25,7 +25,7 @@ export const reports = pgTable('reports_reports', {
 
 export const runs = pgTable('reports_runs', {
   id: uuid().primaryKey().defaultRandom(),
-  institutionId: uuid('institution_id').notNull(),
+  institutionId: uuid('institution_id').notNull().references(() => institutions.id, { onDelete: 'cascade' }),
   reportId: uuid('report_id').notNull(),
   trigger: text().notNull(),
   runBy: text('run_by').references(() => users.id),

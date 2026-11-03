@@ -37,7 +37,7 @@ CREATE INDEX "reports_reports_due" ON "reports_reports" ("next_run_at") WHERE ar
 --> statement-breakpoint
 CREATE TABLE "reports_runs" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-  "institution_id" uuid NOT NULL,
+  "institution_id" uuid NOT NULL REFERENCES "institutions"("id") ON DELETE cascade,
   "report_id" uuid NOT NULL,
   "trigger" text NOT NULL,
   "run_by" text REFERENCES "users"("id") ON DELETE no action,
