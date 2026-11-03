@@ -1,7 +1,7 @@
 import { and, eq, sql } from 'drizzle-orm'
 import { isDeepStrictEqual } from 'node:util'
 import { check, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
-import { withTenant } from './client'
+import { corePool, withTenant } from './client'
 import { institutions, users } from './schema'
 import { tenantPolicy } from './rls'
 
@@ -97,4 +97,16 @@ export async function jobActor(tx: JobTransaction, tenant: string, actorId: stri
   if (!actor || actor.erasedAt || !roles.includes(actor.role)) throw new Error('job actor not authorized')
   if (!alwaysEnabled && !gate.is_enabled) throw new Error('job module not enabled')
   return actor
+}
+
+/** Institutions with a job to run now, binding or not (REL-05, C4). */
+export async function dueTenants(): Promise<string[]> {
+  const { rows } = await corePool.query<{ id: string }>('select campusos_job_tenants() as id')
+  return rows.map((r) => r.id)
+}
+
+/** Finished jobs past their keeping time, at most 10,000 a call (C8). */
+export async function purgeJobs(): Promise<number> {
+  const { rows } = await corePool.query<{ n: number }>('select campusos_purge_jobs() as n')
+  return rows[0]!.n
 }
