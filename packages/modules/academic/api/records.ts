@@ -259,234 +259,239 @@ export async function correctCompletion(actor: Actor, input: unknown) {
  * it, and a second derivation from marks would be the one that drifts.
  */
 export async function degreeAudit(actor: Actor, input: unknown): Promise<DegreeAudit> {
+  degreeAuditQuerySchema.parse(input) // refuse bad input before the role, as before
+  const tenant = requireReader(actor)
+  return withTenant(tenant, (tx) => degreeAuditWithin(tx, actor, input))
+}
+
+/** The same audit inside a caller's transaction, so a job can audit many students in one (REL-04). */
+export async function degreeAuditWithin(tx: Tx, actor: Actor, input: unknown): Promise<DegreeAudit> {
   const data = degreeAuditQuerySchema.parse(input)
   const studentId = data.studentId
-  const tenant = requireReader(actor)
+  requireReader(actor)
 
-  return withTenant(tenant, async (tx): Promise<DegreeAudit> => {
-    await assertCanAccessStudent(tx, actor, studentId, 'academic_record')
-    const [student] = await tx
-      .select({ name: users.name })
-      .from(users)
-      .where(eq(users.id, studentId))
-    if (!student) throw new AcademicError(404, 'no_such_student', 'no such student')
+  await assertCanAccessStudent(tx, actor, studentId, 'academic_record')
+  const [student] = await tx
+    .select({ name: users.name })
+    .from(users)
+    .where(eq(users.id, studentId))
+  if (!student) throw new AcademicError(404, 'no_such_student', 'no such student')
 
-    const declarations = await tx
-      .select({
-        id: studentPrograms.id,
-        programId: studentPrograms.programId,
-        programCode: programs.code,
-        programName: programs.name,
-        curriculumId: studentPrograms.curriculumId,
-        status: studentPrograms.status,
-        isPrimary: studentPrograms.isPrimary,
-      })
-      .from(studentPrograms)
-      .innerJoin(programs, eq(programs.id, studentPrograms.programId))
-      .where(eq(studentPrograms.studentId, studentId))
-
-    const live = declarations.filter((d) => d.status === 'active')
-    const chosen = data.studentProgramId
-      ? declarations.find((d) => d.id === data.studentProgramId)
-      : (live.find((d) => d.isPrimary) ?? live[0])
-    if (!chosen) {
-      throw new AcademicError(
-        404,
-        'no_declaration',
-        'that student is not reading for a programme',
-      )
-    }
-
-    const passes = await tx
-      .select({
-        courseId: courseCompletions.courseId,
-        courseCode: courses.code,
-        courseTitle: courses.title,
-        credits: courseCompletions.credits,
-        gradePoints: courseCompletions.gradePoints,
-        passed: courseCompletions.passed,
-        source: courseCompletions.source,
-      })
-      .from(courseCompletions)
-      .innerJoin(courses, eq(courses.id, courseCompletions.courseId))
-      .where(
-        and(
-          eq(courseCompletions.studentId, studentId),
-          eq(courseCompletions.passed, true),
-        ),
-      )
-
-    // One rule for every average (api/gpa.ts), under the rules the institution
-    // had in force when each term started. A transfer credit with no grade
-    // counts towards the degree and not towards the average.
-    const everyAttempt = await tx
-      .select({
-        courseId: courseCompletions.courseId,
-        credits: courseCompletions.credits,
-        gradePoints: courseCompletions.gradePoints,
-        passed: courseCompletions.passed,
-        termStartsOn: terms.startsOn,
-      })
-      .from(courseCompletions)
-      .leftJoin(terms, eq(terms.id, courseCompletions.termId))
-      .where(eq(courseCompletions.studentId, studentId))
-    const attempts: Attempt[] = everyAttempt.map((r) => ({
-      courseId: r.courseId,
-      termStartsOn: r.termStartsOn,
-      credits: r.credits,
-      points: r.gradePoints === null ? null : Number(r.gradePoints),
-      passed: r.passed,
-    }))
-    const cgpa = gradePointAverage(attempts, await gpaPolicyVersions(tx)).value
-    const creditsEarned = passes.reduce((n, p) => n + p.credits, 0)
-
-    const overrides = await tx
-      .select({
-        courseCode: courses.code,
-        reason: prerequisiteWaivers.reason,
-        approvedBy: prerequisiteWaivers.approvedBy,
-      })
-      .from(prerequisiteWaivers)
-      .innerJoin(courses, eq(courses.id, prerequisiteWaivers.courseId))
-      .where(eq(prerequisiteWaivers.studentId, studentId))
-
-    if (!chosen.curriculumId) {
-      return {
-        studentId,
-        studentName: student.name ?? null,
-        programCode: chosen.programCode,
-        programName: chosen.programName,
-        catalogYear: null,
-        totalCredits: null,
-        creditsEarned,
-        creditsRemaining: null,
-        cgpa,
-        complete: false,
-        requirements: [],
-        overrides,
-        note: 'no curriculum was recorded at declaration, so there is nothing to audit against',
-      }
-    }
-
-    const [curriculum] = await tx
-      .select()
-      .from(curricula)
-      .where(eq(curricula.id, chosen.curriculumId))
-
-    const rules = await tx
-      .select()
-      .from(requirements)
-      .where(eq(requirements.curriculumId, chosen.curriculumId))
-      .orderBy(requirements.code)
-
-    const named = rules.length
-      ? await tx
-          .select({
-            requirementId: requirementCourses.requirementId,
-            courseId: requirementCourses.courseId,
-            courseCode: courses.code,
-            courseTitle: courses.title,
-          })
-          .from(requirementCourses)
-          .innerJoin(courses, eq(courses.id, requirementCourses.courseId))
-          .where(
-            inArray(
-              requirementCourses.requirementId,
-              rules.map((r) => r.id),
-            ),
-          )
-      : []
-
-    const wanted = named.map((n) => n.courseId)
-    const sameAs = wanted.length
-      ? await tx
-          .select({
-            courseId: courseEquivalences.courseId,
-            equivalentCourseId: courseEquivalences.equivalentCourseId,
-          })
-          .from(courseEquivalences)
-      : []
-    const standsFor = (required: string): string[] => [
-      required,
-      ...sameAs
-        .filter((e) => e.courseId === required || e.equivalentCourseId === required)
-        .map((e) => (e.courseId === required ? e.equivalentCourseId : e.courseId)),
-    ]
-
-    const spent = new Set<string>()
-    const order = { core: 0, elective: 1, open: 2 }
-    const inOrder = [...rules].sort((a, b) => order[a.kind] - order[b.kind])
-
-    const audited = inOrder.map((rule) => {
-      const mine = named.filter((n) => n.requirementId === rule.id)
-      const pool =
-        rule.kind === 'open'
-          ? passes.filter((p) => !spent.has(p.courseId))
-          : passes.filter(
-              (p) =>
-                !spent.has(p.courseId) &&
-                mine.some((m) => standsFor(m.courseId).includes(p.courseId)),
-            )
-
-      let credits = 0
-      let count = 0
-      const used: string[] = []
-      for (const p of pool) {
-        // A pool stops taking once it has enough; the rest stay available to
-        // the requirement behind it.
-        if (
-          rule.kind !== 'core' &&
-          credits >= rule.minCredits &&
-          count >= rule.minCourses
-        ) {
-          break
-        }
-        spent.add(p.courseId)
-        used.push(p.courseCode)
-        credits += p.credits
-        count += 1
-      }
-
-      const outstanding =
-        rule.kind === 'core'
-          ? mine
-              .filter((m) => !standsFor(m.courseId).some((id) => spent.has(id)))
-              .map((m) => ({ courseCode: m.courseCode, courseTitle: m.courseTitle }))
-          : []
-
-      return {
-        code: rule.code,
-        title: rule.title,
-        kind: rule.kind,
-        minCredits: rule.minCredits,
-        minCourses: rule.minCourses,
-        creditsEarned: credits,
-        coursesPassed: count,
-        satisfied:
-          credits >= rule.minCredits &&
-          count >= rule.minCourses &&
-          outstanding.length === 0,
-        outstanding,
-        counted: used,
-      }
+  const declarations = await tx
+    .select({
+      id: studentPrograms.id,
+      programId: studentPrograms.programId,
+      programCode: programs.code,
+      programName: programs.name,
+      curriculumId: studentPrograms.curriculumId,
+      status: studentPrograms.status,
+      isPrimary: studentPrograms.isPrimary,
     })
+    .from(studentPrograms)
+    .innerJoin(programs, eq(programs.id, studentPrograms.programId))
+    .where(eq(studentPrograms.studentId, studentId))
 
-    const total = curriculum?.totalCredits ?? null
+  const live = declarations.filter((d) => d.status === 'active')
+  const chosen = data.studentProgramId
+    ? declarations.find((d) => d.id === data.studentProgramId)
+    : (live.find((d) => d.isPrimary) ?? live[0])
+  if (!chosen) {
+    throw new AcademicError(
+      404,
+      'no_declaration',
+      'that student is not reading for a programme',
+    )
+  }
+
+  const passes = await tx
+    .select({
+      courseId: courseCompletions.courseId,
+      courseCode: courses.code,
+      courseTitle: courses.title,
+      credits: courseCompletions.credits,
+      gradePoints: courseCompletions.gradePoints,
+      passed: courseCompletions.passed,
+      source: courseCompletions.source,
+    })
+    .from(courseCompletions)
+    .innerJoin(courses, eq(courses.id, courseCompletions.courseId))
+    .where(
+      and(
+        eq(courseCompletions.studentId, studentId),
+        eq(courseCompletions.passed, true),
+      ),
+    )
+
+  // One rule for every average (api/gpa.ts), under the rules the institution
+  // had in force when each term started. A transfer credit with no grade
+  // counts towards the degree and not towards the average.
+  const everyAttempt = await tx
+    .select({
+      courseId: courseCompletions.courseId,
+      credits: courseCompletions.credits,
+      gradePoints: courseCompletions.gradePoints,
+      passed: courseCompletions.passed,
+      termStartsOn: terms.startsOn,
+    })
+    .from(courseCompletions)
+    .leftJoin(terms, eq(terms.id, courseCompletions.termId))
+    .where(eq(courseCompletions.studentId, studentId))
+  const attempts: Attempt[] = everyAttempt.map((r) => ({
+    courseId: r.courseId,
+    termStartsOn: r.termStartsOn,
+    credits: r.credits,
+    points: r.gradePoints === null ? null : Number(r.gradePoints),
+    passed: r.passed,
+  }))
+  const cgpa = gradePointAverage(attempts, await gpaPolicyVersions(tx)).value
+  const creditsEarned = passes.reduce((n, p) => n + p.credits, 0)
+
+  const overrides = await tx
+    .select({
+      courseCode: courses.code,
+      reason: prerequisiteWaivers.reason,
+      approvedBy: prerequisiteWaivers.approvedBy,
+    })
+    .from(prerequisiteWaivers)
+    .innerJoin(courses, eq(courses.id, prerequisiteWaivers.courseId))
+    .where(eq(prerequisiteWaivers.studentId, studentId))
+
+  if (!chosen.curriculumId) {
     return {
       studentId,
       studentName: student.name ?? null,
       programCode: chosen.programCode,
       programName: chosen.programName,
-      catalogYear: curriculum?.catalogYear ?? null,
-      totalCredits: total,
+      catalogYear: null,
+      totalCredits: null,
       creditsEarned,
-      creditsRemaining: total === null ? null : Math.max(0, total - creditsEarned),
+      creditsRemaining: null,
       cgpa,
-      complete:
-        audited.every((r) => r.satisfied) && total !== null && creditsEarned >= total,
-      requirements: audited,
+      complete: false,
+      requirements: [],
       overrides,
-      note: null,
+      note: 'no curriculum was recorded at declaration, so there is nothing to audit against',
+    }
+  }
+
+  const [curriculum] = await tx
+    .select()
+    .from(curricula)
+    .where(eq(curricula.id, chosen.curriculumId))
+
+  const rules = await tx
+    .select()
+    .from(requirements)
+    .where(eq(requirements.curriculumId, chosen.curriculumId))
+    .orderBy(requirements.code)
+
+  const named = rules.length
+    ? await tx
+        .select({
+          requirementId: requirementCourses.requirementId,
+          courseId: requirementCourses.courseId,
+          courseCode: courses.code,
+          courseTitle: courses.title,
+        })
+        .from(requirementCourses)
+        .innerJoin(courses, eq(courses.id, requirementCourses.courseId))
+        .where(
+          inArray(
+            requirementCourses.requirementId,
+            rules.map((r) => r.id),
+          ),
+        )
+    : []
+
+  const wanted = named.map((n) => n.courseId)
+  const sameAs = wanted.length
+    ? await tx
+        .select({
+          courseId: courseEquivalences.courseId,
+          equivalentCourseId: courseEquivalences.equivalentCourseId,
+        })
+        .from(courseEquivalences)
+    : []
+  const standsFor = (required: string): string[] => [
+    required,
+    ...sameAs
+      .filter((e) => e.courseId === required || e.equivalentCourseId === required)
+      .map((e) => (e.courseId === required ? e.equivalentCourseId : e.courseId)),
+  ]
+
+  const spent = new Set<string>()
+  const order = { core: 0, elective: 1, open: 2 }
+  const inOrder = [...rules].sort((a, b) => order[a.kind] - order[b.kind])
+
+  const audited = inOrder.map((rule) => {
+    const mine = named.filter((n) => n.requirementId === rule.id)
+    const pool =
+      rule.kind === 'open'
+        ? passes.filter((p) => !spent.has(p.courseId))
+        : passes.filter(
+            (p) =>
+              !spent.has(p.courseId) &&
+              mine.some((m) => standsFor(m.courseId).includes(p.courseId)),
+          )
+
+    let credits = 0
+    let count = 0
+    const used: string[] = []
+    for (const p of pool) {
+      // A pool stops taking once it has enough; the rest stay available to
+      // the requirement behind it.
+      if (
+        rule.kind !== 'core' &&
+        credits >= rule.minCredits &&
+        count >= rule.minCourses
+      ) {
+        break
+      }
+      spent.add(p.courseId)
+      used.push(p.courseCode)
+      credits += p.credits
+      count += 1
+    }
+
+    const outstanding =
+      rule.kind === 'core'
+        ? mine
+            .filter((m) => !standsFor(m.courseId).some((id) => spent.has(id)))
+            .map((m) => ({ courseCode: m.courseCode, courseTitle: m.courseTitle }))
+        : []
+
+    return {
+      code: rule.code,
+      title: rule.title,
+      kind: rule.kind,
+      minCredits: rule.minCredits,
+      minCourses: rule.minCourses,
+      creditsEarned: credits,
+      coursesPassed: count,
+      satisfied:
+        credits >= rule.minCredits &&
+        count >= rule.minCourses &&
+        outstanding.length === 0,
+      outstanding,
+      counted: used,
     }
   })
+
+  const total = curriculum?.totalCredits ?? null
+  return {
+    studentId,
+    studentName: student.name ?? null,
+    programCode: chosen.programCode,
+    programName: chosen.programName,
+    catalogYear: curriculum?.catalogYear ?? null,
+    totalCredits: total,
+    creditsEarned,
+    creditsRemaining: total === null ? null : Math.max(0, total - creditsEarned),
+    cgpa,
+    complete:
+      audited.every((r) => r.satisfied) && total !== null && creditsEarned >= total,
+    requirements: audited,
+    overrides,
+    note: null,
+  }
 }
