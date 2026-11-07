@@ -14,12 +14,12 @@
   "dependencies": {
     "@campusos/db": "workspace:*",
     "@pdf-lib/fontkit": "1.1.1",
-    "drizzle-orm": "^0.45.2",
+    "drizzle-orm": "^0.45.4",
     "pdf-lib": "^1.17.1",
     "regenerator-runtime": "0.14.1"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
-    "tsx": "^4.23.12"
+    "tsx": "^4.23.15"
   }
 }
