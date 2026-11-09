@@ -35,13 +35,15 @@ import {
   type DuesReport,
   type StudentLedger,
 } from './schemas'
-import { postedOf, postedSql } from './books'
+import { postedOf, postedSql, receivableReport } from './books'
 import { postInvoice, postPayment, postRefund, postWaiverChange } from './posting'
 import { enrolledPrograms, notEnrolled, priceListSql, termRoster } from './enrolment'
 import { checkOtherPerson } from '@campusos/module-finance/api'
 import { notify } from '@campusos/module-notices/api'
 
 const MODULE = 'fees'
+
+const rupees = (p: number) => '₹' + (p / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 /**
  * Methods whose reference names one transfer in the whole banking system -- a
@@ -1159,4 +1161,25 @@ export async function paymentForReceipt(actor: Actor, paymentId: string) {
     }
     return row
   })
+}
+
+export async function reconciliation(actor: Actor) {
+  const tenant = requireFinance(actor)
+  return withTenant(tenant, (tx) => receivableReport(tx))
+}
+
+/** The nightly check (decision 531): silent when the books agree. */
+export async function checkReceivable(actor: Actor, tx: Tx) {
+  const tenant = tenantOf(actor)
+  const r = await receivableReport(tx)
+  if (r.differencePaise !== 0) {
+    const detail = { booksPaise: r.booksPaise, ledgerPaise: r.ledgerPaise, differencePaise: r.differencePaise, unattributedPaise: r.unattributedPaise, mismatchCount: r.mismatchCount }
+    await audit(tx, { institutionId: tenant, actorId: actor.id, actorEmail: actor.email ?? null, moduleId: MODULE, action: 'fee.receivable_mismatch', entity: 'fees_receivable', entityId: tenant, reason: `the fee ledger and the books differ by ${rupees(Math.abs(r.differencePaise))}`, detail })
+    const office = await tx.select({ id: users.id }).from(users)
+      .where(and(eq(users.institutionId, tenant), inArray(users.role, ['institution_admin', 'accounts_staff']), isNull(users.erasedAt)))
+    if (office.length > 0) {
+      await notify(tx, tenant, { userIds: office.map((u) => u.id), moduleId: 'fees', title: 'Fee ledger and books disagree', body: `The student ledgers and the fees receivable account differ by ${rupees(Math.abs(r.differencePaise))}. See the reconciliation page.`, link: '/m/fees/reconciliation' })
+    }
+  }
+  return { differencePaise: r.differencePaise, mismatchCount: r.mismatchCount }
 }

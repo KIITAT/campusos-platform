@@ -43,6 +43,7 @@ import {
   issueInvoices,
   listFeeItems,
   listInvoices,
+  reconciliation,
   paymentForReceipt,
   receiptPdf,
   recordPayment,
@@ -221,6 +222,11 @@ export const routes: PluginRoute[] = [
         requiredParam(req, 'studentId'),
         requiredParam(req, 'termId'),
       ),
+  },
+  {
+    method: 'GET',
+    path: '/reconciliation',
+    handler: (actor) => reconciliation(actor as Actor),
   },
   {
     method: 'GET',

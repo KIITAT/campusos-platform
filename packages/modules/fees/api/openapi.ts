@@ -19,6 +19,7 @@ import {
   revokeAwardSchema,
   setRefundRulesSchema,
   duesReportSchema,
+  receivableReportSchema,
   grantWaiverSchema,
   issueInvoicesSchema,
   recordPaymentSchema,
@@ -328,6 +329,16 @@ export const paths = {
       tags: ['fees'],
       responses: {
         '200': { description: 'OK', content: json(studentLedgerSchema) },
+        ...gated,
+      },
+    },
+  },
+  [`${base}/reconciliation`]: {
+    get: {
+      summary: 'The student ledgers against the fees receivable account',
+      tags: ['fees'],
+      responses: {
+        '200': { description: 'OK', content: json(receivableReportSchema) },
         ...gated,
       },
     },

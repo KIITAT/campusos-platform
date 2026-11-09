@@ -287,3 +287,23 @@ export const aidAssessmentSchema = z
   .meta({ id: 'FeesAidAssessment' })
 
 export type AidAssessment = z.infer<typeof aidAssessmentSchema>
+
+export const receivableReportSchema = z
+  .object({
+    booksPaise: z.number().int(),
+    ledgerPaise: z.number().int(),
+    differencePaise: z.number().int(),
+    unattributedPaise: z.number().int(),
+    mismatchCount: z.number().int(),
+    students: z.array(
+      z.object({
+        studentId: z.string(),
+        studentName: z.string().nullable(),
+        studentEmail: z.string().nullable(),
+        booksPaise: z.number().int(),
+        ledgerPaise: z.number().int(),
+        differencePaise: z.number().int(),
+      }),
+    ),
+  })
+  .meta({ id: 'FeeReceivableReport' })

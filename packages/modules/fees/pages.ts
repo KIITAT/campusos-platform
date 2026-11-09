@@ -12,6 +12,7 @@ import {
   listRefundRules,
   listScholarships,
   listStudentCharges,
+  reconciliation,
   studentChoices,
   studentLedger,
   type Actor,
@@ -816,5 +817,52 @@ export const pages: PluginPage[] = [
       },
     ],
   },
+  {
+    path: '/reconciliation',
+    title: 'Fee ledger against the books',
+    menu: 'Reconciliation',
+    roles: [...OFFICE],
+    async load(actor) {
+      const r = await reconciliation(actor as Actor)
+      return {
+        ...r,
+        students: r.students.map((s) => ({ ...s, who: s.studentName ?? s.studentEmail ?? s.studentId })),
+      }
+    },
+    sections: (data) => [
+      {
+        kind: 'figures',
+        figures: [
+          { label: 'Student ledgers', value: formatPaise(Number(data.ledgerPaise ?? 0)) },
+          { label: 'Fees receivable', value: formatPaise(Number(data.booksPaise ?? 0)) },
+          {
+            label: 'Difference',
+            value: formatPaise(Number(data.differencePaise ?? 0)),
+            tone: Number(data.differencePaise ?? 0) !== 0 ? 'due' : 'clear',
+          },
+          { label: 'Not from a fee document', value: formatPaise(Number(data.unattributedPaise ?? 0)) },
+        ],
+      },
+      {
+        kind: 'note',
+        text:
+          'Every fee document posts to the fees receivable account. A difference here means the books were changed ' +
+          'outside fees (a journal straight to the account) or a fee record was removed after it was posted. ' +
+          'The check runs every night and tells the office when they differ.',
+      },
+      {
+        kind: 'table',
+        rows: 'students',
+        empty: "Every student's ledger agrees with the books.",
+        columns: [
+          { key: 'who', label: 'Student', href: '/m/fees/student?studentId={studentId}' },
+          { key: 'booksPaise', label: 'Books', kind: 'money' },
+          { key: 'ledgerPaise', label: 'Ledger', kind: 'money' },
+          { key: 'differencePaise', label: 'Difference', kind: 'money' },
+        ],
+      },
+    ],
+  },
+
   ...transferPages,
 ]

@@ -288,6 +288,7 @@ GET /api/v1/modules/fees/invoices                                        SI..A..
 POST /api/v1/modules/fees/invoices                                       SI........ op
 POST /api/v1/modules/fees/refunds                                        SI........ op
 GET /api/v1/modules/fees/ledger                                          SIH.A..s.. gate
+GET /api/v1/modules/fees/reconciliation                                  SI..A..... op
 GET /api/v1/modules/fees/dues                                            SI..A..... gate
 GET /api/v1/modules/fees/receipt.pdf                                     SI..A..s.. gate
 

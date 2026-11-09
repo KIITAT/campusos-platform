@@ -1,4 +1,7 @@
 import { sql, type SQL } from 'drizzle-orm'
+import type { withTenant } from '@campusos/db'
+
+type Tx = Parameters<Parameters<typeof withTenant>[1]>[0]
 
 /**
  * What the books were told, per student and term (ACC-20, decision 526). One
@@ -69,3 +72,61 @@ export const postedOf = (r: Record<string, unknown> | undefined): Posted =>
         balancePaise: Number(r.balance_paise),
       }
     : NOTHING_POSTED
+
+/** The fee document a fees journal entry came from, by its source reference, and so its student. */
+const BOOKS_BY_STUDENT = sql`
+  select coalesce(i.student_id, p.student_id, rp.student_id, w.student_id, aw.student_id, dc.student_id) as student_id,
+         sum(l.debit_paise - l.credit_paise)::bigint as books_paise
+    from finance_journal_lines l
+    join finance_accounts a on a.id = l.account_id and a.purpose = 'fees_receivable'
+    join finance_journal_entries e on e.id = l.entry_id
+    left join fee_invoices i on e.source_module = 'fees' and split_part(e.source_ref, ':', 1) = 'invoice' and i.id::text = split_part(e.source_ref, ':', 2)
+    left join fee_payments p on e.source_module = 'fees' and split_part(e.source_ref, ':', 1) = 'payment' and p.id::text = split_part(e.source_ref, ':', 2)
+    left join fee_refunds r on e.source_module = 'fees' and split_part(e.source_ref, ':', 1) = 'refund' and r.id::text = split_part(e.source_ref, ':', 2)
+    left join fee_payments rp on rp.id = r.payment_id
+    left join fee_waivers w on e.source_module = 'fees' and split_part(e.source_ref, ':', 1) = 'waiver' and w.id::text = split_part(e.source_ref, ':', 2)
+    left join fee_scholarship_awards aw on e.source_module = 'fees' and split_part(e.source_ref, ':', 1) in ('award', 'award-revoked') and aw.id::text = split_part(e.source_ref, ':', 2)
+    left join fee_drop_credits dc on e.source_module = 'fees' and split_part(e.source_ref, ':', 1) = 'drop' and dc.id::text = split_part(e.source_ref, ':', 2)
+   group by 1`
+
+export interface ReceivableReport {
+  booksPaise: number
+  ledgerPaise: number
+  differencePaise: number
+  unattributedPaise: number
+  mismatchCount: number
+  students: { studentId: string; studentName: string | null; studentEmail: string | null; booksPaise: number; ledgerPaise: number; differencePaise: number }[]
+}
+
+/**
+ * Σ student ledgers against the fees receivable account (ACC-20, decision 530).
+ * A new source reference that posts to the receivable must be added to
+ * BOOKS_BY_STUDENT, or its postings read as unattributed.
+ */
+export async function receivableReport(tx: Tx): Promise<ReceivableReport> {
+  const both = sql`
+    with books as (${BOOKS_BY_STUDENT}),
+    ledger as (select student_id, sum(balance_paise)::bigint as ledger_paise from (${postedSql()}) x group by student_id),
+    j as (select coalesce(b.student_id, g.student_id) as student_id, coalesce(b.books_paise, 0) as books_paise, coalesce(g.ledger_paise, 0) as ledger_paise
+            from books b full join ledger g on g.student_id = b.student_id)`
+  const [t] = (await tx.execute(sql`${both}
+    select coalesce(sum(books_paise), 0)::bigint as books, coalesce(sum(ledger_paise), 0)::bigint as ledger,
+           coalesce(sum(books_paise) filter (where student_id is null), 0)::bigint as unattributed,
+           count(*) filter (where student_id is not null and books_paise <> ledger_paise)::int as mismatches
+      from j`)).rows as Record<string, unknown>[]
+  const rows = (await tx.execute(sql`${both}
+    select j.student_id, u.name, u.email, j.books_paise, j.ledger_paise
+      from j left join users u on u.id = j.student_id
+     where j.student_id is not null and j.books_paise <> j.ledger_paise
+     order by abs(j.books_paise - j.ledger_paise) desc, j.student_id
+     limit 100`)).rows as Record<string, unknown>[]
+  const books = Number(t!.books), ledger = Number(t!.ledger)
+  return {
+    booksPaise: books, ledgerPaise: ledger, differencePaise: books - ledger,
+    unattributedPaise: Number(t!.unattributed), mismatchCount: Number(t!.mismatches),
+    students: rows.map((r) => ({
+      studentId: String(r.student_id), studentName: (r.name as string | null) ?? null, studentEmail: (r.email as string | null) ?? null,
+      booksPaise: Number(r.books_paise), ledgerPaise: Number(r.ledger_paise), differencePaise: Number(r.books_paise) - Number(r.ledger_paise),
+    })),
+  }
+}
