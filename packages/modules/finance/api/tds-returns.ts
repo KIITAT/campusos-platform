@@ -25,6 +25,8 @@ export const TDS_FORMS = {
   cutOverYear: 2026,
   certificate: (fy: number) => (fy < 2026 ? 'Form 16A' : 'TDS certificate (Form 16A or its Income-tax Act 2025 equivalent)'),
   returns: { resident: '26Q', nonResident: '27Q' },
+  /** The statement's name: Form 140 or 144 (P1-05d) from tax year 2026-27, the old names before. */
+  returnName: (fy: number, form: '26Q' | '27Q') => (fy < 2026 ? form : form === '26Q' ? 'Form 140 (26Q)' : 'Form 144 (27Q)'),
 } as const
 
 export type TdsForm = '26Q' | '27Q'
@@ -303,7 +305,7 @@ const quarterSchema = z.object({
   form: z.enum(['26Q', '27Q']).default('26Q'),
 })
 
-function quarterOf(input: unknown) {
+export function quarterOf(input: unknown) {
   const parsed = quarterSchema.safeParse(input)
   if (!parsed.success) throw new FinanceError(400, 'bad_period', 'give a fiscal year from 2000 to 2100 and a quarter from 1 to 4')
   const { fy, quarter, form } = parsed.data

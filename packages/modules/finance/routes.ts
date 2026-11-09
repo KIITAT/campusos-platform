@@ -299,6 +299,10 @@ export const specs: RouteSpec[] = [
     const q = query(req)
     return api.tdsQuarterFile(a, { fy: q.fy, quarter: q.quarter, form: q.form })
   }),
+  file('reports', '/tds/statement', 'The quarterly TDS statement file for the FVU (fy, quarter, form, earlierFiled, previousToken)', (a, req) => {
+    const q = query(req)
+    return api.tdsStatementFile(a, { fy: q.fy, quarter: q.quarter, form: q.form, earlierFiled: q.earlierFiled || undefined, previousToken: q.previousToken || undefined })
+  }),
   file('reports', '/tds/certificate.pdf', 'The TDS statement for one payee and quarter, printed', (a, req) => {
     const q = query(req)
     return api.tdsCertificatePdf(a, { partyId: requiredParam(req, 'partyId'), fy: q.fy ?? '', quarter: q.quarter ?? '' })
