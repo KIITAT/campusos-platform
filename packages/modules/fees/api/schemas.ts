@@ -165,15 +165,21 @@ export const duesRowSchema = z
     refundedPaise: z.number().int(),
     unreconciledPaise: z.number().int(),
     outstandingPaise: z.number().int(),
+    overpaidPaise: z.number().int(),
+    notYetInvoicedPaise: z.number().int(),
   })
   .meta({ id: 'FeeDuesRow' })
 
 export const duesReportSchema = z
   .object({
     termCode: z.string(),
-    rows: z.array(duesRowSchema),
     totalOutstandingPaise: z.number().int(),
     defaulterCount: z.number().int(),
+    notYetInvoicedPaise: z.number().int(),
+    notYetInvoicedCount: z.number().int(),
+    rows: z.array(duesRowSchema),
+    total: z.number().int(),
+    next: z.string().nullable(),
   })
   .meta({ id: 'FeeDuesReport' })
 

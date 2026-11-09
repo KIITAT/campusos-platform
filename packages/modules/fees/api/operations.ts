@@ -1,12 +1,22 @@
 import { and, asc, eq, inArray, isNull, notLike, sql } from 'drizzle-orm'
 import { audit, auditLog, users, withIdempotencyKey, withTenant } from '@campusos/db'
-import { assertCanAccessStudent, viewsOnBehalf, type Role, type ViewerScope } from '@campusos/module-framework'
+import {
+  assertCanAccessStudent,
+  cursorColumn,
+  finishPage,
+  keyset,
+  orderKeys,
+  readPage,
+  searchAny,
+  viewsOnBehalf,
+  type Role,
+  type SortSpec,
+  type ViewerScope,
+} from '@campusos/module-framework'
 import { programs, terms } from '@campusos/module-academic/schema'
 import {
-  dropCredits,
   feeIdempotencyKeys,
   feeInvoices,
-  scholarshipAwards,
   feeItems,
   feePayments,
   feeRefunds,
@@ -25,10 +35,9 @@ import {
   type DuesReport,
   type StudentLedger,
 } from './schemas'
-import { ledger, overpaidPaise, type LedgerLine } from './ledger'
 import { postedOf, postedSql } from './books'
 import { postInvoice, postPayment, postRefund, postWaiverChange } from './posting'
-import { duesRoster, enrolledPrograms, notEnrolled, termRoster } from './enrolment'
+import { enrolledPrograms, notEnrolled, priceListSql, termRoster } from './enrolment'
 import { checkOtherPerson } from '@campusos/module-finance/api'
 import { notify } from '@campusos/module-notices/api'
 
@@ -635,10 +644,11 @@ export async function issueInvoices(actor: Actor, input: unknown) {
   })
 }
 
-export async function listInvoices(actor: Actor, termId: string) {
+export async function listInvoices(actor: Actor, termId: string, page = invoicePage(new Request('https://x/'), '')) {
   const tenant = requireFinance(actor)
-  return withTenant(tenant, (tx) =>
-    tx
+  return withTenant(tenant, async (tx) => {
+    const keys = INVOICE_SORTS[page.sort]!.keys
+    const rows = await tx
       .select({
         id: feeInvoices.id,
         studentId: feeInvoices.studentId,
@@ -647,12 +657,19 @@ export async function listInvoices(actor: Actor, termId: string) {
         chargedPaise: feeInvoices.chargedPaise,
         version: feeInvoices.version,
         issuedAt: feeInvoices.issuedAt,
+        _cursor: cursorColumn(keys),
       })
       .from(feeInvoices)
       .innerJoin(users, eq(users.id, feeInvoices.studentId))
+      .where(and(eq(feeInvoices.termId, termId), keyset(keys, page)))
+      .orderBy(...orderKeys(keys, page.dir))
+      .limit(page.limit + 1)
+    const [count] = await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(feeInvoices)
       .where(eq(feeInvoices.termId, termId))
-      .orderBy(asc(users.email)),
-  )
+    return finishPage(rows, page, Number(count!.n))
+  })
 }
 
 /**
@@ -876,38 +893,6 @@ async function chargesFor(tx: Tx, studentId: string, termId: string) {
   return [...items.map((i) => ({ ...i, feeItemId: i.feeItemId as string | null, studentChargeId: null as string | null })), ...own]
 }
 
-/**
- * What the institution has taken off this student's bill without any money
- * moving: scholarships it is funding, and credit for courses dropped inside the
- * refund window. Both are already in the books by the time they are read here.
- */
-async function creditsFor(tx: Tx, studentId: string, termId: string) {
-  const aid = await tx
-    .select({ amountPaise: scholarshipAwards.amountPaise })
-    .from(scholarshipAwards)
-    .where(
-      and(
-        eq(scholarshipAwards.studentId, studentId),
-        eq(scholarshipAwards.termId, termId),
-        eq(scholarshipAwards.status, 'awarded'),
-      ),
-    )
-  const dropped = await tx
-    .select({ amountPaise: dropCredits.amountPaise })
-    .from(dropCredits)
-    .where(and(eq(dropCredits.studentId, studentId), eq(dropCredits.termId, termId)))
-  return [...aid, ...dropped]
-}
-
-/** What has gone back out to this student for this term. */
-function refundsFor(tx: Tx, studentId: string, termId: string) {
-  return tx
-    .select({ amountPaise: feeRefunds.amountPaise })
-    .from(feeRefunds)
-    .innerJoin(feePayments, eq(feePayments.id, feeRefunds.paymentId))
-    .where(and(eq(feePayments.studentId, studentId), eq(feePayments.termId, termId)))
-}
-
 export async function studentLedger(
   actor: Actor,
   studentId: string,
@@ -984,14 +969,28 @@ export async function studentLedger(
   })
 }
 
+const DUES_SORTS: SortSpec = {
+  outstanding: { dir: 'desc', keys: [{ sql: sql`d.outstanding_paise`, type: 'bigint' }, { sql: sql`d.student_id`, type: 'text' }] },
+  name: { dir: 'asc', keys: [{ sql: sql`coalesce(u.name, u.email, '')`, type: 'text' }, { sql: sql`d.student_id`, type: 'text' }] },
+}
+export const duesPage = (req: Request, prefix: string) => readPage(req, prefix, DUES_SORTS, 'outstanding', 50)
+
+const INVOICE_SORTS: SortSpec = {
+  email: { dir: 'asc', keys: [{ sql: sql`coalesce(${users.email}, '')`, type: 'text' }, { sql: sql`${feeInvoices.id}`, type: 'uuid' }] },
+}
+export const invoicePage = (req: Request, prefix: string) => readPage(req, prefix, INVOICE_SORTS, 'email', 50)
+
 /**
- * Defaulters for a term. Every enrolled student, not only those who have paid
- * something, because the ones who have paid nothing are the point of the report
- * -- plus anyone the term has invoiced or taken money from, so a student who
- * left owing stays on it. One row per student (NEW-16), whatever number of
- * programmes they read.
+ * Balances for a term from the books, worst first, a page at a time (REL-09,
+ * decision 529). Every student the books or today's price list know for the
+ * term, so one who left owing stays on it and one not yet invoiced shows what
+ * is coming. Two statements on one `with` block: the page and the totals.
  */
-export async function duesReport(actor: Actor, termId: string): Promise<DuesReport> {
+export async function duesReport(
+  actor: Actor,
+  termId: string,
+  page = duesPage(new Request('https://x/'), ''),
+): Promise<DuesReport> {
   const tenant = requireFinance(actor)
 
   return withTenant(tenant, async (tx): Promise<DuesReport> => {
@@ -1001,50 +1000,71 @@ export async function duesReport(actor: Actor, termId: string): Promise<DuesRepo
       .where(eq(terms.id, termId))
     if (!term) throw new FeeError(404, 'no_such_term', 'no such term')
 
-    const roster = await duesRoster(tx, termId)
+    const cte = sql`
+      with posted as (${postedSql({ termId })}),
+      listed as (select student_id, sum(charged)::bigint as listed_paise, sum(unposted_waived)::bigint as unposted_paise
+                   from (${priceListSql(termId, null)}) l group by student_id),
+      d as (
+        select coalesce(p.student_id, l.student_id) as student_id,
+               coalesce(p.credited_paise, 0) as credited_paise,
+               coalesce(p.invoiced_paise, 0) - coalesce(p.waived_paise, 0) - coalesce(p.credited_paise, 0) as payable_paise,
+               coalesce(p.paid_paise, 0) - coalesce(p.refunded_paise, 0) as paid_paise,
+               coalesce(p.refunded_paise, 0) as refunded_paise,
+               coalesce(p.unreconciled_paise, 0) as unreconciled_paise,
+               greatest(coalesce(p.balance_paise, 0), 0) as outstanding_paise,
+               greatest(-coalesce(p.balance_paise, 0), 0) as overpaid_paise,
+               greatest(coalesce(l.listed_paise, 0) - coalesce(l.unposted_paise, 0) - coalesce(p.invoiced_paise, 0), 0) as not_yet_invoiced_paise
+          from posted p full join listed l on l.student_id = p.student_id)`
+    const shown = sql`(d.payable_paise <> 0 or d.paid_paise <> 0 or d.not_yet_invoiced_paise <> 0)`
+    const search = searchAny(page.q, [sql`u.name`, sql`u.email`])
+    const where = search ? sql`${shown} and ${search}` : shown
+    const keys = DUES_SORTS[page.sort]!.keys
+    const after = keyset(keys, page)
+    const rows = (await tx.execute(sql`${cte}
+      select d.*, u.name as student_name, u.email as student_email,
+         coalesce((select string_agg(distinct pr.code, ', ' order by pr.code)
+                     from academic_student_programs sp
+                     join academic_programs pr on pr.id = sp.program_id
+                     join academic_terms t on t.id = ${termId}::uuid
+                    where sp.student_id = d.student_id and sp.declared_on <= t.ends_on
+                      and (sp.ended_on is null or sp.ended_on > t.starts_on)
+                      and (sp.ended_on is null or sp.ended_on > sp.declared_on)), '—') as program_code,
+         ${cursorColumn(keys)} as _cursor
+       from d join users u on u.id = d.student_id
+      where ${where}${after ? sql` and ${after}` : sql``}
+      order by ${sql.join(orderKeys(keys, page.dir), sql`, `)}
+      limit ${page.limit + 1}`)).rows as Record<string, unknown>[]
+    const [sum] = (await tx.execute(sql`${cte}
+      select count(*)::int as total,
+             coalesce(sum(d.outstanding_paise), 0)::bigint as outstanding,
+             count(*) filter (where d.outstanding_paise > 0)::int as defaulters,
+             coalesce(sum(d.not_yet_invoiced_paise), 0)::bigint as nyi,
+             count(*) filter (where d.not_yet_invoiced_paise > 0)::int as nyi_count
+        from d join users u on u.id = d.student_id
+       where ${where}`)).rows as Record<string, unknown>[]
 
-    const rows = []
-    for (const s of roster) {
-      // ponytail: one pair of queries per student. Fine at a few hundred; if a
-      // term's roster reaches thousands, fold this into two grouped queries.
-      const charges = await chargesFor(tx, s.studentId, termId)
-      const payments = await tx
-        .select({ amountPaise: feePayments.amountPaise, reconciledAt: feePayments.reconciledAt })
-        .from(feePayments)
-        .where(and(eq(feePayments.studentId, s.studentId), eq(feePayments.termId, termId)))
-
-      const l = ledger(
-        charges.map((c) => ({
-          label: c.label,
-          chargedPaise: c.chargedPaise,
-          waivedPaise: c.waivedPaise ?? 0,
-        })),
-        payments,
-        await refundsFor(tx, s.studentId, termId),
-        await creditsFor(tx, s.studentId, termId),
-      )
-      if (l.payablePaise === 0 && l.paidPaise === 0) continue
-
-      const codes = (await enrolledPrograms(tx, s.studentId, termId)).map((p) => p.code)
-      rows.push({
-        studentId: s.studentId,
-        studentName: s.studentName,
-        studentEmail: s.studentEmail,
-        programCode: codes.length > 0 ? codes.join(', ') : '—',
-        creditedPaise: l.creditedPaise,
-        payablePaise: l.payablePaise,
-        paidPaise: l.paidPaise,
-        refundedPaise: l.refundedPaise,
-        unreconciledPaise: l.unreconciledPaise,
-        outstandingPaise: l.outstandingPaise,
-      })
-    }
-
+    const mapped = rows.map((r) => ({
+      studentId: String(r.student_id),
+      studentName: (r.student_name as string | null) ?? null,
+      studentEmail: (r.student_email as string | null) ?? null,
+      programCode: String(r.program_code),
+      creditedPaise: Number(r.credited_paise),
+      payablePaise: Number(r.payable_paise),
+      paidPaise: Number(r.paid_paise),
+      refundedPaise: Number(r.refunded_paise),
+      unreconciledPaise: Number(r.unreconciled_paise),
+      outstandingPaise: Number(r.outstanding_paise),
+      overpaidPaise: Number(r.overpaid_paise),
+      notYetInvoicedPaise: Number(r.not_yet_invoiced_paise),
+      _cursor: r._cursor as string[],
+    }))
     return {
       termCode: term.code,
-      rows: rows.sort((a, b) => b.outstandingPaise - a.outstandingPaise),
-      totalOutstandingPaise: rows.reduce((n, r) => n + r.outstandingPaise, 0),
-      defaulterCount: rows.filter((r) => r.outstandingPaise > 0).length,
+      totalOutstandingPaise: Number(sum!.outstanding),
+      defaulterCount: Number(sum!.defaulters),
+      notYetInvoicedPaise: Number(sum!.nyi),
+      notYetInvoicedCount: Number(sum!.nyi_count),
+      ...finishPage(mapped, page, Number(sum!.total)),
     }
   })
 }

@@ -2,7 +2,9 @@ import { formatPaise } from '@campusos/money'
 import { param, type PluginPage } from '@campusos/module-framework'
 import { listStructure } from '@campusos/module-academic/api'
 import {
+  duesPage,
   duesReport,
+  invoicePage,
   listAwards,
   listDropCredits,
   listFeeItems,
@@ -179,27 +181,29 @@ export const pages: PluginPage[] = [
     path: '/dues',
     title: 'Dues',
     menu: 'Dues',
-    roles: [...OFFICE, 'hod'],
+    roles: [...OFFICE],
     async load(actor, req) {
       const a = actor as Actor
       const { structure, term } = await termFor(a, req)
-      if (!term) return { rows: [], terms: [], termCode: null, total: 0, defaulters: 0 }
+      if (!term) return { rows: [], rowsPage: { total: 0, next: null }, terms: [], termCode: null, total: 0, defaulters: 0 }
 
       const [report, invoices] = await Promise.all([
-        duesReport(a, term.id),
-        listInvoices(a, term.id),
+        duesReport(a, term.id, duesPage(req, 'rows')),
+        listInvoices(a, term.id, invoicePage(new Request('https://x/?n=1'), '')),
       ])
       return {
         termCode: report.termCode,
         termId: term.id,
-        issuedCount: invoices.length,
+        issuedCount: invoices.total,
         total: report.totalOutstandingPaise,
         defaulters: report.defaulterCount,
+        notYetInvoiced: report.notYetInvoicedPaise,
         rows: report.rows.map((r) => ({
           ...r,
           who: r.studentName ?? r.studentEmail,
           overdue: r.outstandingPaise > 0,
         })),
+        rowsPage: { total: report.total, next: report.next },
         terms: structure.terms.map((t) => ({
           label: t.code,
           href: `/m/fees/dues?termId=${t.id}`,
@@ -219,6 +223,7 @@ export const pages: PluginPage[] = [
             value: formatPaise(Number(data.total)),
             tone: Number(data.total) > 0 ? 'due' : 'clear',
           },
+          { label: 'Not yet invoiced', value: formatPaise(Number(data.notYetInvoiced ?? 0)) },
         ],
       },
       {
@@ -231,6 +236,7 @@ export const pages: PluginPage[] = [
       {
         kind: 'table',
         rows: 'rows',
+        paging: { data: 'rowsPage', sorts: ['outstanding', 'name'] },
         empty: 'No charges have been raised for this term.',
         columns: [
           {
@@ -247,6 +253,8 @@ export const pages: PluginPage[] = [
             kind: 'money',
             alertWhen: 'overdue',
           },
+          { key: 'overpaidPaise', label: 'In credit', kind: 'money' },
+          { key: 'notYetInvoicedPaise', label: 'Not yet invoiced', kind: 'money' },
         ],
       },
       {

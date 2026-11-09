@@ -485,6 +485,7 @@ test('an overpayment is a credit, not negative dues', async () => {
 
 test('the dues report ranks defaulters and skips students with nothing owed', async () => {
   await tuition({ amount: '45000' })
+  await issueInvoices(admin(), { termId: ids.term })
   const p = await pay({ amount: '45000' })
   await reconcilePayment(clerk(), { paymentId: p.id, reason: 'cleared' })
 

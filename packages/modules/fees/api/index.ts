@@ -1,7 +1,6 @@
 export * from './operations'
 export * from './aid'
 export * from './schemas'
-export * from './ledger'
 export * from './books'
 export { formatPaise, parseRupeesToPaise, plainPaise } from '@campusos/money'
 export { receiptPdf, type ReceiptData } from './receipt-pdf'

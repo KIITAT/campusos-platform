@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql, type SQL } from 'drizzle-orm'
 import { users, withTenant } from '@campusos/db'
 import {
   programs,
@@ -7,7 +7,7 @@ import {
   studentPrograms,
   terms,
 } from '@campusos/module-academic/schema'
-import { feeInvoices, feePayments, studentCharges } from '../schema'
+import { studentCharges } from '../schema'
 
 /**
  * Who is billed for a term, and for which programmes (ACC-19, decision 189).
@@ -31,8 +31,8 @@ import { feeInvoices, feePayments, studentCharges } from '../schema'
  * until P1-13 decides otherwise; promotion ends one declaration and starts the
  * next, and the same rule bills the class the student is in.
  *
- * The one place the rule lives: the invoicing roster, the charges, the dues
- * report, scholarship assessment, the waiver check and the demand letter all
+ * The one place the rule lives: the invoicing roster, the charges, the price
+ * list in SQL, the dues report, scholarship assessment, the waiver check and the demand letter all
  * ask here, so they cannot disagree.
  */
 
@@ -86,21 +86,28 @@ export async function termRoster(tx: Tx, termId: string, studentId?: string | nu
 }
 
 /**
- * The dues report's roster: the term's roster, plus anyone the term has
- * already put money against -- invoiced, or paid -- so a student who left
- * owing stays on the defaulter list.
+ * Today's price list for a term, one row per charge line: the items of every
+ * programme a student is enrolled in for it (the overlap rule above, in SQL)
+ * and their own live charges. The waiver columns say how much of a line's
+ * waiver the books have not yet been told about. Null `studentIds` means the
+ * whole term.
  */
-export async function duesRoster(tx: Tx, termId: string) {
-  const billed = await termRoster(tx, termId)
-  const invoiced = await tx
-    .selectDistinct({ studentId: feeInvoices.studentId })
-    .from(feeInvoices)
-    .where(eq(feeInvoices.termId, termId))
-  const paid = await tx
-    .selectDistinct({ studentId: feePayments.studentId })
-    .from(feePayments)
-    .where(eq(feePayments.termId, termId))
-  return people(tx, [...billed.map((b) => b.studentId), ...invoiced.map((r) => r.studentId), ...paid.map((r) => r.studentId)])
+export function priceListSql(termId: string, studentIds: string[] | null): SQL {
+  const only = (col: SQL) => (studentIds ? sql` and ${col} = any(${studentIds}::text[])` : sql``)
+  return sql`
+    select e.student_id, f.id as fee_item_id, null::uuid as student_charge_id, f.amount_paise::bigint as charged,
+           w.id as waiver_id, greatest(coalesce(w.amount_paise - w.posted_paise, 0), 0)::bigint as unposted_waived
+      from (select distinct sp.student_id, sp.program_id
+              from academic_student_programs sp join academic_terms t on t.id = ${termId}::uuid
+             where sp.declared_on <= t.ends_on
+               and (sp.ended_on is null or sp.ended_on > t.starts_on)
+               and (sp.ended_on is null or sp.ended_on > sp.declared_on)${only(sql`sp.student_id`)}) e
+      join fee_items f on f.program_id = e.program_id and f.term_id = ${termId}::uuid
+      left join fee_waivers w on w.fee_item_id = f.id and w.student_id = e.student_id
+    union all
+    select c.student_id, null::uuid, c.id, c.amount_paise::bigint, null::uuid, 0::bigint
+      from fee_student_charges c
+     where c.term_id = ${termId}::uuid and c.cancelled_at is null${only(sql`c.student_id`)}`
 }
 
 async function people(tx: Tx, ids: string[]) {

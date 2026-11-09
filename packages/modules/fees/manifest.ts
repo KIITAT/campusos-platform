@@ -40,7 +40,7 @@ export const manifest: ModuleManifest = {
       roles: ['institution_admin', 'accounts_staff'],
     },
     { label: 'Fees', href: '/m/fees', roles: ['institution_admin', 'accounts_staff'] },
-    { label: 'Dues', href: '/m/fees/dues', roles: ['institution_admin', 'accounts_staff', 'hod'] },
+    { label: 'Dues', href: '/m/fees/dues', roles: ['institution_admin', 'accounts_staff'] },
     { label: 'My fees', href: '/m/fees/me', roles: ['student'] },
     { label: 'Bank transfer', href: '/m/fees/transfer', roles: ['student'] },
     { label: 'Demand letter', href: '/m/fees/letter', roles: ['student'] },
