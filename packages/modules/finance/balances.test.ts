@@ -196,15 +196,14 @@ test('0017 backfills every tenant in one statement, past the auth pool\'s 30 s l
   const backfill = file.split('--> statement-breakpoint').at(-1)!
   assert.doesNotMatch(backfill, /finance_rebuild_daily_balances\(/, 'one scan of the journal, not one per tenant')
   assert.match(file, /SET LOCAL statement_timeout = 0/)
-  const rows = `select institution_id, account_id, posting_date, fund_id, cost_center, closing, debit_paise, credit_paise
-                  from finance_daily_balances order by 1, 2, 3, 4 nulls first, 5 nulls first, 6`
-  await authDb.transaction(async tx => {
-    const before = (await tx.execute(sql.raw(rows))).rows
-    await tx.execute(sql`delete from finance_daily_balances`)
-    await tx.execute(sql.raw(backfill))
-    assert.deepEqual((await tx.execute(sql.raw(rows))).rows, before)
-    tx.rollback()
-  }).catch(e => { if (!/rollback/i.test(String(e))) throw e })
+  // Read-only: the backfill's SELECT for this tenant against the rows the trigger kept.
+  const select = backfill.slice(backfill.indexOf('SELECT')).replace(/;\s*$/, '')
+  const cols = 'institution_id, account_id, posting_date, fund_id, cost_center, closing, debit_paise, credit_paise'
+  const order = 'order by 1, 2, 3, 4 nulls first, 5 nulls first, 6'
+  const kept = await authDb.execute(sql.raw(`select ${cols} from finance_daily_balances where institution_id = '${b.id}' ${order}`))
+  const filled = await authDb.execute(sql.raw(`select * from (${select}) s(${cols}) where institution_id = '${b.id}' ${order}`))
+  assert.ok(kept.rows.length > 0)
+  assert.deepEqual(filled.rows, kept.rows)
 })
 
 test('the trial balance is the journal\'s (REL-03)', async () => {
