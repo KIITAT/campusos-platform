@@ -1,5 +1,6 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { like, sql } from 'drizzle-orm'
 import { authDb, institutions, users } from '@campusos/db'
 import { incomeAndExpenditure, postEntry, reverseEntry, trialBalanceReport, type Actor } from './api'
@@ -185,6 +186,24 @@ test('the rebuild gives back the same rows (REL-03)', async () => {
   const rebuilt = await authDb.execute(sql`select finance_rebuild_daily_balances(${b.id}::uuid) as n`)
   assert.equal(Number((rebuilt.rows[0] as { n: string }).n), before.length)
   assert.deepEqual(await balanceRows(b.id), before)
+})
+
+test('0017 backfills every tenant in one statement, past the auth pool\'s 30 s limit, to the rebuild\'s rows (NEW-80)', async () => {
+  const b = await books()
+  await entry(b, { postingDate: '2025-05-01' })
+  await entry(b, { postingDate: '2025-05-02' })
+  const file = readFileSync(new URL('./migrations/0017_daily_balances.sql', import.meta.url), 'utf8')
+  const backfill = file.split('--> statement-breakpoint').at(-1)!
+  assert.doesNotMatch(backfill, /finance_rebuild_daily_balances\(/, 'one scan of the journal, not one per tenant')
+  assert.match(file, /SET LOCAL statement_timeout = 0/)
+  // Read-only: the backfill's SELECT for this tenant against the rows the trigger kept.
+  const select = backfill.slice(backfill.indexOf('SELECT')).replace(/;\s*$/, '')
+  const cols = 'institution_id, account_id, posting_date, fund_id, cost_center, closing, debit_paise, credit_paise'
+  const order = 'order by 1, 2, 3, 4 nulls first, 5 nulls first, 6'
+  const kept = await authDb.execute(sql.raw(`select ${cols} from finance_daily_balances where institution_id = '${b.id}' ${order}`))
+  const filled = await authDb.execute(sql.raw(`select * from (${select}) s(${cols}) where institution_id = '${b.id}' ${order}`))
+  assert.ok(kept.rows.length > 0)
+  assert.deepEqual(filled.rows, kept.rows)
 })
 
 test('the trial balance is the journal\'s (REL-03)', async () => {

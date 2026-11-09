@@ -76,6 +76,7 @@ const NEW_FILES = new Set([
   'finance/0015_gst_returns.sql',
   'finance/0016_tds_returns.sql',
   'crm/0000_crm.sql',
+  'crm/0001_crm_odoo_features.sql',
   'projects/0000_projects.sql',
 ])
 const NEW_CORE_FROM = 5
