@@ -4,6 +4,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { publishPackHost } from './host-libs.mjs'
 
 /**
  * Prove a packed plugin is loadable by somebody who has only the archive.
@@ -54,6 +55,7 @@ try {
       if (actual !== expected) throw new Error(`${id}: ${file} does not match plugin.json`)
     }
 
+    await publishPackHost()
     const { plugin } = await import(pathToFileURL(join(dir, 'server.mjs')).href)
 
     if (plugin.manifest.id !== id) {

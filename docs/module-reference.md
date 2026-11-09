@@ -7,31 +7,31 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 
 | Module | Version | Pages | API routes | Dependencies |
 |---|---|---:|---:|---|
-| [Academic Core](#academic) | 0.9.0 | 7 | 42 | None |
-| [Admissions](#admissions) | 0.5.0 | 3 | 9 | academic |
-| [Alumni and events](#alumni) | 0.4.0 | 4 | 12 | None |
-| [Attendance & QR](#attendance) | 0.11.0 | 7 | 28 | academic, notices |
-| [Student Care](#care) | 0.8.0 | 7 | 24 | academic, notices |
-| [Ceremonies](#ceremonies) | 0.4.0 | 5 | 18 | academic |
-| [Sales CRM](#crm) | 0.2.0 | 4 | 32 | finance, notices |
-| [Enrollment](#enrollment) | 0.4.0 | 3 | 8 | academic |
-| [Examinations & Grading](#examinations) | 0.14.0 | 9 | 36 | academic, notices |
-| [Feedback](#feedback) | 0.5.0 | 8 | 19 | academic |
-| [Fees & Finance](#fees) | 0.17.0 | 10 | 39 | academic, finance, notices |
-| [Finance & Books](#finance) | 0.15.0 | 92 | 204 | None |
-| [Helpdesk and grievance](#helpdesk) | 0.4.0 | 2 | 7 | None |
-| [Hostel](#hostel) | 0.8.0 | 5 | 18 | academic |
-| [HR & Payroll](#hr) | 0.19.0 | 18 | 134 | finance, notices |
-| [Library](#library) | 0.11.0 | 5 | 18 | academic |
-| [Mentoring](#mentoring) | 0.14.0 | 6 | 19 | academic, notices |
-| [Communication & Notices](#notices) | 0.10.0 | 4 | 13 | academic |
-| [Parent Portal](#parents) | 0.14.0 | 4 | 11 | academic |
-| [Placement](#placement) | 0.8.0 | 8 | 15 | academic, notices |
-| [Projects and timesheets](#projects) | 0.1.0 | 6 | 27 | finance |
-| [Quizzes](#quizzes) | 0.5.0 | 7 | 22 | academic |
-| [Skills](#skills) | 0.4.0 | 5 | 12 | None |
-| [Timetable](#timetable) | 0.6.0 | 12 | 42 | academic |
-| [Transport](#transport) | 0.3.0 | 4 | 12 | None |
+| [Academic Core](#academic) | 0.11.0 | 7 | 42 | None |
+| [Admissions](#admissions) | 0.7.0 | 3 | 9 | academic |
+| [Alumni and events](#alumni) | 0.5.0 | 4 | 12 | None |
+| [Attendance & QR](#attendance) | 0.13.0 | 7 | 28 | academic, notices |
+| [Student Care](#care) | 0.10.0 | 7 | 24 | academic, notices |
+| [Ceremonies](#ceremonies) | 0.6.0 | 5 | 18 | academic |
+| [Sales CRM](#crm) | 0.3.0 | 4 | 32 | finance, notices |
+| [Enrollment](#enrollment) | 0.6.0 | 3 | 8 | academic |
+| [Examinations & Grading](#examinations) | 0.16.0 | 9 | 36 | academic, notices |
+| [Feedback](#feedback) | 0.7.0 | 8 | 19 | academic |
+| [Fees & Finance](#fees) | 0.19.0 | 10 | 39 | academic, finance, notices |
+| [Finance & Books](#finance) | 0.16.0 | 92 | 204 | None |
+| [Helpdesk and grievance](#helpdesk) | 0.5.0 | 2 | 7 | None |
+| [Hostel](#hostel) | 0.9.0 | 5 | 18 | academic |
+| [HR & Payroll](#hr) | 0.20.0 | 18 | 134 | finance, notices |
+| [Library](#library) | 0.12.0 | 5 | 18 | academic |
+| [Mentoring](#mentoring) | 0.16.0 | 6 | 19 | academic, notices |
+| [Communication & Notices](#notices) | 0.12.0 | 4 | 13 | academic |
+| [Parent Portal](#parents) | 0.16.0 | 4 | 11 | academic |
+| [Placement](#placement) | 0.10.0 | 8 | 15 | academic, notices |
+| [Projects and timesheets](#projects) | 0.2.0 | 6 | 27 | finance |
+| [Quizzes](#quizzes) | 0.7.0 | 7 | 22 | academic |
+| [Skills](#skills) | 0.5.0 | 5 | 12 | None |
+| [Timetable](#timetable) | 0.8.0 | 12 | 42 | academic |
+| [Transport](#transport) | 0.4.0 | 4 | 12 | None |
 
 <a id="academic"></a>
 ## Academic Core
@@ -306,6 +306,10 @@ Source: `campusos-platform/packages/modules/ceremonies/`.
 | `GET /api/v1/modules/ceremonies/certificate` | One certificate; a student sees only their own | `certificateId` (query) |
 | `GET /api/v1/modules/ceremonies/certificate.pdf` | The certificate to print (binary response) | `certificateId` (query) |
 | `GET /api/v1/modules/ceremonies/verify` | Check a certificate by the code printed on it | `code` (query) |
+
+### Background jobs
+
+- `ceremonies.eligibility`: explicitly queued; roles institution_admin, super_admin.
 
 <a id="crm"></a>
 ## Sales CRM
