@@ -124,8 +124,8 @@ importers:
         specifier: workspace:*
         version: link:../modules/transport
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       tsx:
         specifier: ^4.23.12
         version: 4.23.13
@@ -140,8 +140,8 @@ importers:
         version: 8.23.0
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       '@types/pg':
         specifier: ^8.23.1
         version: 8.23.1
@@ -171,8 +171,8 @@ importers:
         version: 0.14.1
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       tsx:
         specifier: ^4.23.12
         version: 4.23.13
@@ -196,8 +196,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       '@types/react':
         specifier: ^19.2.18
         version: 19.3.0
@@ -224,8 +224,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       tsx:
         specifier: ^4.23.12
         version: 4.23.13
@@ -246,8 +246,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       tsx:
         specifier: ^4.23.12
         version: 4.23.13
@@ -277,8 +277,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       '@types/react':
         specifier: ^19.2.18
         version: 19.3.0
@@ -308,8 +308,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       tsx:
         specifier: ^4.23.12
         version: 4.23.13
@@ -336,8 +336,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       tsx:
         specifier: ^4.23.12
         version: 4.23.13
@@ -364,8 +364,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       tsx:
         specifier: ^4.23.12
         version: 4.23.13
@@ -392,8 +392,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       '@types/react':
         specifier: ^19.2.18
         version: 19.3.0
@@ -438,8 +438,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       '@types/react':
         specifier: ^19.2.18
         version: 19.3.0
@@ -466,8 +466,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       tsx:
         specifier: ^4.23.12
         version: 4.23.13
@@ -509,8 +509,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       '@types/react':
         specifier: ^19.2.18
         version: 19.3.0
@@ -540,8 +540,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       tsx:
         specifier: ^4.23.12
         version: 4.23.13
@@ -562,8 +562,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       tsx:
         specifier: ^4.23.12
         version: 4.23.13
@@ -590,8 +590,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       '@types/react':
         specifier: ^19.2.18
         version: 19.3.0
@@ -630,8 +630,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       '@types/react':
         specifier: ^19.2.18
         version: 19.3.0
@@ -664,8 +664,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       '@types/react':
         specifier: ^19.2.18
         version: 19.3.0
@@ -710,8 +710,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       tsx:
         specifier: ^4.23.12
         version: 4.23.13
@@ -738,8 +738,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       '@types/react':
         specifier: ^19.2.18
         version: 19.3.0
@@ -787,8 +787,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       '@types/react':
         specifier: ^19.2.18
         version: 19.3.0
@@ -818,8 +818,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       tsx:
         specifier: ^4.23.12
         version: 4.23.13
@@ -843,8 +843,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       tsx:
         specifier: ^4.23.12
         version: 4.23.13
@@ -868,8 +868,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       tsx:
         specifier: ^4.23.12
         version: 4.23.13
@@ -896,8 +896,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       hyparquet:
         specifier: 1.31.5
         version: 1.31.5
@@ -921,8 +921,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       tsx:
         specifier: ^4.23.12
         version: 4.23.13
@@ -949,8 +949,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       tsx:
         specifier: ^4.23.12
         version: 4.23.13
@@ -971,8 +971,8 @@ importers:
         version: 4.6.5
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       tsx:
         specifier: ^4.23.12
         version: 4.23.13
@@ -980,8 +980,8 @@ importers:
   packages/money:
     devDependencies:
       '@types/node':
-        specifier: ^24.10.1
-        version: 24.13.4
+        specifier: ^26.6.6
+        version: 26.6.6
       tsx:
         specifier: ^4.23.12
         version: 4.23.13
@@ -1721,8 +1721,8 @@ packages:
   '@types/json-schema@7.0.15':
     resolution: {integrity: sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA==}
 
-  '@types/node@24.13.4':
-    resolution: {integrity: sha512-YJ7EqCstVTzIr0fMr7qul/977en+pQHrfmuKIo6Zr9i75Be21dr3MovcfvGtyvi2HAUrRerWps5sMO9I7WaxDw==}
+  '@types/node@26.6.6':
+    resolution: {integrity: sha512-MzQj+8Kx3XI40OmUAE6Qoh58ZMNstNNMwn2nfd3qWsfe7nDNSqJNzes4njhz6AHwrSHOffSLwXU6yb474Q4aog==}
 
   '@types/pg@8.23.1':
     resolution: {integrity: sha512-fKVHpikPdg4GKks3JuLEhvwSyvwzF23hnabPy6DD8ljVbC7+6J5dQzdv4arV6jqq57djnMgs1HKBxX4P8aBI3A==}
@@ -2300,8 +2300,8 @@ packages:
     engines: {node: '>=14.17'}
     hasBin: true
 
-  undici-types@7.18.2:
-    resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
+  undici-types@8.9.0:
+    resolution: {integrity: sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==}
 
   uri-js@4.4.1:
     resolution: {integrity: sha512-7rKUyy33Q1yc98pQ1DAmLtwX109F7TIfWlW1Ydo8Wl1ii1SeHieeh0HHfPeL2fMXK6z0s8ecKs9frCuLJvndBg==}
@@ -2752,13 +2752,13 @@ snapshots:
 
   '@types/json-schema@7.0.15': {}
 
-  '@types/node@24.13.4':
+  '@types/node@26.6.6':
     dependencies:
-      undici-types: 7.18.2
+      undici-types: 8.9.0
 
   '@types/pg@8.23.1':
     dependencies:
-      '@types/node': 24.13.4
+      '@types/node': 26.6.6
       pg-protocol: 1.16.0
       pg-types: 2.2.0
 
@@ -3358,7 +3358,7 @@ snapshots:
 
   typescript@6.0.3: {}
 
-  undici-types@7.18.2: {}
+  undici-types@8.9.0: {}
 
   uri-js@4.4.1:
     dependencies:
