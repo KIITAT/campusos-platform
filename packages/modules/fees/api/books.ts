@@ -73,9 +73,15 @@ export const postedOf = (r: Record<string, unknown> | undefined): Posted =>
       }
     : NOTHING_POSTED
 
-/** The fee document a fees journal entry came from, by its source reference, and so its student. */
+/**
+ * The fee document a fees journal entry came from, by its source reference, and
+ * so its student. A revoked waiver's row is deleted after its reversal posts;
+ * its student is then read from the `fee.waiver_revoked` audit row written in
+ * the same transaction, because a waiver that rode in the invoice leaves its
+ * reversal as the only `waiver:` posting (review P1-03a HIGH).
+ */
 const BOOKS_BY_STUDENT = sql`
-  select coalesce(i.student_id, p.student_id, rp.student_id, w.student_id, aw.student_id, dc.student_id) as student_id,
+  select coalesce(i.student_id, p.student_id, rp.student_id, w.student_id, wr.student_id, aw.student_id, dc.student_id) as student_id,
          sum(l.debit_paise - l.credit_paise)::bigint as books_paise
     from finance_journal_lines l
     join finance_accounts a on a.id = l.account_id and a.purpose = 'fees_receivable'
@@ -85,6 +91,11 @@ const BOOKS_BY_STUDENT = sql`
     left join fee_refunds r on e.source_module = 'fees' and split_part(e.source_ref, ':', 1) = 'refund' and r.id::text = split_part(e.source_ref, ':', 2)
     left join fee_payments rp on rp.id = r.payment_id
     left join fee_waivers w on e.source_module = 'fees' and split_part(e.source_ref, ':', 1) = 'waiver' and w.id::text = split_part(e.source_ref, ':', 2)
+    left join lateral (
+      select al.detail->>'studentId' as student_id from audit_log al
+       where w.id is null and e.source_module = 'fees' and split_part(e.source_ref, ':', 1) = 'waiver'
+         and al.entity = 'fee_waivers' and al.entity_id = split_part(e.source_ref, ':', 2) and al.action = 'fee.waiver_revoked'
+       limit 1) wr on true
     left join fee_scholarship_awards aw on e.source_module = 'fees' and split_part(e.source_ref, ':', 1) in ('award', 'award-revoked') and aw.id::text = split_part(e.source_ref, ':', 2)
     left join fee_drop_credits dc on e.source_module = 'fees' and split_part(e.source_ref, ':', 1) = 'drop' and dc.id::text = split_part(e.source_ref, ':', 2)
    group by 1`
