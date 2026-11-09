@@ -596,7 +596,7 @@ test('issuing an invoice tells the student', async () => {
   const first = await mine()
   assert.equal(first.length, 1)
   assert.match(first[0]!.title, /^Fees invoiced for /)
-  assert.ok(first[0]!.body.startsWith('₹'))
+  assert.equal(first[0]!.body, 'Fees for t1 have been invoiced. See your fee account for what is due.')
   assert.equal(first[0]!.link, '/m/fees/me')
   await issueInvoices(admin(), { termId: ids.term })
   assert.equal((await mine()).length, 1, 'nothing new, nothing sent')

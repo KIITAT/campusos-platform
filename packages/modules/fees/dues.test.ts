@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { like, sql } from 'drizzle-orm'
 import { authDb, institutions, users } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
-import { setSingleOfficer } from '@campusos/module-finance/api'
+import { setSingleOfficer, trialBalance, type Actor as Books } from '@campusos/module-finance/api'
 import { createFeeItem, duesPage, duesReport, invoicePage, issueInvoices, listInvoices, type Actor } from './api'
 import { manifest } from './manifest'
 import { pages } from './pages'
@@ -120,4 +120,65 @@ test('the invoice list pages (LOW-04)', async () => {
   assert.equal(r.rows.length, 500)
   assert.equal(r.total, 1205)
   assert.notEqual(r.next, null)
+})
+
+// --- chunked invoicing (REL-09) ---------------------------------------------
+
+const balance = async (c: Campus, code: string): Promise<number> => {
+  const tb = await trialBalance(c.admin as unknown as Books)
+  return tb.rows.find((r) => r.code === code)?.balancePaise ?? 0
+}
+
+test('invoicing works a chunk at a time and posts each student once (REL-09)', async () => {
+  const c = await campus()
+  await item(c, 'Tuition', '45000')
+
+  const r = await issueInvoices(c.admin, { termId: c.termId })
+  assert.equal(r.chunks, 3)
+  assert.equal(r.issued.length, 1205)
+  assert.equal(await balance(c, '1100'), 1205 * 4_500_000)
+
+  const r2 = await issueInvoices(c.admin, { termId: c.termId })
+  assert.equal(r2.chunks, 3)
+  assert.equal(r2.unchanged, 1205)
+  assert.equal(r2.issued.length, 0)
+})
+
+test('two runs of the same term at once both finish, and charge nobody twice (REL-09)', async () => {
+  const c = await campus(3)
+  await item(c, 'Tuition', '45000')
+
+  // Hold the table so both runs are in flight, and waiting, before either posts.
+  let release = () => {}
+  let held = () => {}
+  const isHeld = new Promise<void>((r) => (held = r))
+  const blocker = authDb.transaction(async (tx) => {
+    await tx.execute(sql`lock table fee_invoices in access exclusive mode`)
+    held()
+    await new Promise<void>((r) => (release = r))
+  })
+  await isHeld
+  const a = issueInvoices(c.admin, { termId: c.termId })
+  const b = issueInvoices(c.admin, { termId: c.termId })
+  for (let i = 0; i < 200; i++) {
+    const waiting = await authDb.execute<{ n: number }>(sql`
+      select count(*)::int as n from pg_stat_activity
+       where wait_event_type = 'Lock' and datname = current_database()`)
+    if (waiting.rows[0]!.n >= 2) break
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  release()
+  await blocker
+
+  const [ra, rb] = await Promise.allSettled([a, b])
+  assert.equal(ra.status, 'fulfilled')
+  assert.equal(rb.status, 'fulfilled')
+  if (ra.status !== 'fulfilled' || rb.status !== 'fulfilled') return
+  assert.equal(ra.value.issued.length + rb.value.issued.length, 3)
+  assert.equal(ra.value.unchanged + rb.value.unchanged, 3)
+  const entries = await authDb.execute<{ n: number }>(sql`
+    select count(*)::int as n from finance_journal_entries
+     where institution_id = ${c.id}::uuid and source_module = 'fees' and source_ref like 'invoice:%'`)
+  assert.equal(entries.rows[0]!.n, 3)
+  assert.equal(await balance(c, '1100'), 3 * 4_500_000)
 })
