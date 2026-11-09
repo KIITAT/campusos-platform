@@ -198,6 +198,19 @@ test('the reconciliation agrees after ordinary fee work', async () => {
   assert.equal(r.booksPaise, await balance(c, RECEIVABLE))
 })
 
+test('a waiver that rode in the invoice and was then revoked still belongs to its student', async () => {
+  const c = await campus()
+  const item = await charge(c, 'Tuition', '45000')
+  const waiver = await grantWaiver(c.admin, { studentId: c.s1, feeItemId: item.id, amount: '5000', reason: 'hardship before the invoice' })
+  await issueInvoices(c.admin, { termId: c.termId })
+  await revokeWaiver(c.admin, { waiverId: waiver.id, reason: 'granted in error' })
+
+  const r = await withTenant(c.id, (tx) => receivableReport(tx))
+  assert.equal(r.differencePaise, 0)
+  assert.equal(r.unattributedPaise, 0)
+  assert.equal(r.mismatchCount, 0)
+})
+
 /** A journal straight to the receivable, which no fee document explains. */
 const handAdjustment = (c: Campus) =>
   withTenant(c.id, (tx) =>
