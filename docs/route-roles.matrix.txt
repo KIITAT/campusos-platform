@@ -147,7 +147,7 @@ GET /api/v1/modules/ceremonies/certificate                               SIH....
 GET /api/v1/modules/ceremonies/certificate.pdf                           SIH....s.. gate
 GET /api/v1/modules/ceremonies/verify                                    SIHF...... gate
 
-## crm 0.3.0
+## crm 0.4.0
 GET /api/v1/modules/crm/settings                                         SIHFALO... op
 GET /api/v1/modules/crm/pipeline                                         SIHFALO... op
 GET /api/v1/modules/crm/leads/detail                                     SIHFALO... op
@@ -291,7 +291,7 @@ GET /api/v1/modules/fees/ledger                                          SIH.A..
 GET /api/v1/modules/fees/dues                                            SI..A..... gate
 GET /api/v1/modules/fees/receipt.pdf                                     SI..A..s.. gate
 
-## finance 0.16.0
+## finance 0.17.0
 GET /api/v1/modules/finance/accounts                                     SI..A..... op
 POST /api/v1/modules/finance/accounts                                    SI........ op
 POST /api/v1/modules/finance/accounts/update                             SI........ op
