@@ -37,6 +37,14 @@ test("a manager sees their team's pipeline and no other team's", async () => {
   assert.deepEqual((await listLeads(c.admin, page(), {})).rows.map(r => r.id).sort(), [l1.id, l2.id].sort())
 })
 
+test('the pipeline list carries a score but no contact details (NEW-83)', async () => {
+  const c = await sales()
+  await createLead(c.rep, lead('Contact', { email: 'buyer@example.com', phone: '9876543210', contactName: 'A Buyer' }))
+  const [row] = (await listLeads(c.rep, page(), {})).rows as unknown as Record<string, unknown>[]
+  assert.equal(typeof row!.score, 'number')
+  for (const k of ['email', 'phone', 'gstin', 'contactName', 'source', 'stageProbability']) assert.ok(!(k in row!), k)
+})
+
 test('someone outside every team is refused', async () => {
   const c = await sales()
   for (const who of [c.outsider, c.clerk]) {

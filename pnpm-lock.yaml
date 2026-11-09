@@ -111,6 +111,9 @@ importers:
       '@campusos/module-quizzes':
         specifier: workspace:*
         version: link:../modules/quizzes
+      '@campusos/module-reports':
+        specifier: workspace:*
+        version: link:../modules/reports
       '@campusos/module-skills':
         specifier: workspace:*
         version: link:../modules/skills
@@ -867,6 +870,37 @@ importers:
       '@types/node':
         specifier: ^24.10.1
         version: 24.13.4
+      tsx:
+        specifier: ^4.23.12
+        version: 4.23.13
+
+  packages/modules/reports:
+    dependencies:
+      '@campusos/db':
+        specifier: workspace:*
+        version: link:../../db
+      '@campusos/module-framework':
+        specifier: workspace:*
+        version: link:../../module-framework
+      '@campusos/module-notices':
+        specifier: workspace:*
+        version: link:../notices
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@types/pg@8.23.1)(pg@8.23.0)
+      hyparquet-writer:
+        specifier: 0.16.13
+        version: 0.16.13
+      zod:
+        specifier: ^4.4.3
+        version: 4.6.5
+    devDependencies:
+      '@types/node':
+        specifier: ^24.10.1
+        version: 24.13.4
+      hyparquet:
+        specifier: 1.31.5
+        version: 1.31.5
       tsx:
         specifier: ^4.23.12
         version: 4.23.13
@@ -2016,6 +2050,12 @@ packages:
   hookified@2.2.0:
     resolution: {integrity: sha512-p/LgFzRN5FeoD3DLS6bkUapeye6E4SI6yJs6KetENd18S+FBthqYq2amJUWpt5z0EQwwHemidjY5OqJGEKm5uA==}
 
+  hyparquet-writer@0.16.13:
+    resolution: {integrity: sha512-Stm309KdMGdBlIaDp4RuHuqh8X/YDTB7bXZTCezc1qmvax83RHVbwRoA4ft+BnsPIBQJkKoE86LlBsLQr1nQAw==}
+
+  hyparquet@1.31.5:
+    resolution: {integrity: sha512-KPVfaxW8xOiO2/4fjeiBfFNEXhGVw9tfcb9ha2iNZdJ3J/yBjEwIeAnTyyuhllFFTb9YO9wg0DfRAOnm6KCvBg==}
+
   ignore@5.3.2:
     resolution: {integrity: sha512-hsBTNUqQTDwkWtcdYI2i06Y/nUBEsNEDJKjWdigLvegy8kDuJAS8uRlpkkcQpyEXL0Z/pjDy5HBmMjRCJ2gq+g==}
     engines: {node: '>= 4'}
@@ -3095,6 +3135,12 @@ snapshots:
   hookified@1.15.1: {}
 
   hookified@2.2.0: {}
+
+  hyparquet-writer@0.16.13:
+    dependencies:
+      hyparquet: 1.31.5
+
+  hyparquet@1.31.5: {}
 
   ignore@5.3.2: {}
 

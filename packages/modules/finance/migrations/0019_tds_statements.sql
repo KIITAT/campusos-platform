@@ -1,7 +1,7 @@
 -- P1-05d: what the Form 140 and 144 statement files need (ACC-31).
 -- Pre-flight: none; new nullable columns and a new table. The backfill sets return codes
 -- only on the starter sections whose codes the published annexure states without a reading.
--- Rollback (a later migration, or by hand as the owner), then run finance at 0.16.0:
+-- Rollback (a later migration, or by hand as the owner), then run finance at 0.19.0:
 --   DROP TABLE finance_tds_deductor;
 --   ALTER TABLE finance_tds_sections DROP COLUMN return_code, DROP COLUMN nr_return_code, DROP COLUMN nr_remittance;
 --   ALTER TABLE finance_parties DROP COLUMN tds_status, DROP COLUMN country_code,

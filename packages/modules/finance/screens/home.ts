@@ -56,7 +56,7 @@ export const homePages: PluginPage[] = [
         {
           kind: 'chart',
           title: 'Income and expenditure, month by month',
-          type: 'bar',
+          type: 'area',
           rows: 'months',
           x: 'month',
           unit: 'money',

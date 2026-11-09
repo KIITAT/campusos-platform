@@ -10,25 +10,26 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | [Academic Core](#academic) | 0.11.0 | 7 | 42 | None |
 | [Admissions](#admissions) | 0.7.0 | 3 | 9 | academic |
 | [Alumni and events](#alumni) | 0.5.0 | 4 | 12 | None |
-| [Attendance & QR](#attendance) | 0.13.0 | 7 | 28 | academic, notices |
+| [Attendance & QR](#attendance) | 0.14.0 | 7 | 28 | academic, notices |
 | [Student Care](#care) | 0.10.0 | 7 | 24 | academic, notices |
 | [Ceremonies](#ceremonies) | 0.6.0 | 5 | 18 | academic |
-| [Sales CRM](#crm) | 0.3.0 | 4 | 32 | finance, notices |
+| [Sales CRM](#crm) | 0.4.0 | 4 | 32 | finance, notices |
 | [Enrollment](#enrollment) | 0.6.0 | 3 | 8 | academic |
 | [Examinations & Grading](#examinations) | 0.16.0 | 9 | 36 | academic, notices |
 | [Feedback](#feedback) | 0.7.0 | 8 | 19 | academic |
-| [Fees & Finance](#fees) | 0.19.0 | 10 | 39 | academic, finance, notices |
-| [Finance & Books](#finance) | 0.16.0 | 92 | 204 | None |
+| [Fees & Finance](#fees) | 0.20.0 | 10 | 39 | academic, finance, notices |
+| [Finance & Books](#finance) | 0.19.0 | 92 | 204 | None |
 | [Helpdesk and grievance](#helpdesk) | 0.5.0 | 2 | 7 | None |
 | [Hostel](#hostel) | 0.9.0 | 5 | 18 | academic |
-| [HR & Payroll](#hr) | 0.20.0 | 18 | 134 | finance, notices |
+| [HR & Payroll](#hr) | 0.21.0 | 18 | 134 | finance, notices |
 | [Library](#library) | 0.12.0 | 5 | 18 | academic |
 | [Mentoring](#mentoring) | 0.16.0 | 6 | 19 | academic, notices |
-| [Communication & Notices](#notices) | 0.12.0 | 4 | 13 | academic |
+| [Communication & Notices](#notices) | 0.13.0 | 4 | 13 | academic |
 | [Parent Portal](#parents) | 0.16.0 | 4 | 11 | academic |
 | [Placement](#placement) | 0.10.0 | 8 | 15 | academic, notices |
 | [Projects and timesheets](#projects) | 0.2.0 | 6 | 27 | finance |
 | [Quizzes](#quizzes) | 0.7.0 | 7 | 22 | academic |
+| [Reports](#reports) | 0.1.0 | 5 | 10 | notices |
 | [Skills](#skills) | 0.5.0 | 5 | 12 | None |
 | [Timetable](#timetable) | 0.8.0 | 12 | 42 | academic |
 | [Transport](#transport) | 0.4.0 | 4 | 12 | None |
@@ -1428,6 +1429,43 @@ Source: `campusos-platform/packages/modules/quizzes/`.
 ### Background jobs
 
 - `quizzes.finalise-expired`: explicitly queued; roles institution_admin, accounts_staff, super_admin.
+
+<a id="reports"></a>
+## Reports
+
+Reports built without code over the datasets other modules publish: columns, filters, groups and totals, a chart, a schedule, and a dashboard for each role. Queries read the reporting replica when one is configured. Any report exports to CSV and, for administrators, to Parquet.
+
+Module roles: `institution_admin`, `super_admin`, `hod`, `faculty`, `accounts_staff`, `library_staff`, `hostel_staff`.
+Source: `campusos-platform/packages/modules/reports/`.
+
+### Screens
+
+| Path | Page | Roles |
+|---|---|---|
+| `/m/reports` | Dashboard | institution_admin, super_admin, hod, faculty, accounts_staff, library_staff, hostel_staff |
+| `/m/reports/reports` | Reports | institution_admin, super_admin, hod, faculty, accounts_staff, library_staff, hostel_staff |
+| `/m/reports/new` | New report | institution_admin, super_admin |
+| `/m/reports/report` | Report | institution_admin, super_admin, hod, faculty, accounts_staff, library_staff, hostel_staff |
+| `/m/reports/edit` | Edit report | institution_admin, super_admin |
+
+### Operations
+
+| Method and path | Operation | Body fields / query parameters |
+|---|---|---|
+| `GET /api/v1/modules/reports/datasets` | List the datasets this institution can report on | See runtime OpenAPI schema |
+| `GET /api/v1/modules/reports/reports` | List the reports you can see | See runtime OpenAPI schema |
+| `GET /api/v1/modules/reports/reports/detail` | Read a report with its latest run | `id` (query) |
+| `POST /api/v1/modules/reports/reports` | Build a report over a dataset | `name`, `dataset`, `spec`, `viewerRoles`, `onDashboard`, `schedule` |
+| `POST /api/v1/modules/reports/reports/update` | Change a report | `name`, `dataset`, `spec`, `viewerRoles`, `onDashboard`, `schedule`, `id` |
+| `POST /api/v1/modules/reports/reports/archive` | Archive a report | `id` |
+| `POST /api/v1/modules/reports/reports/run` | Run a report now and keep the result | `id` |
+| `GET /api/v1/modules/reports/runs/csv` | Download a stored run as CSV (binary response) | `id` (query) |
+| `GET /api/v1/modules/reports/reports/parquet` | Export a report as a Parquet file (administrators) (binary response) | `id` (query) |
+| `GET /api/v1/modules/reports/dashboard` | The reports marked for your dashboard, from their latest runs | See runtime OpenAPI schema |
+
+### Background jobs
+
+- `reports.run-due`: explicitly queued; roles institution_admin, accounts_staff, super_admin.
 
 <a id="skills"></a>
 ## Skills

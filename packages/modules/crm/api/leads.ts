@@ -217,8 +217,9 @@ const rowColumns = {
 const scoreColumns = { email: leads.email, phone: leads.phone, gstin: leads.gstin, contactName: leads.contactName, source: leads.source, stageProbability: stages.probability }
 /** Adds the score and drops the columns that only fed it, so a list never carries contact data it did not before. */
 const scored = <R extends { company: string | null; kind: string; expectedValuePaise: number | null; expectedClose: string | null; priority: number; email: string | null; phone: string | null; gstin: string | null; contactName: string | null; source: string; stageProbability: number | null }>(r: R) => {
-  const { email, phone, gstin, contactName, source, stageProbability, ...rest } = r
-  return { ...rest, score: leadScore({ ...r }) }
+  const rest: Partial<R> = { ...r }
+  for (const k of Object.keys(scoreColumns)) delete rest[k as keyof R]
+  return { ...(rest as Omit<R, keyof typeof scoreColumns>), score: leadScore({ ...r }) }
 }
 const toRow = <R extends { updatedAt: Date }>(r: R) => ({ ...r, updatedAt: r.updatedAt.toISOString() })
 
@@ -237,7 +238,7 @@ export async function listLeads(actor: Actor, page: PageRequest, filter: { kind?
       .leftJoin(stages, eq(stages.id, leads.stageId)).innerJoin(users, eq(users.id, leads.ownerId))
       .where(and(visible, keyset(keys, page))).orderBy(...orderKeys(keys, page.dir)).limit(page.limit + 1)
     const [counted] = await tx.select({ total: sql<number>`count(*)::int` }).from(leads).where(visible)
-    return finishPage(rows.map(r => ({ ...scored(r), ...toRow(r) })), page, counted!.total)
+    return finishPage(rows.map(r => toRow(scored(r))), page, counted!.total)
   })
 }
 /** Open opportunities for the kanban board. */

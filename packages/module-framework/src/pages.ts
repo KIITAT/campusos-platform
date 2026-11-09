@@ -273,7 +273,7 @@ export interface PluginChart {
   kind: 'chart'
   title?: string
   note?: string
-  type: 'bar' | 'line'
+  type: 'bar' | 'line' | 'area'
   rows: string
   /** The row key along the bottom. */
   x: string
