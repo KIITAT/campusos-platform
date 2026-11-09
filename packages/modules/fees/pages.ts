@@ -285,6 +285,7 @@ export const pages: PluginPage[] = [
         paid: l.paidPaise,
         outstanding: l.outstandingPaise,
         overpaid: l.overpaidPaise,
+        notYetInvoiced: l.notYetInvoicedPaise,
         unreconciled: l.unreconciledPaise,
         refunded: l.refundedPaise,
         invoiced: !!l.invoicedAt,
@@ -336,6 +337,7 @@ export const pages: PluginPage[] = [
             value: formatPaise(Number(data.outstanding ?? 0)),
             tone: Number(data.outstanding ?? 0) > 0 ? 'due' : 'clear',
           },
+          ...(Number(data.notYetInvoiced ?? 0) > 0 ? [{ label: 'Not yet invoiced', value: formatPaise(Number(data.notYetInvoiced)) }] : []),
           ...(Number(data.overpaid ?? 0) > 0
             ? [
                 {
@@ -510,6 +512,8 @@ export const pages: PluginPage[] = [
         credited: l.creditedPaise,
         paid: l.paidPaise,
         outstanding: l.outstandingPaise,
+        overpaid: l.overpaidPaise,
+        notYetInvoiced: l.notYetInvoicedPaise,
         unreconciled: l.unreconciledPaise,
         lines: l.lines.map((line) => ({
           ...line,
@@ -549,6 +553,10 @@ export const pages: PluginPage[] = [
             value: formatPaise(Number(data.outstanding ?? 0)),
             tone: Number(data.outstanding ?? 0) > 0 ? 'due' : 'clear',
           },
+          ...(Number(data.notYetInvoiced ?? 0) > 0 ? [{ label: 'Not yet invoiced', value: formatPaise(Number(data.notYetInvoiced)) }] : []),
+          ...(Number(data.overpaid ?? 0) > 0
+            ? [{ label: 'In credit', value: formatPaise(Number(data.overpaid)), tone: 'clear' as const }]
+            : []),
         ],
       },
       ...(Number(data.unreconciled ?? 0) > 0

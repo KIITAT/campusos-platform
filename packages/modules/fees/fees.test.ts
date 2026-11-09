@@ -20,7 +20,7 @@ import {
   type Actor,
 } from './api'
 import { setSingleOfficer } from '@campusos/module-finance/api'
-import { feeItems, feePayments, feeWaivers, receiptCounters } from './schema'
+import { feeInvoices, feeItems, feePayments, feeWaivers, receiptCounters } from './schema'
 
 // The audit trail is append-only (AUD-01): a reset cannot empty it, so each
 // test reads only the rows written since its own reset.
@@ -156,6 +156,7 @@ beforeEach(async () => {
     await tx.execute(sql`select set_config('app.audit_reason', 'test reset', true)`)
     await tx.execute(sql`delete from notifications`)
     await tx.update(feePayments).set({ reconciledAt: null, reconciledBy: null })
+    await tx.delete(feeInvoices)
     await tx.delete(feePayments)
     await tx.delete(feeWaivers)
     await tx.delete(feeItems)
@@ -445,6 +446,7 @@ test('a ledger adds up: charges, waiver, part payment', async () => {
   await grantWaiver(admin(), {
     studentId: ids.s1, feeItemId: t.id, amount: '5000', reason: 'merit scholarship',
   })
+  await issueInvoices(admin(), { termId: ids.term })
   const p1 = await pay({ amount: '30000' })
   await reconcilePayment(clerk(), { paymentId: p1.id, reason: 'cleared on 12 Jan' })
   await pay({ amount: '10000', method: 'cheque' })
@@ -463,6 +465,7 @@ test('a ledger adds up: charges, waiver, part payment', async () => {
 test('a student is only charged for their own program', async () => {
   await tuition({ amount: '45000' })
   await tuition({ programId: ids.prog2, label: 'Tuition', amount: '90000' })
+  await issueInvoices(admin(), { termId: ids.term })
 
   const btech = await studentLedger(clerk(), ids.s1, ids.term)
   const mtech = await studentLedger(clerk(), ids.s3, ids.term)
@@ -472,6 +475,7 @@ test('a student is only charged for their own program', async () => {
 
 test('an overpayment is a credit, not negative dues', async () => {
   await tuition({ amount: '45000' })
+  await issueInvoices(admin(), { termId: ids.term })
   const p = await pay({ amount: '50000' })
   await reconcilePayment(clerk(), { paymentId: p.id, reason: 'paid full year in advance' })
   const l = await studentLedger(clerk(), ids.s1, ids.term)

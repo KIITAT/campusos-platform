@@ -18,6 +18,7 @@ import {
   createFeeItem,
   createScholarship,
   listAwards,
+  issueInvoices,
   listDropCredits,
   prorateDrops,
   recordPayment,
@@ -430,6 +431,7 @@ test('an award withdrawn is reversed, kept, and not un-withdrawn', async () => {
 test('aid reduces what the student is asked for, not only what the ledger says', async () => {
   const c = await campus()
   await charges(c)
+  await issueInvoices(c.admin, { termId: c.termId })
   const rule = await createScholarship(c.admin, {
     code: 'MERIT',
     name: 'Merit',
@@ -456,6 +458,7 @@ test('aid reduces what the student is asked for, not only what the ledger says',
 test('a course dropped inside the window comes back at the bracket that covers it', async () => {
   const c = await campus()
   await charges(c)
+  await issueInvoices(c.admin, { termId: c.termId })
   const one = await takes(c, c.a, 4, 'Algorithms')
   await takes(c, c.a, 4, 'Databases')
   await setRefundRules(c.admin, {
@@ -588,6 +591,7 @@ test('without registrations there is nothing to prorate, and it says so', async 
 test('a student who already paid ends up in credit, which is a refund to make', async () => {
   const c = await campus()
   await charges(c)
+  await issueInvoices(c.admin, { termId: c.termId })
   const one = await takes(c, c.a, 4, 'Algorithms')
   await takes(c, c.a, 4, 'Databases')
   await recordPayment(c.admin, {

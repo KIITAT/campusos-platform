@@ -143,7 +143,11 @@ export const studentLedgerSchema = z
     refundedPaise: z.number().int(),
     unreconciledPaise: z.number().int(),
     outstandingPaise: z.number().int(),
+    /** Payable less paid; negative when the student is in credit. */
+    balancePaise: z.number().int(),
     overpaidPaise: z.number().int(),
+    /** On today's price list for the term and not yet issued: not owed until it is. */
+    notYetInvoicedPaise: z.number().int(),
     /** Null until the term's charges have been issued to this student. */
     invoicedAt: z.string().nullable(),
   })

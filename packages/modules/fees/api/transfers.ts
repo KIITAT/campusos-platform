@@ -444,14 +444,17 @@ export async function issueDemandLetter(actor: Actor, input: unknown) {
         ...ledger.lines.filter((l) => l.waivedPaise > 0).map((l) => ({ label: `Waived: ${l.label}`, amountPaise: l.waivedPaise })),
         ...(ledger.creditedPaise > 0 ? [{ label: 'Scholarships and credits', amountPaise: ledger.creditedPaise }] : []),
       ]
+      const chargedPaise = ledger.lines.reduce((n, l) => n + l.chargedPaise, 0)
+      const deductedPaise = deductions.reduce((n, d) => n + d.amountPaise, 0)
+      const payablePaise = Math.max(0, chargedPaise - deductedPaise)
       const content: DemandLetterContent = {
         lines: ledger.lines.map((l) => ({ label: l.label, amountPaise: l.chargedPaise })),
         deductions,
-        chargedPaise: ledger.chargedPaise,
-        deductedPaise: ledger.waivedPaise + ledger.creditedPaise,
-        payablePaise: ledger.payablePaise,
+        chargedPaise,
+        deductedPaise,
+        payablePaise,
         paidPaise: ledger.paidPaise,
-        balancePaise: ledger.outstandingPaise,
+        balancePaise: Math.max(0, payablePaise - ledger.paidPaise),
         student: {
           name: ledger.studentName ?? ledger.studentEmail ?? studentId,
           rollNo: profile?.rollNo ?? null,

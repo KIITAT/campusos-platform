@@ -26,6 +26,7 @@ import {
   type StudentLedger,
 } from './schemas'
 import { ledger, overpaidPaise, type LedgerLine } from './ledger'
+import { postedOf, postedSql } from './books'
 import { postInvoice, postPayment, postRefund, postWaiverChange } from './posting'
 import { duesRoster, enrolledPrograms, notEnrolled, termRoster } from './enrolment'
 import { checkOtherPerson } from '@campusos/module-finance/api'
@@ -936,15 +937,13 @@ export async function studentLedger(
       .from(feePayments)
       .where(and(eq(feePayments.studentId, studentId), eq(feePayments.termId, termId)))
       .orderBy(asc(feePayments.receivedAt))
-    const refunds = await refundsFor(tx, studentId, termId)
     const invoice = await invoiceFor(tx, studentId, termId)
 
-    const lines: LedgerLine[] = charges.map((c) => ({
-      label: c.label,
-      chargedPaise: c.chargedPaise,
-      waivedPaise: c.waivedPaise ?? 0,
-    }))
-    const l = ledger(lines, payments, refunds, await creditsFor(tx, studentId, termId))
+    const [row] = (await tx.execute(sql`select * from (${postedSql({ termId, studentId })}) p`)).rows
+    const p = postedOf(row as Record<string, unknown> | undefined)
+    const listed = charges.reduce((n, c) => n + c.chargedPaise, 0)
+    const unposted = charges.reduce((n, c) => n + Math.max(0, (c.waivedPaise ?? 0) - (c.postedPaise ?? 0)), 0)
+    const payablePaise = p.invoicedPaise - p.waivedPaise - p.creditedPaise
 
     return {
       studentId,
@@ -969,15 +968,17 @@ export async function studentLedger(
         receivedAt: p.receivedAt.toISOString(),
         reconciledAt: p.reconciledAt?.toISOString() ?? null,
       })),
-      chargedPaise: l.chargedPaise,
-      waivedPaise: l.waivedPaise,
-      creditedPaise: l.creditedPaise,
-      payablePaise: l.payablePaise,
-      paidPaise: l.paidPaise,
-      refundedPaise: l.refundedPaise,
-      unreconciledPaise: l.unreconciledPaise,
-      outstandingPaise: l.outstandingPaise,
-      overpaidPaise: overpaidPaise(l),
+      chargedPaise: p.invoicedPaise,
+      waivedPaise: p.waivedPaise,
+      creditedPaise: p.creditedPaise,
+      payablePaise,
+      paidPaise: p.paidPaise - p.refundedPaise,
+      refundedPaise: p.refundedPaise,
+      unreconciledPaise: p.unreconciledPaise,
+      balancePaise: p.balancePaise,
+      outstandingPaise: Math.max(0, p.balancePaise),
+      overpaidPaise: Math.max(0, -p.balancePaise),
+      notYetInvoicedPaise: Math.max(0, listed - unposted - p.invoicedPaise),
       invoicedAt: invoice?.issuedAt.toISOString() ?? null,
     }
   })

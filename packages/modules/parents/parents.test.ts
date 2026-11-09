@@ -297,6 +297,7 @@ test('enabling a module makes its section appear, and only that one', async () =
     label: 'Tuition',
     amount: '45000',
   })
+  await fees.issueInvoices(admin(), { termId })
 
   const view = await childOverview(parent(ids.p1), ids.s1)
   assert.deepEqual(view.sections, ['fees'])
@@ -310,6 +311,7 @@ test('the figures a parent sees are the ones the office computes', async () => {
   await setModule('fees', true)
   const programId = (await academic.listStructure(admin())).programs[0]!.id
   await fees.createFeeItem(admin(), { programId, termId, label: 'Hostel', amount: '25000' })
+  await fees.issueInvoices(admin(), { termId })
 
   const view = await childOverview(parent(ids.p1), ids.s1)
   const office = await fees.studentLedger(admin(), ids.s1, termId)
