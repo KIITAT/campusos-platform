@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts", "./schema": "./src/schema.ts", "./jobs": "./src/jobs.ts", "./readiness": "./src/readiness.ts", "./sensitive-reads": "./src/sensitive-reads.ts", "./retention": "./src/retention.ts" },
+  "exports": { ".": "./src/index.ts", "./schema": "./src/schema.ts", "./jobs": "./src/jobs.ts", "./readiness": "./src/readiness.ts", "./sensitive-reads": "./src/sensitive-reads.ts", "./retention": "./src/retention.ts", "./replica": "./src/replica.ts" },
   "scripts": {
     "seed": "tsx src/seed.ts",
     "test": "node --import tsx --test --test-concurrency=1 --experimental-test-coverage --test-coverage-include=\"src/**/*.ts\" --test-coverage-exclude=\"src/**/*.test.ts\" --test-coverage-lines=94 \"src/**/*.test.ts\"",

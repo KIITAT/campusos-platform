@@ -40,6 +40,7 @@
     "@campusos/module-placement": "workspace:*",
     "@campusos/module-projects": "workspace:*",
     "@campusos/module-quizzes": "workspace:*",
+    "@campusos/module-reports": "workspace:*",
     "@campusos/module-skills": "workspace:*",
     "@campusos/module-timetable": "workspace:*",
     "@campusos/module-transport": "workspace:*",

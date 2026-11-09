@@ -250,7 +250,7 @@ GET /api/v1/modules/feedback/give                                        .......
 POST /api/v1/modules/feedback/give                                       .......s.. op
 GET /api/v1/modules/feedback/completion                                  SIHF...s.. gate
 
-## fees 0.19.0
+## fees 0.20.0
 GET /api/v1/modules/fees/bank-accounts                                   SI..A..s.. gate
 POST /api/v1/modules/fees/bank-accounts                                  SI........ op
 POST /api/v1/modules/fees/bank-accounts/retire                           SI........ op
@@ -291,7 +291,7 @@ GET /api/v1/modules/fees/ledger                                          SIH.A..
 GET /api/v1/modules/fees/dues                                            SI..A..... gate
 GET /api/v1/modules/fees/receipt.pdf                                     SI..A..s.. gate
 
-## finance 0.17.0
+## finance 0.18.0
 GET /api/v1/modules/finance/accounts                                     SI..A..... op
 POST /api/v1/modules/finance/accounts                                    SI........ op
 POST /api/v1/modules/finance/accounts/update                             SI........ op
@@ -526,7 +526,7 @@ GET /api/v1/modules/hostel/imports                                       SI....O
 GET /api/v1/modules/hostel/imports/template                              SI....O... gate
 POST /api/v1/modules/hostel/imports/run                                  SI....O... gate
 
-## hr 0.20.0
+## hr 0.21.0
 GET /api/v1/modules/hr/staff                                             SI..A..... op
 POST /api/v1/modules/hr/staff                                            SI........ op
 POST /api/v1/modules/hr/staff/end                                        SI........ op
@@ -703,7 +703,7 @@ GET /api/v1/modules/mentoring/imports                                    SIH....
 GET /api/v1/modules/mentoring/imports/template                           SIH....... gate
 POST /api/v1/modules/mentoring/imports/run                               SIH....... gate
 
-## notices 0.12.0
+## notices 0.13.0
 GET /api/v1/modules/notices/board                                        SIHFALOsp. gate
 POST /api/v1/modules/notices/board                                       SIHFALO... op
 POST /api/v1/modules/notices/board/publish                               SIHFALO... op
@@ -800,6 +800,18 @@ POST /api/v1/modules/quizzes/attempts/answers                            .......
 POST /api/v1/modules/quizzes/attempts/submit                             .......s.. op
 GET /api/v1/modules/quizzes/attempt                                      SIHF...s.. gate
 POST /api/v1/modules/quizzes/responses/override                          SIHF...... op
+
+## reports 0.1.0
+GET /api/v1/modules/reports/datasets                                     SI........ op
+GET /api/v1/modules/reports/reports                                      SIHFALO... op
+GET /api/v1/modules/reports/reports/detail                               SIHFALO... op
+POST /api/v1/modules/reports/reports                                     SI........ op
+POST /api/v1/modules/reports/reports/update                              SI........ op
+POST /api/v1/modules/reports/reports/archive                             SI........ op
+POST /api/v1/modules/reports/reports/run                                 SIHFALO... op
+GET /api/v1/modules/reports/runs/csv                                     SIHFALO... op
+GET /api/v1/modules/reports/reports/parquet                              SI........ op
+GET /api/v1/modules/reports/dashboard                                    SIHFALO... op
 
 ## skills 0.5.0
 GET /api/v1/modules/skills/frameworks                                    SIHF...... op
