@@ -8,7 +8,7 @@ import { runInto } from './runs'
 import { nextRunAt, type Schedule } from './schedule'
 import { reports, type Report } from '../schema'
 
-/** Who hears that a scheduled run finished: the report's viewer roles and its creator, once each (decision 445). */
+/** Who hears that a scheduled run finished: the report's viewer roles and its creator, once each (decision 497). */
 async function recipients(tx: Tx, institutionId: string, report: Report): Promise<string[]> {
   const viewers = report.viewerRoles.length === 0
     ? []

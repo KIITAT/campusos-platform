@@ -3,7 +3,7 @@ import { sql } from 'drizzle-orm'
 import type { ReadTx } from '@campusos/db/replica'
 import { ROLES, STAFF, type Role } from '@campusos/module-framework'
 
-/** Datasets are security_invoker views in schema `reporting`, described by JSON comments (decision 436). */
+/** Datasets are security_invoker views in schema `reporting`, described by JSON comments (decision 488). */
 export const KINDS = ['text', 'number', 'money', 'date', 'bool'] as const
 export type Kind = (typeof KINDS)[number]
 

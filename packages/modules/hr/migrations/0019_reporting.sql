@@ -1,4 +1,4 @@
--- P2-05: hr publishes its staff list as a reporting dataset (MG-57, decisions 436, 437).
+-- P2-05: hr publishes its staff list as a reporting dataset (MG-57, decisions 488, 489).
 -- No contact data, identifiers, bank details or pay: those stay in hr's own screens.
 -- Pre-flight: none. Adds only.
 -- Rollback: DROP VIEW IF EXISTS reporting.hr_staff;

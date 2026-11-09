@@ -1,4 +1,4 @@
--- P2-05: finance publishes its sales invoices as a reporting dataset (MG-57, decisions 436, 437).
+-- P2-05: finance publishes its sales invoices as a reporting dataset (MG-57, decisions 488, 489).
 -- Pre-flight: none (a view over existing tables). Adds only.
 -- Rollback: DROP VIEW IF EXISTS reporting.finance_sales_invoices;
 CREATE SCHEMA IF NOT EXISTS reporting;

@@ -270,7 +270,7 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   projects_projects: 'export',
   projects_tasks: 'export',
   projects_timesheets: 'export',
-  // reports (P2-05): definitions kept, stored results excluded and purged after 90 days (decision 443).
+  // reports (P2-05): definitions kept, stored results excluded and purged after 90 days (decision 495).
   reports_reports: 'export',
   reports_runs: 'exclude',
 

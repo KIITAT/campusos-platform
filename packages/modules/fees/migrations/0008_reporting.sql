@@ -1,4 +1,4 @@
--- P2-05: fees publishes its payments as a reporting dataset (MG-57, decisions 436, 437).
+-- P2-05: fees publishes its payments as a reporting dataset (MG-57, decisions 488, 489).
 -- Pre-flight: none. Adds only.
 -- Rollback: DROP VIEW IF EXISTS reporting.fees_payments;
 CREATE SCHEMA IF NOT EXISTS reporting;

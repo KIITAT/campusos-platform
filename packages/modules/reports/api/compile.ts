@@ -5,7 +5,7 @@ import { badReport } from './errors'
 import { DEFAULT_LIMIT, MAX_ROWS } from './limits'
 import type { Dataset, Kind } from './catalog'
 
-/** The report definition and its SQL compiler (decisions 439 to 441). Identifiers come from the catalog; values are binds. */
+/** The report definition and its SQL compiler (decisions 491 to 493). Identifiers come from the catalog; values are binds. */
 
 const OPS = ['eq', 'ne', 'contains', 'empty', 'not_empty', 'lt', 'le', 'gt', 'ge', 'is_true', 'is_false'] as const
 const FNS = ['count', 'sum', 'avg', 'min', 'max'] as const

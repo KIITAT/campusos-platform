@@ -1,4 +1,4 @@
--- P2-05: report definitions and their stored runs (MG-57, decisions 435-453).
+-- P2-05: report definitions and their stored runs (MG-57, decisions 487-505).
 -- Pre-flight: core 0012 (dpdp_subject) and 0016 (dpdp_retention). New tables only: no existing data.
 -- Rollback:
 --   DROP FUNCTION IF EXISTS dpdp_retention.purge_reports(uuid);
@@ -87,7 +87,7 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE n integer;
 BEGIN
-  -- A stored run is a cache that may name the person: drop the institution's runs; the next run rebuilds them (decision 443).
+  -- A stored run is a cache that may name the person: drop the institution's runs; the next run rebuilds them (decision 495).
   DELETE FROM reports_runs r USING users u WHERE u.id = who AND r.institution_id = u.institution_id;
   GET DIAGNOSTICS n = ROW_COUNT;
   RETURN jsonb_build_object('reports_runs', n);

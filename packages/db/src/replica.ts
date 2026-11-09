@@ -5,7 +5,7 @@ import { corePool } from './client'
 import * as schema from './schema'
 
 /**
- * Report reads (P2-05, decision 438). The host publishes a second pool on the reporting replica
+ * Report reads (P2-05, decision 490). The host publishes a second pool on the reporting replica
  * (REPORTS_DATABASE_URL, the campusos_app role); a plugin's copy of this file finds it here.
  * Without one, reads go to the primary. Either way the transaction is read-only and short.
  */

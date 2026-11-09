@@ -1,4 +1,4 @@
-/** A refusal the page can show; shaped like PluginError (status and code), decision 448. */
+/** A refusal the page can show; shaped like PluginError (status and code), decision 500. */
 export class ReportsError extends Error {
   constructor(readonly status: 400 | 403 | 404 | 409, readonly code: string, message: string) { super(message) }
 }

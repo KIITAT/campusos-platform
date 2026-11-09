@@ -2,7 +2,7 @@ export type Schedule = 'none' | 'daily' | 'weekly' | 'monthly'
 const IST = 330 * 60_000
 const at = (y: number, m: number, d: number) => new Date(Date.UTC(y, m, d, 7, 0) - IST)
 
-/** The next 07:00 Asia/Kolkata strictly after `after` (decision 444). India keeps no daylight saving. */
+/** The next 07:00 Asia/Kolkata strictly after `after` (decision 496). India keeps no daylight saving. */
 export function nextRunAt(schedule: Schedule, after: Date): Date | null {
   if (schedule === 'none') return null
   const ist = new Date(after.getTime() + IST)

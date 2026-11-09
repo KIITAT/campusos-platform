@@ -42,7 +42,7 @@ export async function execRows(tx: ReadTx, query: ReturnType<typeof sql>, column
 const timedOut = (e: unknown) => (e as { code?: string }).code === '57014' || (e as { cause?: { code?: string } }).cause?.code === '57014'
 
 /**
- * Read the report's data on the report pool, in a read-only transaction (decision 438). Throws ReportsError.
+ * Read the report's data on the report pool, in a read-only transaction (decision 490). Throws ReportsError.
  * `within` is a job's transaction: with no report pool, the read runs in a savepoint of it rather than on a
  * second primary connection, because a job handler gets one connection of the worker's five (decision 469;
  * review P2-05 HIGH-2). That path is not read-only; the compiled query is a select over `reporting` views.
@@ -81,7 +81,7 @@ const FAILED = new Set(['report_stale', 'report_timeout', 'dataset_unavailable']
 
 /**
  * Run a report and store the result in `tx` (the primary). A manual run that fails throws; a scheduled run
- * stores a failed run and returns it, so the job can go on (decision 444).
+ * stores a failed run and returns it, so the job can go on (decision 496).
  */
 export async function runInto(tx: Tx, institutionId: string, report: Report, trigger: 'manual' | 'schedule', runBy: string | null): Promise<RunResult> {
   const startedAt = new Date()

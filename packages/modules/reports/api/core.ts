@@ -8,7 +8,7 @@ export type Actor = PluginActor
 export type Tx = Parameters<Parameters<typeof withTenant>[1]>[0]
 export { ADMIN, STAFF }
 
-/** The role check every operation starts with (decision 442); returns the institution. */
+/** The role check every operation starts with (decision 494); returns the institution. */
 export function tenant(actor: Actor, roles: readonly Role[]): string {
   if (!actor.institutionId || !roles.includes(actor.role)) throw notPermitted()
   return actor.institutionId
@@ -27,7 +27,7 @@ export async function loadReport(tx: Tx, institutionId: string, id: string, lock
   return r
 }
 
-/** Administrators see every report; others the ones shared with their role (decision 442). */
+/** Administrators see every report; others the ones shared with their role (decision 494). */
 export function mustView(actor: Actor, report: Report): void {
   if (!isAdmin(actor) && !report.viewerRoles.includes(actor.role)) throw notAViewer()
 }

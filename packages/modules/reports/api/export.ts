@@ -13,7 +13,7 @@ import { istToday } from './schedule'
 import { execRows, type Row } from './runs'
 import { runs } from '../schema'
 
-/** A cell a spreadsheet would run as a formula is made text (decision 446). */
+/** A cell a spreadsheet would run as a formula is made text (decision 498). */
 export const safeCell = (s: string) => (/^[=+\-@\t\r]/.test(s) ? "'" + s : s)
 
 /** Paise as rupees with two decimals, by integer arithmetic. */
@@ -51,7 +51,7 @@ export async function runCsv(actor: Actor, input: unknown): Promise<Response> {
   })
 }
 
-/** The report's rows with no page limit but a cap; more than the cap is refused (decision 446). */
+/** The report's rows with no page limit but a cap; more than the cap is refused (decision 498). */
 export async function parquetRows(tx: ReadTx, ds: Dataset, spec: Spec, today: string, cap: number) {
   const { query, columns } = compile(spec, ds, today, { cap })
   const rows = await execRows(tx, query, columns)

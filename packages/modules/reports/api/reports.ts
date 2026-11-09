@@ -141,7 +141,7 @@ export interface DashboardItem {
   runAt: Date | null
 }
 
-/** The reader's dashboard: each shared report marked for it, from its latest good run (decision 445). */
+/** The reader's dashboard: each shared report marked for it, from its latest good run (decision 497). */
 export async function dashboard(actor: Actor): Promise<DashboardItem[]> {
   const institutionId = tenant(actor, STAFF)
   const admin = isAdmin(actor)

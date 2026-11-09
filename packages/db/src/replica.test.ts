@@ -5,7 +5,7 @@ import { authDb } from './client'
 import { institutions } from './schema'
 import { publishReportPool, readFacts, withTenantRead } from './replica'
 
-/** Read-only tenant reads on an optional report pool (P2-05, decision 438). */
+/** Read-only tenant reads on an optional report pool (P2-05, decision 490). */
 
 let inst: string
 
