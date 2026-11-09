@@ -5,6 +5,7 @@ import {
   index,
   integer,
   pgTable,
+  smallint,
   text,
   timestamp,
   uniqueIndex,
@@ -59,6 +60,11 @@ export const parties = pgTable(
     bankName: text('bank_name'),
     bankAccount: text('bank_account'),
     ifsc: text(),
+    /** For Form 144 (P1-05d): the payee's status (Annexure 8, 1 to 10) and country (Annexure 10). */
+    tdsStatus: smallint('tds_status'),
+    countryCode: text('country_code'),
+    foreignTaxId: text('foreign_tax_id'),
+    foreignAddress: text('foreign_address'),
     archivedAt: timestamp('archived_at', { withTimezone: true }),
     createdAt: createdAt(),
   },
@@ -81,6 +87,9 @@ export const parties = pgTable(
     check('finance_parties_currency', sql`currency is null or currency ~ '^[A-Z]{3}$'`),
     check('finance_parties_terms', sql`payment_terms_days between 0 and 3650`),
     check('finance_parties_ifsc', sql`ifsc is null or ifsc ~ '^[A-Z]{4}0[A-Z0-9]{6}$'`),
+    check('finance_parties_tds_status', sql`tds_status is null or tds_status between 1 and 10`),
+    check('finance_parties_country_code', sql`country_code is null or country_code ~ '^[0-9]{2,3}$'`),
+    check('finance_parties_foreign_lengths', sql`coalesce(length(foreign_tax_id), 0) <= 25 and coalesce(length(foreign_address), 0) <= 150`),
     tenantPolicy('finance_parties'),
   ],
 )
@@ -175,10 +184,18 @@ export const tdsSections = pgTable(
     payableAccountId: uuid('payable_account_id').references(() => accounts.id, {
       onDelete: 'restrict',
     }),
+    /** The section's code in a Form 140 statement (Annexure 2), and in a Form 144 one (P1-05d). */
+    returnCode: text('return_code'),
+    nrReturnCode: text('nr_return_code'),
+    /** Form 144's nature of remittance (Annexure 9) for this section, where the annexure asks for one. */
+    nrRemittance: text('nr_remittance'),
     archivedAt: timestamp('archived_at', { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
+    check('finance_tds_sections_return_code', sql`return_code is null or return_code ~ '^[0-9]{4}$'`),
+    check('finance_tds_sections_nr_remittance', sql`nr_remittance is null or nr_remittance ~ '^[0-9]{2}$'`),
+    check('finance_tds_sections_nr_return_code', sql`nr_return_code is null or nr_return_code ~ '^[0-9]{4}$'`),
     uniqueIndex('finance_tds_sections_code').on(t.institutionId, t.code),
     check('finance_tds_sections_rate', sql`rate_bp between 0 and 10000 and rate_no_pan_bp between 0 and 10000`),
     check(

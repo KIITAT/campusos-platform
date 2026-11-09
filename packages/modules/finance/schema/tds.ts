@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm'
 import { check, date, index, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
-import { tenantPolicy } from '@campusos/db'
+import { institutions, tenantPolicy } from '@campusos/db'
 import { createdAt, paise, pk, tenantId } from './common'
 import { invoices, payments } from './documents'
 import { accounts, entries } from './ledger'
@@ -69,5 +69,56 @@ export const tdsChallanLinks = pgTable(
     check('finance_tds_challan_links_one', sql`(invoice_id is null) <> (payment_id is null)`),
     check('finance_tds_challan_links_amount', sql`tds_paise <> 0`),
     tenantPolicy('finance_tds_challan_links'),
+  ],
+)
+
+/**
+ * Who files the institution's TDS statements (P1-05d, ACC-31): the batch header
+ * of a Form 140 or 144 file. State codes are the return's (Annexure 1), not GST's.
+ */
+export const tdsDeductor = pgTable(
+  'finance_tds_deductor',
+  {
+    institutionId: uuid('institution_id')
+      .primaryKey()
+      .references(() => institutions.id, { onDelete: 'cascade' }),
+    deductorType: text('deductor_type').notNull(),
+    address1: text().notNull(),
+    address2: text(),
+    address3: text(),
+    address4: text(),
+    address5: text(),
+    country: text().notNull().default('INDIA'),
+    stateCode: text('state_code').notNull(),
+    pincode: text().notNull(),
+    email: text().notNull(),
+    phoneCountry: text('phone_country').notNull().default('91'),
+    phone: text().notNull(),
+    responsibleName: text('responsible_name').notNull(),
+    responsibleDesignation: text('responsible_designation').notNull(),
+    responsiblePan: text('responsible_pan').notNull(),
+    responsibleAddress1: text('responsible_address1').notNull(),
+    responsibleAddress2: text('responsible_address2'),
+    responsibleAddress3: text('responsible_address3'),
+    responsibleAddress4: text('responsible_address4'),
+    responsibleAddress5: text('responsible_address5'),
+    responsibleCountry: text('responsible_country').notNull().default('INDIA'),
+    responsibleStateCode: text('responsible_state_code').notNull(),
+    responsiblePincode: text('responsible_pincode').notNull(),
+    responsibleEmail: text('responsible_email').notNull(),
+    responsiblePhoneCountry: text('responsible_phone_country').notNull().default('91'),
+    responsiblePhone: text('responsible_phone').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  () => [
+    check('finance_tds_deductor_type', sql`deductor_type in ('A','S','D','E','G','H','L','N','K','M','P','T','J','B','Q','F')`),
+    check('finance_tds_deductor_states', sql`state_code ~ '^[0-9]{2}$' and responsible_state_code ~ '^[0-9]{2}$'`),
+    check('finance_tds_deductor_pins', sql`pincode ~ '^[1-9][0-9]{5}$' and responsible_pincode ~ '^[1-9][0-9]{5}$'`),
+    check(
+      'finance_tds_deductor_phones',
+      sql`phone ~ '^[0-9]{6,10}$' and responsible_phone ~ '^[0-9]{6,10}$' and phone_country ~ '^[0-9]{1,5}$' and responsible_phone_country ~ '^[0-9]{1,5}$'`,
+    ),
+    check('finance_tds_deductor_pan', sql`responsible_pan ~ '^[A-Z]{5}[0-9]{4}[A-Z]$'`),
+    tenantPolicy('finance_tds_deductor'),
   ],
 )
