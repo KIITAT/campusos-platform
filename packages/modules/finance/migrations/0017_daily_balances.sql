@@ -3,8 +3,11 @@
 -- every insert of journal lines adds that statement's sums. The reports read these
 -- rows instead of every line. The journal stays the record: finance_rebuild_daily_balances
 -- recomputes a tenant's rows from it.
--- Pre-flight: none. A new table; nothing existing is refused. The backfill reads every
--- line once (about a minute at 11M lines); postings wait for this file's transaction.
+-- Pre-flight: none. A new table; nothing existing is refused. The backfill is one
+-- statement over every tenant: it reads the journal once (about 3 minutes at 10M lines,
+-- measured), with the statement timeout lifted for this transaction, since the installer
+-- runs migrations on the auth pool, whose limit is 30 s (NEW-80, edited in place before
+-- any production hub ran it). Postings wait for this file's transaction.
 -- Rollback (a later migration, or by hand as the owner), then run finance at its previous version:
 --   DROP TRIGGER finance_lines_balances ON finance_journal_lines;
 --   DROP FUNCTION finance_lines_into_balances();
@@ -69,5 +72,12 @@ BEGIN
 END $$;--> statement-breakpoint
 REVOKE ALL ON FUNCTION finance_rebuild_daily_balances(uuid) FROM PUBLIC;--> statement-breakpoint
 
-SELECT finance_rebuild_daily_balances(t.institution_id)
-  FROM (SELECT DISTINCT institution_id FROM finance_journal_entries) t;
+SET LOCAL statement_timeout = 0;--> statement-breakpoint
+INSERT INTO finance_daily_balances
+       (institution_id, account_id, posting_date, fund_id, cost_center, closing, debit_paise, credit_paise)
+SELECT l.institution_id, l.account_id, e.posting_date, l.fund_id, l.cost_center,
+       (e.source_ref LIKE 'year-close:%' OR EXISTS (
+          SELECT 1 FROM finance_journal_entries c WHERE c.id = e.reversal_of AND c.source_ref LIKE 'year-close:%')),
+       sum(l.debit_paise), sum(l.credit_paise)
+  FROM finance_journal_lines l JOIN finance_journal_entries e ON e.id = l.entry_id
+ GROUP BY 1, 2, 3, 4, 5, 6;
