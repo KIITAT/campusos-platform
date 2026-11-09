@@ -1,12 +1,22 @@
 import { and, asc, eq, inArray, isNull, notLike, sql } from 'drizzle-orm'
 import { audit, auditLog, users, withIdempotencyKey, withTenant } from '@campusos/db'
-import { assertCanAccessStudent, viewsOnBehalf, type Role, type ViewerScope } from '@campusos/module-framework'
+import {
+  assertCanAccessStudent,
+  cursorColumn,
+  finishPage,
+  keyset,
+  orderKeys,
+  readPage,
+  searchAny,
+  viewsOnBehalf,
+  type Role,
+  type SortSpec,
+  type ViewerScope,
+} from '@campusos/module-framework'
 import { programs, terms } from '@campusos/module-academic/schema'
 import {
-  dropCredits,
   feeIdempotencyKeys,
   feeInvoices,
-  scholarshipAwards,
   feeItems,
   feePayments,
   feeRefunds,
@@ -25,15 +35,15 @@ import {
   type DuesReport,
   type StudentLedger,
 } from './schemas'
-import { ledger, overpaidPaise, type LedgerLine } from './ledger'
+import { postedOf, postedSql, receivableReport } from './books'
 import { postInvoice, postPayment, postRefund, postWaiverChange } from './posting'
-import { duesRoster, enrolledPrograms, notEnrolled, termRoster } from './enrolment'
+import { enrolledPrograms, notEnrolled, priceListSql, termRoster } from './enrolment'
 import { checkOtherPerson } from '@campusos/module-finance/api'
 import { notify } from '@campusos/module-notices/api'
 
-const rupees = (p: number) => '₹' + (p / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-
 const MODULE = 'fees'
+
+const rupees = (p: number) => '₹' + (p / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 /**
  * Methods whose reference names one transfer in the whole banking system -- a
@@ -493,6 +503,18 @@ export async function recordPaymentWithin(tx: Tx, tenant: string, actor: Actor, 
   return row!
 }
 
+/** Students per transaction when a term is issued (REL-09, decision 528). */
+export const ISSUE_CHUNK = 500
+
+interface IssuedInvoice {
+  studentId: string
+  studentName: string | null
+  invoiceId: string
+  version: number
+  chargedPaise: number
+  waivedPaise: number
+}
+
 /**
  * Issue a term's charges, turning a price list into money owed.
  *
@@ -509,135 +531,180 @@ export async function issueInvoices(actor: Actor, input: unknown) {
   const tenant = requireAdmin(actor)
   const data = issueInvoicesSchema.parse(input)
 
-  return withTenant(tenant, async (tx) => {
+  // Enrolled in the term, by programme declaration (ACC-19): not every
+  // section member, who may have left, or be there for an elective.
+  const { term, roster } = await withTenant(tenant, async (tx) => {
     const [term] = await tx
       .select({ code: terms.code })
       .from(terms)
       .where(eq(terms.id, data.termId))
     if (!term) throw new FeeError(404, 'no_such_term', 'no such term')
-
-    // Enrolled in the term, by programme declaration (ACC-19): not every
-    // section member, who may have left, or be there for an elective.
-    const roster = await termRoster(tx, data.termId, data.studentId)
-
-    const issued = []
-    let unchanged = 0
-
-    for (const s of roster) {
-      // ponytail: a pair of queries per student, like duesReport. Fine for a
-      // few hundred; fold into grouped queries if a roster reaches thousands.
-      const charges = await chargesFor(tx, s.studentId, data.termId)
-      const chargedPaise = charges.reduce((n, c) => n + c.chargedPaise, 0)
-      if (chargedPaise === 0) continue
-
-      const invoice = await invoiceFor(tx, s.studentId, data.termId)
-      const delta = chargedPaise - (invoice?.chargedPaise ?? 0)
-      if (delta <= 0) {
-        unchanged++
-        continue
-      }
-
-      // Waivers the books have not been told about: everything granted before
-      // this student was ever invoiced, plus anything against a charge added
-      // since. Both ride along in this entry.
-      const fresh = charges.filter(
-        (c) => c.waiverId && (c.waivedPaise ?? 0) > (c.postedPaise ?? 0),
-      )
-      const waivedPaise = fresh.reduce(
-        (n, c) => n + ((c.waivedPaise ?? 0) - (c.postedPaise ?? 0)),
-        0,
-      )
-
-      const version = (invoice?.version ?? 0) + 1
-      const id =
-        invoice?.id ??
-        (
-          await tx
-            .insert(feeInvoices)
-            .values({
-              institutionId: tenant,
-              studentId: s.studentId,
-              termId: data.termId,
-              chargedPaise,
-              issuedBy: actor.id,
-            })
-            .returning({ id: feeInvoices.id })
-        )[0]!.id
-
-      if (invoice) {
-        await tx
-          .update(feeInvoices)
-          .set({ chargedPaise, version })
-          .where(eq(feeInvoices.id, invoice.id))
-      }
-
-      await postInvoice(tx, tenant, actor.id, {
-        id,
-        version,
-        studentName: s.studentName,
-        termCode: term.code,
-        chargedPaise: delta,
-        waivedPaise,
-      })
-
-      if (fresh.length > 0) {
-        await tx
-          .update(feeWaivers)
-          .set({ postedPaise: sql`${feeWaivers.amountPaise}` })
-          .where(
-            inArray(
-              feeWaivers.id,
-              fresh.map((c) => c.waiverId!),
-            ),
-          )
-      }
-
-      // The student's own charges are in the books now: from here they are
-      // waived or refunded, not cancelled.
-      const own = charges.map((c) => c.studentChargeId).filter((id): id is string => id !== null)
-      if (own.length > 0) {
-        await tx
-          .update(studentCharges)
-          .set({ invoicedAt: new Date() })
-          .where(and(inArray(studentCharges.id, own), isNull(studentCharges.invoicedAt)))
-      }
-
-      issued.push({
-        studentId: s.studentId,
-        studentName: s.studentName,
-        invoiceId: id,
-        version,
-        chargedPaise: delta,
-        waivedPaise,
-      })
-      await notify(tx, tenant, {
-        userIds: [s.studentId],
-        moduleId: 'fees',
-        title: `Fees invoiced for ${term.code}`,
-        body: `${rupees(delta)} has been invoiced for ${term.code}. See the fee account for what is due.`,
-        link: '/m/fees/me',
-        alsoGuardians: { link: '/m/parents' },
-      })
-    }
-
-    // Sitting in a section, never declared: not billed, and named, so a
-    // forgotten declaration is fixed rather than quietly going unbilled.
-    const missing = await notEnrolled(tx, data.termId, data.studentId)
-    const named = missing.slice(0, 10).map((m) => `${m.studentName ?? m.studentEmail} (${m.programCode})`)
-    const notice =
-      `Invoiced ${issued.length} for ${term.code}; ${unchanged} unchanged.` +
-      (missing.length > 0
-        ? ` Not invoiced, because they are in a section but not enrolled in its programme: ${named.join(', ')}${missing.length > named.length ? ` and ${missing.length - named.length} more` : ''}.`
-        : '')
-
-    return { termCode: term.code, issued, unchanged, notEnrolled: missing, notice }
+    return { term, roster: await termRoster(tx, data.termId, data.studentId) }
   })
+
+  const issued: IssuedInvoice[] = []
+  let unchanged = 0
+  let chunks = 0
+  // ponytail: the whole term runs inside the request; move the loop into a job per chunk if a proxy ever cuts a long request.
+  for (let i = 0; i < roster.length; i += ISSUE_CHUNK) {
+    const r = await withTenant(tenant, (tx) =>
+      issueChunk(tx, tenant, actor, data.termId, term.code, roster.slice(i, i + ISSUE_CHUNK)),
+    )
+    issued.push(...r.issued)
+    unchanged += r.unchanged
+    chunks++
+  }
+
+  // Sitting in a section, never declared: not billed, and named, so a
+  // forgotten declaration is fixed rather than quietly going unbilled.
+  const missing = await withTenant(tenant, (tx) => notEnrolled(tx, data.termId, data.studentId))
+  const named = missing.slice(0, 10).map((m) => `${m.studentName ?? m.studentEmail} (${m.programCode})`)
+  const notice =
+    `Invoiced ${issued.length} for ${term.code}; ${unchanged} unchanged.` +
+    (missing.length > 0
+      ? ` Not invoiced, because they are in a section but not enrolled in its programme: ${named.join(', ')}${missing.length > named.length ? ` and ${missing.length - named.length} more` : ''}.`
+      : '')
+
+  return { termCode: term.code, issued, unchanged, notEnrolled: missing, notice, chunks }
 }
 
-export async function listInvoices(actor: Actor, termId: string) {
+/**
+ * One chunk of a term, in its own transaction. The term lock makes two runs of
+ * the same term take their chunks in turn, so the second sees the first's
+ * invoices and reports them unchanged instead of failing on a unique key.
+ */
+async function issueChunk(
+  tx: Tx,
+  tenant: string,
+  actor: Actor,
+  termId: string,
+  termCode: string,
+  students: { studentId: string; studentName: string | null }[],
+) {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'fees.issue:' + termId}, 0))`)
+
+  const ids = students.map((s) => s.studentId)
+  const lines = (await tx.execute(priceListSql(termId, ids))).rows as Record<string, unknown>[]
+  const priced = new Map<string, { listed: number; unposted: number; freshWaivers: string[] }>()
+  for (const l of lines) {
+    const g = priced.get(String(l.student_id)) ?? { listed: 0, unposted: 0, freshWaivers: [] }
+    g.listed += Number(l.charged)
+    g.unposted += Number(l.unposted_waived)
+    if (l.waiver_id && Number(l.unposted_waived) > 0) g.freshWaivers.push(String(l.waiver_id))
+    priced.set(String(l.student_id), g)
+  }
+
+  const existing = new Map(
+    (
+      await tx
+        .select({
+          id: feeInvoices.id,
+          studentId: feeInvoices.studentId,
+          chargedPaise: feeInvoices.chargedPaise,
+          version: feeInvoices.version,
+        })
+        .from(feeInvoices)
+        .where(and(eq(feeInvoices.termId, termId), inArray(feeInvoices.studentId, ids)))
+    ).map((i) => [i.studentId, i]),
+  )
+
+  const issued: IssuedInvoice[] = []
+  let unchanged = 0
+  const freshWaiverIds: string[] = []
+  for (const s of students) {
+    const group = priced.get(s.studentId)
+    const listed = group?.listed ?? 0
+    if (!group || listed === 0) continue
+
+    const invoice = existing.get(s.studentId)
+    const delta = listed - (invoice?.chargedPaise ?? 0)
+    if (delta <= 0) {
+      unchanged++
+      continue
+    }
+
+    const version = (invoice?.version ?? 0) + 1
+    const id =
+      invoice?.id ??
+      (
+        await tx
+          .insert(feeInvoices)
+          .values({
+            institutionId: tenant,
+            studentId: s.studentId,
+            termId,
+            chargedPaise: listed,
+            issuedBy: actor.id,
+          })
+          .returning({ id: feeInvoices.id })
+      )[0]!.id
+
+    if (invoice) {
+      await tx.update(feeInvoices).set({ chargedPaise: listed, version }).where(eq(feeInvoices.id, invoice.id))
+    }
+
+    // Waivers the books have not been told about: everything granted before
+    // this student was ever invoiced, plus anything against a charge added
+    // since. Both ride along in this entry.
+    await postInvoice(tx, tenant, actor.id, {
+      id,
+      version,
+      studentName: s.studentName,
+      termCode,
+      chargedPaise: delta,
+      waivedPaise: group.unposted,
+    })
+    freshWaiverIds.push(...group.freshWaivers)
+    issued.push({
+      studentId: s.studentId,
+      studentName: s.studentName,
+      invoiceId: id,
+      version,
+      chargedPaise: delta,
+      waivedPaise: group.unposted,
+    })
+  }
+
+  if (freshWaiverIds.length > 0) {
+    await tx
+      .update(feeWaivers)
+      .set({ postedPaise: sql`${feeWaivers.amountPaise}` })
+      .where(inArray(feeWaivers.id, freshWaiverIds))
+  }
+
+  if (issued.length > 0) {
+    const issuedIds = issued.map((i) => i.studentId)
+    // The student's own charges are in the books now: from here they are
+    // waived or refunded, not cancelled.
+    await tx
+      .update(studentCharges)
+      .set({ invoicedAt: new Date() })
+      .where(
+        and(
+          eq(studentCharges.termId, termId),
+          inArray(studentCharges.studentId, issuedIds),
+          isNull(studentCharges.cancelledAt),
+          isNull(studentCharges.invoicedAt),
+        ),
+      )
+    await notify(tx, tenant, {
+      userIds: issuedIds,
+      moduleId: 'fees',
+      title: `Fees invoiced for ${termCode}`,
+      body: `Fees for ${termCode} have been invoiced. See your fee account for what is due.`,
+      link: '/m/fees/me',
+      alsoGuardians: { link: '/m/parents' },
+    })
+  }
+
+  return { issued, unchanged }
+}
+
+export async function listInvoices(actor: Actor, termId: string, page = invoicePage(new Request('https://x/'), '')) {
   const tenant = requireFinance(actor)
-  return withTenant(tenant, (tx) =>
-    tx
+  return withTenant(tenant, async (tx) => {
+    const keys = INVOICE_SORTS[page.sort]!.keys
+    const rows = await tx
       .select({
         id: feeInvoices.id,
         studentId: feeInvoices.studentId,
@@ -646,12 +713,19 @@ export async function listInvoices(actor: Actor, termId: string) {
         chargedPaise: feeInvoices.chargedPaise,
         version: feeInvoices.version,
         issuedAt: feeInvoices.issuedAt,
+        _cursor: cursorColumn(keys),
       })
       .from(feeInvoices)
       .innerJoin(users, eq(users.id, feeInvoices.studentId))
+      .where(and(eq(feeInvoices.termId, termId), keyset(keys, page)))
+      .orderBy(...orderKeys(keys, page.dir))
+      .limit(page.limit + 1)
+    const [count] = await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(feeInvoices)
       .where(eq(feeInvoices.termId, termId))
-      .orderBy(asc(users.email)),
-  )
+    return finishPage(rows, page, Number(count!.n))
+  })
 }
 
 /**
@@ -875,38 +949,6 @@ async function chargesFor(tx: Tx, studentId: string, termId: string) {
   return [...items.map((i) => ({ ...i, feeItemId: i.feeItemId as string | null, studentChargeId: null as string | null })), ...own]
 }
 
-/**
- * What the institution has taken off this student's bill without any money
- * moving: scholarships it is funding, and credit for courses dropped inside the
- * refund window. Both are already in the books by the time they are read here.
- */
-async function creditsFor(tx: Tx, studentId: string, termId: string) {
-  const aid = await tx
-    .select({ amountPaise: scholarshipAwards.amountPaise })
-    .from(scholarshipAwards)
-    .where(
-      and(
-        eq(scholarshipAwards.studentId, studentId),
-        eq(scholarshipAwards.termId, termId),
-        eq(scholarshipAwards.status, 'awarded'),
-      ),
-    )
-  const dropped = await tx
-    .select({ amountPaise: dropCredits.amountPaise })
-    .from(dropCredits)
-    .where(and(eq(dropCredits.studentId, studentId), eq(dropCredits.termId, termId)))
-  return [...aid, ...dropped]
-}
-
-/** What has gone back out to this student for this term. */
-function refundsFor(tx: Tx, studentId: string, termId: string) {
-  return tx
-    .select({ amountPaise: feeRefunds.amountPaise })
-    .from(feeRefunds)
-    .innerJoin(feePayments, eq(feePayments.id, feeRefunds.paymentId))
-    .where(and(eq(feePayments.studentId, studentId), eq(feePayments.termId, termId)))
-}
-
 export async function studentLedger(
   actor: Actor,
   studentId: string,
@@ -936,15 +978,13 @@ export async function studentLedger(
       .from(feePayments)
       .where(and(eq(feePayments.studentId, studentId), eq(feePayments.termId, termId)))
       .orderBy(asc(feePayments.receivedAt))
-    const refunds = await refundsFor(tx, studentId, termId)
     const invoice = await invoiceFor(tx, studentId, termId)
 
-    const lines: LedgerLine[] = charges.map((c) => ({
-      label: c.label,
-      chargedPaise: c.chargedPaise,
-      waivedPaise: c.waivedPaise ?? 0,
-    }))
-    const l = ledger(lines, payments, refunds, await creditsFor(tx, studentId, termId))
+    const [row] = (await tx.execute(sql`select * from (${postedSql({ termId, studentId })}) p`)).rows
+    const p = postedOf(row as Record<string, unknown> | undefined)
+    const listed = charges.reduce((n, c) => n + c.chargedPaise, 0)
+    const unposted = charges.reduce((n, c) => n + Math.max(0, (c.waivedPaise ?? 0) - (c.postedPaise ?? 0)), 0)
+    const payablePaise = p.invoicedPaise - p.waivedPaise - p.creditedPaise
 
     return {
       studentId,
@@ -969,28 +1009,44 @@ export async function studentLedger(
         receivedAt: p.receivedAt.toISOString(),
         reconciledAt: p.reconciledAt?.toISOString() ?? null,
       })),
-      chargedPaise: l.chargedPaise,
-      waivedPaise: l.waivedPaise,
-      creditedPaise: l.creditedPaise,
-      payablePaise: l.payablePaise,
-      paidPaise: l.paidPaise,
-      refundedPaise: l.refundedPaise,
-      unreconciledPaise: l.unreconciledPaise,
-      outstandingPaise: l.outstandingPaise,
-      overpaidPaise: overpaidPaise(l),
+      chargedPaise: p.invoicedPaise,
+      waivedPaise: p.waivedPaise,
+      creditedPaise: p.creditedPaise,
+      payablePaise,
+      paidPaise: p.paidPaise - p.refundedPaise,
+      refundedPaise: p.refundedPaise,
+      unreconciledPaise: p.unreconciledPaise,
+      balancePaise: p.balancePaise,
+      outstandingPaise: Math.max(0, p.balancePaise),
+      overpaidPaise: Math.max(0, -p.balancePaise),
+      notYetInvoicedPaise: Math.max(0, listed - unposted - p.invoicedPaise),
       invoicedAt: invoice?.issuedAt.toISOString() ?? null,
     }
   })
 }
 
+const DUES_SORTS: SortSpec = {
+  outstanding: { dir: 'desc', keys: [{ sql: sql`d.outstanding_paise`, type: 'bigint' }, { sql: sql`d.student_id`, type: 'text' }] },
+  name: { dir: 'asc', keys: [{ sql: sql`coalesce(u.name, u.email, '')`, type: 'text' }, { sql: sql`d.student_id`, type: 'text' }] },
+}
+export const duesPage = (req: Request, prefix: string) => readPage(req, prefix, DUES_SORTS, 'outstanding', 50)
+
+const INVOICE_SORTS: SortSpec = {
+  email: { dir: 'asc', keys: [{ sql: sql`coalesce(${users.email}, '')`, type: 'text' }, { sql: sql`${feeInvoices.id}`, type: 'uuid' }] },
+}
+export const invoicePage = (req: Request, prefix: string) => readPage(req, prefix, INVOICE_SORTS, 'email', 50)
+
 /**
- * Defaulters for a term. Every enrolled student, not only those who have paid
- * something, because the ones who have paid nothing are the point of the report
- * -- plus anyone the term has invoiced or taken money from, so a student who
- * left owing stays on it. One row per student (NEW-16), whatever number of
- * programmes they read.
+ * Balances for a term from the books, worst first, a page at a time (REL-09,
+ * decision 529). Every student the books or today's price list know for the
+ * term, so one who left owing stays on it and one not yet invoiced shows what
+ * is coming. Two statements on one `with` block: the page and the totals.
  */
-export async function duesReport(actor: Actor, termId: string): Promise<DuesReport> {
+export async function duesReport(
+  actor: Actor,
+  termId: string,
+  page = duesPage(new Request('https://x/'), ''),
+): Promise<DuesReport> {
   const tenant = requireFinance(actor)
 
   return withTenant(tenant, async (tx): Promise<DuesReport> => {
@@ -1000,50 +1056,71 @@ export async function duesReport(actor: Actor, termId: string): Promise<DuesRepo
       .where(eq(terms.id, termId))
     if (!term) throw new FeeError(404, 'no_such_term', 'no such term')
 
-    const roster = await duesRoster(tx, termId)
+    const cte = sql`
+      with posted as (${postedSql({ termId })}),
+      listed as (select student_id, sum(charged)::bigint as listed_paise, sum(unposted_waived)::bigint as unposted_paise
+                   from (${priceListSql(termId, null)}) l group by student_id),
+      d as (
+        select coalesce(p.student_id, l.student_id) as student_id,
+               coalesce(p.credited_paise, 0) as credited_paise,
+               coalesce(p.invoiced_paise, 0) - coalesce(p.waived_paise, 0) - coalesce(p.credited_paise, 0) as payable_paise,
+               coalesce(p.paid_paise, 0) - coalesce(p.refunded_paise, 0) as paid_paise,
+               coalesce(p.refunded_paise, 0) as refunded_paise,
+               coalesce(p.unreconciled_paise, 0) as unreconciled_paise,
+               greatest(coalesce(p.balance_paise, 0), 0) as outstanding_paise,
+               greatest(-coalesce(p.balance_paise, 0), 0) as overpaid_paise,
+               greatest(coalesce(l.listed_paise, 0) - coalesce(l.unposted_paise, 0) - coalesce(p.invoiced_paise, 0), 0) as not_yet_invoiced_paise
+          from posted p full join listed l on l.student_id = p.student_id)`
+    const shown = sql`(d.payable_paise <> 0 or d.paid_paise <> 0 or d.not_yet_invoiced_paise <> 0)`
+    const search = searchAny(page.q, [sql`u.name`, sql`u.email`])
+    const where = search ? sql`${shown} and ${search}` : shown
+    const keys = DUES_SORTS[page.sort]!.keys
+    const after = keyset(keys, page)
+    const rows = (await tx.execute(sql`${cte}
+      select d.*, u.name as student_name, u.email as student_email,
+         coalesce((select string_agg(distinct pr.code, ', ' order by pr.code)
+                     from academic_student_programs sp
+                     join academic_programs pr on pr.id = sp.program_id
+                     join academic_terms t on t.id = ${termId}::uuid
+                    where sp.student_id = d.student_id and sp.declared_on <= t.ends_on
+                      and (sp.ended_on is null or sp.ended_on > t.starts_on)
+                      and (sp.ended_on is null or sp.ended_on > sp.declared_on)), '—') as program_code,
+         ${cursorColumn(keys)} as _cursor
+       from d join users u on u.id = d.student_id
+      where ${where}${after ? sql` and ${after}` : sql``}
+      order by ${sql.join(orderKeys(keys, page.dir), sql`, `)}
+      limit ${page.limit + 1}`)).rows as Record<string, unknown>[]
+    const [sum] = (await tx.execute(sql`${cte}
+      select count(*)::int as total,
+             coalesce(sum(d.outstanding_paise), 0)::bigint as outstanding,
+             count(*) filter (where d.outstanding_paise > 0)::int as defaulters,
+             coalesce(sum(d.not_yet_invoiced_paise), 0)::bigint as nyi,
+             count(*) filter (where d.not_yet_invoiced_paise > 0)::int as nyi_count
+        from d join users u on u.id = d.student_id
+       where ${where}`)).rows as Record<string, unknown>[]
 
-    const rows = []
-    for (const s of roster) {
-      // ponytail: one pair of queries per student. Fine at a few hundred; if a
-      // term's roster reaches thousands, fold this into two grouped queries.
-      const charges = await chargesFor(tx, s.studentId, termId)
-      const payments = await tx
-        .select({ amountPaise: feePayments.amountPaise, reconciledAt: feePayments.reconciledAt })
-        .from(feePayments)
-        .where(and(eq(feePayments.studentId, s.studentId), eq(feePayments.termId, termId)))
-
-      const l = ledger(
-        charges.map((c) => ({
-          label: c.label,
-          chargedPaise: c.chargedPaise,
-          waivedPaise: c.waivedPaise ?? 0,
-        })),
-        payments,
-        await refundsFor(tx, s.studentId, termId),
-        await creditsFor(tx, s.studentId, termId),
-      )
-      if (l.payablePaise === 0 && l.paidPaise === 0) continue
-
-      const codes = (await enrolledPrograms(tx, s.studentId, termId)).map((p) => p.code)
-      rows.push({
-        studentId: s.studentId,
-        studentName: s.studentName,
-        studentEmail: s.studentEmail,
-        programCode: codes.length > 0 ? codes.join(', ') : '—',
-        creditedPaise: l.creditedPaise,
-        payablePaise: l.payablePaise,
-        paidPaise: l.paidPaise,
-        refundedPaise: l.refundedPaise,
-        unreconciledPaise: l.unreconciledPaise,
-        outstandingPaise: l.outstandingPaise,
-      })
-    }
-
+    const mapped = rows.map((r) => ({
+      studentId: String(r.student_id),
+      studentName: (r.student_name as string | null) ?? null,
+      studentEmail: (r.student_email as string | null) ?? null,
+      programCode: String(r.program_code),
+      creditedPaise: Number(r.credited_paise),
+      payablePaise: Number(r.payable_paise),
+      paidPaise: Number(r.paid_paise),
+      refundedPaise: Number(r.refunded_paise),
+      unreconciledPaise: Number(r.unreconciled_paise),
+      outstandingPaise: Number(r.outstanding_paise),
+      overpaidPaise: Number(r.overpaid_paise),
+      notYetInvoicedPaise: Number(r.not_yet_invoiced_paise),
+      _cursor: r._cursor as string[],
+    }))
     return {
       termCode: term.code,
-      rows: rows.sort((a, b) => b.outstandingPaise - a.outstandingPaise),
-      totalOutstandingPaise: rows.reduce((n, r) => n + r.outstandingPaise, 0),
-      defaulterCount: rows.filter((r) => r.outstandingPaise > 0).length,
+      totalOutstandingPaise: Number(sum!.outstanding),
+      defaulterCount: Number(sum!.defaulters),
+      notYetInvoicedPaise: Number(sum!.nyi),
+      notYetInvoicedCount: Number(sum!.nyi_count),
+      ...finishPage(mapped, page, Number(sum!.total)),
     }
   })
 }
@@ -1084,4 +1161,25 @@ export async function paymentForReceipt(actor: Actor, paymentId: string) {
     }
     return row
   })
+}
+
+export async function reconciliation(actor: Actor) {
+  const tenant = requireFinance(actor)
+  return withTenant(tenant, (tx) => receivableReport(tx))
+}
+
+/** The nightly check (decision 531): silent when the books agree. */
+export async function checkReceivable(actor: Actor, tx: Tx) {
+  const tenant = tenantOf(actor)
+  const r = await receivableReport(tx)
+  if (r.differencePaise !== 0) {
+    const detail = { booksPaise: r.booksPaise, ledgerPaise: r.ledgerPaise, differencePaise: r.differencePaise, unattributedPaise: r.unattributedPaise, mismatchCount: r.mismatchCount }
+    await audit(tx, { institutionId: tenant, actorId: actor.id, actorEmail: actor.email ?? null, moduleId: MODULE, action: 'fee.receivable_mismatch', entity: 'fees_receivable', entityId: tenant, reason: `the fee ledger and the books differ by ${rupees(Math.abs(r.differencePaise))}`, detail })
+    const office = await tx.select({ id: users.id }).from(users)
+      .where(and(eq(users.institutionId, tenant), inArray(users.role, ['institution_admin', 'accounts_staff']), isNull(users.erasedAt)))
+    if (office.length > 0) {
+      await notify(tx, tenant, { userIds: office.map((u) => u.id), moduleId: 'fees', title: 'Fee ledger and books disagree', body: `The student ledgers and the fees receivable account differ by ${rupees(Math.abs(r.differencePaise))}. See the reconciliation page.`, link: '/m/fees/reconciliation' })
+    }
+  }
+  return { differencePaise: r.differencePaise, mismatchCount: r.mismatchCount }
 }

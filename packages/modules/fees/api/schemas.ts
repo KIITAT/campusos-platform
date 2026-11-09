@@ -143,7 +143,11 @@ export const studentLedgerSchema = z
     refundedPaise: z.number().int(),
     unreconciledPaise: z.number().int(),
     outstandingPaise: z.number().int(),
+    /** Payable less paid; negative when the student is in credit. */
+    balancePaise: z.number().int(),
     overpaidPaise: z.number().int(),
+    /** On today's price list for the term and not yet issued: not owed until it is. */
+    notYetInvoicedPaise: z.number().int(),
     /** Null until the term's charges have been issued to this student. */
     invoicedAt: z.string().nullable(),
   })
@@ -161,15 +165,21 @@ export const duesRowSchema = z
     refundedPaise: z.number().int(),
     unreconciledPaise: z.number().int(),
     outstandingPaise: z.number().int(),
+    overpaidPaise: z.number().int(),
+    notYetInvoicedPaise: z.number().int(),
   })
   .meta({ id: 'FeeDuesRow' })
 
 export const duesReportSchema = z
   .object({
     termCode: z.string(),
-    rows: z.array(duesRowSchema),
     totalOutstandingPaise: z.number().int(),
     defaulterCount: z.number().int(),
+    notYetInvoicedPaise: z.number().int(),
+    notYetInvoicedCount: z.number().int(),
+    rows: z.array(duesRowSchema),
+    total: z.number().int(),
+    next: z.string().nullable(),
   })
   .meta({ id: 'FeeDuesReport' })
 
@@ -277,3 +287,23 @@ export const aidAssessmentSchema = z
   .meta({ id: 'FeesAidAssessment' })
 
 export type AidAssessment = z.infer<typeof aidAssessmentSchema>
+
+export const receivableReportSchema = z
+  .object({
+    booksPaise: z.number().int(),
+    ledgerPaise: z.number().int(),
+    differencePaise: z.number().int(),
+    unattributedPaise: z.number().int(),
+    mismatchCount: z.number().int(),
+    students: z.array(
+      z.object({
+        studentId: z.string(),
+        studentName: z.string().nullable(),
+        studentEmail: z.string().nullable(),
+        booksPaise: z.number().int(),
+        ledgerPaise: z.number().int(),
+        differencePaise: z.number().int(),
+      }),
+    ),
+  })
+  .meta({ id: 'FeeReceivableReport' })

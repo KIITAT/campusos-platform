@@ -2,7 +2,9 @@ import { formatPaise } from '@campusos/money'
 import { param, type PluginPage } from '@campusos/module-framework'
 import { listStructure } from '@campusos/module-academic/api'
 import {
+  duesPage,
   duesReport,
+  invoicePage,
   listAwards,
   listDropCredits,
   listFeeItems,
@@ -10,6 +12,7 @@ import {
   listRefundRules,
   listScholarships,
   listStudentCharges,
+  reconciliation,
   studentChoices,
   studentLedger,
   type Actor,
@@ -179,27 +182,29 @@ export const pages: PluginPage[] = [
     path: '/dues',
     title: 'Dues',
     menu: 'Dues',
-    roles: [...OFFICE, 'hod'],
+    roles: [...OFFICE],
     async load(actor, req) {
       const a = actor as Actor
       const { structure, term } = await termFor(a, req)
-      if (!term) return { rows: [], terms: [], termCode: null, total: 0, defaulters: 0 }
+      if (!term) return { rows: [], rowsPage: { total: 0, next: null }, terms: [], termCode: null, total: 0, defaulters: 0 }
 
       const [report, invoices] = await Promise.all([
-        duesReport(a, term.id),
-        listInvoices(a, term.id),
+        duesReport(a, term.id, duesPage(req, 'rows')),
+        listInvoices(a, term.id, invoicePage(new Request('https://x/?n=1'), '')),
       ])
       return {
         termCode: report.termCode,
         termId: term.id,
-        issuedCount: invoices.length,
+        issuedCount: invoices.total,
         total: report.totalOutstandingPaise,
         defaulters: report.defaulterCount,
+        notYetInvoiced: report.notYetInvoicedPaise,
         rows: report.rows.map((r) => ({
           ...r,
           who: r.studentName ?? r.studentEmail,
           overdue: r.outstandingPaise > 0,
         })),
+        rowsPage: { total: report.total, next: report.next },
         terms: structure.terms.map((t) => ({
           label: t.code,
           href: `/m/fees/dues?termId=${t.id}`,
@@ -219,6 +224,7 @@ export const pages: PluginPage[] = [
             value: formatPaise(Number(data.total)),
             tone: Number(data.total) > 0 ? 'due' : 'clear',
           },
+          { label: 'Not yet invoiced', value: formatPaise(Number(data.notYetInvoiced ?? 0)) },
         ],
       },
       {
@@ -231,6 +237,7 @@ export const pages: PluginPage[] = [
       {
         kind: 'table',
         rows: 'rows',
+        paging: { data: 'rowsPage', sorts: ['outstanding', 'name'] },
         empty: 'No charges have been raised for this term.',
         columns: [
           {
@@ -247,6 +254,8 @@ export const pages: PluginPage[] = [
             kind: 'money',
             alertWhen: 'overdue',
           },
+          { key: 'overpaidPaise', label: 'In credit', kind: 'money' },
+          { key: 'notYetInvoicedPaise', label: 'Not yet invoiced', kind: 'money' },
         ],
       },
       {
@@ -285,6 +294,7 @@ export const pages: PluginPage[] = [
         paid: l.paidPaise,
         outstanding: l.outstandingPaise,
         overpaid: l.overpaidPaise,
+        notYetInvoiced: l.notYetInvoicedPaise,
         unreconciled: l.unreconciledPaise,
         refunded: l.refundedPaise,
         invoiced: !!l.invoicedAt,
@@ -336,6 +346,7 @@ export const pages: PluginPage[] = [
             value: formatPaise(Number(data.outstanding ?? 0)),
             tone: Number(data.outstanding ?? 0) > 0 ? 'due' : 'clear',
           },
+          ...(Number(data.notYetInvoiced ?? 0) > 0 ? [{ label: 'Not yet invoiced', value: formatPaise(Number(data.notYetInvoiced)) }] : []),
           ...(Number(data.overpaid ?? 0) > 0
             ? [
                 {
@@ -510,6 +521,8 @@ export const pages: PluginPage[] = [
         credited: l.creditedPaise,
         paid: l.paidPaise,
         outstanding: l.outstandingPaise,
+        overpaid: l.overpaidPaise,
+        notYetInvoiced: l.notYetInvoicedPaise,
         unreconciled: l.unreconciledPaise,
         lines: l.lines.map((line) => ({
           ...line,
@@ -549,6 +562,10 @@ export const pages: PluginPage[] = [
             value: formatPaise(Number(data.outstanding ?? 0)),
             tone: Number(data.outstanding ?? 0) > 0 ? 'due' : 'clear',
           },
+          ...(Number(data.notYetInvoiced ?? 0) > 0 ? [{ label: 'Not yet invoiced', value: formatPaise(Number(data.notYetInvoiced)) }] : []),
+          ...(Number(data.overpaid ?? 0) > 0
+            ? [{ label: 'In credit', value: formatPaise(Number(data.overpaid)), tone: 'clear' as const }]
+            : []),
         ],
       },
       ...(Number(data.unreconciled ?? 0) > 0
@@ -800,5 +817,52 @@ export const pages: PluginPage[] = [
       },
     ],
   },
+  {
+    path: '/reconciliation',
+    title: 'Fee ledger against the books',
+    menu: 'Reconciliation',
+    roles: [...OFFICE],
+    async load(actor) {
+      const r = await reconciliation(actor as Actor)
+      return {
+        ...r,
+        students: r.students.map((s) => ({ ...s, who: s.studentName ?? s.studentEmail ?? s.studentId })),
+      }
+    },
+    sections: (data) => [
+      {
+        kind: 'figures',
+        figures: [
+          { label: 'Student ledgers', value: formatPaise(Number(data.ledgerPaise ?? 0)) },
+          { label: 'Fees receivable', value: formatPaise(Number(data.booksPaise ?? 0)) },
+          {
+            label: 'Difference',
+            value: formatPaise(Number(data.differencePaise ?? 0)),
+            tone: Number(data.differencePaise ?? 0) !== 0 ? 'due' : 'clear',
+          },
+          { label: 'Not from a fee document', value: formatPaise(Number(data.unattributedPaise ?? 0)) },
+        ],
+      },
+      {
+        kind: 'note',
+        text:
+          'Every fee document posts to the fees receivable account. A difference here means the books were changed ' +
+          'outside fees (a journal straight to the account) or a fee record was removed after it was posted. ' +
+          'The check runs every night and tells the office when they differ.',
+      },
+      {
+        kind: 'table',
+        rows: 'students',
+        empty: "Every student's ledger agrees with the books.",
+        columns: [
+          { key: 'who', label: 'Student', href: '/m/fees/student?studentId={studentId}' },
+          { key: 'booksPaise', label: 'Books', kind: 'money' },
+          { key: 'ledgerPaise', label: 'Ledger', kind: 'money' },
+          { key: 'differencePaise', label: 'Difference', kind: 'money' },
+        ],
+      },
+    ],
+  },
+
   ...transferPages,
 ]

@@ -19,6 +19,7 @@ import {
   revokeAwardSchema,
   setRefundRulesSchema,
   duesReportSchema,
+  receivableReportSchema,
   grantWaiverSchema,
   issueInvoicesSchema,
   recordPaymentSchema,
@@ -190,9 +191,31 @@ export const paths = {
 
   [`${base}/invoices`]: {
     get: {
-      summary: 'What has been issued for a term, and for how much',
+      summary: 'What has been issued for a term, and for how much, a page at a time',
       tags: ['fees'],
-      responses: { '200': { description: 'OK' }, ...gated },
+      responses: {
+        '200': {
+          description: 'OK',
+          content: json(
+            z.object({
+              rows: z.array(
+                z.object({
+                  id: z.string(),
+                  studentId: z.string(),
+                  studentName: z.string().nullable(),
+                  studentEmail: z.string().nullable(),
+                  chargedPaise: z.number().int(),
+                  version: z.number().int(),
+                  issuedAt: z.string(),
+                }),
+              ),
+              total: z.number().int(),
+              next: z.string().nullable(),
+            }),
+          ),
+        },
+        ...gated,
+      },
     },
     post: {
       summary: "Issue a term's charges and post them to the books",
@@ -310,9 +333,19 @@ export const paths = {
       },
     },
   },
+  [`${base}/reconciliation`]: {
+    get: {
+      summary: 'The student ledgers against the fees receivable account',
+      tags: ['fees'],
+      responses: {
+        '200': { description: 'OK', content: json(receivableReportSchema) },
+        ...gated,
+      },
+    },
+  },
   [`${base}/dues`]: {
     get: {
-      summary: 'Outstanding balances for a term, worst first',
+      summary: 'Balances for a term from the books, worst first, a page at a time',
       tags: ['fees'],
       responses: {
         '200': { description: 'OK', content: json(duesReportSchema) },

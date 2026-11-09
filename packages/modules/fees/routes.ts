@@ -29,7 +29,9 @@ import {
   awardScholarship,
   createFeeItem,
   createScholarship,
+  duesPage,
   duesReport,
+  invoicePage,
   listAwards,
   listDropCredits,
   listRefundRules,
@@ -41,6 +43,7 @@ import {
   issueInvoices,
   listFeeItems,
   listInvoices,
+  reconciliation,
   paymentForReceipt,
   receiptPdf,
   recordPayment,
@@ -197,7 +200,7 @@ export const routes: PluginRoute[] = [
   {
     method: 'GET',
     path: '/invoices',
-    handler: (actor, req) => listInvoices(actor as Actor, requiredParam(req, 'termId')),
+    handler: (actor, req) => listInvoices(actor as Actor, requiredParam(req, 'termId'), invoicePage(req, '')),
   },
   {
     method: 'POST',
@@ -222,8 +225,13 @@ export const routes: PluginRoute[] = [
   },
   {
     method: 'GET',
+    path: '/reconciliation',
+    handler: (actor) => reconciliation(actor as Actor),
+  },
+  {
+    method: 'GET',
     path: '/dues',
-    handler: (actor, req) => duesReport(actor as Actor, requiredParam(req, 'termId')),
+    handler: (actor, req) => duesReport(actor as Actor, requiredParam(req, 'termId'), duesPage(req, '')),
   },
 
   {

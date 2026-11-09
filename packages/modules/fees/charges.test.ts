@@ -68,7 +68,8 @@ test('a charge on one student is billed with the rest, and fixed once it is', as
 
   const l = await studentLedger(c.clerk, c.studentId, c.termId)
   assert.deepEqual(l.lines.map((x) => [x.label, x.chargedPaise]), [['Tuition', 4_500_000], ['Backlog paper: CS101', 150_000]])
-  assert.equal(l.outstandingPaise, 4_650_000)
+  assert.equal(l.outstandingPaise, 0)
+  assert.equal(l.notYetInvoicedPaise, 4_650_000)
   assert.equal(l.lines[1]!.feeItemId, null)
 
   await issueInvoices(c.admin, { termId: c.termId })

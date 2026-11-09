@@ -22,6 +22,7 @@ export const routeRoles: Record<string, readonly Role[]> = {
   'GET /letters/verify': OFFICE,
   'GET /demand-letter.pdf': [...OFFICE, 'student'],
   'GET /charges': OFFICE,
+  'GET /reconciliation': OFFICE,
   'POST /charges': OFFICE,
   'POST /charges/cancel': OFFICE,
   'GET /scholarships': ADMIN,
