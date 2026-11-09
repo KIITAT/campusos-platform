@@ -41,8 +41,6 @@ import { enrolledPrograms, notEnrolled, priceListSql, termRoster } from './enrol
 import { checkOtherPerson } from '@campusos/module-finance/api'
 import { notify } from '@campusos/module-notices/api'
 
-const rupees = (p: number) => '₹' + (p / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-
 const MODULE = 'fees'
 
 /**
@@ -503,6 +501,18 @@ export async function recordPaymentWithin(tx: Tx, tenant: string, actor: Actor, 
   return row!
 }
 
+/** Students per transaction when a term is issued (REL-09, decision 528). */
+export const ISSUE_CHUNK = 500
+
+interface IssuedInvoice {
+  studentId: string
+  studentName: string | null
+  invoiceId: string
+  version: number
+  chargedPaise: number
+  waivedPaise: number
+}
+
 /**
  * Issue a term's charges, turning a price list into money owed.
  *
@@ -519,129 +529,173 @@ export async function issueInvoices(actor: Actor, input: unknown) {
   const tenant = requireAdmin(actor)
   const data = issueInvoicesSchema.parse(input)
 
-  return withTenant(tenant, async (tx) => {
+  // Enrolled in the term, by programme declaration (ACC-19): not every
+  // section member, who may have left, or be there for an elective.
+  const { term, roster } = await withTenant(tenant, async (tx) => {
     const [term] = await tx
       .select({ code: terms.code })
       .from(terms)
       .where(eq(terms.id, data.termId))
     if (!term) throw new FeeError(404, 'no_such_term', 'no such term')
+    return { term, roster: await termRoster(tx, data.termId, data.studentId) }
+  })
 
-    // Enrolled in the term, by programme declaration (ACC-19): not every
-    // section member, who may have left, or be there for an elective.
-    const roster = await termRoster(tx, data.termId, data.studentId)
+  const issued: IssuedInvoice[] = []
+  let unchanged = 0
+  let chunks = 0
+  // ponytail: the whole term runs inside the request; move the loop into a job per chunk if a proxy ever cuts a long request.
+  for (let i = 0; i < roster.length; i += ISSUE_CHUNK) {
+    const r = await withTenant(tenant, (tx) =>
+      issueChunk(tx, tenant, actor, data.termId, term.code, roster.slice(i, i + ISSUE_CHUNK)),
+    )
+    issued.push(...r.issued)
+    unchanged += r.unchanged
+    chunks++
+  }
 
-    const issued = []
-    let unchanged = 0
+  // Sitting in a section, never declared: not billed, and named, so a
+  // forgotten declaration is fixed rather than quietly going unbilled.
+  const missing = await withTenant(tenant, (tx) => notEnrolled(tx, data.termId, data.studentId))
+  const named = missing.slice(0, 10).map((m) => `${m.studentName ?? m.studentEmail} (${m.programCode})`)
+  const notice =
+    `Invoiced ${issued.length} for ${term.code}; ${unchanged} unchanged.` +
+    (missing.length > 0
+      ? ` Not invoiced, because they are in a section but not enrolled in its programme: ${named.join(', ')}${missing.length > named.length ? ` and ${missing.length - named.length} more` : ''}.`
+      : '')
 
-    for (const s of roster) {
-      // ponytail: a pair of queries per student, like duesReport. Fine for a
-      // few hundred; fold into grouped queries if a roster reaches thousands.
-      const charges = await chargesFor(tx, s.studentId, data.termId)
-      const chargedPaise = charges.reduce((n, c) => n + c.chargedPaise, 0)
-      if (chargedPaise === 0) continue
+  return { termCode: term.code, issued, unchanged, notEnrolled: missing, notice, chunks }
+}
 
-      const invoice = await invoiceFor(tx, s.studentId, data.termId)
-      const delta = chargedPaise - (invoice?.chargedPaise ?? 0)
-      if (delta <= 0) {
-        unchanged++
-        continue
-      }
+/**
+ * One chunk of a term, in its own transaction. The term lock makes two runs of
+ * the same term take their chunks in turn, so the second sees the first's
+ * invoices and reports them unchanged instead of failing on a unique key.
+ */
+async function issueChunk(
+  tx: Tx,
+  tenant: string,
+  actor: Actor,
+  termId: string,
+  termCode: string,
+  students: { studentId: string; studentName: string | null }[],
+) {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'fees.issue:' + termId}, 0))`)
 
-      // Waivers the books have not been told about: everything granted before
-      // this student was ever invoiced, plus anything against a charge added
-      // since. Both ride along in this entry.
-      const fresh = charges.filter(
-        (c) => c.waiverId && (c.waivedPaise ?? 0) > (c.postedPaise ?? 0),
-      )
-      const waivedPaise = fresh.reduce(
-        (n, c) => n + ((c.waivedPaise ?? 0) - (c.postedPaise ?? 0)),
-        0,
-      )
+  const ids = students.map((s) => s.studentId)
+  const lines = (await tx.execute(priceListSql(termId, ids))).rows as Record<string, unknown>[]
+  const priced = new Map<string, { listed: number; unposted: number; freshWaivers: string[] }>()
+  for (const l of lines) {
+    const g = priced.get(String(l.student_id)) ?? { listed: 0, unposted: 0, freshWaivers: [] }
+    g.listed += Number(l.charged)
+    g.unposted += Number(l.unposted_waived)
+    if (l.waiver_id && Number(l.unposted_waived) > 0) g.freshWaivers.push(String(l.waiver_id))
+    priced.set(String(l.student_id), g)
+  }
 
-      const version = (invoice?.version ?? 0) + 1
-      const id =
-        invoice?.id ??
-        (
-          await tx
-            .insert(feeInvoices)
-            .values({
-              institutionId: tenant,
-              studentId: s.studentId,
-              termId: data.termId,
-              chargedPaise,
-              issuedBy: actor.id,
-            })
-            .returning({ id: feeInvoices.id })
-        )[0]!.id
+  const existing = new Map(
+    (
+      await tx
+        .select({
+          id: feeInvoices.id,
+          studentId: feeInvoices.studentId,
+          chargedPaise: feeInvoices.chargedPaise,
+          version: feeInvoices.version,
+        })
+        .from(feeInvoices)
+        .where(and(eq(feeInvoices.termId, termId), inArray(feeInvoices.studentId, ids)))
+    ).map((i) => [i.studentId, i]),
+  )
 
-      if (invoice) {
-        await tx
-          .update(feeInvoices)
-          .set({ chargedPaise, version })
-          .where(eq(feeInvoices.id, invoice.id))
-      }
+  const issued: IssuedInvoice[] = []
+  let unchanged = 0
+  const freshWaiverIds: string[] = []
+  for (const s of students) {
+    const group = priced.get(s.studentId)
+    const listed = group?.listed ?? 0
+    if (!group || listed === 0) continue
 
-      await postInvoice(tx, tenant, actor.id, {
-        id,
-        version,
-        studentName: s.studentName,
-        termCode: term.code,
-        chargedPaise: delta,
-        waivedPaise,
-      })
-
-      if (fresh.length > 0) {
-        await tx
-          .update(feeWaivers)
-          .set({ postedPaise: sql`${feeWaivers.amountPaise}` })
-          .where(
-            inArray(
-              feeWaivers.id,
-              fresh.map((c) => c.waiverId!),
-            ),
-          )
-      }
-
-      // The student's own charges are in the books now: from here they are
-      // waived or refunded, not cancelled.
-      const own = charges.map((c) => c.studentChargeId).filter((id): id is string => id !== null)
-      if (own.length > 0) {
-        await tx
-          .update(studentCharges)
-          .set({ invoicedAt: new Date() })
-          .where(and(inArray(studentCharges.id, own), isNull(studentCharges.invoicedAt)))
-      }
-
-      issued.push({
-        studentId: s.studentId,
-        studentName: s.studentName,
-        invoiceId: id,
-        version,
-        chargedPaise: delta,
-        waivedPaise,
-      })
-      await notify(tx, tenant, {
-        userIds: [s.studentId],
-        moduleId: 'fees',
-        title: `Fees invoiced for ${term.code}`,
-        body: `${rupees(delta)} has been invoiced for ${term.code}. See the fee account for what is due.`,
-        link: '/m/fees/me',
-        alsoGuardians: { link: '/m/parents' },
-      })
+    const invoice = existing.get(s.studentId)
+    const delta = listed - (invoice?.chargedPaise ?? 0)
+    if (delta <= 0) {
+      unchanged++
+      continue
     }
 
-    // Sitting in a section, never declared: not billed, and named, so a
-    // forgotten declaration is fixed rather than quietly going unbilled.
-    const missing = await notEnrolled(tx, data.termId, data.studentId)
-    const named = missing.slice(0, 10).map((m) => `${m.studentName ?? m.studentEmail} (${m.programCode})`)
-    const notice =
-      `Invoiced ${issued.length} for ${term.code}; ${unchanged} unchanged.` +
-      (missing.length > 0
-        ? ` Not invoiced, because they are in a section but not enrolled in its programme: ${named.join(', ')}${missing.length > named.length ? ` and ${missing.length - named.length} more` : ''}.`
-        : '')
+    const version = (invoice?.version ?? 0) + 1
+    const id =
+      invoice?.id ??
+      (
+        await tx
+          .insert(feeInvoices)
+          .values({
+            institutionId: tenant,
+            studentId: s.studentId,
+            termId,
+            chargedPaise: listed,
+            issuedBy: actor.id,
+          })
+          .returning({ id: feeInvoices.id })
+      )[0]!.id
 
-    return { termCode: term.code, issued, unchanged, notEnrolled: missing, notice }
-  })
+    if (invoice) {
+      await tx.update(feeInvoices).set({ chargedPaise: listed, version }).where(eq(feeInvoices.id, invoice.id))
+    }
+
+    // Waivers the books have not been told about: everything granted before
+    // this student was ever invoiced, plus anything against a charge added
+    // since. Both ride along in this entry.
+    await postInvoice(tx, tenant, actor.id, {
+      id,
+      version,
+      studentName: s.studentName,
+      termCode,
+      chargedPaise: delta,
+      waivedPaise: group.unposted,
+    })
+    freshWaiverIds.push(...group.freshWaivers)
+    issued.push({
+      studentId: s.studentId,
+      studentName: s.studentName,
+      invoiceId: id,
+      version,
+      chargedPaise: delta,
+      waivedPaise: group.unposted,
+    })
+  }
+
+  if (freshWaiverIds.length > 0) {
+    await tx
+      .update(feeWaivers)
+      .set({ postedPaise: sql`${feeWaivers.amountPaise}` })
+      .where(inArray(feeWaivers.id, freshWaiverIds))
+  }
+
+  if (issued.length > 0) {
+    const issuedIds = issued.map((i) => i.studentId)
+    // The student's own charges are in the books now: from here they are
+    // waived or refunded, not cancelled.
+    await tx
+      .update(studentCharges)
+      .set({ invoicedAt: new Date() })
+      .where(
+        and(
+          eq(studentCharges.termId, termId),
+          inArray(studentCharges.studentId, issuedIds),
+          isNull(studentCharges.cancelledAt),
+          isNull(studentCharges.invoicedAt),
+        ),
+      )
+    await notify(tx, tenant, {
+      userIds: issuedIds,
+      moduleId: 'fees',
+      title: `Fees invoiced for ${termCode}`,
+      body: `Fees for ${termCode} have been invoiced. See your fee account for what is due.`,
+      link: '/m/fees/me',
+      alsoGuardians: { link: '/m/parents' },
+    })
+  }
+
+  return { issued, unchanged }
 }
 
 export async function listInvoices(actor: Actor, termId: string, page = invoicePage(new Request('https://x/'), '')) {

@@ -93,7 +93,7 @@ export async function termRoster(tx: Tx, termId: string, studentId?: string | nu
  * whole term.
  */
 export function priceListSql(termId: string, studentIds: string[] | null): SQL {
-  const only = (col: SQL) => (studentIds ? sql` and ${col} = any(${studentIds}::text[])` : sql``)
+  const only = (col: SQL) => (studentIds ? sql` and ${col} = any(array[${sql.join(studentIds.map((i) => sql`${i}`), sql`, `)}]::text[])` : sql``)
   return sql`
     select e.student_id, f.id as fee_item_id, null::uuid as student_charge_id, f.amount_paise::bigint as charged,
            w.id as waiver_id, greatest(coalesce(w.amount_paise - w.posted_paise, 0), 0)::bigint as unposted_waived
