@@ -71,7 +71,7 @@ GET /api/v1/modules/alumni/imports                                       SI.....
 GET /api/v1/modules/alumni/imports/template                              SI........ gate
 POST /api/v1/modules/alumni/imports/run                                  SI........ gate
 
-## attendance 0.13.0
+## attendance 0.14.0
 POST /api/v1/modules/attendance/scan/signed                              .......s.. op
 POST /api/v1/modules/attendance/devices/key                              .......s.. op
 GET /api/v1/modules/attendance/devices/mine                              .......s.. gate
@@ -291,7 +291,7 @@ GET /api/v1/modules/fees/ledger                                          SIH.A..
 GET /api/v1/modules/fees/dues                                            SI..A..... gate
 GET /api/v1/modules/fees/receipt.pdf                                     SI..A..s.. gate
 
-## finance 0.18.0
+## finance 0.19.0
 GET /api/v1/modules/finance/accounts                                     SI..A..... op
 POST /api/v1/modules/finance/accounts                                    SI........ op
 POST /api/v1/modules/finance/accounts/update                             SI........ op

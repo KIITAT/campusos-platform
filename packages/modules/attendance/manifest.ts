@@ -10,7 +10,7 @@ export const manifest: ModuleManifest = {
   name: 'Attendance & QR',
   description:
     'Rotating-QR attendance with GPS geofencing and one-device-per-student binding.',
-  version: '0.13.0',
+  version: '0.14.0',
   alwaysEnabled: false,
   dependsOn: ['academic', 'notices'],
   pricing: { model: 'included_in_base', priceINR: null },

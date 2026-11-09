@@ -10,7 +10,7 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | [Academic Core](#academic) | 0.11.0 | 7 | 42 | None |
 | [Admissions](#admissions) | 0.7.0 | 3 | 9 | academic |
 | [Alumni and events](#alumni) | 0.5.0 | 4 | 12 | None |
-| [Attendance & QR](#attendance) | 0.13.0 | 7 | 28 | academic, notices |
+| [Attendance & QR](#attendance) | 0.14.0 | 7 | 28 | academic, notices |
 | [Student Care](#care) | 0.10.0 | 7 | 24 | academic, notices |
 | [Ceremonies](#ceremonies) | 0.6.0 | 5 | 18 | academic |
 | [Sales CRM](#crm) | 0.4.0 | 4 | 32 | finance, notices |
@@ -18,7 +18,7 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | [Examinations & Grading](#examinations) | 0.16.0 | 9 | 36 | academic, notices |
 | [Feedback](#feedback) | 0.7.0 | 8 | 19 | academic |
 | [Fees & Finance](#fees) | 0.20.0 | 10 | 39 | academic, finance, notices |
-| [Finance & Books](#finance) | 0.18.0 | 92 | 204 | None |
+| [Finance & Books](#finance) | 0.19.0 | 92 | 204 | None |
 | [Helpdesk and grievance](#helpdesk) | 0.5.0 | 2 | 7 | None |
 | [Hostel](#hostel) | 0.9.0 | 5 | 18 | academic |
 | [HR & Payroll](#hr) | 0.21.0 | 18 | 134 | finance, notices |
