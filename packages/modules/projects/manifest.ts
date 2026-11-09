@@ -4,7 +4,7 @@ export const manifest: ModuleManifest = {
   id: 'projects',
   name: 'Projects and timesheets',
   description: 'Projects with stages, milestones and tasks. Staff log time against tasks; the project manager approves it; the accounts office bills approved time through the books once and costs it to the project\'s cost centre; profitability is read from the ledger.',
-  version: '0.2.0',
+  version: '0.3.0',
   alwaysEnabled: false,
   dependsOn: ['finance'],
   pricing: { model: 'not_priced_yet', priceINR: null },

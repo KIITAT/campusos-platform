@@ -148,7 +148,7 @@ test('the whole product still answers the same number of endpoints', () => {
   // P2-16: +22 (crm: pipeline, lead detail, settings; 19 writes for leads, activities, conversion, erasure and settings)
   // P2-14: +27 (projects: projects, members, stages, milestones, tasks, timesheets, cost rates, billing, costing, profitability)
   // MG-65 (Odoo parity): +10 (crm: forecast, report, duplicates; notes, scripts, script delete, team auto-assign, capture, import, merge)
-  assert.equal(total, 821, `expected 821 endpoints across all modules, found ${total}`)
+  assert.equal(total, 825, `expected 825 endpoints across all modules, found ${total}`)
 })
 
 test('a longer path is never swallowed by a shorter one', () => {
@@ -189,6 +189,7 @@ test('only the document routes return bytes instead of JSON', () => {
     'finance/reports/export.csv',
     'finance/tds/certificate.pdf',
     'finance/tds/quarter',
+    'finance/tds/statement',
     'hostel/imports/template',
     'hr/imports/template',
     'hr/payroll/bank-advice',
