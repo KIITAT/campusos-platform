@@ -103,6 +103,17 @@ test("the deductor's details are stored and read back (ACC-31)", async () => {
   await refused(saveTdsDeductor(b.admin, { ...DEDUCTOR, stateCode: '99' }), 'bad_deductor', 400)
 })
 
+test("one institution's deductor details are invisible to another (ACC-31)", async () => {
+  const a = await books()
+  const b = await books()
+  await saveTdsDeductor(a.admin, DEDUCTOR)
+  assert.equal(await tdsDeductor(b.clerk), null)
+  await saveTdsDeductor(b.admin, { ...DEDUCTOR, responsibleName: 'Other Person' })
+  assert.equal((await tdsDeductor(a.clerk))?.responsibleName, 'Meera Rao')
+  const seen = await withTenant(b.id, (tx) => tx.execute(sql`select institution_id from finance_tds_deductor`))
+  assert.deepEqual(seen.rows.map((r) => r.institution_id), [b.id])
+})
+
 test('a return code must be a code of the form (ACC-31)', async () => {
   const b = await books()
   const s = await sectionId(b, 'CONTRACT')
