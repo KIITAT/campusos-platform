@@ -197,3 +197,32 @@ test('the Form 140 file is refused when it cannot be complete (ACC-31)', async (
   const empty = await books()
   await refused(tdsStatementFile(empty.admin, { fy: 2026, quarter: 2, form: '26Q' }), 'deductor_incomplete', 409)
 })
+
+// --- the Form 144 file -------------------------------------------------------------
+
+test('the Form 144 file carries the non-resident fields (ACC-31)', async () => {
+  const b = await books()
+  await saveTdsDeductor(b.admin, DEDUCTOR)
+  const nr = await section(b, 'NRTECH', '20', '20', undefined, '1057')
+  await setReturnCodes(b.admin, { sectionId: nr, nrRemittance: '21' })
+  const globex = (await createParty(b.clerk, { code: `G${++n}`, name: 'Globex Ltd', isSupplier: true, gstCategory: 'overseas', pan: 'AABCG1234Q', tdsSectionId: nr, email: 'ap@globex.example' })).id
+  await billOf(b, globex, '2026-08-12', '200000')
+  const bank = await withTenant(b.id, (tx) => accountFor(tx, b.id, 'bank'))
+  await recordChallan(b.admin, { form: '27Q', month: '2026-08', depositedOn: '2026-09-04', bsrCode: '0510308', challanSerial: '00077', accountId: bank })
+
+  await refused(tdsStatementFile(b.admin, { fy: 2026, quarter: 2, form: '27Q' }), 'party_incomplete', 409)
+  await updateParty(b.clerk, { partyId: globex, isSupplier: true, tdsStatus: '1', countryCode: '267', foreignTaxId: '12-3456789', foreignAddress: '1 Main Street, Springfield' })
+
+  const f = await tdsStatementFile(b.admin, { fy: 2026, quarter: 2, form: '27Q' })
+  assert.equal(f.fileName, 'AAAA12345A_144_Q2_202627.txt')
+  const lines = f.bytes.split('\r\n').slice(0, -1).map(fields)
+  assert.deepEqual(lines.map((l) => l.length), [18, 72, 30, 45])
+  const [, bh, cd, dd] = lines as string[][]
+  assert.equal(bh![4], '144')
+  assert.deepEqual([cd![7], cd![11]], ['40000.00', '40000.00'])
+  assert.deepEqual(
+    [dd![7], dd![11], dd![13], dd![14], dd![15], dd![16], dd![19], dd![20], dd![23], dd![27], dd![29], dd![36], dd![37], dd![40]],
+    ['AABCG1234Q', '1', 'N', '1057', '21', '267', '200000.00', 'N', '40000.00', '20.0000', 'A', '1 Main Street, Springfield', 'ap@globex.example', '12-3456789'],
+  )
+  await refused(setReturnCodes(b.admin, { sectionId: nr, nrRemittance: '71' }), 'bad_remittance', 400)
+})
