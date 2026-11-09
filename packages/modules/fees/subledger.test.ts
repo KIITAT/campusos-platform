@@ -1,20 +1,25 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { like } from 'drizzle-orm'
-import { authDb, institutions, users } from '@campusos/db'
+import { randomUUID } from 'node:crypto'
+import { like, sql } from 'drizzle-orm'
+import { authDb, institutions, users, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
-import { setSingleOfficer, trialBalance, type Actor as Books } from '@campusos/module-finance/api'
+import { postWithin, setSingleOfficer, trialBalance, type Actor as Books } from '@campusos/module-finance/api'
 import {
   awardScholarship,
+  checkReceivable,
   createFeeItem,
   createScholarship,
   grantWaiver,
   issueInvoices,
+  receivableReport,
   recordPayment,
   refundPayment,
+  revokeWaiver,
   studentLedger,
   type Actor,
 } from './api'
+import { plugin } from './plugin'
 
 /**
  * The student ledger is what the books were told (ACC-20, decision 526), and
@@ -148,7 +153,7 @@ test('nothing is owed before the term is issued', async () => {
 async function ordinaryWork(c: Campus) {
   const item = await charge(c, 'Tuition', '45000')
   await issueInvoices(c.admin, { termId: c.termId })
-  await grantWaiver(c.admin, { studentId: c.s1, feeItemId: item.id, amount: '5000', reason: 'hardship after the invoice' })
+  const waiver = await grantWaiver(c.admin, { studentId: c.s1, feeItemId: item.id, amount: '5000', reason: 'hardship after the invoice' })
   const pay = await recordPayment(c.clerk, {
     studentId: c.s1,
     termId: c.termId,
@@ -158,6 +163,7 @@ async function ordinaryWork(c: Campus) {
   })
   await refundPayment(c.admin, { paymentId: pay.id, amount: '2000', reason: 'paid twice at the counter' })
   await recordPayment(c.clerk, { studentId: c.s2, termId: c.termId, amount: '50000', method: 'cash' })
+  return { waiver }
 }
 
 test('the student ledgers add up to the receivable', async () => {
@@ -168,4 +174,91 @@ test('the student ledgers add up to the receivable', async () => {
   const b = await studentLedger(c.admin, c.s2, c.termId)
   assert.equal(a.balancePaise + b.balancePaise, await balance(c, RECEIVABLE))
   assert.equal(b.overpaidPaise, 500_000)
+})
+
+// --- the reconciliation and the nightly check ---------------------------------
+
+test('the reconciliation agrees after ordinary fee work', async () => {
+  const c = await campus()
+  const { waiver } = await ordinaryWork(c)
+  const rule = await createScholarship(c.admin, {
+    code: 'MERIT',
+    name: 'Merit',
+    kind: 'merit',
+    basis: 'fixed',
+    amountPaise: '1000',
+  })
+  await awardScholarship(c.admin, { scholarshipId: rule.id, studentId: c.s1, termId: c.termId })
+  await revokeWaiver(c.admin, { waiverId: waiver.id, reason: 'granted in error' })
+
+  const r = await withTenant(c.id, (tx) => receivableReport(tx))
+  assert.equal(r.differencePaise, 0)
+  assert.equal(r.unattributedPaise, 0)
+  assert.equal(r.mismatchCount, 0)
+  assert.equal(r.booksPaise, await balance(c, RECEIVABLE))
+})
+
+/** A journal straight to the receivable, which no fee document explains. */
+const handAdjustment = (c: Campus) =>
+  withTenant(c.id, (tx) =>
+    postWithin(tx, c.id, c.admin.id, {
+      memo: 'hand adjustment',
+      sourceModule: 'finance',
+      sourceRef: `test:${randomUUID()}`,
+      lines: [
+        { purpose: 'fees_receivable', debitPaise: 10_000 },
+        { purpose: 'cash', creditPaise: 10_000 },
+      ],
+    }),
+  )
+
+test('a journal straight to the receivable is caught and named unattributed', async () => {
+  const c = await campus()
+  await ordinaryWork(c)
+  await handAdjustment(c)
+
+  const r = await withTenant(c.id, (tx) => receivableReport(tx))
+  assert.equal(r.differencePaise, 10_000)
+  assert.equal(r.unattributedPaise, 10_000)
+  assert.equal(r.mismatchCount, 0)
+})
+
+test('the nightly check tells the office when the books disagree', async () => {
+  const c = await campus()
+  await ordinaryWork(c)
+  await handAdjustment(c)
+
+  const out = await withTenant(c.id, (tx) => checkReceivable(c.admin, tx))
+  assert.equal(out.differencePaise, 10_000)
+  const mine = async (userId: string) =>
+    (await withTenant(c.id, (tx) => tx.execute(sql`select title, link from notifications where user_id = ${userId}`))).rows as {
+      title: string
+      link: string
+    }[]
+  for (const who of [c.admin, c.clerk]) {
+    const rows = (await mine(who.id)).filter((n) => n.title === 'Fee ledger and books disagree')
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0]!.link, '/m/fees/reconciliation')
+  }
+  const logged = await withTenant(c.id, (tx) =>
+    tx.execute(sql`select count(*)::int as n from audit_log where institution_id = ${c.id}::uuid and action = 'fee.receivable_mismatch'`),
+  )
+  assert.equal((logged.rows[0] as { n: number }).n, 1)
+
+  // A campus whose books agree is left alone.
+  const fine = await campus()
+  await ordinaryWork(fine)
+  const quiet = await withTenant(fine.id, (tx) => checkReceivable(fine.admin, tx))
+  assert.equal(quiet.differencePaise, 0)
+  assert.equal((await mine(fine.admin.id)).filter((n) => n.title === 'Fee ledger and books disagree').length, 0)
+  const none = await withTenant(fine.id, (tx) =>
+    tx.execute(sql`select count(*)::int as n from audit_log where institution_id = ${fine.id}::uuid and action = 'fee.receivable_mismatch'`),
+  )
+  assert.equal((none.rows[0] as { n: number }).n, 0)
+})
+
+test('the check is a daily job', () => {
+  const job = plugin.jobs?.find((j) => j.kind === 'fees.check-receivable')
+  assert.ok(job)
+  assert.equal(job.daily, true)
 })
