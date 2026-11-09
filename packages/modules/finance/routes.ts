@@ -116,6 +116,7 @@ export const specs: RouteSpec[] = [
   post('tax', '/taxes', 'Add a tax template', api.createTaxTemplate, api.taxTemplateSchema),
   post('tax', '/taxes/archive', 'Retire a tax template', api.archiveTaxTemplate),
   post('tax', '/tds-sections', 'Add a TDS section', api.createTdsSection, api.tdsSectionSchema),
+  post('tax', '/tds-sections/return-codes', "Set a TDS section's codes in the Form 140 and 144 statements", api.setReturnCodes, api.returnCodesSchema),
   post('tax', '/taxes/india-preset', 'Load the India starter set: GST accounts and slabs, TDS sections (to be checked)', (a) => api.loadIndiaPreset(a)),
 
   // --- parties ---------------------------------------------------------------------
@@ -290,6 +291,8 @@ export const specs: RouteSpec[] = [
   get('reports', '/reports/cost-centers', 'Income and expenditure by cost centre', (a, q) => api.costCenterReport(a, q)),
   get('reports', '/reports/gstr1', 'GSTR-1 tables for a period', (a, q) => api.gstr1(a, range(q))),
   post('reports', '/tds/challans', 'Record a TDS challan against a month of deductions', api.recordChallan, api.recordChallanSchema),
+  post('reports', '/tds/deductor', "Save the deductor's details for TDS statements", api.saveTdsDeductor, api.tdsDeductorSchema),
+  get('reports', '/tds/deductor', "The deductor's details for TDS statements", (a) => api.tdsDeductor(a)),
   post('reports', '/tds/challans/void', 'Void a TDS challan', api.voidChallan, api.voidChallanSchema),
   get('reports', '/tds/challans', 'TDS challans recorded', (a) => api.listChallans(a)),
   file('reports', '/tds/quarter', 'The TDS working statement for a quarter as CSV (fy, quarter, form)', (a, req) => {

@@ -374,16 +374,18 @@ const GST_SLABS = [
  * section numbers in brackets because that is what most staff still know them
  * by. Under the Income-tax Act, 2025 (in force from 1 April 2026) these are
  * consolidated in one section with a table; the institution checks each rate
- * and threshold before relying on it.
+ * and threshold before relying on it. `returnCode` is the Form 140 section code
+ * (P1-05d) where the published annexure states it; rent has none until the CA
+ * says which code ordinary rent takes.
  */
 const TDS_STARTERS = [
-  { code: 'CONTRACT-IND', name: 'Contractors: individual or HUF (was 194C)', rate: 100, noPan: 2000, single: 3_000_000, annual: 10_000_000 },
-  { code: 'CONTRACT', name: 'Contractors: others (was 194C)', rate: 200, noPan: 2000, single: 3_000_000, annual: 10_000_000 },
-  { code: 'PROF', name: 'Professional fees (was 194J)', rate: 1000, noPan: 2000, single: 0, annual: 5_000_000 },
-  { code: 'TECH', name: 'Fees for technical services (was 194J)', rate: 200, noPan: 2000, single: 0, annual: 5_000_000 },
-  { code: 'RENT-LB', name: 'Rent: land and buildings (was 194-I)', rate: 1000, noPan: 2000, single: 5_000_000, annual: 0 },
-  { code: 'RENT-PM', name: 'Rent: plant and machinery (was 194-I)', rate: 200, noPan: 2000, single: 5_000_000, annual: 0 },
-  { code: 'COMM', name: 'Commission or brokerage (was 194H)', rate: 200, noPan: 2000, single: 0, annual: 2_000_000 },
+  { code: 'CONTRACT-IND', name: 'Contractors: individual or HUF (was 194C)', rate: 100, noPan: 2000, single: 3_000_000, annual: 10_000_000, returnCode: '1023' },
+  { code: 'CONTRACT', name: 'Contractors: others (was 194C)', rate: 200, noPan: 2000, single: 3_000_000, annual: 10_000_000, returnCode: '1024' },
+  { code: 'PROF', name: 'Professional fees (was 194J)', rate: 1000, noPan: 2000, single: 0, annual: 5_000_000, returnCode: '1027' },
+  { code: 'TECH', name: 'Fees for technical services (was 194J)', rate: 200, noPan: 2000, single: 0, annual: 5_000_000, returnCode: '1026' },
+  { code: 'RENT-LB', name: 'Rent: land and buildings (was 194-I)', rate: 1000, noPan: 2000, single: 5_000_000, annual: 0, returnCode: null },
+  { code: 'RENT-PM', name: 'Rent: plant and machinery (was 194-I)', rate: 200, noPan: 2000, single: 5_000_000, annual: 0, returnCode: null },
+  { code: 'COMM', name: 'Commission or brokerage (was 194H)', rate: 200, noPan: 2000, single: 0, annual: 2_000_000, returnCode: '1006' },
 ] as const
 
 /**
@@ -464,6 +466,7 @@ export async function loadIndiaPreset(actor: Actor) {
           thresholdSinglePaise: s.single,
           thresholdAnnualPaise: s.annual,
           payableAccountId: payable,
+          returnCode: s.returnCode,
         })
         made++
       }

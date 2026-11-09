@@ -44,6 +44,11 @@ export const partySchema = z
     bankName: optional(120),
     bankAccount: optional(40),
     ifsc: optional(11).transform((v) => v?.toUpperCase()),
+    /** Form 144 (P1-05d): the payee's status (Annexure 8) and country (Annexure 10). */
+    tdsStatus: z.coerce.number().int().min(1).max(10).optional().or(z.literal('').transform(() => undefined)),
+    countryCode: z.string().trim().regex(/^[0-9]{2,3}$/).optional().or(z.literal('').transform(() => undefined)),
+    foreignTaxId: optional(25),
+    foreignAddress: optional(150),
   })
   .meta({ id: 'FinanceParty' })
 
@@ -82,6 +87,10 @@ function values(data: Partial<z.infer<typeof partySchema>>) {
     ...(data.bankName !== undefined && { bankName: data.bankName ?? null }),
     ...(data.bankAccount !== undefined && { bankAccount: data.bankAccount ?? null }),
     ...(data.ifsc !== undefined && { ifsc: data.ifsc ?? null }),
+    ...(data.tdsStatus !== undefined && { tdsStatus: data.tdsStatus }),
+    ...(data.countryCode !== undefined && { countryCode: data.countryCode }),
+    ...(data.foreignTaxId !== undefined && { foreignTaxId: data.foreignTaxId ?? null }),
+    ...(data.foreignAddress !== undefined && { foreignAddress: data.foreignAddress ?? null }),
   }
   return out
 }
