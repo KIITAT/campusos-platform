@@ -5,8 +5,16 @@ import { chargeStayWithin, endStayWithin, termChoicesWithin, termOnWithin, type 
 import { manifest as feesManifest } from '@campusos/module-fees/manifest'
 import { terms } from '@campusos/module-academic/schema'
 import {
+  cursorColumn,
+  finishPage,
+  keyset,
   moduleEnabled,
+  orderKeys,
+  readPage,
+  searchAny,
   viewsOnBehalf,
+  type Page,
+  type SortSpec,
   type Role,
   type ViewerScope,
 } from '@campusos/module-framework'
@@ -745,14 +753,30 @@ export async function visitorOut(actor: Actor, input: unknown) {
   })
 }
 
+const VISITOR_SORTS: SortSpec = {
+  entered: {
+    dir: 'desc',
+    keys: [{ sql: sql`${visitors.enteredAt}`, type: 'timestamptz' }, { sql: sql`${visitors.id}`, type: 'uuid' }],
+  },
+}
+export const visitorPage = (req: Request, prefix: string) => readPage(req, prefix, VISITOR_SORTS, 'entered', 50)
+
+/** The gate register, newest first, a page at a time (NEW-66). */
 export async function visitorLog(
   actor: Actor,
   blockId?: string,
   openOnly = false,
-): Promise<VisitorRow[]> {
+  page = visitorPage(new Request('https://x/'), ''),
+): Promise<Page<VisitorRow>> {
   const tenant = requireWarden(actor)
+  const keys = VISITOR_SORTS[page.sort]!.keys
+  const where = and(
+    blockId ? eq(visitors.blockId, blockId) : undefined,
+    openOnly ? isNull(visitors.exitedAt) : undefined,
+    searchAny(page.q, [sql`${visitors.name}`]),
+  )
 
-  return withTenant(tenant, async (tx): Promise<VisitorRow[]> => {
+  return withTenant(tenant, async (tx) => {
     const rows = await tx
       .select({
         id: visitors.id,
@@ -763,23 +787,24 @@ export async function visitorLog(
         studentName: users.name,
         enteredAt: visitors.enteredAt,
         exitedAt: visitors.exitedAt,
+        _cursor: cursorColumn(keys),
       })
       .from(visitors)
       .leftJoin(users, eq(users.id, visitors.studentId))
-      .where(
-        and(
-          blockId ? eq(visitors.blockId, blockId) : undefined,
-          openOnly ? isNull(visitors.exitedAt) : undefined,
-        ),
-      )
-      .orderBy(desc(visitors.enteredAt))
-      .limit(300)
+      .where(and(where, keyset(keys, page)))
+      .orderBy(...orderKeys(keys, page.dir))
+      .limit(page.limit + 1)
+    const [{ n }] = (await tx.select({ n: sql<number>`count(*)::int` }).from(visitors).where(where)) as [{ n: number }]
 
-    return rows.map((r) => ({
-      ...r,
-      enteredAt: r.enteredAt.toISOString(),
-      exitedAt: r.exitedAt?.toISOString() ?? null,
-    }))
+    return finishPage(
+      rows.map((r) => ({
+        ...r,
+        enteredAt: r.enteredAt.toISOString(),
+        exitedAt: r.exitedAt?.toISOString() ?? null,
+      })),
+      page,
+      Number(n),
+    )
   })
 }
 

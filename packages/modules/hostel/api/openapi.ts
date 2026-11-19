@@ -185,10 +185,13 @@ export const paths = {
 
   [`${base}/visitors`]: {
     get: {
-      summary: 'The gate register',
+      summary: 'The gate register, newest first, a page at a time',
       tags: ['hostel'],
       responses: {
-        '200': { description: 'OK', content: json(z.array(visitorRowSchema)) },
+        '200': {
+          description: 'OK',
+          content: json(z.object({ rows: z.array(visitorRowSchema), total: z.number().int(), next: z.string().nullable() })),
+        },
         ...gated,
       },
     },

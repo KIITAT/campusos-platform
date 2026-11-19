@@ -7,6 +7,7 @@ import {
   myHostel,
   rollCall,
   visitorLog,
+  visitorPage,
   type Actor,
 } from './api'
 
@@ -298,10 +299,11 @@ export const pages: PluginPage[] = [
       const blockId = param(req, 'blockId')
       const [blocks, inside, all] = await Promise.all([
         listBlocks(a),
-        visitorLog(a, blockId, true),
-        visitorLog(a, blockId),
+        // Everyone inside: bounded by the building, not by the years of the log.
+        visitorLog(a, blockId, true, visitorPage(new Request('https://x/?n=500'), '')).then((p) => p.rows),
+        visitorLog(a, blockId, false, visitorPage(req, 'all')),
       ])
-      const row = (v: (typeof all)[number]) => ({
+      const row = (v: (typeof all.rows)[number]) => ({
         ...v,
         in: v.enteredAt.slice(11, 16),
         out: v.exitedAt ? v.exitedAt.slice(11, 16) : 'still inside',
@@ -309,7 +311,8 @@ export const pages: PluginPage[] = [
       })
       return {
         inside: inside.map(row),
-        all: all.map(row),
+        all: all.rows.map(row),
+        allPage: { total: all.total, next: all.next },
         count: inside.length,
         blockOptions: blocks.map((b) => ({ value: b.id, label: `${b.code} - ${b.name}` })),
         insideOptions: inside.map((v) => ({
@@ -365,6 +368,7 @@ export const pages: PluginPage[] = [
         kind: 'table',
         title: 'Recent',
         rows: 'all',
+        paging: { data: 'allPage', sorts: ['entered'] },
         empty: 'Nothing recorded.',
         columns: [
           { key: 'name', label: 'Visitor' },

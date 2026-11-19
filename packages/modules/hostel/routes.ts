@@ -17,6 +17,7 @@ import {
   visitorIn,
   visitorLog,
   visitorOut,
+  visitorPage,
   type Actor,
 } from './api'
 
@@ -94,7 +95,7 @@ export const routes: PluginRoute[] = [
     method: 'GET',
     path: '/visitors',
     handler: (actor, req) =>
-      visitorLog(actor as Actor, param(req, 'blockId'), flag(req, 'open')),
+      visitorLog(actor as Actor, param(req, 'blockId'), flag(req, 'open'), visitorPage(req, '')),
   },
   {
     method: 'POST',
