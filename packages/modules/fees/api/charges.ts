@@ -1,7 +1,16 @@
-import { and, asc, desc, eq, gte, isNull, like, lte } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, isNull, like, lte, sql } from 'drizzle-orm'
 import * as z from 'zod'
 import { audit, users, withIdempotencyKey, withTenant } from '@campusos/db'
-import type { Role } from '@campusos/module-framework'
+import {
+  cursorColumn,
+  finishPage,
+  keyset,
+  orderKeys,
+  readPage,
+  searchAny,
+  type Role,
+  type SortSpec,
+} from '@campusos/module-framework'
 import { terms } from '@campusos/module-academic/schema'
 import { parseRupeesToPaise } from '@campusos/money'
 import { feeIdempotencyKeys, studentCharges } from '../schema'
@@ -299,8 +308,22 @@ export async function cancelStudentCharge(actor: Actor, input: unknown) {
   })
 }
 
-export async function listStudentCharges(actor: Actor, termId?: string) {
+const CHARGE_SORTS: SortSpec = {
+  created: {
+    dir: 'desc',
+    keys: [{ sql: sql`${studentCharges.createdAt}`, type: 'timestamptz' }, { sql: sql`${studentCharges.id}`, type: 'uuid' }],
+  },
+}
+export const chargePage = (req: Request, prefix: string) => readPage(req, prefix, CHARGE_SORTS, 'created', 50)
+
+/** Charges on single students, newest first, a page at a time (LOW-04). */
+export async function listStudentCharges(actor: Actor, termId?: string, page = chargePage(new Request('https://x/'), '')) {
   const tenant = requireFinance(actor)
+  const keys = CHARGE_SORTS[page.sort]!.keys
+  const where = and(
+    termId ? eq(studentCharges.termId, termId) : undefined,
+    searchAny(page.q, [sql`${users.name}`, sql`${users.email}`, sql`${studentCharges.label}`]),
+  )
   return withTenant(tenant, async (tx) => {
     const rows = await tx
       .select({
@@ -308,18 +331,50 @@ export async function listStudentCharges(actor: Actor, termId?: string) {
         student: users.name,
         email: users.email,
         term: terms.code,
+        _cursor: cursorColumn(keys),
       })
       .from(studentCharges)
       .innerJoin(users, eq(users.id, studentCharges.studentId))
       .innerJoin(terms, eq(terms.id, studentCharges.termId))
-      .where(termId ? eq(studentCharges.termId, termId) : undefined)
-      .orderBy(desc(studentCharges.createdAt), asc(users.name))
-    return rows.map((r) => ({
-      ...r.c,
-      student: r.student ?? r.email ?? r.c.studentId,
-      term: r.term,
-      state: r.c.cancelledAt ? 'cancelled' : r.c.invoicedAt ? 'invoiced' : 'pending',
-    }))
+      .where(and(where, keyset(keys, page)))
+      .orderBy(...orderKeys(keys, page.dir))
+      .limit(page.limit + 1)
+    const [{ n }] = (await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(studentCharges)
+      .innerJoin(users, eq(users.id, studentCharges.studentId))
+      .where(where)) as [{ n: number }]
+    return finishPage(
+      rows.map((r) => ({
+        ...r.c,
+        student: r.student ?? r.email ?? r.c.studentId,
+        term: r.term,
+        state: r.c.cancelledAt ? 'cancelled' : r.c.invoicedAt ? 'invoiced' : 'pending',
+        _cursor: r._cursor,
+      })),
+      page,
+      Number(n),
+    )
+  })
+}
+
+/** What the office may still cancel: its own charges not yet invoiced. */
+export async function cancellableCharges(actor: Actor) {
+  const tenant = requireFinance(actor)
+  return withTenant(tenant, async (tx) => {
+    const rows = await tx
+      .select({ id: studentCharges.id, label: studentCharges.label, student: users.name, email: users.email })
+      .from(studentCharges)
+      .innerJoin(users, eq(users.id, studentCharges.studentId))
+      .where(
+        and(
+          eq(studentCharges.sourceModule, MODULE),
+          isNull(studentCharges.cancelledAt),
+          isNull(studentCharges.invoicedAt),
+        ),
+      )
+      .orderBy(desc(studentCharges.createdAt))
+    return rows.map((r) => ({ value: r.id, label: `${r.student ?? r.email}: ${r.label}` }))
   })
 }
 

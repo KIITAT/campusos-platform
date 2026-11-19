@@ -12,6 +12,8 @@ import {
   listRefundRules,
   listScholarships,
   listStudentCharges,
+  cancellableCharges,
+  chargePage,
   reconciliation,
   studentChoices,
   studentLedger,
@@ -118,16 +120,20 @@ export const pages: PluginPage[] = [
     title: 'Charges on one student',
     menu: 'Student charges',
     roles: [...OFFICE],
-    async load(actor) {
+    async load(actor, req) {
       const a = actor as Actor
-      const [rows, structure, students] = await Promise.all([listStudentCharges(a), listStructure(a), studentChoices(a)])
+      const [page, structure, students, cancellable] = await Promise.all([
+        listStudentCharges(a, undefined, chargePage(req, 'rows')),
+        listStructure(a),
+        studentChoices(a),
+        cancellableCharges(a),
+      ])
       return {
-        rows: rows.map((r) => ({ ...r, cancellable: r.state === 'pending' && r.sourceModule === 'fees' })),
+        rows: page.rows,
+        rowsPage: { total: page.total, next: page.next },
         students,
         terms: structure.terms.map((t) => ({ value: t.id, label: `${t.code} - ${t.name}${t.isCurrent ? ' (current)' : ''}` })),
-        cancellable: rows
-          .filter((r) => r.state === 'pending' && r.sourceModule === 'fees')
-          .map((r) => ({ value: r.id, label: `${r.student}: ${r.label}` })),
+        cancellable,
       }
     },
     sections: () => [
@@ -143,6 +149,7 @@ export const pages: PluginPage[] = [
         title: 'Charges on one student',
         rows: 'rows',
         empty: 'None.',
+        paging: { data: 'rowsPage', sorts: ['created'] },
         columns: [
           { key: 'student', label: 'Student' },
           { key: 'term', label: 'Term', kind: 'code' },
