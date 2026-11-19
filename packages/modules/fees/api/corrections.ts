@@ -1,12 +1,14 @@
-import { eq, sql } from 'drizzle-orm'
-import { audit, withTenant } from '@campusos/db'
+import { and, eq, isNull, sql } from 'drizzle-orm'
+import { audit, users, withTenant } from '@campusos/db'
 import { checkOtherPerson, localToday } from '@campusos/module-finance/api'
 import { notify } from '@campusos/module-notices/api'
-import { feePayments } from '../schema'
+import { terms } from '@campusos/module-academic/schema'
+import { feeInvoices, feePayments } from '../schema'
 import { FeeError, localDayOf, requireAdmin, requireFinance, type Actor } from './operations'
 import { chargeStudentWithin } from './charges'
-import { reversePayment } from './posting'
-import { bouncePaymentSchema, voidPaymentSchema } from './schemas'
+import { postedOf, postedSql } from './books'
+import { postInvoiceVoid, reversePayment } from './posting'
+import { bouncePaymentSchema, voidInvoiceSchema, voidPaymentSchema } from './schemas'
 
 /**
  * Correcting money already receipted (ACC-23). A receipt is never deleted: a
@@ -185,6 +187,88 @@ export async function bouncePayment(actor: Actor, input: unknown) {
       notice:
         `Receipt ${p.receiptNo} is marked returned unpaid; the amount is due again.` +
         (data.charge !== undefined ? ` A charge of ${rupees(data.charge)} is billed when the term's fees are next issued.` : ''),
+    }
+  })
+}
+
+/**
+ * Void an invoice issued in error, such as to a student who was not enrolled
+ * (D3 of tools/p006-diagnostics.sql). Only when nothing is paid or credited
+ * against the term. One entry takes the student's position back to nothing
+ * (D13); the waivers it carried go back to unposted and ride again if the term
+ * is issued afresh (D14). Under the term's issue lock, so an issue run and a
+ * void take turns.
+ */
+export async function voidInvoice(actor: Actor, input: unknown) {
+  const tenant = requireAdmin(actor)
+  const data = voidInvoiceSchema.parse(input)
+
+  return withTenant(tenant, async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'fees.issue:' + data.termId}, 0))`)
+    const [invoice] = await tx
+      .select()
+      .from(feeInvoices)
+      .where(and(eq(feeInvoices.studentId, data.studentId), eq(feeInvoices.termId, data.termId), isNull(feeInvoices.voidedAt)))
+      .for('update')
+    if (!invoice) throw new FeeError(404, 'no_such_invoice', 'no live invoice for that student and term')
+
+    const [posted] = (await tx.execute(sql`select * from (${postedSql({ termId: data.termId, studentId: data.studentId })}) p`)).rows
+    const p = postedOf(posted as Record<string, unknown> | undefined)
+    const net = p.paidPaise - p.refundedPaise
+    if (net !== 0) {
+      throw new FeeError(409, 'invoice_has_payments', `${rupees(net)} is paid against this term; void or refund those receipts first`)
+    }
+    if (p.creditedPaise !== 0) {
+      throw new FeeError(
+        409,
+        'invoice_has_credits',
+        'this term has scholarship awards or drop credits; revoke the awards first (a drop credit cannot be undone)',
+      )
+    }
+
+    const waivers = (
+      await tx.execute(sql`
+        select w.id, w.posted_paise from fee_waivers w join fee_items f on f.id = w.fee_item_id
+         where w.student_id = ${data.studentId} and f.term_id = ${data.termId}::uuid and w.posted_paise <> 0
+           for update of w`)
+    ).rows as { id: string; posted_paise: string | number }[]
+    const waived = waivers.reduce((n, w) => n + Number(w.posted_paise), 0)
+
+    await audit(tx, {
+      institutionId: tenant,
+      actorId: actor.id,
+      actorEmail: actor.email ?? null,
+      moduleId: MODULE,
+      action: 'fee.invoice_voided',
+      entity: 'fee_invoices',
+      entityId: invoice.id,
+      reason: data.reason,
+      detail: { studentId: data.studentId, termId: data.termId, chargedPaise: invoice.chargedPaise, waivedPaise: waived, version: invoice.version },
+    })
+    await tx
+      .update(feeInvoices)
+      .set({ voidedAt: new Date(), voidedBy: actor.id, voidReason: data.reason })
+      .where(eq(feeInvoices.id, invoice.id))
+    if (waivers.length > 0) {
+      await tx.execute(sql`update fee_waivers set posted_paise = 0 where id in (${sql.join(waivers.map((w) => sql`${w.id}::uuid`), sql`, `)})`)
+    }
+
+    const [term] = await tx.select({ code: terms.code }).from(terms).where(eq(terms.id, data.termId))
+    const [student] = await tx.select({ name: users.name }).from(users).where(eq(users.id, data.studentId))
+    const termCode = term?.code ?? 'term'
+    await postInvoiceVoid(tx, tenant, actor.id, {
+      id: invoice.id,
+      studentName: student?.name ?? null,
+      termCode,
+      chargedPaise: invoice.chargedPaise,
+      waivedPaise: waived,
+      reason: data.reason,
+      postingDate: await localToday(tx, tenant),
+    })
+
+    return {
+      invoiceId: invoice.id,
+      notice: `Invoice for ${termCode} voided; ${rupees(invoice.chargedPaise - waived)} is no longer owed. Issuing the term again bills the student afresh if they are enrolled.`,
     }
   })
 }

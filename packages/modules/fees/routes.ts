@@ -9,6 +9,7 @@ import { db, institutions } from '@campusos/db'
 import {
   addBankAccount,
   bouncePayment,
+  voidInvoice,
   voidPayment,
   claimQueue,
   claimTransfer,
@@ -223,6 +224,11 @@ export const routes: PluginRoute[] = [
     method: 'POST',
     path: '/payments/bounce',
     handler: async (actor, req) => bouncePayment(actor as Actor, await jsonBody(req)),
+  },
+  {
+    method: 'POST',
+    path: '/invoices/void',
+    handler: async (actor, req) => voidInvoice(actor as Actor, await jsonBody(req)),
   },
 
   {

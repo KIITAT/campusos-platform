@@ -125,7 +125,7 @@ async function invoiceFor(tx: Tx, studentId: string, termId: string) {
   const [row] = await tx
     .select()
     .from(feeInvoices)
-    .where(and(eq(feeInvoices.studentId, studentId), eq(feeInvoices.termId, termId)))
+    .where(and(eq(feeInvoices.studentId, studentId), eq(feeInvoices.termId, termId), isNull(feeInvoices.voidedAt)))
   return row ?? null
 }
 
@@ -599,12 +599,13 @@ async function issueChunk(
 
   const ids = students.map((s) => s.studentId)
   const lines = (await tx.execute(priceListSql(termId, ids))).rows as Record<string, unknown>[]
-  const priced = new Map<string, { listed: number; unposted: number; freshWaivers: string[] }>()
+  const priced = new Map<string, { listed: number; unposted: number; freshWaivers: string[]; chargeIds: string[] }>()
   for (const l of lines) {
-    const g = priced.get(String(l.student_id)) ?? { listed: 0, unposted: 0, freshWaivers: [] }
+    const g = priced.get(String(l.student_id)) ?? { listed: 0, unposted: 0, freshWaivers: [], chargeIds: [] }
     g.listed += Number(l.charged)
     g.unposted += Number(l.unposted_waived)
     if (l.waiver_id && Number(l.unposted_waived) > 0) g.freshWaivers.push(String(l.waiver_id))
+    if (l.student_charge_id != null) g.chargeIds.push(String(l.student_charge_id))
     priced.set(String(l.student_id), g)
   }
 
@@ -618,7 +619,7 @@ async function issueChunk(
           version: feeInvoices.version,
         })
         .from(feeInvoices)
-        .where(and(eq(feeInvoices.termId, termId), inArray(feeInvoices.studentId, ids)))
+        .where(and(eq(feeInvoices.termId, termId), inArray(feeInvoices.studentId, ids), isNull(feeInvoices.voidedAt)))
     ).map((i) => [i.studentId, i]),
   )
 
@@ -688,19 +689,22 @@ async function issueChunk(
 
   if (issued.length > 0) {
     const issuedIds = issued.map((i) => i.studentId)
-    // The student's own charges are in the books now: from here they are
-    // waived or refunded, not cancelled.
-    await tx
-      .update(studentCharges)
-      .set({ invoicedAt: new Date() })
-      .where(
-        and(
-          eq(studentCharges.termId, termId),
-          inArray(studentCharges.studentId, issuedIds),
-          isNull(studentCharges.cancelledAt),
-          isNull(studentCharges.invoicedAt),
-        ),
-      )
+    // The student's own charges this run priced are in the books now: from
+    // here they are waived or refunded, not cancelled. Only those (NEW-91): a
+    // charge raised while the chunk ran was not billed and stays cancellable.
+    const chargeIds = issuedIds.flatMap((s) => priced.get(s)?.chargeIds ?? [])
+    if (chargeIds.length > 0) {
+      await tx
+        .update(studentCharges)
+        .set({ invoicedAt: new Date() })
+        .where(
+          and(
+            inArray(studentCharges.id, chargeIds),
+            isNull(studentCharges.cancelledAt),
+            isNull(studentCharges.invoicedAt),
+          ),
+        )
+    }
     await notify(tx, tenant, {
       userIds: issuedIds,
       moduleId: 'fees',
@@ -731,13 +735,13 @@ export async function listInvoices(actor: Actor, termId: string, page = invoiceP
       })
       .from(feeInvoices)
       .innerJoin(users, eq(users.id, feeInvoices.studentId))
-      .where(and(eq(feeInvoices.termId, termId), keyset(keys, page)))
+      .where(and(eq(feeInvoices.termId, termId), isNull(feeInvoices.voidedAt), keyset(keys, page)))
       .orderBy(...orderKeys(keys, page.dir))
       .limit(page.limit + 1)
     const [count] = await tx
       .select({ n: sql<number>`count(*)::int` })
       .from(feeInvoices)
-      .where(eq(feeInvoices.termId, termId))
+      .where(and(eq(feeInvoices.termId, termId), isNull(feeInvoices.voidedAt)))
     return finishPage(rows, page, Number(count!.n))
   })
 }

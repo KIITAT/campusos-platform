@@ -17,7 +17,7 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | [Enrollment](#enrollment) | 0.6.0 | 3 | 8 | academic |
 | [Examinations & Grading](#examinations) | 0.18.0 | 9 | 36 | academic, notices |
 | [Feedback](#feedback) | 0.7.0 | 8 | 19 | academic |
-| [Fees & Finance](#fees) | 0.22.0 | 11 | 42 | academic, finance, notices |
+| [Fees & Finance](#fees) | 0.22.0 | 11 | 43 | academic, finance, notices |
 | [Finance & Books](#finance) | 0.20.0 | 92 | 208 | None |
 | [Helpdesk and grievance](#helpdesk) | 0.5.0 | 2 | 7 | None |
 | [Hostel](#hostel) | 0.9.0 | 5 | 18 | academic |
@@ -573,6 +573,7 @@ Source: `campusos-platform/packages/modules/fees/`.
 | `POST /api/v1/modules/fees/refunds` | Return money against the payment it came in on | `paymentId`, `amount`, `reason`, `method`, `reference`, `Idempotency-Key` (header) |
 | `POST /api/v1/modules/fees/payments/void` | Void a receipt recorded by mistake | `paymentId`, `reason` |
 | `POST /api/v1/modules/fees/payments/bounce` | Record a cheque returned unpaid by the bank | `paymentId`, `bouncedOn`, `reason`, `drawerIfsc`, `drawerAccount`, `charge` |
+| `POST /api/v1/modules/fees/invoices/void` | Void a student's invoice for a term, issued in error | `studentId`, `termId`, `reason` |
 | `GET /api/v1/modules/fees/ledger` | One student’s charges, waivers and payments for a term | See runtime OpenAPI schema |
 | `GET /api/v1/modules/fees/reconciliation` | The student ledgers against the fees receivable account | See runtime OpenAPI schema |
 | `GET /api/v1/modules/fees/dues` | Balances for a term from the books, worst first, a page at a time | See runtime OpenAPI schema |

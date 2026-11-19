@@ -14,6 +14,7 @@ import {
   aidAssessmentSchema,
   awardScholarshipSchema,
   bouncePaymentSchema,
+  voidInvoiceSchema,
   voidPaymentSchema,
   createFeeItemSchema,
   createScholarshipSchema,
@@ -295,6 +296,28 @@ export const paths = {
         '403': { description: 'separation_of_duties: you recorded it; forbidden; or the module is not enabled', content: json(err) },
         '404': { description: 'no_such_payment', content: json(err) },
         '409': { description: 'payment_not_live: already void or returned; payment_refunded: refunds stand against it', content: json(err) },
+      },
+    },
+  },
+
+  [`${base}/invoices/void`]: {
+    post: {
+      summary: "Void a student's invoice for a term, issued in error",
+      description:
+        'For an invoice issued to a student who was not enrolled, for example. Nothing may be paid or ' +
+        'credited against the term. One entry today takes the student back to owing nothing; issuing ' +
+        'the term again bills them afresh if they are enrolled.',
+      tags: ['fees'],
+      requestBody: { content: json(voidInvoiceSchema) },
+      responses: {
+        '200': { description: 'Voided' },
+        '400': { description: 'Invalid input', content: json(err) },
+        '404': { description: 'no_such_invoice: no live invoice for that student and term', content: json(err) },
+        '409': {
+          description: 'invoice_has_payments: money is paid against the term; invoice_has_credits: scholarship awards or drop credits',
+          content: json(err),
+        },
+        ...gated,
       },
     },
   },

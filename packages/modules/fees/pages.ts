@@ -531,6 +531,26 @@ export const pages: PluginPage[] = [
           { name: 'reason', label: "Bank's reason" },
         ],
       },
+      ...(data.invoiced
+        ? [
+            {
+              kind: 'form' as const,
+              title: "Void this term's invoice",
+              note:
+                'For an invoice issued in error, such as to a student who was not enrolled. Nothing may be ' +
+                'paid or credited against the term. The student is no longer billed; issuing the term again ' +
+                'bills them afresh if they are enrolled.',
+              submit: 'Void invoice',
+              path: '/invoices/void',
+              roles: [...ADMIN],
+              fields: [
+                { name: 'studentId', kind: 'hidden' as const, label: '', value: String(data.studentId ?? '') },
+                { name: 'termId', kind: 'hidden' as const, label: '', value: String(data.termId ?? '') },
+                { name: 'reason', label: 'Reason', hint: 'At least five characters' },
+              ],
+            },
+          ]
+        : []),
       {
         kind: 'form',
         title: 'Waive a charge',

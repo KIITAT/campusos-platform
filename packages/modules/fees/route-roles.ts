@@ -43,6 +43,7 @@ export const routeRoles: Record<string, readonly Role[]> = {
   'POST /payments/reconcile': OFFICE,
   'POST /payments/void': ADMIN,
   'POST /payments/bounce': OFFICE,
+  'POST /invoices/void': ADMIN,
   'GET /invoices': OFFICE,
   'POST /invoices': ADMIN,
   'POST /refunds': ADMIN,
