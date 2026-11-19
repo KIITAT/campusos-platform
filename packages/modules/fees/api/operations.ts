@@ -1257,6 +1257,11 @@ export async function paymentForReceipt(actor: Actor, paymentId: string) {
         reference: feePayments.reference,
         receivedAt: feePayments.receivedAt,
         reconciledAt: feePayments.reconciledAt,
+        status: feePayments.status,
+        voidedAt: feePayments.voidedAt,
+        bouncedOn: feePayments.bouncedOn,
+        voidReason: feePayments.voidReason,
+        breakup: feePayments.breakup,
         studentId: feePayments.studentId,
         studentName: users.name,
         studentEmail: users.email,
@@ -1278,7 +1283,9 @@ export async function paymentForReceipt(actor: Actor, paymentId: string) {
         throw new FeeError(403, 'forbidden', 'not permitted')
       }
     }
-    return row
+    // The institution's identity for the receipt's head (ACC-30, D21).
+    const s = await settingsWithin(tx, tenant)
+    return { ...row, legalName: s.legalName, address: s.address, pan: s.pan }
   })
 }
 

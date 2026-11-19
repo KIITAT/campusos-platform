@@ -1,6 +1,7 @@
 import { PDFDocument, rgb } from 'pdf-lib'
 import { pdfText, type Weight } from '@campusos/module-framework/pdf'
 import { plainPaise } from '@campusos/money'
+import { rupeesInWords } from './words'
 
 export interface ReceiptData {
   receiptNo: string
@@ -14,7 +15,20 @@ export interface ReceiptData {
   reference: string | null
   receivedAt: Date
   reconciledAt: Date | null
+  /** The institution's address and PAN, from finance's settings (ACC-30, D21). */
+  address?: string | null
+  pan?: string | null
+  /** A voided or returned receipt is stamped so (D22). */
+  status?: 'live' | 'voided' | 'bounced'
+  voidedAt?: Date | null
+  bouncedOn?: string | null
+  voidReason?: string | null
+  /** The fee heads as they stood when the money was received (D20). */
+  breakup?: { heads: { label: string; chargedPaise: number; waivedPaise: number }[] } | null
 }
+
+/** Heads printed before the rest are summed up in one line. */
+const MAX_HEADS = 20
 
 /**
  * A fee receipt. Same toolchain as the transcript, for the same reason: pure
@@ -30,8 +44,10 @@ export async function receiptPdf(d: ReceiptData): Promise<Uint8Array> {
   doc.setTitle(`Receipt ${d.receiptNo}`)
   doc.setProducer('CampusOS')
 
-  // A5 landscape: a receipt, not a report.
-  const page = doc.addPage([595.28, 420])
+  // A4 portrait: the fee heads do not fit a half sheet (D22).
+  const W = 595.28
+  const H = 841.89
+  const page = doc.addPage([W, H])
   const t = await pdfText(doc, JSON.stringify(d))
   const font: Weight = 'regular'
   const bold: Weight = 'bold'
@@ -39,20 +55,29 @@ export async function receiptPdf(d: ReceiptData): Promise<Uint8Array> {
   const ink = rgb(0.1, 0.1, 0.12)
   const faint = rgb(0.45, 0.45, 0.5)
   const M = 40
-  let y = 420 - M
+  let y = H - M
 
   const text = (s: string, x: number, size = 10, f: Weight = font, color = ink) =>
     t.draw(page, s, { x, y, size, weight: f, color })
 
   text(d.institutionName || 'Institution', M, 15, bold)
-  y -= 18
+  y -= 16
+  for (const line of (d.address ?? '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(0, 3)) {
+    text(line, M, 8, font, faint)
+    y -= 11
+  }
+  if (d.pan) {
+    text(`PAN ${d.pan}`, M, 8, font, faint)
+    y -= 11
+  }
+  y -= 4
   text('Fee Receipt', M, 10, font, faint)
-  text(d.receiptNo, 595.28 - M - t.width(d.receiptNo, 12) - 4, 12, bold)
+  text(d.receiptNo, W - M - t.width(d.receiptNo, 12) - 4, 12, bold)
   y -= 24
 
   page.drawLine({
     start: { x: M, y: y + 6 },
-    end: { x: 595.28 - M, y: y + 6 },
+    end: { x: W - M, y: y + 6 },
     thickness: 0.5,
     color: rgb(0.8, 0.8, 0.83),
   })
@@ -75,11 +100,36 @@ export async function receiptPdf(d: ReceiptData): Promise<Uint8Array> {
   text('Amount', M, 10, bold)
   const amount = `INR ${plainPaise(d.amountPaise)}`
   text(amount, M + 150, 16, bold)
-  y -= 30
+  y -= 20
+  text(rupeesInWords(d.amountPaise), M, 9)
+  y -= 24
 
-  // Stated plainly: an unreconciled payment is a claim, not cleared funds, and
-  // a receipt that hides that is the one an institution regrets issuing.
-  if (d.reconciledAt) {
+  const heads = d.breakup?.heads ?? []
+  if (heads.length > 0) {
+    text('Fee heads for the term', M, 9, bold)
+    y -= 16
+    for (const h of heads.slice(0, MAX_HEADS)) {
+      text(h.label, M, 9)
+      text(`INR ${plainPaise(h.chargedPaise - h.waivedPaise)}`, M + 300, 9)
+      y -= 14
+    }
+    if (heads.length > MAX_HEADS) {
+      text(`and ${heads.length - MAX_HEADS} more`, M, 9, font, faint)
+      y -= 14
+    }
+    text('Term total', M, 9, bold)
+    text(`INR ${plainPaise(heads.reduce((n, h) => n + h.chargedPaise - h.waivedPaise, 0))}`, M + 300, 9, bold)
+    y -= 24
+  }
+
+  const reason = (d.voidReason ?? '').slice(0, 120)
+  if (d.status === 'voided') {
+    text(`VOID: cancelled on ${(d.voidedAt ?? new Date()).toISOString().slice(0, 10)}. ${reason}`, M, 10, bold, rgb(0.7, 0.1, 0.1))
+  } else if (d.status === 'bounced') {
+    text(`CHEQUE RETURNED UNPAID on ${d.bouncedOn ?? ''}. ${reason}`, M, 10, bold, rgb(0.7, 0.1, 0.1))
+  } else if (d.reconciledAt) {
+    // Stated plainly: an unreconciled payment is a claim, not cleared funds, and
+    // a receipt that hides that is the one an institution regrets issuing.
     text(
       `Reconciled on ${d.reconciledAt.toISOString().slice(0, 10)}`,
       M,

@@ -271,7 +271,7 @@ export const routes: PluginRoute[] = [
 
       const bytes = await receiptPdf({
         ...payment,
-        institutionName: inst?.name ?? 'Institution',
+        institutionName: payment.legalName ?? inst?.name ?? 'Institution',
       })
 
       return new Response(bytes as unknown as BodyInit, {
