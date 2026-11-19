@@ -194,7 +194,7 @@ test('a backlog is a course the record shows failed, booked in its window at its
     bookBacklog(c.asha, { termId: c.termId, courseId: c.maId, bookingType: 'internal' }),
     (e) => code(e) === 'exam_backlog_bookings_once',
   )
-  const charges = await listStudentCharges(c.admin as unknown as FeeActor, c.termId)
+  const charges = (await listStudentCharges(c.admin as unknown as FeeActor, c.termId)).rows
   assert.equal(charges.length, 1)
   assert.equal(charges[0]!.amountPaise, 200_000)
   assert.equal(charges[0]!.sourceId, b.id)
@@ -202,7 +202,7 @@ test('a backlog is a course the record shows failed, booked in its window at its
   // Cancelling takes the fee with it.
   await assert.rejects(cancelBacklog(c.bilal, { bookingId: b.id, reason: 'not mine to cancel' }), (e) => code(e) === 'forbidden')
   await cancelBacklog(c.asha, { bookingId: b.id, reason: 'I will sit it next year' })
-  assert.equal((await listStudentCharges(c.admin as unknown as FeeActor, c.termId))[0]!.state, 'cancelled')
+  assert.equal((await listStudentCharges(c.admin as unknown as FeeActor, c.termId)).rows[0]!.state, 'cancelled')
   await assert.rejects(
     withTenant(c.id, (tx) => tx.update(backlogBookings).set({ bookingType: 'internal' }).where(eq(backlogBookings.id, b.id))),
     (x) => String((x as { cause?: { constraint?: string } }).cause?.constraint) === 'exam_backlog_fixed',
