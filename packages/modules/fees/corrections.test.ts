@@ -5,13 +5,17 @@ import { authDb, institutions, users, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
 import { localToday, setSingleOfficer, trialBalance, type Actor as Books } from '@campusos/module-finance/api'
 import {
+  awardScholarship,
   createFeeItem,
+  createScholarship,
+  grantWaiver,
   issueInvoices,
   listStudentCharges,
   receivableReport,
   reconcilePayment,
   recordPayment,
   refundPayment,
+  revokeWaiver,
   studentLedger,
   type Actor,
 } from './api'
@@ -429,4 +433,155 @@ test("another institution cannot void this one's receipt", async () => {
     () => api.voidPayment(b.admin, { paymentId: p.id, reason: 'not mine at all' }),
     (e: unknown) => (e as { status?: number }).status === 404 && code('no_such_payment')(e),
   )
+})
+
+// --- an invoice issued in error (D3 of tools/p006-diagnostics.sql) ------------
+
+const invoicesOf = (c: Campus, studentId: string) =>
+  withTenant(c.id, async (tx) =>
+    (
+      await tx.execute(
+        sql`select id, voided_at from fee_invoices where student_id = ${studentId} and term_id = ${c.termId}::uuid order by created_at`,
+      )
+    ).rows as { id: string; voided_at: Date | null }[],
+  )
+
+test('an invoice issued to a student who is not enrolled is voided and nothing is owed (D3)', async () => {
+  const c = await campus()
+  const item1 = await charge(c, 'Tuition', '45000')
+  const w1 = await grantWaiver(c.admin, { studentId: c.s1, feeItemId: item1.id, amount: '5000', reason: 'hardship before the invoice' })
+  await issueInvoices(c.admin, { termId: c.termId })
+  const item2 = await charge(c, 'Library', '2000')
+  await issueInvoices(c.admin, { termId: c.termId })
+  const w2 = await grantWaiver(c.admin, { studentId: c.s1, feeItemId: item2.id, amount: '1000', reason: 'hardship after the invoice' })
+  await revokeWaiver(c.admin, { waiverId: w1.id, reason: 'granted in error' })
+  const [invoice] = await invoicesOf(c, c.s1)
+
+  await api.voidInvoice(c.admin, { studentId: c.s1, termId: c.termId, reason: 'issued under the old section roster' })
+
+  const l = await studentLedger(c.admin, c.s1, c.termId)
+  assert.equal(l.chargedPaise, 0)
+  assert.equal(l.waivedPaise, 0)
+  assert.equal(l.balancePaise, 0)
+  const w = await one<{ posted_paise: string }>(c, sql`select posted_paise from fee_waivers where id = ${w2.id}`)
+  assert.equal(Number(w.posted_paise), 0)
+  const entries = await one<{ n: number }>(
+    c,
+    sql`select count(*)::int as n from finance_journal_entries where source_ref = ${'invoice-void:' + invoice!.id}`,
+  )
+  assert.equal(entries.n, 1)
+  await reconciled(c)
+  const l2 = await studentLedger(c.admin, c.s2, c.termId)
+  assert.equal(await balance(c, RECEIVABLE), l2.balancePaise)
+})
+
+test('a voided invoice is issued afresh to an enrolled student', async () => {
+  const c = await campus()
+  const item = await charge(c, 'Tuition', '45000')
+  await grantWaiver(c.admin, { studentId: c.s1, feeItemId: item.id, amount: '5000', reason: 'hardship before the invoice' })
+  await issueInvoices(c.admin, { termId: c.termId })
+  await api.voidInvoice(c.admin, { studentId: c.s1, termId: c.termId, reason: 'issued with the wrong charges' })
+  await issueInvoices(c.admin, { termId: c.termId })
+
+  const rows = await invoicesOf(c, c.s1)
+  assert.equal(rows.length, 2)
+  assert.notEqual(rows[0]!.voided_at, null)
+  assert.equal(rows[1]!.voided_at, null)
+  assert.notEqual(rows[0]!.id, rows[1]!.id)
+  const l = await studentLedger(c.admin, c.s1, c.termId)
+  assert.equal(l.chargedPaise, 4_500_000)
+  assert.equal(l.waivedPaise, 500_000)
+  assert.equal(l.outstandingPaise, 4_000_000)
+  await reconciled(c)
+})
+
+test('an invoice with money against it is not voided', async () => {
+  const c = await campus()
+  await charge(c, 'Tuition', '45000')
+  await issueInvoices(c.admin, { termId: c.termId })
+  const p = await cash(c, '1000')
+  await assert.rejects(
+    () => api.voidInvoice(c.admin, { studentId: c.s1, termId: c.termId, reason: 'issued under the old section roster' }),
+    code('invoice_has_payments'),
+  )
+  await api.voidPayment(c.admin, { paymentId: p.id, reason: 'entered against the wrong student' })
+  await api.voidInvoice(c.admin, { studentId: c.s1, termId: c.termId, reason: 'issued under the old section roster' })
+  await reconciled(c)
+})
+
+test('an invoice with aid is not voided', async () => {
+  const c = await campus()
+  await charge(c, 'Tuition', '45000')
+  await issueInvoices(c.admin, { termId: c.termId })
+  const rule = await createScholarship(c.admin, { code: 'MERIT', name: 'Merit', kind: 'merit', basis: 'fixed', amountPaise: '1000' })
+  await awardScholarship(c.admin, { scholarshipId: rule.id, studentId: c.s1, termId: c.termId })
+  await assert.rejects(
+    () => api.voidInvoice(c.admin, { studentId: c.s1, termId: c.termId, reason: 'issued under the old section roster' }),
+    code('invoice_has_credits'),
+  )
+})
+
+test('a waiver granted after the void waits for the next issue', async () => {
+  const c = await campus()
+  const item = await charge(c, 'Tuition', '45000')
+  await issueInvoices(c.admin, { termId: c.termId })
+  await api.voidInvoice(c.admin, { studentId: c.s1, termId: c.termId, reason: 'issued under the old section roster' })
+  const w = await grantWaiver(c.admin, { studentId: c.s1, feeItemId: item.id, amount: '1000', reason: 'hardship after the void' })
+  const posted = await one<{ n: number }>(
+    c,
+    sql`select count(*)::int as n from finance_journal_entries where source_ref like ${'waiver:' + w.id + '%'}`,
+  )
+  assert.equal(posted.n, 0)
+  const row = await one<{ posted_paise: string }>(c, sql`select posted_paise from fee_waivers where id = ${w.id}`)
+  assert.equal(Number(row.posted_paise), 0)
+  await reconciled(c)
+})
+
+test('a clerk does not void an invoice', async () => {
+  const c = await campus()
+  await charge(c, 'Tuition', '45000')
+  await assert.rejects(
+    () => api.voidInvoice(c.admin, { studentId: c.s1, termId: c.termId, reason: 'issued under the old section roster' }),
+    (e: unknown) => (e as { status?: number }).status === 404 && code('no_such_invoice')(e),
+  )
+  await issueInvoices(c.admin, { termId: c.termId })
+  await assert.rejects(
+    () => api.voidInvoice(c.clerk, { studentId: c.s1, termId: c.termId, reason: 'issued under the old section roster' }),
+    (e: unknown) => (e as { status?: number }).status === 403 && code('forbidden')(e),
+  )
+})
+
+test('NEW-91: issuing marks only the charges it billed', async () => {
+  const c = await campus()
+  const uuidish = /^[0-9A-Za-z_-]+$/
+  for (const v of [c.id, c.s1, c.termId]) assert.match(v, uuidish)
+  await charge(c, 'Tuition', '45000')
+  await authDb.execute(sql.raw(`
+    create function test_new91_inject() returns trigger language plpgsql as $$
+    begin
+      if new.source_ref like 'invoice:%' and new.institution_id = '${c.id}'::uuid
+         and not exists (select 1 from fee_student_charges where source_id = 'new91') then
+        insert into fee_student_charges (institution_id, student_id, term_id, label, amount_paise, source_module, source_id)
+        values (new.institution_id, '${c.s1}', '${c.termId}'::uuid, 'Injected mid-issue', 1000, 'test', 'new91');
+      end if;
+      return new;
+    end $$`))
+  try {
+    await authDb.execute(
+      sql`create trigger test_new91_inject after insert on finance_journal_entries for each row execute function test_new91_inject()`,
+    )
+    await issueInvoices(c.admin, { termId: c.termId })
+    const injected = await one<{ invoiced_at: Date | null }>(
+      c,
+      sql`select invoiced_at from fee_student_charges where source_id = 'new91'`,
+    )
+    assert.equal(injected.invoiced_at, null)
+  } finally {
+    await authDb.execute(sql`drop trigger if exists test_new91_inject on finance_journal_entries`)
+    await authDb.execute(sql`drop function if exists test_new91_inject()`)
+  }
+  await issueInvoices(c.admin, { termId: c.termId })
+  const billed = await one<{ invoiced_at: Date | null }>(c, sql`select invoiced_at from fee_student_charges where source_id = 'new91'`)
+  assert.notEqual(billed.invoiced_at, null)
+  assert.equal((await studentLedger(c.admin, c.s1, c.termId)).chargedPaise, 4_501_000)
 })
