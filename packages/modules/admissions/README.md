@@ -1,8 +1,15 @@
 # Admissions
 
-Institution-operated admissions using existing CampusOS identities. The office records an enquiry, applies to an Academic programme and intake term, offers a place, and accepts it by linking an existing student. Acceptance and the active Academic student-programme declaration commit atomically. An existing active declaration is reused; another active primary programme is not displaced.
+Institution-operated admissions. The office records an enquiry, applies to an Academic programme and intake term (optionally with the applicant's own name, email, date of birth and category, when the enquirer is someone else), offers a place, and accepts it into a section of the programme. The section is required.
 
-Only `institution_admin` and tenant-scoped `super_admin` operate this module. No public applicant portal, applicant login, payment capture, document verification service, or automatic identity provisioning is introduced.
+Acceptance enrols the applicant in one transaction:
+
+- **Account.** An existing student account may be picked. Otherwise the applicant's own email (or the enquiry's) decides: a new address creates a student account and a 30-day sign-in invitation, whose link is shown once in the acceptance notice; an existing student here is reused; an address that is another role here, or an account at another institution, is refused.
+- **Programme and section.** The active Academic programme declaration is reused or created (another active primary programme is not displaced), and the student is seated in the chosen section.
+- **Profile.** A student without a roll number gets one, `<intake year><programme code><4-digit sequence>` (for example `2026BSC0001`), numbered per programme and intake year; a number already typed by hand is skipped. The application's category is copied to the profile when it has none, and its date of birth to an account that has none.
+- **Fees.** When Fees is on for the institution, the term's invoice is issued and posted in the same transaction; nothing is invoiced when it is off.
+
+Only `institution_admin` and tenant-scoped `super_admin` operate this module. No public applicant portal, applicant login, payment capture or document verification service is introduced (P1-12b).
 
 ## State and integrity
 
