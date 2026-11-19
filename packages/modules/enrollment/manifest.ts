@@ -14,6 +14,8 @@ import type { ModuleManifest } from '@campusos/module-framework'
  * event with a date on it, because the fee proration in Student Financials is
  * keyed to the day a course was dropped, not to the fact that it no longer
  * appears on a list.
+ *
+ * Since P1-07a it writes one academic table, section membership, and only for sections an administrator has marked to follow registration.
  */
 export const manifest: ModuleManifest = {
   id: 'enrollment',

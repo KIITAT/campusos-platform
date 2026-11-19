@@ -5,6 +5,7 @@ import {
   dropSchema,
   registerSchema,
   registrationSchema,
+  sectionFeedSchema,
   setOfferingLimitSchema,
 } from './schemas'
 
@@ -67,6 +68,10 @@ export const paths = {
     ...post('Set how many may sit in an offering, and how many may queue', setOfferingLimitSchema),
     ...get('Every capped offering, with seats taken and queued'),
   },
+  [`${base}/sections/feed`]: post(
+    "Whether a section's membership follows registration; marking it brings in the students already registered",
+    sectionFeedSchema,
+  ),
   [`${base}/roster`]: get('Who is on an offering, with waiting-list places in order'),
   [`${base}/registrations`]: get(
     "A student's registrations; the caller's own without a studentId",
