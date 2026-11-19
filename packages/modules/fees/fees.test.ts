@@ -76,6 +76,7 @@ const pay = (over: Record<string, unknown> = {}) =>
     termId: ids.term,
     amount: '10000',
     method: 'upi',
+    allowAdvance: true,
     ...over,
   })
 
@@ -151,13 +152,21 @@ before(async () => {
 })
 
 beforeEach(async () => {
+  // A payment is never deleted (ACC-23), so the reset goes round the guards as
+  // the owner, with triggers off for this transaction only.
+  await authDb.transaction(async (tx) => {
+    await tx.execute(sql`set local session_replication_role = replica`)
+    await tx.execute(sql`delete from fee_refunds where institution_id = ${inst}`)
+    await tx.execute(sql`delete from fee_payments where institution_id = ${inst}`)
+    if ((await tx.execute(sql`select to_regclass('public.fee_receipt_series') as t`)).rows[0]?.t) {
+      await tx.execute(sql`delete from fee_receipt_series where institution_id = ${inst}`)
+    }
+  })
   await withTenant(inst, async (tx) => {
     // The guards refuse a silent delete, so the reset states its reason too.
     await tx.execute(sql`select set_config('app.audit_reason', 'test reset', true)`)
     await tx.execute(sql`delete from notifications`)
-    await tx.update(feePayments).set({ reconciledAt: null, reconciledBy: null })
     await tx.delete(feeInvoices)
-    await tx.delete(feePayments)
     await tx.delete(feeWaivers)
     await tx.delete(feeItems)
     await tx.delete(receiptCounters)
@@ -407,17 +416,21 @@ test('a reconciled payment cannot be deleted at all', async () => {
   )
 })
 
-test('an unreconciled payment can be deleted, but only with a reason', async () => {
+test('a payment is never deleted, reason or not (ACC-23)', async () => {
   await tuition()
   const p = await pay()
   await assert.rejects(
     () => withTenant(inst, (tx) => tx.delete(feePayments).where(eq(feePayments.id, p.id))),
-    saysDb(/requires an audited reason/),
+    saysDb(/a payment is never deleted/),
   )
-  await withTenant(inst, async (tx) => {
-    await tx.execute(sql`select set_config('app.audit_reason', 'entered twice by mistake', true)`)
-    await tx.delete(feePayments).where(eq(feePayments.id, p.id))
-  })
+  await assert.rejects(
+    () =>
+      withTenant(inst, async (tx) => {
+        await tx.execute(sql`select set_config('app.audit_reason', 'entered twice by mistake', true)`)
+        await tx.delete(feePayments).where(eq(feePayments.id, p.id))
+      }),
+    saysDb(/a payment is never deleted/),
+  )
 })
 
 test('a receipt renders as a PDF', async () => {
