@@ -15,17 +15,17 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | [Ceremonies](#ceremonies) | 0.6.0 | 5 | 18 | academic |
 | [Sales CRM](#crm) | 0.5.0 | 4 | 32 | finance, notices |
 | [Enrollment](#enrollment) | 0.6.0 | 3 | 8 | academic |
-| [Examinations & Grading](#examinations) | 0.18.0 | 9 | 36 | academic, notices |
+| [Examinations & Grading](#examinations) | 0.19.0 | 9 | 36 | academic, notices |
 | [Feedback](#feedback) | 0.7.0 | 8 | 19 | academic |
-| [Fees & Finance](#fees) | 0.22.0 | 11 | 43 | academic, finance, notices |
+| [Fees & Finance](#fees) | 0.23.0 | 11 | 43 | academic, finance, notices |
 | [Finance & Books](#finance) | 0.20.0 | 92 | 208 | None |
 | [Helpdesk and grievance](#helpdesk) | 0.5.0 | 2 | 7 | None |
 | [Hostel](#hostel) | 0.9.0 | 5 | 18 | academic |
 | [HR & Payroll](#hr) | 0.22.0 | 18 | 134 | finance, notices |
 | [Library](#library) | 0.13.0 | 5 | 18 | academic |
-| [Mentoring](#mentoring) | 0.18.0 | 6 | 19 | academic, notices |
+| [Mentoring](#mentoring) | 0.19.0 | 6 | 19 | academic, notices |
 | [Communication & Notices](#notices) | 0.13.0 | 4 | 13 | academic |
-| [Parent Portal](#parents) | 0.18.0 | 4 | 11 | academic |
+| [Parent Portal](#parents) | 0.19.0 | 4 | 11 | academic |
 | [Placement](#placement) | 0.10.0 | 8 | 15 | academic, notices |
 | [Projects and timesheets](#projects) | 0.3.0 | 6 | 27 | finance |
 | [Quizzes](#quizzes) | 0.7.0 | 7 | 22 | academic |
@@ -566,7 +566,7 @@ Source: `campusos-platform/packages/modules/fees/`.
 | `POST /api/v1/modules/fees/items` | Define a charge for a programme and term | `programId`, `termId`, `label`, `amount`, `proratable`, `dueOn` |
 | `POST /api/v1/modules/fees/waivers` | Grant or revise a scholarship or waiver. Reason mandatory and audited. | `studentId`, `feeItemId`, `amount`, `reason` |
 | `POST /api/v1/modules/fees/waivers/revoke` | Withdraw a waiver. Reason mandatory and audited. | `waiverId`, `reason` |
-| `POST /api/v1/modules/fees/payments` | Record a payment and issue a receipt number | `studentId`, `termId`, `amount`, `method`, `reference`, `receivedAt`, `notes`, `drawerIfsc`, `drawerAccount`, `Idempotency-Key` (header) |
+| `POST /api/v1/modules/fees/payments` | Record a payment and issue a receipt number | `studentId`, `termId`, `amount`, `method`, `reference`, `receivedAt`, `notes`, `drawerIfsc`, `drawerAccount`, `allowAdvance`, `Idempotency-Key` (header) |
 | `POST /api/v1/modules/fees/payments/reconcile` | Confirm a payment against the bank. Reason mandatory and audited. | `paymentId`, `reason` |
 | `GET /api/v1/modules/fees/invoices` | What has been issued for a term, and for how much, a page at a time | See runtime OpenAPI schema |
 | `POST /api/v1/modules/fees/invoices` | Issue a term's charges and post them to the books | `termId`, `studentId` |
