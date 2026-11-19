@@ -3,13 +3,14 @@ import assert from 'node:assert/strict'
 import { like, sql } from 'drizzle-orm'
 import { authDb, institutions, users, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
-import { localToday, setSingleOfficer, trialBalance, type Actor as Books } from '@campusos/module-finance/api'
+import { localToday, setSingleOfficer, trialBalance, updateSettings, type Actor as Books } from '@campusos/module-finance/api'
 import {
   awardScholarship,
   createFeeItem,
   createScholarship,
   grantWaiver,
   issueInvoices,
+  paymentForReceipt,
   listStudentCharges,
   receivableReport,
   reconcilePayment,
@@ -659,4 +660,17 @@ test('a UTR voided can be receipted again', async () => {
   await api.voidPayment(c.admin, { paymentId: p.id, reason: 'entered against the wrong student' })
   await paying()
   await assert.rejects(paying, code('duplicate_reference'))
+})
+
+test("the receipt carries the institution's PAN and address", async () => {
+  const c = await campus()
+  await updateSettings(books(c), { legalName: 'Kalinga Test University', address: 'Campus 1', pan: 'AAATK1234F' })
+  await charge(c, 'Tuition', '45000')
+  const p = await cash(c, '1000')
+  const r = (await paymentForReceipt(c.admin, p.id)) as Record<string, unknown>
+  assert.equal(r.legalName, 'Kalinga Test University')
+  assert.equal(r.address, 'Campus 1')
+  assert.equal(r.pan, 'AAATK1234F')
+  assert.equal(r.status, 'live')
+  assert.deepEqual(r.breakup, { heads: [{ label: 'Tuition', chargedPaise: 4_500_000, waivedPaise: 0 }] })
 })
