@@ -16,7 +16,7 @@ const SLUG = 'att-daily'
 let inst = ''
 let since = new Date(0)
 const ids = { ct: '', other: '', adm: '', s1: '', s2: '', s3: '', section: '', term: '', guardian: '' }
-const names = { program: '', section: '' }
+const names = { program: '', section: '', term: '' }
 
 const A = (id: string, role: Actor['role']): Actor => ({ id, role, institutionId: inst }) as Actor
 const ct = () => A(ids.ct, 'faculty')
@@ -74,6 +74,7 @@ before(async () => {
   const term = await academic.createTerm(setup, { code: '2026-t1', name: '2026-27 term 1', startsOn: '2026-04-01', endsOn: '2027-03-31' })
   await academic.setCurrentTerm(setup, { termId: term.id })
   ids.term = term.id
+  names.term = term.code
   const section = await academic.createSection(setup, { programId: prog.id, label: 'A', admissionYear: 2026 })
   ids.section = section.id
   names.program = prog.code
@@ -250,5 +251,5 @@ test('the attendance summary carries the register', async () => {
     assert.ok(lines.filter((l) => l !== d).every((l) => l.kind === 'period'))
   }
   check(await attendanceSummary(admin(), ids.s2), '')
-  check(await attendanceSummary(admin(), ids.s2, ids.term), '2026-t1')
+  check(await attendanceSummary(admin(), ids.s2, ids.term), names.term)
 })

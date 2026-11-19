@@ -1,6 +1,6 @@
 import { param, type PluginPage, type PluginSection } from '@campusos/module-framework'
 import { listStructure } from '@campusos/module-academic/api'
-import { attendanceRules, attendanceSummary, classAbsentees, classChoices, excusableStudents, listExcuses, type Actor } from './api'
+import { attendanceRules, attendanceSummary, classAbsentees, classChoices, dailySheet, excusableStudents, listExcuses, type Actor } from './api'
 
 const STAFF = ['institution_admin', 'super_admin', 'hod', 'faculty'] as const
 const KINDS = [
@@ -149,6 +149,58 @@ export const summaryPages: PluginPage[] = [
           rows: 'missing',
           empty: v.lastSession ? 'Nobody: everyone was there.' : 'No class held yet.',
           columns: [{ key: 'name', label: 'Student' }],
+        },
+      ]
+    },
+  },
+
+  {
+    path: '/daily',
+    title: 'Daily register',
+    menu: 'Daily register',
+    roles: [...STAFF],
+    async load(actor, req) {
+      const v = await dailySheet(actor as Actor, param(req, 'sectionId'), param(req, 'onDate'))
+      return {
+        v,
+        students: v.students,
+        links: v.sections.map((s) => ({ label: s.label, href: `/m/attendance/daily?sectionId=${s.value}&onDate=${v.onDate}`, active: s.value === v.sectionId })),
+      }
+    },
+    sections: (data) => {
+      const v = data.v as Awaited<ReturnType<typeof dailySheet>> | undefined
+      if (!v?.sectionId) return [{ kind: 'note', text: 'You are not the class teacher of any section.' }]
+      return [
+        { kind: 'links', title: 'Section', links: data.links as never },
+        {
+          kind: 'form',
+          title: 'Day',
+          method: 'GET',
+          path: '/daily',
+          submit: 'Show',
+          placement: 'inline',
+          fields: [
+            { name: 'sectionId', label: 'Section', kind: 'hidden', value: v.sectionId },
+            { name: 'onDate', label: 'Day', kind: 'date', value: v.onDate },
+          ],
+        },
+        {
+          kind: 'note',
+          text: v.marked
+            ? 'Marked. Saving again corrects it; only students newly marked absent are told.'
+            : 'Not marked yet. Tick the students who are absent; everyone else is present.',
+        },
+        {
+          kind: 'form',
+          title: `Register for ${v.onDate}`,
+          path: '/daily',
+          submit: 'Save register',
+          placement: 'inline',
+          fields: [
+            { name: 'sectionId', label: 'Section', kind: 'hidden', value: v.sectionId },
+            { name: 'onDate', label: 'Day', kind: 'hidden', value: v.onDate },
+            { name: 'absent', label: 'Absent', kind: 'checkboxes', options: 'students', optional: true, value: v.absent.join(',') },
+          ],
         },
       ]
     },
