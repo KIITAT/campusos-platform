@@ -10,6 +10,7 @@ import {
   numeric,
   pgEnum,
   pgTable,
+  primaryKey,
   smallint,
   text,
   timestamp,
@@ -170,17 +171,48 @@ export const feePayments = pgTable(
     reconciledBy: text('reconciled_by').references(() => users.id, { onDelete: 'set null' }),
     notes: text(),
     createdAt: createdAt(),
+    /**
+     * A payment is never deleted (ACC-23, fees 0009): a mistake is voided and a
+     * returned cheque is bounced. Either is final, reverses the journal entry
+     * and leaves the student ledger, which counts live payments only.
+     */
+    status: text().$type<'live' | 'voided' | 'bounced'>().notNull().default('live'),
+    /** When the void or the return was recorded. */
+    voidedAt: timestamp('voided_at', { withTimezone: true }),
+    voidedBy: text('voided_by').references(() => users.id, { onDelete: 'set null' }),
+    voidReason: text('void_reason'),
+    /** The bank's date of return, for a bounced cheque only. */
+    bouncedOn: date('bounced_on', { mode: 'string' }),
+    /** The drawer's IFSC and account, printed on a CTS-2010 cheque. */
+    drawerIfsc: text('drawer_ifsc'),
+    drawerAccount: text('drawer_account'),
+    /** The fee heads at recording, as printed on the receipt (ACC-30). */
+    breakup: jsonb().$type<{ heads: { label: string; chargedPaise: number; waivedPaise: number }[] }>(),
   },
   (t) => [
     uniqueIndex('fee_payments_receipt').on(t.institutionId, t.receiptNo),
-    // One receipt per UTR or UPI reference (ACC-18, fees 0007). Cheque numbers
-    // repeat across banks, so cheques are not in it.
+    // One live receipt per UTR or UPI reference (ACC-18, fees 0007; live only
+    // since 0009). Cheque numbers repeat across banks, so cheques are unique by
+    // drawer IFSC, account and number instead.
     uniqueIndex('fee_payments_reference')
       .on(t.institutionId, sql`upper(btrim(${t.reference}))`)
-      .where(sql`method IN ('bank_transfer', 'upi') AND reference IS NOT NULL AND btrim(reference) <> ''`),
+      .where(sql`method IN ('bank_transfer', 'upi') AND reference IS NOT NULL AND btrim(reference) <> '' AND status = 'live'`),
+    uniqueIndex('fee_payments_cheque')
+      .on(t.institutionId, t.drawerIfsc, t.drawerAccount, sql`upper(btrim(${t.reference}))`)
+      .where(sql`method = 'cheque' AND drawer_ifsc IS NOT NULL AND reference IS NOT NULL AND btrim(reference) <> '' AND status = 'live'`),
     index('fee_payments_student').on(t.studentId),
     index('fee_payments_term').on(t.termId),
     check('fee_payments_amount', sql`amount_paise > 0`),
+    check('fee_payments_status', sql`status IN ('live', 'voided', 'bounced')`),
+    check(
+      'fee_payments_void_shape',
+      sql`(status = 'live') = (voided_at IS NULL) AND (status = 'live' OR length(btrim(coalesce(void_reason, ''))) >= 5) AND ((status = 'bounced') = (bounced_on IS NOT NULL))`,
+    ),
+    check('fee_payments_bounce_cheque', sql`status <> 'bounced' OR method = 'cheque'`),
+    check(
+      'fee_payments_drawer',
+      sql`(drawer_ifsc IS NULL) = (drawer_account IS NULL) AND (drawer_ifsc IS NULL OR (method = 'cheque' AND drawer_ifsc ~ '^[A-Z]{4}0[A-Z0-9]{6}$' AND drawer_account ~ '^[0-9A-Z]{6,20}$'))`,
+    ),
     tenantPolicy('fee_payments'),
   ],
 )
@@ -199,6 +231,28 @@ export const receiptCounters = pgTable(
     next: bigint({ mode: 'number' }).notNull().default(1),
   },
   () => [tenantPolicy('fee_receipt_counters')],
+)
+
+/**
+ * Receipt numbering per institution and fiscal year (ACC-30, fees 0009): a
+ * gap-free series that restarts each year, <prefix>/<fy>/<n>. The prefix is
+ * still fee_receipt_counters.prefix; that table's own counter is no longer used.
+ */
+export const receiptSeries = pgTable(
+  'fee_receipt_series',
+  {
+    institutionId: uuid('institution_id')
+      .notNull()
+      .references(() => institutions.id, { onDelete: 'cascade' }),
+    fiscalYear: text('fiscal_year').notNull(),
+    next: bigint({ mode: 'number' }).notNull().default(1),
+  },
+  (t) => [
+    primaryKey({ name: 'fee_receipt_series_pk', columns: [t.institutionId, t.fiscalYear] }),
+    check('fee_receipt_series_year', sql`fiscal_year ~ '^[0-9]{2}([0-9]{2})?$'`),
+    check('fee_receipt_series_next', sql`next >= 1`),
+    tenantPolicy('fee_receipt_series'),
+  ],
 )
 
 // --- what is issued --------------------------------------------------------
@@ -234,11 +288,20 @@ export const feeInvoices = pgTable(
     issuedAt: timestamp('issued_at', { withTimezone: true }).notNull().defaultNow(),
     issuedBy: text('issued_by').references(() => users.id, { onDelete: 'set null' }),
     createdAt: createdAt(),
+    /** An invoice issued in error is voided, never deleted (fees 0009). */
+    voidedAt: timestamp('voided_at', { withTimezone: true }),
+    voidedBy: text('voided_by').references(() => users.id, { onDelete: 'set null' }),
+    voidReason: text('void_reason'),
   },
   (t) => [
-    uniqueIndex('fee_invoices_once').on(t.studentId, t.termId),
+    // One live invoice per student and term; a voided one frees them.
+    uniqueIndex('fee_invoices_once').on(t.studentId, t.termId).where(sql`voided_at IS NULL`),
     index('fee_invoices_term').on(t.termId),
     check('fee_invoices_amount', sql`charged_paise > 0`),
+    check(
+      'fee_invoices_void_shape',
+      sql`(voided_at IS NULL) = (void_reason IS NULL) AND (void_reason IS NULL OR length(btrim(void_reason)) >= 5)`,
+    ),
     tenantPolicy('fee_invoices'),
   ],
 )
