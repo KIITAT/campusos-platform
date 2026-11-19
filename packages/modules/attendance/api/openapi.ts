@@ -1,5 +1,6 @@
 import * as z from 'zod'
 import { manifest } from '../manifest'
+import { markDaySchema } from './daily'
 import { grantExcuseSchema, revokeExcuseSchema, rulesSchema } from './excuses'
 import { heldSessionSchema, offlinePolicySchema, prepareSessionSchema, registerKeySchema, revokeCredentialSchema, revokeDeviceSchema, signedScanSchema } from './offline'
 import {
@@ -192,6 +193,10 @@ function excusesAndRules() {
       'Everybody in a class with their attendance, those short of the minimum first, and who missed the last session',
       ['offeringId'],
     ),
+    [`${base}/daily`]: {
+      ...get('A section’s daily register for a day: its students and who is marked absent', ['sectionId?', 'onDate?']),
+      ...post('Mark a section’s attendance for a day; everyone not listed absent is present', markDaySchema),
+    },
     [`${base}/summary`]: get(
       'A student’s attendance class by class: held, present, excused, absent, percentage, and classes needed to reach the minimum',
       ['studentId?', 'termId?'],

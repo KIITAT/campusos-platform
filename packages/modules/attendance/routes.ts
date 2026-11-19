@@ -3,6 +3,8 @@ import {
   attendanceRules,
   attendanceSummary,
   classAbsentees,
+  dailySheet,
+  markDay,
   grantExcuse,
   listExcuses,
   revokeExcuse,
@@ -46,6 +48,8 @@ export const routes: PluginRoute[] = [
   { method: 'GET', path: '/excuses', handler: (actor) => listExcuses(actor as Actor) },
   { method: 'POST', path: '/excuses', handler: async (actor, req) => grantExcuse(actor as Actor, await jsonBody(req)) },
   { method: 'POST', path: '/excuses/revoke', handler: async (actor, req) => revokeExcuse(actor as Actor, await jsonBody(req)) },
+  { method: 'GET', path: '/daily', handler: (actor, req) => dailySheet(actor as Actor, param(req, 'sectionId'), param(req, 'onDate')) },
+  { method: 'POST', path: '/daily', handler: async (actor, req) => markDay(actor as Actor, await jsonBody(req)) },
   { method: 'GET', path: '/absentees', handler: (actor, req) => classAbsentees(actor as Actor, requiredParam(req, 'offeringId')) },
   {
     method: 'GET',

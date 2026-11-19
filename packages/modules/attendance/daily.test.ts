@@ -66,7 +66,7 @@ before(async () => {
       { email: `s3@${SLUG}.test`, institutionId: inst, role: 'student', name: 'Chitra' },
     ])
     .returning({ id: users.id })
-  ;[ids.ct, ids.other, ids.adm, ids.s1, ids.s2, ids.s3] = people.map((p) => p.id)
+  ;[ids.ct, ids.other, ids.adm, ids.s1, ids.s2, ids.s3] = people.map((p) => p.id) as [string, string, string, string, string, string]
 
   const setup = admin()
   const dept = await academic.createDepartment(setup, { code: 'sch', name: 'School' })
