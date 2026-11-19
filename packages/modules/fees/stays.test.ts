@@ -87,7 +87,7 @@ test('a stay is charged once per term, prorated', async () => {
   const rows = await charges(c.id)
   assert.equal(rows.length, 1)
   assert.equal(rows[0]!.sourceId, `a1:${c.termId}`)
-  assert.equal(rows[0]!.label, 'Hostel A-101, t1 (91 of 146 days)')
+  assert.equal(rows[0]!.label, 'Hostel A-101, T1 (91 of 146 days)')
 })
 
 test('a stay covering the whole term is charged the whole fee, with no proration note', async () => {
@@ -95,7 +95,7 @@ test('a stay covering the whole term is charged the whole fee, with no proration
   await withTenant(c.id, (tx) => chargeStayWithin(tx, c.id, c.admin.id, stay(c.studentId), c.termId))
   const [row] = await charges(c.id)
   assert.equal(row!.amountPaise, 1_460_000)
-  assert.equal(row!.label, 'Hostel A-101, t1')
+  assert.equal(row!.label, 'Hostel A-101, T1')
 })
 
 test('ending a stay before invoicing re-raises it for the days used', async () => {
@@ -118,7 +118,7 @@ test('an invoiced stay charge is left for a waiver', async () => {
   await withTenant(c.id, (tx) => chargeStayWithin(tx, c.id, c.admin.id, s, c.termId))
   await issueInvoices(c.admin, { termId: c.termId })
   const out = await withTenant(c.id, (tx) => endStayWithin(tx, c.id, c.admin.id, { ...s, until: '2026-02-04' }))
-  assert.deepEqual(out, { invoiced: ['t1'] })
+  assert.deepEqual(out, { invoiced: ['T1'] })
   const live = await withTenant(c.id, (tx) =>
     tx.select().from(studentCharges).where(and(eq(studentCharges.sourceModule, 'hostel'))),
   )
