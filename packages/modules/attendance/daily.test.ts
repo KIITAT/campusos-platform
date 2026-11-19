@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
-import { AttendanceError, dailySheet, grantExcuse, markDay, type Actor } from './api'
+import { AttendanceError, attendanceSummary, dailySheet, grantExcuse, markDay, type Actor } from './api'
 
 /**
  * A section's daily register, kept by its class teacher (P1-13a): one
@@ -230,4 +230,25 @@ test('the daily sheet lists the section’s students and who is absent', async (
   assert.equal(v.marked, true)
   const office = await dailySheet(admin())
   assert.ok(office.sections.some((s) => s.value === ids.section))
+})
+
+test('the attendance summary carries the register', async () => {
+  await markDay(ct(), { sectionId: ids.section, onDate: daysAgo(2), absent: [ids.s2] })
+  await markDay(ct(), { sectionId: ids.section, onDate: daysAgo(1), absent: [] })
+  const check = (lines: Awaited<ReturnType<typeof attendanceSummary>>, term: string) => {
+    const d = lines.find((l) => l.kind === 'daily')
+    assert.ok(d, 'a daily line')
+    assert.equal(d.offeringId, ids.section)
+    assert.equal(d.courseCode, 'Daily')
+    assert.equal(d.held, 2)
+    assert.equal(d.present, 1)
+    assert.equal(d.excused, 0)
+    assert.equal(d.absent, 1)
+    assert.equal(d.percent, 50)
+    assert.equal(d.teacher, 'Class Teacher')
+    assert.equal(d.term, term)
+    assert.ok(lines.filter((l) => l !== d).every((l) => l.kind === 'period'))
+  }
+  check(await attendanceSummary(admin(), ids.s2), '')
+  check(await attendanceSummary(admin(), ids.s2, ids.term), '2026-t1')
 })
