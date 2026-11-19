@@ -585,3 +585,78 @@ test('NEW-91: issuing marks only the charges it billed', async () => {
   assert.notEqual(billed.invoiced_at, null)
   assert.equal((await studentLedger(c.admin, c.s1, c.termId)).chargedPaise, 4_501_000)
 })
+
+// --- recording rules: cheques, dates, advances, the fee heads ----------------
+
+test('a cheque is receipted once per IFSC, account and number', async () => {
+  const c = await campus()
+  const first = await cheque(c)
+  await assert.rejects(() => cheque(c, { drawerIfsc: ' sbin0001234 ' }), code('duplicate_cheque'))
+  await cheque(c, { drawerAccount: '99999999' })
+  await api.bouncePayment(c.clerk2, { paymentId: first.id, bouncedOn: await today(c), reason: 'funds insufficient' })
+  await cheque(c)
+})
+
+test('drawer details are both or neither, and only on a cheque', async () => {
+  const c = await campus()
+  await assert.rejects(() => cheque(c, { drawerAccount: undefined }), code('drawer_incomplete'))
+  await assert.rejects(
+    () =>
+      recordPayment(c.clerk, {
+        studentId: c.s1,
+        termId: c.termId,
+        amount: '45000',
+        method: 'upi',
+        reference: 'UTR' + Date.now(),
+        drawerIfsc: 'SBIN0001234',
+        drawerAccount: '12345678901',
+        allowAdvance: true,
+      }),
+    code('drawer_not_cheque'),
+  )
+  await assert.rejects(() => cheque(c, { drawerIfsc: 'SBIN1234' }))
+})
+
+test('a receipt cannot be dated in the future (LOW-03)', async () => {
+  const c = await campus()
+  const at = (ms: number) => new Date(Date.now() + ms).toISOString()
+  const paying = (receivedAt: string) =>
+    recordPayment(c.clerk, { studentId: c.s1, termId: c.termId, amount: '1000', method: 'cash', receivedAt, allowAdvance: true })
+  await assert.rejects(() => paying(at(24 * 3600_000)), code('future_receipt'))
+  await paying(at(-60_000))
+})
+
+test('more than is due needs the advance ticked (LOW-03)', async () => {
+  const c = await campus()
+  await charge(c, 'Tuition', '45000')
+  const paying = (amount: string, over: Record<string, unknown> = {}) =>
+    recordPayment(c.clerk, { studentId: c.s1, termId: c.termId, amount, method: 'cash', ...over })
+  await paying('40000')
+  await assert.rejects(() => paying('10000'), code('exceeds_outstanding'))
+  await paying('10000', { allowAdvance: 'on' })
+  await issueInvoices(c.admin, { termId: c.termId })
+  await assert.rejects(() => paying('1'), code('exceeds_outstanding'))
+})
+
+test('a receipt keeps the fee heads it was issued against (ACC-30)', async () => {
+  const c = await campus()
+  const item = await charge(c, 'Tuition', '45000')
+  await grantWaiver(c.admin, { studentId: c.s1, feeItemId: item.id, amount: '5000', reason: 'hardship at admission' })
+  const p = await cash(c, '1000')
+  const heads = { heads: [{ label: 'Tuition', chargedPaise: 4_500_000, waivedPaise: 500_000 }] }
+  const read = async () => (await one<{ breakup: unknown }>(c, sql`select breakup from fee_payments where id = ${p.id}`)).breakup
+  assert.deepEqual(await read(), heads)
+  await charge(c, 'Library', '2000')
+  assert.deepEqual(await read(), heads)
+})
+
+test('a UTR voided can be receipted again', async () => {
+  const c = await campus()
+  const utr = `UTR-V-${Date.now()}`
+  const paying = () =>
+    recordPayment(c.clerk, { studentId: c.s1, termId: c.termId, amount: '1000', method: 'upi', reference: utr, allowAdvance: true })
+  const p = await paying()
+  await api.voidPayment(c.admin, { paymentId: p.id, reason: 'entered against the wrong student' })
+  await paying()
+  await assert.rejects(paying, code('duplicate_reference'))
+})

@@ -314,10 +314,18 @@ test('a waiver without a real reason is refused before it reaches the database',
 
 test('receipt numbers are sequential and unique', async () => {
   await tuition()
-  const a = await pay()
-  const b = await pay({ amount: '5000' })
-  assert.equal(a.receiptNo, 'R-000001')
-  assert.equal(b.receiptNo, 'R-000002')
+  const a = await pay({ receivedAt: '2026-06-15T10:00:00.000Z' })
+  const b = await pay({ amount: '5000', receivedAt: '2026-06-15T10:00:00.000Z' })
+  assert.equal(a.receiptNo, 'R/2627/000001')
+  assert.equal(b.receiptNo, 'R/2627/000002')
+})
+
+test("a fiscal year starts its own series, by the institution's clock (ACC-30)", async () => {
+  await tuition()
+  // 22:30 IST on 31 March, then 01:30 IST on 1 April.
+  assert.equal((await pay({ receivedAt: '2026-03-31T17:00:00.000Z' })).receiptNo, 'R/2526/000001')
+  assert.equal((await pay({ receivedAt: '2026-03-31T20:00:00.000Z' })).receiptNo, 'R/2627/000001')
+  assert.equal((await pay({ receivedAt: '2026-06-15T10:00:00.000Z' })).receiptNo, 'R/2627/000002')
 })
 
 test('two clerks taking money at the same time never share a receipt number', async () => {
