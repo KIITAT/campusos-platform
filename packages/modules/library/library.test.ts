@@ -647,6 +647,7 @@ function baseSettings(over: Record<string, unknown> = {}) {
     maxRenewals: 1,
     maxFine: null,
     blockAtOutstanding: '0',
+    reason: 'the rules for this test',
     ...over,
   }
 }
