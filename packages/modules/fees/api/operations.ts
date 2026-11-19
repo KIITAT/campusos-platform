@@ -506,7 +506,7 @@ export async function recordPaymentWithin(tx: Tx, tenant: string, actor: Actor, 
 /** Students per transaction when a term is issued (REL-09, decision 528). */
 export const ISSUE_CHUNK = 500
 
-interface IssuedInvoice {
+export interface IssuedInvoice {
   studentId: string
   studentName: string | null
   invoiceId: string
@@ -698,6 +698,21 @@ async function issueChunk(
   }
 
   return { issued, unchanged }
+}
+
+/**
+ * One student's charges for one term, issued in the caller's transaction
+ * (P1-12a): an admission and its fee invoice commit together or not at all.
+ * The same chunk as a term run, under the same term lock, so a later run
+ * sees this invoice and posts only a difference. Null when nothing new is owed.
+ */
+export async function issueStudentWithin(tx: Tx, actor: Actor, termId: string, studentId: string): Promise<IssuedInvoice | null> {
+  const tenant = requireAdmin(actor)
+  const [term] = await tx.select({ code: terms.code }).from(terms).where(eq(terms.id, termId))
+  if (!term) throw new FeeError(404, 'no_such_term', 'no such term')
+  const roster = await termRoster(tx, termId, studentId)
+  const { issued } = await issueChunk(tx, tenant, actor, termId, term.code, roster)
+  return issued[0] ?? null
 }
 
 export async function listInvoices(actor: Actor, termId: string, page = invoicePage(new Request('https://x/'), '')) {
