@@ -18,6 +18,7 @@ import {
   listWaivers,
   type Actor,
 } from './api'
+import { CATEGORY_LABELS, STUDENT_CATEGORIES } from './schema'
 
 const REGISTRAR = ['institution_admin', 'super_admin'] as const
 const EVERYONE = [
@@ -837,6 +838,7 @@ export const pages: PluginPage[] = [
               { what: 'Emergency contact', value: profile.emergencyContact ?? 'not recorded' },
               { what: 'Date of birth', value: profile.dateOfBirth ?? 'not recorded' },
               { what: 'APAAR ID (as given; not verified with APAAR)', value: profile.apaarId ?? 'not recorded' },
+              { what: 'Category', value: profile.category ? CATEGORY_LABELS[profile.category] : 'not recorded' },
             ]
           : [],
         consentRows: (consents ?? []).map((c) => ({
@@ -962,6 +964,14 @@ export const pages: PluginPage[] = [
                 },
                 { name: 'dateOfBirth', label: 'Date of birth (YYYY-MM-DD)', optional: true, value: (data.profile as { dateOfBirth: string | null }).dateOfBirth ?? '' },
                 { name: 'apaarId', label: 'APAAR ID (12 digits, as given)', optional: true, value: (data.profile as { apaarId: string | null }).apaarId ?? '' },
+                {
+                  name: 'category',
+                  label: 'Category',
+                  kind: 'select' as const,
+                  optional: true,
+                  options: STUDENT_CATEGORIES.map((v) => ({ value: v, label: CATEGORY_LABELS[v] })),
+                  value: (data.profile as { category: string | null }).category ?? '',
+                },
               ],
             },
           ]

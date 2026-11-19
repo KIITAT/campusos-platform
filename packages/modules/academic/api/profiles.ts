@@ -2,7 +2,7 @@ import { assertCanAccessStudent, viewsOnBehalf, type StudentPurpose } from '@cam
 import { eq } from 'drizzle-orm'
 import * as z from 'zod'
 import { audit, consentGiven, users, withTenant } from '@campusos/db'
-import { studentProfiles } from '../schema'
+import { STUDENT_CATEGORIES, studentProfiles, type StudentCategory } from '../schema'
 import { AcademicError, requireReader, requireWriter, type Actor } from './operations'
 
 /**
@@ -30,6 +30,7 @@ export const studentProfileSchema = z
     emergencyContact: opt(120),
     dateOfBirth: z.preprocess(blankToNull, z.iso.date().nullable().optional()),
     apaarId: z.preprocess(blankToNull, z.string().trim().regex(/^[0-9]{12}$/, 'twelve digits').nullable().optional()),
+    category: z.preprocess(blankToNull, z.enum(STUDENT_CATEGORIES).nullable().optional()),
   })
   .meta({ id: 'AcademicStudentProfile' })
 
@@ -49,6 +50,8 @@ export interface StudentProfile {
   dateOfBirth: string | null
   /** As given, not verified with APAAR. Null for everyone but the student, a guardian and the office (D16). */
   apaarId: string | null
+  /** Null for everyone but the student, a guardian and the office (D7 of plans/P1-12a.md). */
+  category: StudentCategory | null
   /** One line, as an envelope or an admit card prints it. */
   address: string | null
   updatedAt: Date | null
@@ -70,6 +73,7 @@ export async function studentProfile(actor: Actor, studentId: string, purpose: S
       .where(eq(users.id, studentId))
     if (!u || u.role !== 'student') throw new AcademicError(404, 'no_such_student', 'no such student')
     const [p] = await tx.select().from(studentProfiles).where(eq(studentProfiles.studentId, studentId))
+    const own = actor.id === studentId || viewsOnBehalf(actor, studentId) || actor.role === 'institution_admin' || actor.role === 'super_admin'
     const address = p
       ? [p.addressLine, p.city, p.state, p.postalCode].filter((x) => x && x.trim()).join(', ') || null
       : null
@@ -87,7 +91,8 @@ export async function studentProfile(actor: Actor, studentId: string, purpose: S
       emergencyContact: p?.emergencyContact ?? null,
       dateOfBirth: u.dateOfBirth,
       // The ID is not for staff who read the profile for their own purpose (Supreme Court direction, D16).
-      apaarId: actor.id === studentId || viewsOnBehalf(actor, studentId) || actor.role === 'institution_admin' || actor.role === 'super_admin' ? (p?.apaarId ?? null) : null,
+      apaarId: own ? (p?.apaarId ?? null) : null,
+      category: own ? ((p?.category as StudentCategory | null) ?? null) : null,
       address,
       updatedAt: p?.updatedAt ?? null,
     }
@@ -103,7 +108,7 @@ export async function setStudentProfile(actor: Actor, input: unknown) {
     const [before] = await tx.select().from(studentProfiles).where(eq(studentProfiles.studentId, d.studentId))
     // A field left out is kept; an explicit null clears it. An API caller
     // correcting a phone number must not wipe the roll number by omission.
-    const fields = ['rollNo', 'registrationNo', 'phone', 'addressLine', 'city', 'state', 'postalCode', 'emergencyContact'] as const
+    const fields = ['rollNo', 'registrationNo', 'phone', 'addressLine', 'city', 'state', 'postalCode', 'emergencyContact', 'category'] as const
     const values: Partial<Record<(typeof fields)[number] | 'apaarId', string | null>> & { updatedBy: string } = { updatedBy: actor.id }
     for (const f of fields) if (d[f] !== undefined) values[f] = d[f] ?? null
     if (d.apaarId !== undefined) {
