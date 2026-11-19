@@ -5,6 +5,8 @@ import {
   catalogue,
   copiesOf,
   getSettings,
+  loanPage,
+  titlePage,
   openLoans,
   overdueReport,
   type Actor,
@@ -42,15 +44,16 @@ export const pages: PluginPage[] = [
     title: 'Library desk',
     menu: 'Desk',
     roles: [...DESK],
-    async load(actor) {
+    async load(actor, req) {
       const a = actor as Actor
-      const [loans, rules] = await Promise.all([openLoans(a), getSettings(a)])
+      const [loans, rules] = await Promise.all([openLoans(a, loanPage(req, 'loans')), getSettings(a)])
       return {
-        loans: loans.map(loanRow),
+        loans: loans.rows.map(loanRow),
+        loansPage: { total: loans.total, next: loans.next },
         loanDays: rules.loanDays,
         finePerDay: formatPaise(rules.finePerDayPaise),
-        out: loans.length,
-        late: loans.filter((l) => l.daysOverdue > 0).length,
+        out: loans.total,
+        late: loans.late,
       }
     },
     sections: (data) => [
@@ -95,6 +98,7 @@ export const pages: PluginPage[] = [
         kind: 'table',
         title: 'Out now',
         rows: 'loans',
+        paging: { data: 'loansPage', sorts: ['due'] },
         empty: 'Nothing out.',
         columns: [
           { key: 'title', label: 'Book' },
@@ -115,11 +119,12 @@ export const pages: PluginPage[] = [
     async load(actor, req) {
       const a = actor as Actor
       const q = param(req, 'q')
-      const rows = await catalogue(a, q)
+      const page = await catalogue(a, q, titlePage(req, 'rows'))
       const titleId = param(req, 'titleId')
       return {
         q: q ?? '',
-        rows: rows.map((r) => ({ ...r, none: r.available === 0 })),
+        rows: page.rows.map((r) => ({ ...r, none: r.available === 0 })),
+        rowsPage: { total: page.total, next: page.next },
         copies: titleId ? await copiesOf(a, titleId) : [],
       }
     },
@@ -142,6 +147,7 @@ export const pages: PluginPage[] = [
       {
         kind: 'table',
         rows: 'rows',
+        paging: { data: 'rowsPage', sorts: ['title'] },
         empty: 'Nothing matches.',
         columns: [
           {
@@ -216,13 +222,14 @@ export const pages: PluginPage[] = [
     title: 'Overdue',
     menu: 'Overdue',
     roles: [...DESK],
-    async load(actor) {
+    async load(actor, req) {
       const a = actor as Actor
-      const report = await overdueReport(a)
+      const report = await overdueReport(a, loanPage(req, 'rows'))
       return {
         rows: report.rows.map(loanRow),
+        rowsPage: { total: report.total, next: report.next },
         total: formatPaise(report.totalAccruedPaise),
-        count: report.rows.length,
+        count: report.total,
       }
     },
     sections: (data) => [
@@ -235,6 +242,7 @@ export const pages: PluginPage[] = [
       {
         kind: 'table',
         rows: 'rows',
+        paging: { data: 'rowsPage', sorts: ['due'] },
         empty: 'Nothing overdue.',
         columns: [
           { key: 'title', label: 'Book' },
@@ -294,6 +302,7 @@ export const pages: PluginPage[] = [
       return {
         open: s.open.map(loanRow),
         history: s.history.map(loanRow),
+        historyCut: s.historyTotal > s.history.length ? `Showing the 100 most recent of ${s.historyTotal}.` : null,
         openCount: s.openCount,
         max: s.maxConcurrentLoans,
         fines: formatPaise(s.outstandingFinePaise),
@@ -349,6 +358,7 @@ export const pages: PluginPage[] = [
         path: '/loans/renew',
         fields: [{ name: 'loanId', label: 'Book', kind: 'select', options: 'renewable' }],
       },
+      ...(data.historyCut ? [{ kind: 'note' as const, text: String(data.historyCut) }] : []),
       {
         kind: 'table',
         title: 'Returned',

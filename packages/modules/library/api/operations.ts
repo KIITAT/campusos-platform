@@ -1,8 +1,16 @@
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm'
 import { audit, auditLog, users, withTenant } from '@campusos/db'
 import {
+  cursorColumn,
+  finishPage,
+  keyset,
   moduleEnabled,
+  orderKeys,
+  readPage,
+  searchAny,
   viewsOnBehalf,
+  type Page,
+  type SortSpec,
   type Role,
   type ViewerScope,
 } from '@campusos/module-framework'
@@ -19,6 +27,7 @@ import {
   daysOverdue,
   dueDate,
   fineFor,
+  fineSql,
   refusalToBorrow,
   refusalToRenew,
   renewedDueDate,
@@ -273,12 +282,28 @@ export async function setCopyStatus(actor: Actor, input: unknown) {
   })
 }
 
-export async function catalogue(actor: Actor, q?: string): Promise<CatalogueRow[]> {
-  const tenant = requireReader(actor)
-  const needle = q?.trim()
+const TITLE_SORTS: SortSpec = {
+  title: { dir: 'asc', keys: [{ sql: sql`${titles.title}`, type: 'text' }, { sql: sql`${titles.id}`, type: 'uuid' }] },
+}
+export const titlePage = (req: Request, prefix: string) => readPage(req, prefix, TITLE_SORTS, 'title', 50)
 
-  return withTenant(tenant, (tx) =>
-    tx
+/** The catalogue, by title, a page at a time (NEW-66). `q` wins over the page's own search. */
+export async function catalogue(
+  actor: Actor,
+  q?: string | null,
+  page = titlePage(new Request('https://x/'), ''),
+): Promise<Page<CatalogueRow>> {
+  const tenant = requireReader(actor)
+  const needle = (q ?? page.q)?.trim()
+  const keys = TITLE_SORTS[page.sort]!.keys
+  const where = needle
+    ? sql`(${titles.title} ilike ${'%' + needle + '%'}
+           or ${titles.author} ilike ${'%' + needle + '%'}
+           or ${titles.isbn} = ${needle.replace(/[\s-]/g, '')})`
+    : undefined
+
+  return withTenant(tenant, async (tx) => {
+    const rows = await tx
       .select({
         titleId: titles.id,
         isbn: titles.isbn,
@@ -288,23 +313,18 @@ export async function catalogue(actor: Actor, q?: string): Promise<CatalogueRow[
         year: titles.year,
         category: titles.category,
         copies: sql<number>`count(${copies.id})`.mapWith(Number),
-        available: sql<number>`count(*) filter (where ${copies.status} = 'available')`.mapWith(
-          Number,
-        ),
+        available: sql<number>`count(*) filter (where ${copies.status} = 'available')`.mapWith(Number),
+        _cursor: cursorColumn(keys),
       })
       .from(titles)
       .leftJoin(copies, eq(copies.titleId, titles.id))
-      .where(
-        needle
-          ? sql`(${titles.title} ilike ${'%' + needle + '%'}
-                 or ${titles.author} ilike ${'%' + needle + '%'}
-                 or ${titles.isbn} = ${needle.replace(/[\s-]/g, '')})`
-          : undefined,
-      )
+      .where(and(where, keyset(keys, page)))
       .groupBy(titles.id)
-      .orderBy(asc(titles.title))
-      .limit(200),
-  )
+      .orderBy(...orderKeys(keys, page.dir))
+      .limit(page.limit + 1)
+    const [{ n }] = (await tx.select({ n: sql<number>`count(*)::int` }).from(titles).where(where)) as [{ n: number }]
+    return finishPage(rows, page, Number(n))
+  })
 }
 
 export async function copiesOf(actor: Actor, titleId: string) {
@@ -758,20 +778,31 @@ export async function borrowerStatus(actor: Actor, borrowerId: string): Promise<
 
     const rules = await rulesFor(tx, tenant)
     const at = new Date()
-    const rows = await loanQuery(tx)
-      .where(eq(loans.borrowerId, borrowerId))
-      .orderBy(desc(loans.issuedAt))
-      .limit(100)
-
-    const all = rows.map((r) => toLoanRow(r, rules, at))
-    const open = all.filter((l) => !l.returnedAt)
+    // Open loans are bounded by the loan limit; the history is the 100 most
+    // recent, and its count says when it is cut (NEW-66, decision 581).
+    const open = (
+      await loanQuery(tx)
+        .where(and(eq(loans.borrowerId, borrowerId), isNull(loans.returnedAt)))
+        .orderBy(desc(loans.issuedAt))
+    ).map((r) => toLoanRow(r, rules, at))
+    const history = (
+      await loanQuery(tx)
+        .where(and(eq(loans.borrowerId, borrowerId), sql`${loans.returnedAt} is not null`))
+        .orderBy(desc(loans.issuedAt))
+        .limit(100)
+    ).map((r) => toLoanRow(r, rules, at))
+    const [{ n: historyTotal }] = (await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(loans)
+      .where(and(eq(loans.borrowerId, borrowerId), sql`${loans.returnedAt} is not null`))) as [{ n: number }]
     const outstandingFinePaise = await outstandingFine(tx, borrowerId)
 
     return {
       borrowerId,
       borrowerName: person.name,
       open,
-      history: all.filter((l) => l.returnedAt),
+      history,
+      historyTotal: Number(historyTotal),
       openCount: open.length,
       maxConcurrentLoans: rules.maxConcurrentLoans,
       outstandingFinePaise,
@@ -780,36 +811,68 @@ export async function borrowerStatus(actor: Actor, borrowerId: string): Promise<
   })
 }
 
-export async function overdueReport(actor: Actor): Promise<OverdueReport> {
+const LOAN_SORTS: SortSpec = {
+  due: { dir: 'asc', keys: [{ sql: sql`${loans.dueOn}`, type: 'timestamptz' }, { sql: sql`${loans.id}`, type: 'uuid' }] },
+}
+export const loanPage = (req: Request, prefix: string) => readPage(req, prefix, LOAN_SORTS, 'due', 50)
+
+/** Loans out, a page at a time, with counts and the fine total over all of them. */
+async function loansOut(tx: Tx, tenant: string, page: ReturnType<typeof loanPage>, overdueOnly: boolean) {
+  const rules = await rulesFor(tx, tenant)
+  const at = new Date()
+  const keys = LOAN_SORTS[page.sort]!.keys
+  const where = and(
+    isNull(loans.returnedAt),
+    overdueOnly ? sql`${loans.dueOn} < now()` : undefined,
+    searchAny(page.q, [sql`${users.name}`, sql`${users.email}`, sql`${titles.title}`, sql`${copies.accessionNo}`]),
+  )
+  const rows = await tx
+    .select({ ...loanColumns, _cursor: cursorColumn(keys) })
+    .from(loans)
+    .innerJoin(copies, eq(copies.id, loans.copyId))
+    .innerJoin(titles, eq(titles.id, copies.titleId))
+    .innerJoin(users, eq(users.id, loans.borrowerId))
+    .where(and(where, keyset(keys, page)))
+    .orderBy(...orderKeys(keys, page.dir))
+    .limit(page.limit + 1)
+  const owed = fineSql(rules, sql`${loans.dueOn}`, sql`${copies.replacementPaise}`)
+  const [sum] = (await tx
+    .select({
+      total: sql<number>`count(*)::int`,
+      late: sql<number>`(count(*) filter (where ${loans.dueOn} < now()))::int`,
+      accrued: sql<number>`coalesce(sum(${owed} - ${loans.fineWaivedPaise}) filter (where ${loans.dueOn} < now()), 0)::bigint`,
+    })
+    .from(loans)
+    .innerJoin(copies, eq(copies.id, loans.copyId))
+    .innerJoin(titles, eq(titles.id, copies.titleId))
+    .innerJoin(users, eq(users.id, loans.borrowerId))
+    .where(where)) as [{ total: number; late: number; accrued: number }]
+  return {
+    ...finishPage(
+      rows.map((r) => ({ ...toLoanRow(r, rules, at), _cursor: r._cursor })),
+      page,
+      Number(sum.total),
+    ),
+    late: Number(sum.late),
+    totalAccruedPaise: Number(sum.accrued),
+  }
+}
+
+/** Loans past their due date, longest overdue first, a page at a time (LOW-08). */
+export async function overdueReport(actor: Actor, page = loanPage(new Request('https://x/'), '')): Promise<OverdueReport> {
   const tenant = requireDesk(actor)
-
-  return withTenant(tenant, async (tx): Promise<OverdueReport> => {
-    const rules = await rulesFor(tx, tenant)
-    const at = new Date()
-    const rows = await loanQuery(tx)
-      .where(and(isNull(loans.returnedAt), sql`${loans.dueOn} < now()`))
-      .orderBy(asc(loans.dueOn))
-      .limit(500)
-
-    const out = rows.map((r) => toLoanRow(r, rules, at))
-    return {
-      rows: out,
-      totalAccruedPaise: out.reduce((n, l) => n + l.finePaise - l.fineWaivedPaise, 0),
-    }
+  return withTenant(tenant, async (tx) => {
+    const r = await loansOut(tx, tenant, page, true)
+    return { rows: r.rows, total: r.total, next: r.next, totalAccruedPaise: r.totalAccruedPaise }
   })
 }
 
-/** Everything currently out, for the desk's own view. */
-export async function openLoans(actor: Actor): Promise<LoanRow[]> {
+/** Everything currently out, for the desk's own view, a page at a time (NEW-66). */
+export async function openLoans(actor: Actor, page = loanPage(new Request('https://x/'), '')) {
   const tenant = requireDesk(actor)
   return withTenant(tenant, async (tx) => {
-    const rules = await rulesFor(tx, tenant)
-    const at = new Date()
-    const rows = await loanQuery(tx)
-      .where(isNull(loans.returnedAt))
-      .orderBy(asc(loans.dueOn))
-      .limit(500)
-    return rows.map((r) => toLoanRow(r, rules, at))
+    const r = await loansOut(tx, tenant, page, false)
+    return { rows: r.rows, total: r.total, next: r.next, late: r.late }
   })
 }
 

@@ -1,3 +1,5 @@
+import { sql, type SQL } from 'drizzle-orm'
+
 /**
  * Circulation arithmetic, as pure functions.
  *
@@ -154,3 +156,16 @@ export function refusalToRenew(
 /** A renewal extends from the current due date, not from today. */
 export const renewedDueDate = (dueOn: Date, loanDays: number, timeZone = DEFAULT_ZONE) =>
   dueDate(dueOn, loanDays, timeZone)
+
+/**
+ * `fineFor` in SQL, for an open loan read now: the overdue total is summed in
+ * the database over every overdue loan, not over a page of them (LOW-08,
+ * decision 582). Keep the two in step; a test pins them together.
+ */
+export function fineSql(rules: LoanRules, dueOn: SQL, replacementPaise: SQL): SQL {
+  if (rules.finePerDayPaise === 0) return sql`0::bigint`
+  const days = sql`greatest(ceil(extract(epoch from (now() - ${dueOn})) / 86400)::bigint - ${rules.graceDays}::bigint, 0)`
+  const accrued = sql`(${days} * ${rules.finePerDayPaise}::bigint)`
+  const cap = rules.maxFinePaise === null ? accrued : sql`${rules.maxFinePaise}::bigint`
+  return sql`least(${accrued}, ${cap}, coalesce(${replacementPaise}, ${accrued}))`
+}

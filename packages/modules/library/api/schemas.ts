@@ -151,7 +151,10 @@ export const borrowerStatusSchema = z
     borrowerId: z.string(),
     borrowerName: z.string().nullable(),
     open: z.array(loanRowSchema),
+    /** The 100 most recent returned loans. */
     history: z.array(loanRowSchema),
+    /** Every returned loan, so a screen can say when the history is cut. */
+    historyTotal: z.number().int(),
     openCount: z.number().int(),
     maxConcurrentLoans: z.number().int(),
     outstandingFinePaise: z.number().int(),
@@ -163,6 +166,9 @@ export const borrowerStatusSchema = z
 export const overdueReportSchema = z
   .object({
     rows: z.array(loanRowSchema),
+    total: z.number().int(),
+    next: z.string().nullable(),
+    /** Over every overdue loan, not this page. */
     totalAccruedPaise: z.number().int(),
   })
   .meta({ id: 'LibraryOverdueReport' })

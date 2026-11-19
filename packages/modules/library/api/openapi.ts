@@ -32,7 +32,7 @@ export const paths = {
         'filing cabinet. Counts of total and available copies come back with each row.',
       tags: ['library'],
       responses: {
-        '200': { description: 'OK', content: json(z.array(catalogueRowSchema)) },
+        '200': { description: 'OK', content: json(z.object({ rows: z.array(catalogueRowSchema), total: z.number().int(), next: z.string().nullable() })) },
         ...gated,
       },
     },
@@ -83,10 +83,10 @@ export const paths = {
 
   [`${base}/loans`]: {
     get: {
-      summary: 'Everything currently out, soonest due first',
+      summary: 'Everything currently out, soonest due first, a page at a time',
       tags: ['library'],
       responses: {
-        '200': { description: 'OK', content: json(z.array(loanRowSchema)) },
+        '200': { description: 'OK', content: json(z.object({ rows: z.array(loanRowSchema), total: z.number().int(), next: z.string().nullable(), late: z.number().int() })) },
         ...gated,
       },
     },
@@ -174,7 +174,7 @@ export const paths = {
   },
   [`${base}/overdue`]: {
     get: {
-      summary: 'Loans past their due date, longest overdue first',
+      summary: 'Loans past their due date, longest overdue first, a page at a time; the fine total covers all of them',
       tags: ['library'],
       responses: {
         '200': { description: 'OK', content: json(overdueReportSchema) },
