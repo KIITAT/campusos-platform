@@ -13,6 +13,8 @@ import {
 import {
   aidAssessmentSchema,
   awardScholarshipSchema,
+  bouncePaymentSchema,
+  voidPaymentSchema,
   createFeeItemSchema,
   createScholarshipSchema,
   prorateDropsSchema,
@@ -253,6 +255,46 @@ export const paths = {
         },
         '404': { description: 'No such payment', content: json(err) },
         ...gated,
+      },
+    },
+  },
+
+  [`${base}/payments/void`]: {
+    post: {
+      summary: 'Void a receipt recorded by mistake',
+      description:
+        'The receipt stays on record marked void; its journal entry is reversed today in the ' +
+        "institution's zone and the amount is owed again. An administrator who did not record " +
+        'the payment voids it; the student and their guardians are told.',
+      tags: ['fees'],
+      requestBody: { content: json(voidPaymentSchema) },
+      responses: {
+        '200': { description: 'Voided' },
+        '400': { description: 'Invalid input', content: json(err) },
+        '403': { description: 'separation_of_duties: you recorded it; forbidden: not an administrator; or the module is not enabled', content: json(err) },
+        '404': { description: 'no_such_payment', content: json(err) },
+        '409': { description: 'payment_not_live: already void or returned; payment_refunded: refunds stand against it', content: json(err) },
+      },
+    },
+  },
+  [`${base}/payments/bounce`]: {
+    post: {
+      summary: 'Record a cheque returned unpaid by the bank',
+      description:
+        "The receipt stays on record marked returned unpaid; its journal entry is reversed on the bank's " +
+        "date of return and the amount is owed again. The drawer's IFSC and account are required if the " +
+        'receipt lacks them. An optional bounce charge is billed when the term is next issued.',
+      tags: ['fees'],
+      requestBody: { content: json(bouncePaymentSchema) },
+      responses: {
+        '200': { description: 'Marked returned unpaid' },
+        '400': {
+          description: 'not_a_cheque, drawer_required, bounce_before_receipt, future_bounce or bad_charge',
+          content: json(err),
+        },
+        '403': { description: 'separation_of_duties: you recorded it; forbidden; or the module is not enabled', content: json(err) },
+        '404': { description: 'no_such_payment', content: json(err) },
+        '409': { description: 'payment_not_live: already void or returned; payment_refunded: refunds stand against it', content: json(err) },
       },
     },
   },
