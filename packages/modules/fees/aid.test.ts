@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { eq, like } from 'drizzle-orm'
 import {
   authDb,
+  corePool,
   institutionModules,
   institutions,
   users,
@@ -484,6 +485,35 @@ test('a course dropped inside the window comes back at the bracket that covers i
   const l = await studentLedger(c.admin, c.a, c.termId)
   assert.equal(l.creditedPaise, 2_000_000)
   assert.equal(l.payablePaise, 2_200_000)
+})
+
+test('a drop is prorated on one connection (LOW-02)', async () => {
+  const c = await campus()
+  await charges(c)
+  await issueInvoices(c.admin, { termId: c.termId })
+  const one = await takes(c, c.a, 4, 'Algorithms')
+  await takes(c, c.a, 4, 'Databases')
+  await setRefundRules(c.admin, {
+    termId: c.termId,
+    brackets: [
+      { throughOn: day(7), refundBps: 10_000 },
+      { throughOn: day(21), refundBps: 5_000 },
+    ],
+  })
+  await enrollment.drop(asEnrollment(c.admin), {
+    studentId: c.a,
+    offeringId: one.id,
+    effectiveOn: day(3),
+  })
+
+  // Four of the pool's five connections held: prorating must not need a second.
+  const held = await Promise.all([1, 2, 3, 4].map(() => corePool.connect()))
+  try {
+    const out = await prorateDrops(c.admin, { termId: c.termId })
+    assert.equal(out.credited.length, 1)
+  } finally {
+    for (const h of held) h.release()
+  }
 })
 
 test('the later bracket returns less, and past every bracket nothing comes back', async () => {
