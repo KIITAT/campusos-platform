@@ -6,6 +6,8 @@ import {
   LibraryError,
   addCopies,
   borrowerStatus,
+  loanPage,
+  titlePage,
   catalogue,
   copiesOf,
   createTitle,
@@ -128,7 +130,7 @@ test('a student cannot catalogue a book', async () => {
 
 test('a student can search the catalogue -- one nobody can search is a cupboard', async () => {
   await stocked(2)
-  const rows = await catalogue(student(ids.s1))
+  const { rows } = await catalogue(student(ids.s1))
   assert.equal(rows.length, 1)
   assert.equal(rows[0]!.copies, 2)
   assert.equal(rows[0]!.available, 2)
@@ -171,7 +173,7 @@ test('the same ISBN cannot be catalogued twice', async () => {
 test('two books without an ISBN do not collide', async () => {
   await mkTitle({ isbn: null, title: 'Bound Thesis 48' })
   await mkTitle({ isbn: null, title: 'Bound Thesis 49' })
-  assert.equal((await catalogue(desk())).length, 2)
+  assert.equal((await catalogue(desk())).rows.length, 2)
 })
 
 test('a malformed ISBN is refused before it reaches the shelf', async () => {
@@ -198,10 +200,10 @@ test('a batch that repeats a number is refused whole, not half-applied', async (
 
 test('search matches title, author and a hyphenated ISBN alike', async () => {
   await stocked(1)
-  assert.equal((await catalogue(desk(), 'algor')).length, 1)
-  assert.equal((await catalogue(desk(), 'cormen')).length, 1)
-  assert.equal((await catalogue(desk(), '978-0-262-03384-8')).length, 1)
-  assert.equal((await catalogue(desk(), 'sipser')).length, 0)
+  assert.equal((await catalogue(desk(), 'algor')).rows.length, 1)
+  assert.equal((await catalogue(desk(), 'cormen')).rows.length, 1)
+  assert.equal((await catalogue(desk(), '978-0-262-03384-8')).rows.length, 1)
+  assert.equal((await catalogue(desk(), 'sipser')).rows.length, 0)
 })
 
 // --- issue and return ------------------------------------------------------
@@ -213,7 +215,7 @@ test('issuing takes the copy off the shelf', async () => {
   const [copy] = await copiesOf(desk(), title.id)
   assert.equal(copy!.status, 'on_loan')
   assert.equal(copy!.borrowerName, 'One Student')
-  assert.equal((await catalogue(desk()))[0]!.available, 0)
+  assert.equal((await catalogue(desk())).rows[0]!.available, 0)
 })
 
 test('the desk can issue by the number stamped inside the cover', async () => {
@@ -260,7 +262,7 @@ test('returning puts the copy back and closes the loan', async () => {
   assert.equal(back.finePaise, 0)
   assert.ok(back.loan.returnedAt)
   assert.equal((await copiesOf(desk(), title.id))[0]!.status, 'available')
-  assert.equal((await catalogue(desk()))[0]!.available, 1)
+  assert.equal((await catalogue(desk())).rows[0]!.available, 1)
 })
 
 test('returning something nobody borrowed is refused', async () => {
@@ -276,7 +278,7 @@ test('a copy that came back destroyed is written off, not shelved', async () => 
   await issue(desk(), { copyId: c[0]!.id, borrowerId: ids.s1 })
   await returnCopy(desk(), { copyId: c[0]!.id, markLost: true })
   assert.equal((await copiesOf(desk(), title.id))[0]!.status, 'lost')
-  assert.equal((await catalogue(desk()))[0]!.available, 0)
+  assert.equal((await catalogue(desk())).rows[0]!.available, 0)
 })
 
 test('the same copy circulates again after coming back', async () => {
@@ -560,6 +562,33 @@ test('the overdue report lists the late and totals what is owed', async () => {
   assert.equal(r.totalAccruedPaise, 1000 + 400)
 })
 
+test('the overdue total and the desk lists cover every row, not one page (LOW-08, NEW-66)', async () => {
+  await setSettings(desk(), baseSettings({ finePerDay: '2' }))
+  const { copies: c } = await stocked(3)
+  const a = await issue(desk(), { copyId: c[0]!.id, borrowerId: ids.s1 })
+  const b = await issue(desk(), { copyId: c[1]!.id, borrowerId: ids.s2 })
+  await issue(desk(), { copyId: c[2]!.id, borrowerId: ids.s1 })
+  await overdueBy(a.id, 5)
+  await overdueBy(b.id, 2)
+
+  const one = await overdueReport(desk(), loanPage(new Request('https://x/?n=1'), ''))
+  assert.equal(one.rows.length, 1)
+  assert.equal(one.total, 2)
+  assert.ok(one.next)
+  assert.equal(one.totalAccruedPaise, 1000 + 400, 'the total is every overdue loan, not the page')
+
+  const out = await openLoans(desk(), loanPage(new Request('https://x/?n=1'), ''))
+  assert.equal(out.rows.length, 1)
+  assert.equal(out.total, 3)
+  assert.equal(out.late, 2)
+
+  await mkTitle({ isbn: null, title: 'Theory of Computation', author: 'Sipser' })
+  const cat = await catalogue(desk(), null, titlePage(new Request('https://x/?n=1'), ''))
+  assert.equal(cat.rows.length, 1)
+  assert.equal(cat.total, 2)
+  assert.ok(cat.next)
+})
+
 test('a student cannot read the overdue report or another borrower s status', async () => {
   await assert.rejects(() => overdueReport(student(ids.s1)), (e: unknown) => status(e) === 403)
   await assert.rejects(
@@ -574,7 +603,7 @@ test('the desk sees everything currently out', async () => {
   const { copies: c } = await stocked(2)
   await issue(desk(), { copyId: c[0]!.id, borrowerId: ids.s1 })
   await issue(desk(), { copyId: c[1]!.id, borrowerId: ids.s2 })
-  assert.equal((await openLoans(desk())).length, 2)
+  assert.equal((await openLoans(desk())).rows.length, 2)
 })
 
 test('status reports the rule blocking a borrower, not merely that they are blocked', async () => {
