@@ -20,7 +20,7 @@ import {
   type Actor,
 } from './api'
 import { setSingleOfficer } from '@campusos/module-finance/api'
-import { feeInvoices, feeItems, feePayments, feeWaivers, receiptCounters } from './schema'
+import { feeInvoices, feeItems, feePayments, feeWaivers, receiptCounters, receiptSeries } from './schema'
 
 // The audit trail is append-only (AUD-01): a reset cannot empty it, so each
 // test reads only the rows written since its own reset.
@@ -337,13 +337,13 @@ test('two clerks taking money at the same time never share a receipt number', as
   assert.equal(numbers.size, 12)
 })
 
-test('a receipt counter cannot be wound back', async () => {
+test('a receipt series cannot be wound back', async () => {
   await tuition()
   await pay()
   await assert.rejects(
     () =>
       withTenant(inst, (tx) =>
-        tx.update(receiptCounters).set({ next: 1 }).where(eq(receiptCounters.institutionId, inst)),
+        tx.update(receiptSeries).set({ next: 1 }).where(eq(receiptSeries.institutionId, inst)),
       ),
     saysDb(/cannot move backwards/),
   )

@@ -29,6 +29,7 @@ const body = (over: Record<string, unknown> = {}) => ({
   termId: ids.term,
   amount: '1000',
   method: 'cash',
+  allowAdvance: true,
   ...over,
 })
 const code = (e: unknown) => (e as { code?: string }).code
@@ -55,7 +56,7 @@ async function tally(institutionId = inst) {
         where institution_id = ${institutionId} and source_module = 'fees' and source_ref like 'payment:%') as entries,
       (select count(*)::int from audit_log
         where institution_id = ${institutionId} and action = 'fee.payment_recorded') as audits,
-      (select next::int from fee_receipt_counters where institution_id = ${institutionId}) as counter`)
+      (select coalesce(sum(next), 0)::int from fee_receipt_series where institution_id = ${institutionId}) as counter`)
   return r.rows[0]!
 }
 
@@ -155,7 +156,7 @@ test('two requests racing on one key: the second waits on the claim and replays 
   let holding!: () => void
   const locked = new Promise<void>((resolve) => (holding = resolve))
   const holder = authDb.transaction(async (tx) => {
-    await tx.execute(sql`select 1 from fee_receipt_counters where institution_id = ${inst} for update`)
+    await tx.execute(sql`select 1 from fee_receipt_series where institution_id = ${inst} for update`)
     holding()
     await held
   })
@@ -163,7 +164,7 @@ test('two requests racing on one key: the second waits on the claim and replays 
 
   const a = recordPayment(keyed(clerk(), key), body())
   const b = (async () => {
-    await waitingOn('%update "fee_receipt_counters"%')
+    await waitingOn('%update "fee_receipt_series"%')
     return recordPayment(keyed(clerk(), key), body())
   })()
   try {

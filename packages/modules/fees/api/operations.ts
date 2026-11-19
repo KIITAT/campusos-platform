@@ -22,6 +22,7 @@ import {
   feeRefunds,
   feeWaivers,
   receiptCounters,
+  receiptSeries,
   studentCharges,
 } from '../schema'
 import {
@@ -38,7 +39,7 @@ import {
 import { postedOf, postedSql, receivableReport } from './books'
 import { postInvoice, postPayment, postRefund, postWaiverChange } from './posting'
 import { enrolledPrograms, notEnrolled, priceListSql, termRoster } from './enrolment'
-import { checkOtherPerson, settingsWithin } from '@campusos/module-finance/api'
+import { checkOtherPerson, fiscalShort, settingsWithin } from '@campusos/module-finance/api'
 import { notify } from '@campusos/module-notices/api'
 
 const MODULE = 'fees'
@@ -353,24 +354,60 @@ export async function revokeWaiver(actor: Actor, input: unknown) {
 // --- payments -------------------------------------------------------------
 
 /**
- * Next receipt number for the institution. A counter row updated in the same
- * transaction, not a count of payments: two clerks taking money at once must
- * not be handed the same number, and the row lock makes that impossible.
+ * Next receipt number: one gap-free series per institution and fiscal year
+ * (ACC-30, D15), <prefix>/<fy>/<n>, such as R/2627/000001. The year is that of
+ * the money's date in the institution's zone, which is the year the journal
+ * posts it in. A series row updated in the same transaction, not a count of
+ * payments: two clerks taking money at once must not be handed the same
+ * number, and the row lock makes that impossible. The prefix is still the old
+ * counter's; its own count is no longer used. Receipts issued before keep
+ * their R-000001 numbers.
  */
-async function nextReceiptNo(tx: Tx, tenant: string): Promise<string> {
-  await tx
-    .insert(receiptCounters)
-    .values({ institutionId: tenant })
-    .onConflictDoNothing()
-
-  const [row] = await tx
-    .update(receiptCounters)
-    .set({ next: sql`${receiptCounters.next} + 1` })
+async function nextReceiptNo(tx: Tx, tenant: string, receivedAt: Date): Promise<string> {
+  const [counter] = await tx
+    .select({ prefix: receiptCounters.prefix })
+    .from(receiptCounters)
     .where(eq(receiptCounters.institutionId, tenant))
-    .returning({ prefix: receiptCounters.prefix, next: receiptCounters.next })
+  const prefix = counter?.prefix ?? 'R'
+  const { short } = await fiscalShort(tx, tenant, await localDayOf(tx, tenant, receivedAt))
+
+  await tx.insert(receiptSeries).values({ institutionId: tenant, fiscalYear: short }).onConflictDoNothing()
+  const [row] = await tx
+    .update(receiptSeries)
+    .set({ next: sql`${receiptSeries.next} + 1` })
+    .where(and(eq(receiptSeries.institutionId, tenant), eq(receiptSeries.fiscalYear, short)))
+    .returning({ next: receiptSeries.next })
 
   // `next` comes back already incremented, so the number issued is one less.
-  return `${row!.prefix}-${String(row!.next - 1).padStart(6, '0')}`
+  return `${prefix}/${short}/${String(row!.next - 1).padStart(6, '0')}`
+}
+
+/** A browser's clock may run a little ahead; five minutes is allowed (D18). */
+const FUTURE_SKEW_MS = 300_000
+
+/**
+ * Taking more than is due for the term needs saying so (LOW-03, D19). Due is
+ * the balance plus what today's price list has not yet invoiced, so a school
+ * may take fees before issuing the term. A check, not a lock: two payments at
+ * once may together go past it.
+ */
+async function assertWithinDue(tx: Tx, studentId: string, termId: string, amountPaise: number) {
+  const [row] = (await tx.execute(sql`select * from (${postedSql({ termId, studentId })}) p`)).rows
+  const p = postedOf(row as Record<string, unknown> | undefined)
+  const [l] = (
+    await tx.execute(sql`
+      select coalesce(sum(charged), 0)::bigint as listed, coalesce(sum(unposted_waived), 0)::bigint as unposted
+        from (${priceListSql(termId, [studentId])}) l`)
+  ).rows as { listed: string | number; unposted: string | number }[]
+  const notYet = Math.max(0, Number(l?.listed ?? 0) - Number(l?.unposted ?? 0) - p.invoicedPaise)
+  const due = Math.max(0, p.balancePaise + notYet)
+  if (amountPaise > due) {
+    throw new FeeError(
+      409,
+      'exceeds_outstanding',
+      `${rupees(amountPaise)} is more than the ${rupees(due)} due for this term. Tick "Record the excess as an advance" to record it anyway.`,
+    )
+  }
 }
 
 /**
@@ -388,8 +425,9 @@ export async function recordPayment(actor: Actor, input: unknown) {
       tx,
       feeIdempotencyKeys,
       { institutionId: tenant, actorId: actor.id, operation: 'payment', key: actor.idempotencyKey, request: data },
-      () =>
-        recordPaymentWithin(tx, tenant, actor, {
+      async () => {
+        if (!data.allowAdvance) await assertWithinDue(tx, data.studentId, data.termId, data.amount)
+        return recordPaymentWithin(tx, tenant, actor, {
           studentId: data.studentId,
           termId: data.termId,
           amountPaise: data.amount,
@@ -399,7 +437,8 @@ export async function recordPayment(actor: Actor, input: unknown) {
           notes: data.notes ?? null,
           drawerIfsc: data.drawerIfsc ?? null,
           drawerAccount: data.drawerAccount ?? null,
-        }),
+        })
+      },
       async (id) => (await tx.select().from(feePayments).where(eq(feePayments.id, id)))[0],
     )
     return replayed
@@ -437,9 +476,25 @@ export async function recordPaymentWithin(tx: Tx, tenant: string, actor: Actor, 
     throw new FeeError(400, 'not_a_student', 'fees are recorded against students')
   }
 
+  // No receipt for money that has not arrived yet (LOW-03, D18).
+  if (data.receivedAt.getTime() > Date.now() + FUTURE_SKEW_MS) {
+    throw new FeeError(400, 'future_receipt', 'a receipt cannot be dated in the future')
+  }
+
+  // A cheque's drawer, both or neither, and only on a cheque (D16).
+  const ifsc = data.drawerIfsc ?? null
+  const account = data.drawerAccount ?? null
+  if ((ifsc === null) !== (account === null)) {
+    throw new FeeError(400, 'drawer_incomplete', 'give both the IFSC and the account number, or neither')
+  }
+  if (ifsc !== null && data.method !== 'cheque') {
+    throw new FeeError(400, 'drawer_not_cheque', 'drawer details belong to a cheque')
+  }
+
   // A UTR already receipted -- typed twice, or typed once and now arriving as
   // the student's verified claim -- is refused before it takes a receipt
   // number. The unique index is what holds when two requests race past this.
+  // A voided receipt no longer holds its UTR (D17).
   const reference = data.reference?.trim() || null
   if (reference && onePerReference(data.method)) {
     const [prior] = await tx
@@ -447,6 +502,7 @@ export async function recordPaymentWithin(tx: Tx, tenant: string, actor: Actor, 
       .from(feePayments)
       .where(
         and(
+          eq(feePayments.status, 'live'),
           inArray(feePayments.method, [...ONE_RECEIPT_PER_REFERENCE]),
           sql`${feePayments.reference} is not null and btrim(${feePayments.reference}) <> ''`,
           sql`upper(btrim(${feePayments.reference})) = upper(${reference})`,
@@ -457,7 +513,36 @@ export async function recordPaymentWithin(tx: Tx, tenant: string, actor: Actor, 
     }
   }
 
-  const receiptNo = await nextReceiptNo(tx, tenant)
+  // A cheque is receipted once per drawer IFSC, account and number while it
+  // is live; a returned cheque presented again can be receipted again (D16).
+  if (reference && ifsc && account && data.method === 'cheque') {
+    const [prior] = await tx
+      .select({ receiptNo: feePayments.receiptNo })
+      .from(feePayments)
+      .where(
+        and(
+          eq(feePayments.status, 'live'),
+          eq(feePayments.method, 'cheque'),
+          eq(feePayments.drawerIfsc, ifsc),
+          eq(feePayments.drawerAccount, account),
+          sql`upper(btrim(${feePayments.reference})) = upper(${reference})`,
+        ),
+      )
+    if (prior) {
+      throw new FeeError(409, 'duplicate_cheque', `cheque ${reference} on ${ifsc} ${account} is already receipted as ${prior.receiptNo}`)
+    }
+  }
+
+  const receiptNo = await nextReceiptNo(tx, tenant, data.receivedAt)
+
+  // The fee heads as they stand now, printed on the receipt and kept (ACC-30, D20).
+  const breakup = {
+    heads: (await chargesFor(tx, data.studentId, data.termId)).map((h) => ({
+      label: h.label,
+      chargedPaise: h.chargedPaise,
+      waivedPaise: h.waivedPaise ?? 0,
+    })),
+  }
 
   let row: typeof feePayments.$inferSelect | undefined
   try {
@@ -474,13 +559,17 @@ export async function recordPaymentWithin(tx: Tx, tenant: string, actor: Actor, 
         recordedBy: actor.id,
         receiptNo,
         notes: data.notes,
-        drawerIfsc: data.drawerIfsc ?? null,
-        drawerAccount: data.drawerAccount ?? null,
+        drawerIfsc: ifsc,
+        drawerAccount: account,
+        breakup,
       })
       .returning()
   } catch (e) {
     if (constraintOf(e) === 'fee_payments_reference') {
       throw new FeeError(409, 'duplicate_reference', `${reference} has just been receipted by another request`)
+    }
+    if (constraintOf(e) === 'fee_payments_cheque') {
+      throw new FeeError(409, 'duplicate_cheque', `cheque ${reference} has just been receipted by another request`)
     }
     throw e
   }
@@ -501,6 +590,8 @@ export async function recordPaymentWithin(tx: Tx, tenant: string, actor: Actor, 
       amountPaise: data.amountPaise,
       method: data.method,
       reference,
+      drawerIfsc: ifsc,
+      drawerAccount: account,
     },
   })
 

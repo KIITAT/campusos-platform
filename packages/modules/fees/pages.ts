@@ -448,7 +448,10 @@ export const pages: PluginPage[] = [
             optional: true,
             hint: 'Cheque number, UPI reference, whatever identifies it on the statement',
           },
+          { name: 'drawerIfsc', label: "Drawer's IFSC", optional: true, hint: 'Cheques: printed on the cheque' },
+          { name: 'drawerAccount', label: "Drawer's account number", optional: true },
           { name: 'notes', label: 'Notes', optional: true },
+          { name: 'allowAdvance', label: 'Record the excess as an advance', kind: 'checkbox', optional: true },
         ],
       },
       {

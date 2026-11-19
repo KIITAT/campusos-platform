@@ -85,6 +85,8 @@ export const recordPaymentSchema = z
     notes: z.string().max(500).trim().nullish(),
     drawerIfsc,
     drawerAccount,
+    /** Confirms an amount above what is due for the term (LOW-03). */
+    allowAdvance: z.preprocess(ticked, z.boolean()).default(false),
   })
   .meta({ id: 'FeePaymentRecord' })
 
