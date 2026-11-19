@@ -87,7 +87,7 @@ test('allocating mid-term charges the rest of the term', async () => {
   const rows = await live(c.id)
   assert.equal(rows.length, 1)
   assert.equal(rows[0]!.amount, 910_000)
-  assert.equal(rows[0]!.label, 'Hostel A-101, T1 (91 of 146 days)')
+  assert.equal(rows[0]!.label, 'Hostel a-101, T1 (91 of 146 days)')
 })
 
 test('vacating before invoicing charges only the nights used', async () => {

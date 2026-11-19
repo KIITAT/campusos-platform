@@ -1,5 +1,9 @@
 import { and, asc, desc, eq, gte, isNull, lte, sql } from 'drizzle-orm'
 import { audit, users, withTenant } from '@campusos/db'
+import { formatPaise, parseRupeesToPaise } from '@campusos/money'
+import { chargeStayWithin, endStayWithin, termChoicesWithin, termOnWithin, type Stay } from '@campusos/module-fees/api'
+import { manifest as feesManifest } from '@campusos/module-fees/manifest'
+import { terms } from '@campusos/module-academic/schema'
 import {
   moduleEnabled,
   viewsOnBehalf,
@@ -21,10 +25,12 @@ import {
 import {
   addRoomsSchema,
   allocateSchema,
+  chargeTermSchema,
   createBlockSchema,
   grantLeaveSchema,
   markSchema,
   scanSchema,
+  setRoomFeeSchema,
   vacateSchema,
   visitorInSchema,
   visitorOutSchema,
@@ -72,12 +78,52 @@ const requireWarden = (actor: Actor) => {
   return tenant
 }
 
-/** Allocating and vacating beds is an administrative act, not a gate one. */
+/**
+ * The price of a bed and billing a term are the office's, not the warden's
+ * (LOW-11, decision 579). Blocks, rooms and who sleeps where stay with the
+ * warden's desk.
+ */
 const requireAdmin = (actor: Actor) => {
   const tenant = tenantOf(actor)
-  if (!isWarden(actor.role)) throw new HostelError(403, 'forbidden', 'not permitted')
+  if (actor.role !== 'institution_admin' && actor.role !== 'super_admin') {
+    throw new HostelError(403, 'forbidden', 'only an administrator may set hostel fees or bill a term')
+  }
   return tenant
 }
+
+/** Whether beds are charged through the student's fee account here. */
+const feesOn = (institutionId: string) =>
+  moduleEnabled([hostelManifest, attendanceManifest, feesManifest], 'fees', institutionId)
+
+interface Priced {
+  blockCode: string
+  number: string
+  termFeePaise: number
+}
+
+/** One allocation, as a stay the fee account can charge (ACC-28). */
+const stayOf = (a: { id: string; studentId: string; allocatedOn: string; vacatedOn: string | null }, room: Priced): Stay => ({
+  sourceModule: MODULE,
+  stayId: a.id,
+  studentId: a.studentId,
+  label: `Hostel ${room.blockCode}-${room.number}`,
+  termFeePaise: room.termFeePaise,
+  from: a.allocatedOn,
+  until: a.vacatedOn,
+})
+
+/** The room's name and fee, or null when it is not charged. */
+async function roomPrice(tx: Tx, roomId: string): Promise<Priced | null> {
+  const [r] = await tx
+    .select({ blockCode: blocks.code, number: rooms.number, termFeePaise: rooms.termFeePaise })
+    .from(rooms)
+    .innerJoin(blocks, eq(blocks.id, rooms.blockId))
+    .where(eq(rooms.id, roomId))
+  return r && r.termFeePaise ? { blockCode: r.blockCode, number: r.number, termFeePaise: r.termFeePaise } : null
+}
+
+const invoicedNotice = (codes: string[]) =>
+  codes.length ? ` Already invoiced for ${codes.join(', ')}: grant a waiver in Fees for the days not used.` : ''
 
 const today = () => new Date().toISOString().slice(0, 10)
 
@@ -100,7 +146,7 @@ export async function rollCallMode(institutionId: string): Promise<RollCallMode>
 // --- inventory -------------------------------------------------------------
 
 export async function createBlock(actor: Actor, input: unknown) {
-  const tenant = requireAdmin(actor)
+  const tenant = requireWarden(actor)
   const d = createBlockSchema.parse(input)
 
   return withTenant(tenant, async (tx) => {
@@ -121,7 +167,7 @@ export async function createBlock(actor: Actor, input: unknown) {
 }
 
 export async function addRooms(actor: Actor, input: unknown) {
-  const tenant = requireAdmin(actor)
+  const tenant = requireWarden(actor)
   const d = addRoomsSchema.parse(input)
 
   const unique = [...new Set(d.numbers)]
@@ -166,6 +212,7 @@ export async function listRooms(actor: Actor, blockId?: string): Promise<RoomRow
         number: rooms.number,
         floor: rooms.floor,
         capacity: rooms.capacity,
+        termFeePaise: rooms.termFeePaise,
       })
       .from(rooms)
       .innerJoin(blocks, eq(blocks.id, rooms.blockId))
@@ -226,8 +273,9 @@ export async function listBlocks(actor: Actor) {
 // --- residence -------------------------------------------------------------
 
 export async function allocate(actor: Actor, input: unknown) {
-  const tenant = requireAdmin(actor)
+  const tenant = requireWarden(actor)
   const d = allocateSchema.parse(input)
+  const billed = await feesOn(tenant)
 
   return withTenant(tenant, async (tx) => {
     const [student] = await tx
@@ -261,6 +309,23 @@ export async function allocate(actor: Actor, input: unknown) {
         allocatedBy: actor.id,
       })
       .returning()
+
+    await audit(tx, {
+      institutionId: tenant,
+      actorId: actor.id,
+      actorEmail: actor.email ?? null,
+      moduleId: MODULE,
+      action: 'hostel.allocated',
+      entity: 'hostel_allocations',
+      entityId: row!.id,
+      reason: 'allocated a bed',
+      detail: { studentId: row!.studentId, roomId: row!.roomId, allocatedOn: row!.allocatedOn },
+    })
+
+    // The bed and its fee land together or not at all (ACC-28, decision 577).
+    const price = billed ? await roomPrice(tx, row!.roomId) : null
+    const term = price ? await termOnWithin(tx, row!.allocatedOn) : null
+    if (price && term) await chargeStayWithin(tx, tenant, actor.id, stayOf(row!, price), term.id)
     return row!
   })
 }
@@ -270,8 +335,9 @@ export async function allocate(actor: Actor, input: unknown) {
  * made, and "why was I moved" is asked often enough to be worth answering.
  */
 export async function vacate(actor: Actor, input: unknown) {
-  const tenant = requireAdmin(actor)
+  const tenant = requireWarden(actor)
   const d = vacateSchema.parse(input)
+  const billed = await feesOn(tenant)
 
   return withTenant(tenant, async (tx) => {
     const [row] = await tx
@@ -298,7 +364,110 @@ export async function vacate(actor: Actor, input: unknown) {
       .set({ vacatedOn: d.vacatedOn ?? today() })
       .where(eq(allocations.id, d.allocationId))
       .returning()
-    return updated!
+
+    // Charges not yet invoiced shrink to the nights used (ACC-28, decision 575),
+    // re-priced at the room's fee as it stands.
+    const price = billed ? await roomPrice(tx, updated!.roomId) : null
+    const invoiced = price
+      ? (await endStayWithin(tx, tenant, actor.id, { ...stayOf(updated!, price), until: updated!.vacatedOn! })).invoiced
+      : []
+    return { ...updated!, invoiced, notice: `Vacated.${invoicedNotice(invoiced)}` }
+  })
+}
+
+// --- hostel fees (ACC-28, decisions 576, 577) ---------------------------------
+
+/** Whether the fee forms apply here, and the terms they bill. */
+export async function feeChoices(actor: Actor) {
+  const tenant = requireWarden(actor)
+  if (!(await feesOn(tenant))) return { on: false, terms: [] as { value: string; label: string }[] }
+  return { on: true, terms: await withTenant(tenant, (tx) => termChoicesWithin(tx)) }
+}
+
+export async function setRoomFee(actor: Actor, input: unknown) {
+  const tenant = requireAdmin(actor)
+  const d = setRoomFeeSchema.parse(input)
+  const termFeePaise = d.termFee === '' ? null : parseRupeesToPaise(d.termFee)
+  if (d.termFee !== '' && (termFeePaise === null || termFeePaise <= 0)) {
+    throw new HostelError(400, 'bad_amount', 'enter the fee in rupees, more than nothing, or leave it empty')
+  }
+
+  return withTenant(tenant, async (tx) => {
+    const [block] = await tx.select().from(blocks).where(eq(blocks.id, d.blockId))
+    if (!block) throw new HostelError(404, 'no_such_block', 'no such block')
+    await audit(tx, {
+      institutionId: tenant,
+      actorId: actor.id,
+      actorEmail: actor.email ?? null,
+      moduleId: MODULE,
+      action: 'hostel.room_fee_set',
+      entity: 'hostel_rooms',
+      entityId: block.id,
+      reason: d.reason,
+      detail: { blockId: block.id, capacity: d.capacity ?? null, termFeePaise },
+    })
+    const changed = await tx
+      .update(rooms)
+      .set({ termFeePaise })
+      .where(and(eq(rooms.blockId, block.id), d.capacity ? eq(rooms.capacity, d.capacity) : undefined))
+      .returning({ id: rooms.id })
+    return { rooms: changed.length, termFeePaise, notice: `Fee set on ${changed.length} rooms.` }
+  })
+}
+
+/**
+ * Charge every resident of a term who has no charge for it yet: residents who
+ * stayed on from last term, and anyone allocated before the fee was set. Safe
+ * to repeat; two runs of one term take turns.
+ */
+export async function chargeTerm(actor: Actor, input: unknown) {
+  const tenant = requireAdmin(actor)
+  const d = chargeTermSchema.parse(input)
+  if (!(await feesOn(tenant))) throw new HostelError(409, 'fees_not_enabled', 'hostel charges need the Fees module')
+
+  return withTenant(tenant, async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'hostel.charge:' + d.termId}, 0))`)
+    const [term] = await tx.select().from(terms).where(eq(terms.id, d.termId))
+    if (!term) throw new HostelError(404, 'no_such_term', 'no such term')
+    const stays = await tx
+      .select({
+        id: allocations.id,
+        studentId: allocations.studentId,
+        allocatedOn: allocations.allocatedOn,
+        vacatedOn: allocations.vacatedOn,
+        blockCode: blocks.code,
+        number: rooms.number,
+        termFeePaise: rooms.termFeePaise,
+      })
+      .from(allocations)
+      .innerJoin(rooms, eq(rooms.id, allocations.roomId))
+      .innerJoin(blocks, eq(blocks.id, rooms.blockId))
+      .where(
+        and(
+          lte(allocations.allocatedOn, term.endsOn),
+          sql`(${allocations.vacatedOn} is null or ${allocations.vacatedOn} > ${term.startsOn})`,
+          sql`${rooms.termFeePaise} is not null`,
+        ),
+      )
+    let charged = 0
+    let alreadyCharged = 0
+    let amountPaise = 0
+    for (const s of stays) {
+      const r = await chargeStayWithin(tx, tenant, actor.id, stayOf(s, { ...s, termFeePaise: s.termFeePaise! }), term.id)
+      if (r) {
+        charged++
+        amountPaise += r.amountPaise
+      } else {
+        alreadyCharged++
+      }
+    }
+    return {
+      termCode: term.code,
+      charged,
+      alreadyCharged,
+      amountPaise,
+      notice: `Charged ${charged} residents ${formatPaise(amountPaise)} for ${term.code}. ${alreadyCharged} already had their charge. Billed on the next invoice.`,
+    }
   })
 }
 
@@ -412,6 +581,24 @@ async function recordNight(
   },
 ) {
   return withTenant(tenant, async (tx) => {
+    // The trigger refuses this too; asking first answers a scan with a reason
+    // rather than a server error (NEW-20, decision 580).
+    const [lives] = await tx
+      .select({ id: allocations.id })
+      .from(allocations)
+      .innerJoin(rooms, eq(rooms.id, allocations.roomId))
+      .where(
+        and(
+          eq(allocations.studentId, v.studentId),
+          eq(rooms.blockId, v.blockId),
+          lte(allocations.allocatedOn, v.onNight),
+          sql`(${allocations.vacatedOn} is null or ${allocations.vacatedOn} > ${v.onNight})`,
+        ),
+      )
+      .limit(1)
+    if (!lives) {
+      throw new HostelError(409, 'not_resident', `that student was not resident in this block on ${v.onNight}`)
+    }
     const [row] = await tx
       .insert(checkIns)
       .values({ institutionId: tenant, ...v })

@@ -31,6 +31,19 @@ export const allocateSchema = z
   })
   .meta({ id: 'HostelAllocate' })
 
+/** The fee per bed per term, as typed in rupees; empty clears it (decision 576). */
+export const setRoomFeeSchema = z
+  .object({
+    blockId: uuid,
+    /** Only the rooms with this many beds: single, double and triple are priced apart. */
+    capacity: z.coerce.number().int().min(1).max(20).nullish(),
+    termFee: z.string().trim().max(20),
+    reason: z.string().trim().min(5).max(500),
+  })
+  .meta({ id: 'HostelRoomFeeSet' })
+
+export const chargeTermSchema = z.object({ termId: uuid }).meta({ id: 'HostelChargeTerm' })
+
 export const vacateSchema = z
   .object({
     allocationId: uuid,
@@ -92,6 +105,8 @@ export const roomRowSchema = z
     number: z.string(),
     floor: z.number().int(),
     capacity: z.number().int(),
+    /** One bed for a term, charged through fees; null when not charged. */
+    termFeePaise: z.number().int().nullable(),
     occupied: z.number().int(),
     residents: z.array(
       z.object({

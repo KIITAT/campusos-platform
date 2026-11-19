@@ -1,5 +1,7 @@
+import { formatPaise } from '@campusos/money'
 import { param, type PluginPage } from '@campusos/module-framework'
 import {
+  feeChoices,
   listBlocks,
   listRooms,
   myHostel,
@@ -9,6 +11,7 @@ import {
 } from './api'
 
 const WARDEN = ['institution_admin', 'super_admin', 'hostel_staff'] as const
+const ADMIN = ['institution_admin', 'super_admin'] as const
 
 export const pages: PluginPage[] = [
   {
@@ -19,12 +22,15 @@ export const pages: PluginPage[] = [
     async load(actor, req) {
       const a = actor as Actor
       const blockId = param(req, 'blockId')
-      const [blocks, rooms] = await Promise.all([listBlocks(a), listRooms(a, blockId)])
+      const [blocks, rooms, fees] = await Promise.all([listBlocks(a), listRooms(a, blockId), feeChoices(a)])
       return {
+        feesOn: fees.on,
+        termOptions: fees.terms,
         rooms: rooms.map((r) => ({
           ...r,
           room: `${r.blockCode}-${r.number}`,
           free: r.capacity - r.occupied,
+          fee: r.termFeePaise === null ? '-' : formatPaise(r.termFeePaise),
           full: r.occupied >= r.capacity,
           residents: r.residents.map((p) => p.name ?? p.email).join(', ') || 'empty',
         })),
@@ -71,6 +77,7 @@ export const pages: PluginPage[] = [
           { key: 'floor', label: 'Floor' },
           { key: 'occupied', label: 'Taken', alertWhen: 'full' },
           { key: 'capacity', label: 'Beds' },
+          { key: 'fee', label: 'Fee a term' },
           { key: 'residents', label: 'Residents' },
         ],
       },
@@ -130,6 +137,38 @@ export const pages: PluginPage[] = [
           { name: 'capacity', label: 'Beds per room', kind: 'number', value: '2' },
         ],
       },
+      ...(data.feesOn
+        ? [
+            {
+              kind: 'form' as const,
+              title: 'Set the room fee',
+              note:
+                'The fee for one bed for one term, charged to the student\'s fee account: on ' +
+                'allocation for the rest of that term, and by "Charge residents" for the terms after. ' +
+                'Leave the beds empty to set every room of the block. Leave the fee empty to stop charging.',
+              submit: 'Set fee',
+              path: '/rooms/fee',
+              roles: [...ADMIN],
+              fields: [
+                { name: 'blockId', label: 'Block', kind: 'select' as const, options: 'blockOptions' },
+                { name: 'capacity', label: 'Only rooms with this many beds', kind: 'number' as const, optional: true },
+                { name: 'termFee', label: 'Fee a term', kind: 'money' as const, optional: true, hint: 'Rupees.' },
+                { name: 'reason', label: 'Reason' },
+              ],
+            },
+            {
+              kind: 'form' as const,
+              title: 'Charge residents for a term',
+              note:
+                'Charges everyone living in a priced room during the term who has no charge for it yet, ' +
+                'for the nights inside the term. Billed on the next invoice. Safe to run again.',
+              submit: 'Charge',
+              path: '/charges',
+              roles: [...ADMIN],
+              fields: [{ name: 'termId', label: 'Term', kind: 'select' as const, options: 'termOptions' }],
+            },
+          ]
+        : []),
     ],
   },
 

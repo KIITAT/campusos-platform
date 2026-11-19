@@ -2,6 +2,7 @@ import { flag, jsonBody, param, requiredParam, type PluginRoute } from '@campuso
 import {
   addRooms,
   allocate,
+  chargeTerm,
   createBlock,
   grantLeave,
   listBlocks,
@@ -11,6 +12,7 @@ import {
   rollCall,
   rollCallCode,
   scanCheckIn,
+  setRoomFee,
   vacate,
   visitorIn,
   visitorLog,
@@ -35,6 +37,17 @@ export const routes: PluginRoute[] = [
     method: 'POST',
     path: '/rooms',
     handler: async (actor, req) => addRooms(actor as Actor, await jsonBody(req)),
+  },
+
+  {
+    method: 'POST',
+    path: '/rooms/fee',
+    handler: async (actor, req) => setRoomFee(actor as Actor, await jsonBody(req)),
+  },
+  {
+    method: 'POST',
+    path: '/charges',
+    handler: async (actor, req) => chargeTerm(actor as Actor, await jsonBody(req)),
   },
 
   {

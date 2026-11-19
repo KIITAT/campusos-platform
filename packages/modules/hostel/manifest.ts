@@ -9,7 +9,8 @@ export const manifest: ModuleManifest = {
   alwaysEnabled: false,
   dependsOn: ['academic'],
   // Not a hard dependency: roll call degrades to a manual register without it.
-  softDependsOn: ['attendance'],
+  // fees, softly too: beds are charged to the fee account only where it runs.
+  softDependsOn: ['attendance', 'fees'],
   pricing: { model: 'not_priced_yet', priceINR: null },
 
   rolesWithAccess: [
