@@ -598,7 +598,8 @@ test('a library with no settings row still lends, on the defaults', async () => 
   // fourteenth day, so the span from a morning issue is fourteen days and most
   // of another one -- which rounds to fifteen and made this test pass or fail
   // depending on the hour it was run at.
-  const midnight = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  // Days in India, the institution's zone by default (LOW-09), not the server's.
+  const midnight = (d: Date) => Date.parse(new Date(d.getTime() + 330 * 60_000).toISOString().slice(0, 10))
   const days = Math.round((midnight(loan.dueOn) - midnight(loan.issuedAt)) / 86_400_000)
   assert.equal(days, 14)
 })

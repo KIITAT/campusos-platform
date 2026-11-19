@@ -13,7 +13,7 @@ export const manifest: ModuleManifest = {
    * and simply taken when it does not. A library that refuses five rupees
    * because nobody bought the ledger is a library that has stopped working.
    */
-  softDependsOn: ['finance'],
+  softDependsOn: ['finance', 'fees'],
   pricing: { model: 'not_priced_yet', priceINR: null },
 
   rolesWithAccess: [

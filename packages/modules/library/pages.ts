@@ -27,12 +27,13 @@ const loanRow = (l: {
   finePaise: number
   fineWaivedPaise: number
   finePaidAt: string | null
+  fineSettledBy?: string | null
 }) => ({
   ...l,
   who: l.borrowerName ?? l.borrowerEmail,
   owing: l.finePaise - l.fineWaivedPaise,
   late: l.daysOverdue > 0,
-  settled: l.finePaidAt ? 'paid' : l.finePaise > 0 ? 'owing' : '-',
+  settled: l.finePaidAt ? (l.fineSettledBy === 'fee_account' ? 'on fee account' : 'paid') : l.finePaise > 0 ? 'owing' : '-',
 })
 
 export const pages: PluginPage[] = [
@@ -77,7 +78,7 @@ export const pages: PluginPage[] = [
         title: 'Return',
         note:
           'The fine is worked out on return. Tick the box only if the book did ' +
-          'not come back, or came back unusable.',
+          'not come back, or came back unusable: its replacement cost is then added to the fine.',
         submit: 'Return',
         path: '/loans/return',
         fields: [
@@ -251,7 +252,20 @@ export const pages: PluginPage[] = [
           'open loan would bank a figure that is still rising.',
         submit: 'Mark paid',
         path: '/fines/settle',
-        fields: [{ name: 'loanId', label: 'Loan id' }],
+        fields: [
+          { name: 'loanId', label: 'Loan id' },
+          {
+            name: 'method',
+            label: 'How it was paid',
+            kind: 'select',
+            options: [
+              { value: 'cash', label: 'Cash' },
+              { value: 'upi', label: 'UPI' },
+              { value: 'bank_transfer', label: 'Bank transfer' },
+              { value: 'fee_account', label: 'To the fee account (students; billed with the term)' },
+            ],
+          },
+        ],
       },
       {
         kind: 'form',

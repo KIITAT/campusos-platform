@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@campusos/db": "workspace:*",
+    "@campusos/module-fees": "workspace:*",
     "@campusos/module-finance": "workspace:*",
     "@campusos/module-framework": "workspace:*",
     "@campusos/money": "workspace:*",

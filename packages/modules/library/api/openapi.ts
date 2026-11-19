@@ -139,25 +139,25 @@ export const paths = {
 
   [`${base}/fines/waive`]: {
     post: {
-      summary: 'Forgive part or all of a fine. Reason mandatory and audited.',
+      summary: 'Forgive part or all of a fine not yet settled. Reason mandatory and audited.',
       tags: ['library'],
       requestBody: { content: json(waiveFineSchema) },
-      responses: { '200': { description: 'Waived' }, ...gated },
+      responses: { '200': { description: 'Waived' }, ...gated, '409': { description: 'Already settled', content: json(err) } },
     },
   },
   [`${base}/fines/settle`]: {
     post: {
-      summary: 'Record a fine paid at the desk',
+      summary: "Record how a fine was paid: cash, UPI, bank transfer, or moved to the student's fee account",
       description:
-        'Deliberately not a Fees charge: Fees is an optional module, and a library that cannot ' +
-        'take a five-rupee fine because the institution did not buy the finance module is a ' +
-        'library that has stopped working.',
+        'Cash posts to cash and UPI or a transfer to the bank, when the institution keeps books. ' +
+        "To the fee account raises a charge on the term running today, billed with the term's fees; " +
+        'the library then posts nothing. A settled fine cannot be waived.',
       tags: ['library'],
       requestBody: { content: json(settleFineSchema) },
       responses: {
         '200': { description: 'Settled' },
         ...gated,
-        '409': { description: 'Already settled', content: json(err) },
+        '409': { description: 'Already settled; or, to the fee account: Fees not enabled, not a student, or no term running', content: json(err) },
       },
     },
   },
@@ -189,7 +189,7 @@ export const paths = {
       responses: { '200': { description: 'OK' }, ...gated },
     },
     put: {
-      summary: 'Set the circulation rules',
+      summary: 'Set the circulation rules. Reason mandatory and audited.',
       tags: ['library'],
       requestBody: { content: json(librarySettingsSchema) },
       responses: { '200': { description: 'Saved' }, ...gated },

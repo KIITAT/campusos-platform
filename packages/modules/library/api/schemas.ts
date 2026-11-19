@@ -85,8 +85,11 @@ export const waiveFineSchema = z
   })
   .meta({ id: 'LibraryFineWaive' })
 
+/** How a fine was paid (ACC-27, decision 586). Cash when not said, as before. */
+export const settlementMethods = ['cash', 'upi', 'bank_transfer', 'fee_account'] as const
+
 export const settleFineSchema = z
-  .object({ loanId: uuid })
+  .object({ loanId: uuid, method: z.enum(settlementMethods).default('cash') })
   .meta({ id: 'LibraryFineSettle' })
 
 export const librarySettingsSchema = z
@@ -98,6 +101,8 @@ export const librarySettingsSchema = z
     maxRenewals: z.coerce.number().int().min(0).max(20),
     maxFine: rupees.nullish(),
     blockAtOutstanding: rupees,
+    /** Why the rules change: on the audit trail (AUD-12). */
+    reason: z.string().trim().min(5).max(500),
   })
   .meta({ id: 'LibrarySettings' })
 
@@ -135,6 +140,8 @@ export const loanRowSchema = z
     finePaise: z.number().int(),
     fineWaivedPaise: z.number().int(),
     finePaidAt: z.string().nullable(),
+    /** cash, upi, bank_transfer or fee_account; null while unsettled. */
+    fineSettledBy: z.string().nullable(),
     daysOverdue: z.number().int(),
   })
   .meta({ id: 'LibraryLoan' })
