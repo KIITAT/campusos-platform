@@ -29,6 +29,7 @@ import {
   visitorIn,
   visitorLog,
   visitorOut,
+  visitorPage,
   type Actor,
 } from './api'
 import { allocations, blocks, checkIns, leaves, rooms, visitors } from './schema'
@@ -503,11 +504,24 @@ test('a visitor is signed in and out, and the open register shows who is inside'
     phone: '9000000000',
     relation: 'father',
   })
-  assert.equal((await visitorLog(warden(), blockId, true)).length, 1)
+  assert.equal((await visitorLog(warden(), blockId, true)).rows.length, 1)
 
   await visitorOut(warden(), { visitorId: v.id })
-  assert.equal((await visitorLog(warden(), blockId, true)).length, 0)
-  assert.equal((await visitorLog(warden(), blockId)).length, 1)
+  assert.equal((await visitorLog(warden(), blockId, true)).rows.length, 0)
+  assert.equal((await visitorLog(warden(), blockId)).rows.length, 1)
+})
+
+test('the visitor log pages (NEW-66)', async () => {
+  for (const name of ['First Visitor', 'Second Visitor', 'Third Visitor']) {
+    await visitorIn(warden(), { blockId, name })
+  }
+  const first = await visitorLog(warden(), blockId, false, visitorPage(new Request('https://x/?n=2'), ''))
+  assert.equal(first.rows.length, 2)
+  assert.equal(first.total, 3)
+  assert.ok(first.next)
+  const rest = await visitorLog(warden(), blockId, false, visitorPage(new Request(`https://x/?n=2&after=${first.next}`), ''))
+  assert.equal(rest.rows.length, 1)
+  assert.equal(rest.next, null)
 })
 
 test('signing a visitor out twice is refused', async () => {
