@@ -1,9 +1,9 @@
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
-import { users, withTenant } from '@campusos/db'
+import { audit, users, withTenant } from '@campusos/db'
 import { assertCanAccessStudent, type Role } from '@campusos/module-framework'
 import { checkEligibility } from '@campusos/module-academic/api'
-import { courses, offerings, terms } from '@campusos/module-academic/schema'
-import { offeringLimits, registrationEvents, registrations } from '../schema'
+import { courses, offerings, programs, sectionMembers, sections, terms } from '@campusos/module-academic/schema'
+import { fedSections, offeringLimits, registrationEvents, registrations } from '../schema'
 import {
   creditLoadQuerySchema,
   dropSchema,
@@ -11,6 +11,7 @@ import {
   registerSchema,
   registrationsQuerySchema,
   rosterQuerySchema,
+  sectionFeedSchema,
   setOfferingLimitSchema,
   type CreditLoad,
 } from './schemas'
@@ -31,6 +32,7 @@ export interface Actor {
   id: string
   role: Role
   institutionId: string | null
+  email?: string | null
 }
 
 export class EnrollmentError extends Error {
@@ -100,6 +102,7 @@ async function offeringDetail(tx: Tx, offeringId: string) {
       id: offerings.id,
       termId: offerings.termId,
       courseId: offerings.courseId,
+      sectionId: offerings.sectionId,
       courseCode: courses.code,
       courseTitle: courses.title,
       credits: courses.credits,
@@ -114,6 +117,47 @@ async function offeringDetail(tx: Tx, offeringId: string) {
     .where(eq(offerings.id, offeringId))
   if (!row) throw new EnrollmentError(404, 'no_such_offering', 'no such offering')
   return row
+}
+
+const MODULE = 'enrollment'
+
+/** The section's mark, read under a shared lock that marking it takes exclusively (decision 704). */
+async function followsRegistration(tx: Tx, sectionId: string): Promise<boolean> {
+  await tx.execute(sql`select pg_advisory_xact_lock_shared(hashtextextended(${'enrollment.section:' + sectionId}, 0))`)
+  const [row] = await tx.select({ id: fedSections.sectionId }).from(fedSections).where(eq(fedSections.sectionId, sectionId))
+  return row !== undefined
+}
+
+/** One student's place in one section changes under this lock, and only under it. */
+async function lockMember(tx: Tx, sectionId: string, studentId: string) {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'enrollment.member:' + sectionId + ':' + studentId}, 0))`)
+}
+
+/** A registered student joins a section that follows registration. True when it does. */
+async function joinSection(tx: Tx, tenant: string, sectionId: string, studentId: string): Promise<boolean> {
+  if (!(await followsRegistration(tx, sectionId))) return false
+  await lockMember(tx, sectionId, studentId)
+  await tx.insert(sectionMembers).values({ institutionId: tenant, sectionId, userId: studentId }).onConflictDoNothing()
+  return true
+}
+
+/**
+ * The student leaves the section, unless another registration in it still
+ * holds them there. Called after the ended registration's status is written,
+ * so it does not count itself. True when the membership was removed.
+ */
+async function leaveSection(tx: Tx, sectionId: string, studentId: string): Promise<boolean> {
+  if (!(await followsRegistration(tx, sectionId))) return false
+  await lockMember(tx, sectionId, studentId)
+  const [still] = await tx
+    .select({ id: registrations.id })
+    .from(registrations)
+    .innerJoin(offerings, eq(offerings.id, registrations.offeringId))
+    .where(and(eq(registrations.studentId, studentId), eq(registrations.status, 'registered'), eq(offerings.sectionId, sectionId)))
+    .limit(1)
+  if (still) return false
+  await tx.delete(sectionMembers).where(and(eq(sectionMembers.sectionId, sectionId), eq(sectionMembers.userId, studentId)))
+  return true
 }
 
 // --- seats -----------------------------------------------------------------
@@ -136,6 +180,17 @@ export async function setOfferingLimit(actor: Actor, input: unknown) {
         set: { capacity: data.capacity, waitlistCapacity: data.waitlistCapacity },
       })
       .returning()
+    await audit(tx, {
+      institutionId: tenant,
+      actorId: actor.id,
+      actorEmail: actor.email ?? null,
+      moduleId: MODULE,
+      action: 'offering.limit_set',
+      entity: 'enrollment_offering_limits',
+      entityId: data.offeringId,
+      reason: `capacity ${data.capacity}, waiting list ${data.waitlistCapacity}`,
+      detail: { capacity: data.capacity, waitlistCapacity: data.waitlistCapacity },
+    })
     return row!
   }).catch((e) =>
     // Lowering a cap below what is already taken is refused by the same trigger
@@ -316,6 +371,25 @@ export async function register(actor: Actor, input: unknown) {
       actorId: actor.id,
     })
 
+    const joinedSection = status === 'registered' ? await joinSection(tx, tenant, detail.sectionId, studentId) : false
+    await audit(tx, {
+      institutionId: tenant,
+      actorId: actor.id,
+      actorEmail: actor.email ?? null,
+      moduleId: MODULE,
+      action: `registration.${status}`,
+      entity: 'enrollment_registrations',
+      entityId: row.id,
+      reason:
+        data.reason ??
+        (windowOpen
+          ? status === 'registered'
+            ? 'registered for the course'
+            : 'joined the waiting list'
+          : 'outside the registration window'),
+      detail: { studentId, offeringId: data.offeringId, effectiveOn: on, joinedSection },
+    })
+
     return { ...row, courseCode: detail.courseCode, courseTitle: detail.courseTitle }
   }).catch((e) => rethrowConflict(e, 'full', 'that class filled while you were registering'))
 }
@@ -384,8 +458,22 @@ export async function drop(actor: Actor, input: unknown) {
       actorId: actor.id,
     })
 
+    const leftSection = await leaveSection(tx, detail.sectionId, studentId)
+    await audit(tx, {
+      institutionId: tenant,
+      actorId: actor.id,
+      actorEmail: actor.email ?? null,
+      moduleId: MODULE,
+      action: `registration.${kind}`,
+      entity: 'enrollment_registrations',
+      entityId: row.id,
+      reason: data.reason ?? (kind === 'dropped' ? 'dropped the course' : 'withdrew from the course'),
+      detail: { studentId, offeringId: data.offeringId, effectiveOn: on, leftSection },
+    })
+
     // A seat came free, so the queue moves. Longest wait first, which is the
     // only ordering anybody will accept.
+    // ponytail: two member locks in one drop (the leaver's, then the promoted student's); a deadlock needs two drops promoting each other in one section at once, and Postgres then aborts one (retry).
     let promoted: string | null = null
     if (row.status === 'registered') {
       const [next] = await tx
@@ -413,12 +501,75 @@ export async function drop(actor: Actor, input: unknown) {
           reason: 'a place came free',
           actorId: actor.id,
         })
+        const joinedSection = await joinSection(tx, tenant, detail.sectionId, next.studentId)
+        await audit(tx, {
+          institutionId: tenant,
+          actorId: actor.id,
+          actorEmail: actor.email ?? null,
+          moduleId: MODULE,
+          action: 'registration.promoted',
+          entity: 'enrollment_registrations',
+          entityId: next.id,
+          reason: 'a place came free',
+          detail: { studentId: next.studentId, offeringId: data.offeringId, joinedSection },
+        })
         promoted = next.studentId
       }
     }
 
     return { ...ended!, promoted }
   })
+}
+
+// --- sections that follow registration ---------------------------------------
+
+/** Whether a section's membership follows registration (decision 705). Staff only. */
+export async function setSectionFeed(actor: Actor, input: unknown) {
+  const tenant = requireStaff(actor)
+  const data = sectionFeedSchema.parse(input)
+  return withTenant(tenant, async (tx) => {
+    const [section] = await tx.select({ id: sections.id }).from(sections).where(eq(sections.id, data.sectionId))
+    if (!section) throw new EnrollmentError(404, 'no_such_section', 'no such section')
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'enrollment.section:' + data.sectionId}, 0))`)
+    let added = 0
+    if (data.fed) {
+      await tx.insert(fedSections).values({ institutionId: tenant, sectionId: data.sectionId }).onConflictDoNothing()
+      const done = await tx.execute(sql`
+        insert into academic_section_members (institution_id, section_id, user_id)
+        select distinct ${tenant}::uuid, o.section_id, r.student_id
+          from enrollment_registrations r join academic_offerings o on o.id = r.offering_id
+         where o.section_id = ${data.sectionId} and r.status = 'registered'
+        on conflict do nothing`)
+      added = done.rowCount ?? 0
+    } else {
+      await tx.delete(fedSections).where(eq(fedSections.sectionId, data.sectionId))
+    }
+    await audit(tx, {
+      institutionId: tenant,
+      actorId: actor.id,
+      actorEmail: actor.email ?? null,
+      moduleId: MODULE,
+      action: data.fed ? 'section.fed' : 'section.unfed',
+      entity: 'enrollment_fed_sections',
+      entityId: data.sectionId,
+      reason: data.fed ? 'section membership now follows registration' : 'section membership no longer follows registration',
+      detail: { added },
+    })
+    return { sectionId: data.sectionId, fed: data.fed, added }
+  })
+}
+
+/** The sections marked to follow registration, for the seats page. */
+export async function listFedSections(actor: Actor) {
+  const tenant = requireStaff(actor)
+  return withTenant(tenant, (tx) =>
+    tx
+      .select({ sectionId: fedSections.sectionId, label: sections.label, admissionYear: sections.admissionYear, programCode: programs.code })
+      .from(fedSections)
+      .innerJoin(sections, eq(sections.id, fedSections.sectionId))
+      .innerJoin(programs, eq(programs.id, sections.programId))
+      .orderBy(programs.code, sections.admissionYear, sections.label),
+  )
 }
 
 // --- reads -----------------------------------------------------------------
