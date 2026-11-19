@@ -21,6 +21,27 @@ const rupees = z.union([z.string(), z.number()]).transform((v, ctx) => {
 
 const positiveRupees = rupees.refine((p) => p > 0, 'must be more than zero')
 
+/** An empty form field is no answer at all. */
+const blank = (v: unknown) => (typeof v === 'string' && v.trim() === '' ? undefined : v)
+
+/** The drawer's IFSC and account, as printed on a CTS-2010 cheque (D16). */
+const drawerIfsc = z.preprocess(
+  blank,
+  z
+    .string()
+    .transform((s) => s.replace(/\s+/g, '').toUpperCase())
+    .pipe(z.string().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, 'an IFSC is four letters, a zero and six letters or digits'))
+    .optional(),
+)
+const drawerAccount = z.preprocess(
+  blank,
+  z
+    .string()
+    .transform((s) => s.replace(/\s+/g, '').toUpperCase())
+    .pipe(z.string().regex(/^[0-9A-Z]{6,20}$/, 'an account number is 6 to 20 letters or digits'))
+    .optional(),
+)
+
 export const createFeeItemSchema = z
   .object({
     programId: uuid,
@@ -62,6 +83,8 @@ export const recordPaymentSchema = z
     reference: z.string().max(120).trim().nullish(),
     receivedAt: z.iso.datetime().nullish(),
     notes: z.string().max(500).trim().nullish(),
+    drawerIfsc,
+    drawerAccount,
   })
   .meta({ id: 'FeePaymentRecord' })
 
@@ -99,6 +122,35 @@ export const reconcilePaymentSchema = z
   })
   .meta({ id: 'FeePaymentReconcile' })
 
+/** A receipt recorded by mistake (ACC-23). */
+export const voidPaymentSchema = z
+  .object({
+    paymentId: uuid,
+    reason: z.string().trim().min(5).max(500),
+  })
+  .meta({ id: 'FeePaymentVoid' })
+
+/** A cheque the bank returned unpaid, on the date of its return memo (ACC-23). */
+export const bouncePaymentSchema = z
+  .object({
+    paymentId: uuid,
+    bouncedOn: z.iso.date(),
+    reason: z.string().trim().min(5).max(500),
+    drawerIfsc,
+    drawerAccount,
+    charge: z.preprocess(blank, positiveRupees.optional()),
+  })
+  .meta({ id: 'FeeChequeReturn' })
+
+/** An invoice issued in error, such as to a student who was not enrolled. */
+export const voidInvoiceSchema = z
+  .object({
+    studentId: z.string().min(1),
+    termId: uuid,
+    reason: z.string().trim().min(5).max(500),
+  })
+  .meta({ id: 'FeeInvoiceVoid' })
+
 // --- reads -----------------------------------------------------------------
 
 export const ledgerLineSchema = z
@@ -122,6 +174,7 @@ export const paymentSchema = z
     reference: z.string().nullable(),
     receivedAt: z.string(),
     reconciledAt: z.string().nullable(),
+    status: z.enum(['live', 'voided', 'bounced']),
   })
   .meta({ id: 'FeePayment' })
 

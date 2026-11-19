@@ -38,7 +38,7 @@ import {
 import { postedOf, postedSql, receivableReport } from './books'
 import { postInvoice, postPayment, postRefund, postWaiverChange } from './posting'
 import { enrolledPrograms, notEnrolled, priceListSql, termRoster } from './enrolment'
-import { checkOtherPerson } from '@campusos/module-finance/api'
+import { checkOtherPerson, settingsWithin } from '@campusos/module-finance/api'
 import { notify } from '@campusos/module-notices/api'
 
 const MODULE = 'fees'
@@ -95,7 +95,7 @@ const isFinance = (r: Role) =>
 /** Waiving money and defining charges is a decision, not a clerk's task. */
 const canWaive = (r: Role) => r === 'institution_admin' || r === 'super_admin'
 
-const requireFinance = (actor: Actor) => {
+export const requireFinance = (actor: Actor) => {
   const tenant = tenantOf(actor)
   if (!isFinance(actor.role)) throw new FeeError(403, 'forbidden', 'not permitted')
   return tenant
@@ -112,6 +112,13 @@ export const requireAdmin = (actor: Actor) => {
 }
 
 type Tx = Parameters<Parameters<typeof withTenant>[1]>[0]
+
+/** The calendar day of a moment, in the institution's own zone. */
+export async function localDayOf(tx: Tx, tenant: string, at: Date): Promise<string> {
+  const s = await settingsWithin(tx, tenant)
+  const res = await tx.execute(sql`select (${at.toISOString()}::timestamptz at time zone ${s.timeZone})::date::text as day`)
+  return String((res.rows[0] as { day: string }).day)
+}
 
 /** Whether this student's charges for this term have been issued yet. */
 async function invoiceFor(tx: Tx, studentId: string, termId: string) {
@@ -390,6 +397,8 @@ export async function recordPayment(actor: Actor, input: unknown) {
           reference: data.reference ?? null,
           receivedAt: data.receivedAt ? new Date(data.receivedAt) : new Date(),
           notes: data.notes ?? null,
+          drawerIfsc: data.drawerIfsc ?? null,
+          drawerAccount: data.drawerAccount ?? null,
         }),
       async (id) => (await tx.select().from(feePayments).where(eq(feePayments.id, id)))[0],
     )
@@ -407,6 +416,9 @@ export interface PaymentInput {
   reference: string | null
   receivedAt: Date
   notes: string | null
+  /** A cheque's drawer, as printed on it (D16). */
+  drawerIfsc?: string | null
+  drawerAccount?: string | null
 }
 
 /**
@@ -462,6 +474,8 @@ export async function recordPaymentWithin(tx: Tx, tenant: string, actor: Actor, 
         recordedBy: actor.id,
         receiptNo,
         notes: data.notes,
+        drawerIfsc: data.drawerIfsc ?? null,
+        drawerAccount: data.drawerAccount ?? null,
       })
       .returning()
   } catch (e) {
@@ -758,11 +772,16 @@ export async function refundPayment(actor: Actor, input: unknown) {
 type RefundInput = ReturnType<typeof refundPaymentSchema.parse>
 
 async function refundWithin(tx: Tx, tenant: string, actor: Actor, data: RefundInput) {
+  // Locked: a refund and a void of one receipt take turns (D7).
   const [payment] = await tx
     .select()
     .from(feePayments)
     .where(eq(feePayments.id, data.paymentId))
+    .for('update')
   if (!payment) throw new FeeError(404, 'no_such_payment', 'no such payment')
+  if (payment.status !== 'live') {
+    throw new FeeError(409, 'payment_not_live', `receipt ${payment.receiptNo} is void or returned unpaid`)
+  }
   if ((await checkOtherPerson(tx, actor, tenant, { creatorId: payment.recordedBy, act: 'refund', moduleId: MODULE, entity: 'fee_payments', entityId: payment.id })) === 'refused') {
     throw new FeeError(403, 'separation_of_duties', 'you recorded this payment, so someone else must refund it')
   }
@@ -837,7 +856,11 @@ export async function reconcilePayment(actor: Actor, input: unknown) {
       .select()
       .from(feePayments)
       .where(eq(feePayments.id, data.paymentId))
+      .for('update')
     if (!row) throw new FeeError(404, 'no_such_payment', 'no such payment')
+    if (row.status !== 'live') {
+      throw new FeeError(409, 'payment_not_live', `receipt ${row.receiptNo} is void or returned unpaid`)
+    }
     if (row.reconciledAt) {
       throw new FeeError(409, 'already_reconciled', 'that payment is already reconciled')
     }
@@ -894,7 +917,7 @@ export async function paymentTrail(actor: Actor, paymentId: string) {
  * Charges applying to one student in one term: the fee items of the
  * programmes they are enrolled in for it (ACC-19), and their own charges.
  */
-async function chargesFor(tx: Tx, studentId: string, termId: string) {
+export async function chargesFor(tx: Tx, studentId: string, termId: string) {
   const progs = await enrolledPrograms(tx, studentId, termId)
 
   // Charges on this student alone -- a backlog paper -- whatever programme
@@ -1008,6 +1031,7 @@ export async function studentLedger(
         reference: p.reference,
         receivedAt: p.receivedAt.toISOString(),
         reconciledAt: p.reconciledAt?.toISOString() ?? null,
+        status: p.status,
       })),
       chargedPaise: p.invoicedPaise,
       waivedPaise: p.waivedPaise,

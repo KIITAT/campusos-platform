@@ -1,4 +1,5 @@
-import { postWithin } from '@campusos/module-finance/api'
+import { sql } from 'drizzle-orm'
+import { postWithin, reverseWithin } from '@campusos/module-finance/api'
 import { withTenant } from '@campusos/db'
 import type { paymentMethodEnum } from '../schema'
 
@@ -266,6 +267,61 @@ export async function postDropCredit(
     lines: [
       { purpose: 'fee_income', debitPaise: credit.amountPaise },
       { purpose: 'fees_receivable', creditPaise: credit.amountPaise },
+    ],
+  })
+}
+
+/** A receipt undone: the mirror of its entry, on the day given (D3). */
+export async function reversePayment(
+  tx: Tx,
+  institutionId: string,
+  actorId: string,
+  paymentId: string,
+  reason: string,
+  postingDate: string,
+): Promise<string> {
+  const [e] = (
+    await tx.execute(sql`select id from finance_journal_entries where source_module = 'fees' and source_ref = ${'payment:' + paymentId}`)
+  ).rows as { id: string }[]
+  if (!e) throw new Error(`payment ${paymentId} has no journal entry`)
+  return reverseWithin(tx, institutionId, actorId, e.id, reason, postingDate)
+}
+
+/**
+ * An invoice issued in error, voided (D13). One entry that takes the student's
+ * position for the term back to nothing, rather than a mirror of each invoice
+ * entry: a waiver that rode in the invoice may since have been revoked, and its
+ * reversal is already in the books.
+ *
+ *   debit  fee income        everything the invoice charged
+ *   credit fee waiver        every waiver still posted against the term
+ *   credit fees receivable   the difference (a debit, if the waivers are more)
+ */
+export async function postInvoiceVoid(
+  tx: Tx,
+  institutionId: string,
+  actorId: string | null,
+  v: {
+    id: string
+    studentName: string | null
+    termCode: string
+    chargedPaise: number
+    waivedPaise: number
+    reason: string
+    postingDate: string
+  },
+): Promise<void> {
+  const net = v.chargedPaise - v.waivedPaise
+  await postWithin(tx, institutionId, actorId, {
+    postingDate: v.postingDate,
+    memo: `Void of ${v.termCode} fees, ${v.studentName ?? 'student'}: ${v.reason}`.slice(0, 200),
+    sourceModule: 'fees',
+    sourceRef: `invoice-void:${v.id}`,
+    lines: [
+      { purpose: 'fee_income', debitPaise: v.chargedPaise },
+      ...(v.waivedPaise > 0 ? [{ purpose: 'fee_waiver', creditPaise: v.waivedPaise }] : []),
+      ...(net > 0 ? [{ purpose: 'fees_receivable', creditPaise: net }] : []),
+      ...(net < 0 ? [{ purpose: 'fees_receivable', debitPaise: -net }] : []),
     ],
   })
 }
