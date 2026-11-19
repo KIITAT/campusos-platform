@@ -22,6 +22,7 @@
     "@campusos/db": "workspace:*",
     "@campusos/module-framework": "workspace:*",
     "@campusos/module-academic": "workspace:*",
+    "@campusos/module-fees": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "zod": "^4.4.3"
   },
