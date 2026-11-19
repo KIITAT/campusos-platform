@@ -58,19 +58,8 @@ const comparable = (v: unknown): number | string | null => {
   return String(v).toLowerCase()
 }
 
-/**
- * Filter, sort and cut a table's rows the way the list view's toolbar asks.
- *
- * On the rows the page already loaded: a module's load decides what a reader
- * may see, and this only decides the order they see it in. Blanks sort last
- * either way, because a missing date is not the earliest one.
- */
-export function listView<T extends Record<string, unknown>>(
-  rows: T[],
-  columns: PluginColumn[],
-  query: ListQuery,
-  pageSize = 20,
-): ListView<T> {
+/** The rows filtered and sorted as the list view's toolbar asks, with no cut: what an export writes. */
+export function listRows<T extends Record<string, unknown>>(rows: T[], columns: PluginColumn[], query: ListQuery): T[] {
   const q = query.q?.trim().toLowerCase()
   const filtered = q
     ? rows.filter((r) => columns.some((c) => text(r[c.key], c.kind).toLowerCase().includes(q)))
@@ -88,9 +77,25 @@ export function listView<T extends Record<string, unknown>>(
         return query.dir === 'desc' ? -order : order
       })
     : filtered
+  return sorted
+}
 
+/**
+ * Filter, sort and cut a table's rows the way the list view's toolbar asks.
+ *
+ * On the rows the page already loaded: a module's load decides what a reader
+ * may see, and this only decides the order they see it in. Blanks sort last
+ * either way, because a missing date is not the earliest one.
+ */
+export function listView<T extends Record<string, unknown>>(
+  rows: T[],
+  columns: PluginColumn[],
+  query: ListQuery,
+  pageSize = 20,
+): ListView<T> {
+  const sorted = listRows(rows, columns, query)
   const limit = Math.min(Math.max(query.limit ?? pageSize, 1), 500)
-  return { rows: sorted.slice(0, limit), matched: filtered.length, total: rows.length, limit }
+  return { rows: sorted.slice(0, limit), matched: sorted.length, total: rows.length, limit }
 }
 
 /** Nice round steps for a chart's axis, from zero to at least the largest value. */

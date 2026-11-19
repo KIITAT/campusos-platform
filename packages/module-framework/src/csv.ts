@@ -75,5 +75,14 @@ export function parseCsvRecords(text: string): CsvRecord[] {
  */
 export const normaliseHeader = (h: string) => h.trim().toLowerCase().replace(/[\s_-]+/g, '')
 
-/** A cell for a CSV file: quoted when it holds a comma, a quote or a line break. */
-export const csvCell = (value: string) => (/[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value)
+/**
+ * A cell for a CSV file. A cell a spreadsheet would run as a formula (it
+ * starts with = + - @, a tab or a carriage return) is made text with a
+ * leading apostrophe, unless it is a plain number: a negative amount must
+ * stay a number (SEC-08). Then it is quoted when it holds a comma, a quote
+ * or a line break.
+ */
+export const csvCell = (value: string) => {
+  const safe = /^[=+\-@\t\r]/.test(value) && !/^[+-]?\d+(\.\d+)?$/.test(value) ? `'${value}` : value
+  return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe
+}
