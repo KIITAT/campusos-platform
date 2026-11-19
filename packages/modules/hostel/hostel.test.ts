@@ -235,8 +235,8 @@ test('vacating frees the bed, is audited, and keeps the history', async () => {
   const trail = await withTenant(inst, (tx) =>
     tx.select({ action: auditLog.action, reason: auditLog.reason }).from(auditLog).where(gte(auditLog.at, since)),
   )
-  assert.equal(trail[0]!.action, 'hostel.vacated')
-  assert.match(trail[0]!.reason!, /new block/)
+  const vacated = trail.find((t) => t.action === 'hostel.vacated')!
+  assert.match(vacated.reason!, /new block/)
 
   // The closed allocation is still there: who slept where is a record.
   const history = await withTenant(inst, (tx) =>
@@ -345,6 +345,26 @@ test('a resident scans in and is marked present', async () => {
   const r = await rollCall(warden(), blockId)
   assert.equal(r.present, 1)
   assert.equal(r.unmarked, 0)
+})
+
+test('a student who does not live in the block cannot scan in there (NEW-20)', async () => {
+  await setAttendance(true)
+  await allocate(warden(), { roomId: roomA, studentId: ids.s1 })
+  const qr = await rollCallCode(warden(), blockId, SECRET)
+  await assert.rejects(
+    () => scanCheckIn(student(ids.s2), { code: encodeQr(qr), blockId }, SECRET),
+    (e: unknown) => code(e) === 'not_resident' && status(e) === 409,
+  )
+})
+
+test('allocating a bed is audited (LOW-11)', async () => {
+  const a = await allocate(warden(), { roomId: roomA, studentId: ids.s1 })
+  const trail = await withTenant(inst, (tx) =>
+    tx.select({ action: auditLog.action, entityId: auditLog.entityId, detail: auditLog.detail }).from(auditLog).where(gte(auditLog.at, since)),
+  )
+  const row = trail.find((t) => t.action === 'hostel.allocated')!
+  assert.equal(row.entityId, a.id)
+  assert.equal((row.detail as { roomId: string }).roomId, roomA)
 })
 
 test('a code from another block does not work here', async () => {
