@@ -458,7 +458,8 @@ export async function drop(actor: Actor, input: unknown) {
       actorId: actor.id,
     })
 
-    const leftSection = await leaveSection(tx, detail.sectionId, studentId)
+    // A queue place never made anyone a member, so leaving one removes nobody.
+    const leftSection = row.status === 'registered' && (await leaveSection(tx, detail.sectionId, studentId))
     await audit(tx, {
       institutionId: tenant,
       actorId: actor.id,
