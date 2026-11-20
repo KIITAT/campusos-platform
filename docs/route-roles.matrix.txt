@@ -187,6 +187,7 @@ POST /api/v1/modules/crm/leads/erase                                     SI.....
 POST /api/v1/modules/enrollment/register                                 SIH....s.. gate
 POST /api/v1/modules/enrollment/drop                                     SIH....s.. gate
 POST /api/v1/modules/enrollment/seats                                    SIH....... op
+POST /api/v1/modules/enrollment/sections/feed                            SIH....... op
 GET /api/v1/modules/enrollment/seats                                     SIH....... gate
 GET /api/v1/modules/enrollment/roster                                    SIHF...... gate
 GET /api/v1/modules/enrollment/registrations                             SIHF...s.. gate
