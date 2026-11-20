@@ -161,7 +161,7 @@ test('a transfer not on the statement is rejected with a reason, and can be clai
   // A rejected UTR is free again.
   const again = await claim(c, { utr: 'TYPO000000001', amount: '21,310' })
   assert.equal(again.status, 'pending')
-  const queue = await claimQueue(c.clerk)
+  const queue = (await claimQueue(c.clerk)).rows
   assert.deepEqual(queue.map((q) => q.status), ['pending', 'rejected'], 'pending first')
 
   await retireBankAccount(c.admin, { accountId: c.accountId })
@@ -254,4 +254,65 @@ test('a claim takes the term issue lock, as every other money path does (NEW-93)
   })
   await pending
   assert.equal(verified, true)
+})
+
+const importing = async (name: string) => ((await import('./api')) as Record<string, any>)[name]
+
+test('a guardian reports a payment for their child only through the parents portal, and the report is audited', async () => {
+  const claimStudent = await importing('studentClaims')
+  const c = await campus()
+  const [p] = await authDb
+    .insert(users)
+    .values({ email: `p@${SLUG}guardian${n}.test`, institutionId: c.id, role: 'parent', name: 'Parent' })
+    .returning({ id: users.id })
+  const guardian: Actor = { id: p!.id, role: 'parent', institutionId: c.id }
+  const fields = (over: Record<string, unknown> = {}) => ({
+    termId: c.termId,
+    accountId: c.accountId,
+    mode: 'neft',
+    remitterBank: 'State Bank of India',
+    accountHolder: 'Parent',
+    contactPhone: '+91 98765 43210',
+    transferredOn: today(),
+    amount: '1,000',
+    utr: 'GUARD0000001',
+    ...over,
+  })
+  await assert.rejects(claimTransfer(guardian, fields({ studentId: c.asha.id })), (e) => code(e) === 'not_your_student')
+  const through = { ...guardian, viewerOf: [c.asha.id] } as Actor
+  const made = await claimTransfer(through, fields({ studentId: c.asha.id }))
+  assert.equal(made.studentId, c.asha.id)
+  await assert.rejects(claimTransfer(through, fields({ utr: 'GUARD0000002' })), (e) => code(e) === 'no_student')
+  await assert.rejects(claimTransfer(c.clerk, fields({ utr: 'GUARD0000003', studentId: c.asha.id })), (e) => code(e) === 'forbidden')
+  const logged = await withTenant(c.id, (tx) =>
+    tx.execute(sql`select detail from audit_log where action = 'fee.transfer_claimed' and entity_id = ${made.id}`),
+  )
+  const detail = (logged.rows[0] as { detail: { submittedBy: string; role: string } }).detail
+  assert.equal(detail.submittedBy, guardian.id)
+  assert.equal(detail.role, 'parent')
+  assert.equal((await claimStudent(through, c.asha.id)).length, 1)
+})
+
+test('the claim queue pages, pending first, and counts every claim (LOW-04)', async () => {
+  const claimPage = await importing('claimPage')
+  const claimCounts = await importing('claimCounts')
+  const pendingClaimOptions = await importing('pendingClaimOptions')
+  const c = await campus()
+  const ids: string[] = []
+  for (let i = 1; i <= 55; i++) ids.push((await claim(c, { utr: `QUEUE${String(i).padStart(7, '0')}`, amount: '1,000' })).id)
+  await rejectClaim(c.clerk, { claimId: ids[0], reason: 'not on the statement' })
+  const first = await claimQueue(c.clerk, null, claimPage(new Request('https://x/'), ''))
+  assert.equal(first.rows.length, 50)
+  assert.equal(first.total, 55)
+  assert.notEqual(first.next, null)
+  assert.equal(first.rows[0]!.status, 'pending')
+  const second = await claimQueue(c.clerk, null, claimPage(new Request(`https://x/?after=${encodeURIComponent(first.next!)}`), ''))
+  assert.equal(second.rows.length, 5)
+  assert.equal(second.rows[4]!.status, 'rejected')
+  assert.equal(second.next, null)
+  assert.equal((await claimQueue(c.clerk, 'rejected', claimPage(new Request('https://x/'), ''))).total, 1)
+  assert.deepEqual(await claimCounts(c.clerk), { pending: 54, pendingPaise: 54 * 100_000, verified: 0 })
+  const options = await pendingClaimOptions(c.clerk)
+  assert.equal(options.length, 54)
+  assert.equal(options[0].value, ids[1])
 })
