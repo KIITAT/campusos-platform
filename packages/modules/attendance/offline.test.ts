@@ -304,3 +304,37 @@ test('held-session declarations reject unauthorized teachers, future starts and 
   await assert.rejects(attendance.markSessionHeld(teacher, start), failure('credential_revoked'))
   assert.deepEqual(await withTenant(tenant, (tx) => tx.select().from(sessions)), [])
 })
+
+// --- structural audit (AUD-06) ----------------------------------------------
+
+test('offline registration and credential control leave a safe trail', async () => {
+  const mark = new Date(Math.floor(Number((await withTenant(tenant, (tx) => tx.execute<{ ms: string }>(sql`select extract(epoch from clock_timestamp()) * 1000 as ms`))).rows[0]!.ms)))
+  const second = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
+  const secondKey = second.publicKey.export({ type: 'spki', format: 'der' }).toString('base64')
+  const enrol = enrollment(secondKey, 'signed-device-identifier-5678', second.privateKey)
+  const one = await attendance.registerDeviceKey(student, enrol)
+  const two = await attendance.registerDeviceKey(student, enrol)
+  assert.equal(one.id, two.id)
+  await attendance.revokeDevice(student, { deviceId: one.id })
+  await attendance.revokeDevice(student, { deviceId: one.id })
+  const credential = await attendance.prepareSession(teacher, { slotId, onDate: today })
+  await attendance.prepareSession(teacher, { slotId, onDate: today })
+  const [other] = await authDb.insert(users).values({ institutionId: tenant, email: 'other-teacher@offline.test', role: 'faculty' }).returning()
+  await assert.rejects(attendance.revokeCredential({ id: other!.id, institutionId: tenant, role: 'faculty' }, { sessionId: credential.sessionId }), failure('forbidden'))
+  await attendance.revokeCredential(teacher, { sessionId: credential.sessionId })
+  await attendance.revokeCredential(teacher, { sessionId: credential.sessionId })
+
+  const t = await withTenant(tenant, (tx) => tx.select().from(auditLog).where(and(eq(auditLog.moduleId, 'attendance'), gte(auditLog.at, mark))).orderBy(auditLog.at))
+  assert.deepEqual(t.map((r) => r.action), [
+    'attendance.device-registered', 'attendance.device-revoked', 'attendance.credential-prepared', 'attendance.credential-revoked',
+  ])
+  assert.deepEqual(t[0]!.detail, { studentId: student.id, status: one.status, signed: true })
+  assert.equal(t[0]!.entityId, one.id)
+  assert.deepEqual(t[1]!.detail, { studentId: student.id, previousStatus: one.status, status: 'revoked' })
+  assert.equal(t[2]!.entityId, credential.sessionId)
+  assert.equal(t[2]!.entity, 'attendance_offline_credentials')
+  assert.deepEqual(t[2]!.detail, { slotId, offeringId: (t[2]!.detail as { offeringId: string }).offeringId, onDate: today })
+  assert.equal(t[3]!.entityId, credential.sessionId)
+  const text = JSON.stringify(t)
+  for (const secret of [secondKey, enrol.proof, 'signed-device-identifier-5678', credential.secret]) assert.ok(!text.includes(secret))
+})
