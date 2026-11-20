@@ -320,3 +320,48 @@ test('two promotions of the same section race: one wins, one is told it is final
   assert.equal((await promotions(c)).length, 1)
   assert.deepEqual((await programsOf(c, c.asha)).map((p) => p.status), ['completed', 'active'])
 })
+
+const pageOf = (actor: Actor, sourceSectionId?: string) => {
+  const page = plugin.pages!.find((p) => p.path === '/promotion')
+  assert.ok(page, 'the promotion page is declared')
+  return page.load(actor as never, new Request(`http://x/promotion${sourceSectionId ? `?sourceSectionId=${sourceSectionId}` : ''}`)).then((data) => ({ data, sections: page.sections(data) }))
+}
+
+test('the promotion page is for the office, previews the exact token and offers the form once', async () => {
+  const c = await campus()
+  const y = await year(c)
+  await assert.rejects(pageOf(c.faculty, y.s6), (e) => status(e) === 403)
+
+  const preview = await pageOf(c.admin, y.s6)
+  const form = preview.sections.find((s) => s.kind === 'form' && s.path === '/sections/promote')
+  assert.ok(form && form.kind === 'form', 'a valid roster shows the promote form')
+  assert.equal(preview.data.rosterToken, token([c.asha, c.bala, c.chitra], [c.asha, c.bala]))
+  assert.deepEqual((preview.data.candidates as { value: string }[]).map((x) => x.value).sort(), [c.asha, c.bala].sort())
+  assert.deepEqual((preview.data.roster as { standing: string }[]).map((r) => r.standing).sort(), ['Departed', 'On roll', 'On roll'])
+  assert.deepEqual(form.fields.map((f) => f.label).filter((l) => !/^(Source section|Roster)$/.test(l)), [
+    'Last term of old session',
+    'First term of new session',
+    'Promoted students’ section',
+    'Detained students’ section',
+    'Students to detain',
+    'Reason',
+  ])
+
+  await call(c.admin, '/sections/promote', y.body())
+  const after = await pageOf(c.admin, y.s6)
+  assert.equal(after.data.state, 'finalised')
+  assert.ok(!after.sections.some((s) => s.kind === 'form' && s.path === '/sections/promote'))
+  assert.ok(after.sections.some((s) => s.kind === 'note' && /already been promoted/.test(s.text)))
+})
+
+test('a second section for the same class and year gets the office’s own answer, and a promoted section takes nobody new', async () => {
+  const c = await campus()
+  const y = await year(c)
+  const b = await c.sec(c.c6.id, 'B', 2025)
+  await assert.rejects(addSectionMember(c.admin, { sectionId: b, userId: c.asha }), (e) => code(e) === 'school_section_taken' && status(e) === 409)
+  await call(c.admin, '/sections/promote', y.body())
+  // The same person again is still a no-op; a new person is refused.
+  await addSectionMember(c.admin, { sectionId: y.s6, userId: c.asha })
+  const fresh = await authDb.insert(users).values({ email: `late@${SLUG}x.test`, institutionId: c.id, role: 'student', name: 'Late' }).returning({ id: users.id })
+  await assert.rejects(addSectionMember(c.admin, { sectionId: y.s6, userId: fresh[0]!.id }), (e) => code(e) === 'school_section_finalised' && status(e) === 409)
+})

@@ -46,6 +46,11 @@ export const manifest: ModuleManifest = {
       roles: ['institution_admin', 'hod'],
     },
     {
+      label: 'School promotion',
+      href: '/m/academic/promotion',
+      roles: ['institution_admin'],
+    },
+    {
       label: 'Curriculum',
       href: '/m/academic/curriculum',
       roles: ['institution_admin', 'hod'],

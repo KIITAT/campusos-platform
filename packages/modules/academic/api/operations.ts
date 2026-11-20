@@ -284,6 +284,16 @@ export async function addSectionMember(actor: Actor, input: unknown) {
       .insert(sectionMembers)
       .values({ institutionId: tenant, sectionId: data.sectionId, userId: data.userId })
       .onConflictDoNothing({ target: [sectionMembers.sectionId, sectionMembers.userId] })
+  }).catch((e) => {
+    // Only the school roster rules are translated; the constraints are created in migration 0013.
+    const constraint = ((e as { cause?: unknown }).cause ?? e) as { constraint?: string }
+    if (constraint.constraint === 'academic_school_member_one_section') {
+      throw new AcademicError(409, 'school_section_taken', 'The student already has a section for this class and school year.')
+    }
+    if (constraint.constraint === 'academic_school_section_finalised') {
+      throw new AcademicError(409, 'school_section_finalised', 'This section has already been promoted.')
+    }
+    throw e
   })
 }
 
