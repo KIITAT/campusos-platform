@@ -740,3 +740,108 @@ test('plugin: the signed export carries a read-only mail hook beside its routes'
   assert.equal(exported.plugin.assentMailer.deliveryFailed, core.markChallengeDeliveryFailed)
   assert.throws(() => { (exported.plugin.assentMailer as { issue: unknown }).issue = () => undefined }, TypeError)
 })
+
+// Plugin routes and page (Step 7).
+async function plugin() {
+  return (await import('./plugin')).plugin
+}
+
+async function route(method: string, path: string, actor: PluginActor, request: Request) {
+  const found = (await plugin()).routes.find(candidate => candidate.method === method && candidate.path === path)
+  assert.ok(found, `${method} ${path}`)
+  return found.handler(actor, request)
+}
+
+const url = (path: string, query = '') => `http://localhost/api/v1/modules/documents${path}${query}`
+const json = (path: string, body: unknown) => new Request(url(path), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+
+function sectionsOf(page: Awaited<ReturnType<typeof plugin>>['pages'], data: Record<string, unknown>) {
+  const sections = page![0]!.sections(data)
+  const titles = sections.flatMap(section => ('title' in section && section.title) ? [section.title] : [])
+  const labels = sections.flatMap(section => section.kind === 'shortcuts' ? section.items.map(item => item.label) : [])
+  return { sections, titles, labels, all: [...titles, ...labels] }
+}
+
+test('routes: eight mounted paths with the planned roles, and raw files stay raw', async () => {
+  const exported = await plugin()
+  const { ADMIN, MEMBERS } = await import('@campusos/module-framework')
+  const table = Object.fromEntries(exported.routes.map(candidate => [`${candidate.method} ${candidate.path}`, candidate.roles]))
+  assert.deepEqual(table, {
+    'GET /files': MEMBERS, 'GET /file': MEMBERS, 'GET /receipt.pdf': MEMBERS, 'POST /verify': MEMBERS,
+    'POST /upload': ADMIN, 'POST /request': ADMIN, 'POST /sign': MEMBERS, 'POST /close': MEMBERS,
+  })
+  assert.deepEqual(exported.routes.filter(candidate => candidate.raw).map(candidate => candidate.path).sort(), ['/file', '/receipt.pdf'])
+  assert.deepEqual(Object.keys(exported.openapiPaths).sort(), ['/file', '/files', '/receipt.pdf', '/request', '/sign', '/upload', '/verify', '/close'].map(path => `/api/v1/modules/documents${path}`).sort())
+  assert.equal(exported.manifest.routeRoles, true)
+})
+
+test('routes: an administrator uploads and requests, the signer downloads and signs, over the mounted handlers', async () => {
+  const campus = await college()
+  const { admin, signer, faculty } = campus
+  const { file, bytes, sha256 } = await pdf()
+  const uploaded = await route('POST', '/upload', admin, json('/upload', { title: 'Offer', kind: 'offer', scope: 'signer', subjectUserId: signer.id, file,
+    retainUntil: new Date(Date.now() + 30 * 86400_000).toISOString(), retentionBasis: 'specified_purpose', authorityRef: 'Offer records policy' })) as { documentId: string; notice: string; next: string }
+  assert.equal(uploaded.notice, 'Document stored.')
+  assert.equal(uploaded.next, `/m/documents?documentId=${uploaded.documentId}`)
+  const requested = await route('POST', '/request', admin, json('/request', { documentId: uploaded.documentId, reason: 'Send the offer for acceptance', approvedInternalUse: true })) as { requestId: string }
+  const raw = await route('GET', '/file', signer, new Request(url('/file', `?id=${uploaded.documentId}`))) as Response
+  assert.deepEqual(Buffer.from(await raw.arrayBuffer()), bytes)
+  const { issueAssentChallenge } = await import('./api/index')
+  const { code } = await issueAssentChallenge(signer, { requestId: requested.requestId })
+  const signed = await route('POST', '/sign', signer, json('/sign', { requestId: requested.requestId, code, consent: true })) as { notice: string }
+  assert.equal(signed.notice, 'Assent recorded.')
+  const verified = await route('POST', '/verify', signer, json('/verify', { documentId: uploaded.documentId, sha256 })) as Record<string, unknown>
+  assert.deepEqual(verified, { integrity: 'verified', copyMatches: true, notice: 'Verified' })
+  const other = await route('POST', '/verify', signer, json('/verify', { documentId: uploaded.documentId, sha256: '0'.repeat(64) })) as Record<string, unknown>
+  assert.equal(other.notice, 'Copy does not match')
+  const receipt = await route('GET', '/receipt.pdf', signer, new Request(url('/receipt.pdf', `?id=${uploaded.documentId}`))) as Response
+  assert.equal(receipt.headers.get('content-type'), 'application/pdf')
+  const listed = await route('GET', '/files', signer, new Request(url('/files'))) as { rows: { id: string; integrity: string }[]; total: number }
+  assert.deepEqual(listed.rows.map(row => [row.id, row.integrity]), [[uploaded.documentId, 'verified']])
+  await assert.rejects(() => route('GET', '/file', faculty, new Request(url('/file', `?id=${uploaded.documentId}`))), status('document_missing', 404))
+  const declined = await route('POST', '/close', admin, json('/close', { requestId: requested.requestId, decision: 'cancel', reason: 'Too late to cancel now' })).catch(error => error)
+  assert.equal((declined as { code?: string }).code, 'document_closed')
+})
+
+test('pages: each reader sees only the actions that are theirs', async () => {
+  const api = await workflow()
+  const campus = await college()
+  const { admin, signer, faculty } = campus
+  const exported = await plugin()
+  const page = exported.pages![0]!
+  const view = async (actor: PluginActor, documentId?: string) => {
+    const data = await page.load(actor, new Request(`http://localhost/m/documents${documentId ? `?documentId=${documentId}` : ''}`))
+    return { data, ...sectionsOf(exported.pages, data) }
+  }
+  assert.ok((await view(admin)).all.includes('Upload document'))
+  assert.ok(!(await view(signer)).all.includes('Upload document'))
+  const office = await api.uploadDocument(admin, { title: 'Circular', kind: 'record', scope: 'office', subjectUserId: faculty.id, file: (await pdf()).file })
+  const unavailable = await view(faculty, office.documentId)
+  assert.ok(unavailable.sections.some(section => section.kind === 'note' && section.text === 'Document unavailable.'))
+  assert.ok(!unavailable.all.includes('Download document'))
+  const sent = await offer(api, campus)
+  const forAdmin = await view(admin, sent.documentId)
+  for (const expected of ['Download document', 'Verify integrity', 'Cancel request']) assert.ok(forAdmin.all.includes(expected), expected)
+  assert.ok(!forAdmin.all.includes('Record assent') && !forAdmin.all.includes('Request assent'))
+  const forSigner = await view(signer, sent.documentId)
+  for (const expected of ['Download document', 'Verify integrity', 'Email me a confirmation code', 'Record assent', 'Decline']) assert.ok(forSigner.all.includes(expected), expected)
+  assert.ok(!forSigner.all.includes('Cancel request') && !forSigner.all.includes('Download assent record'))
+  const challenge = forSigner.sections.find(section => section.kind === 'form' && section.title === 'Email me a confirmation code')
+  assert.equal(challenge?.kind === 'form' && challenge.path, '/assent-challenge')
+  assert.deepEqual(challenge?.kind === 'form' && challenge.fields.map(entry => entry.name), ['requestId', 'documentId'])
+  const fresh = await api.uploadDocument(admin, { title: 'Contract', kind: 'contract', scope: 'signer', subjectUserId: signer.id, file: (await pdf()).file,
+    retainUntil: new Date(Date.now() + 30 * 86400_000).toISOString(), retentionBasis: 'legal_obligation', authorityRef: 'Contracts register' })
+  assert.ok((await view(admin, fresh.documentId)).all.includes('Request assent'))
+  await api.downloadDocument(signer, sent.documentId)
+  const { code } = await api.issueAssentChallenge(signer, { requestId: sent.requestId })
+  await api.recordAssent(signer, { requestId: sent.requestId, code, consent: true })
+  const done = await view(signer, sent.documentId)
+  assert.ok(done.all.includes('Download assent record'))
+  assert.ok(!done.all.includes('Record assent') && !done.all.includes('Decline'))
+  await tamper(sql`update documents_files set body = ${Buffer.from('%PDF-1.4 swapped')} where id = ${sent.documentId}`)
+  const broken = await view(admin, sent.documentId)
+  assert.ok(!broken.all.includes('Download document') && !broken.all.includes('Download assent record'))
+  assert.ok(broken.sections.some(section => section.kind === 'note' && section.tone === 'danger'))
+  const list = (broken.data.files as { id: string; check: string }[]).find(row => row.id === sent.documentId)
+  assert.equal(list?.check, 'Integrity check failed')
+})

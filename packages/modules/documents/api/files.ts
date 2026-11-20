@@ -143,3 +143,16 @@ export async function listDocuments(actor: Actor, page: PageRequest, studentId?:
     return { rows: out, total: shown.total, next: shown.next }
   })
 }
+
+/** One document for its page: metadata and integrity, after the same checks as a download (D856). */
+export async function documentDetail(actor: Actor, id: string): Promise<DocumentSummary> {
+  const institutionId = tenant(actor)
+  const found = await withTenant(institutionId, async tx => {
+    const access = await requireDocument(tx, actor, id)
+    const state = await integrityOf(tx, institutionId, access.id, await actualHash(tx, access.id), access.sha256)
+    if (state === 'mismatch') await failIntegrity(tx, actor, access.id)
+    else await logDocument(tx, actor, 'document.read', access.id, 'Document details read by an authorized member', { part: 'detail' })
+    return { ...access, integrity: state }
+  })
+  return found
+}
