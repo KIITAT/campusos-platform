@@ -34,7 +34,6 @@ before(async () => {
 })
 
 after(async () => {
-  await authDb.delete(users).where(eq(users.institutionId, tenant))
   await authDb.delete(institutions).where(eq(institutions.slug, SLUG))
 })
 
