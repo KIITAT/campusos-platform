@@ -97,13 +97,13 @@ const named = (e: unknown) => {
 }
 
 /** Until a session is blocked behind another on a statement that matches. */
-async function blockedOn(pattern: string) {
+async function blockedOn(pattern: string, count = 1) {
   const deadline = Date.now() + 5_000
   for (;;) {
     const r = await authDb.execute<{ n: number }>(sql`
       select count(*)::int as n from pg_stat_activity
        where cardinality(pg_blocking_pids(pid)) > 0 and query ilike ${pattern}`)
-    if (r.rows[0]!.n >= 1) return
+    if (r.rows[0]!.n >= count) return
     if (Date.now() > deadline) throw new Error(`nobody is blocked on ${pattern}`)
     await new Promise((resolve) => setTimeout(resolve, 25))
   }
@@ -291,4 +291,32 @@ test('the database holds a school class and section still, and refuses another t
   const refusedAsOwner = await owner(sql`insert into academic_section_members (institution_id, section_id, user_id) values (${c.id}, ${foreign}, ${c.asha})`)
   assert.ok(refusedAsOwner)
   assert.match(named(refusedAsOwner), /missing from membership tenant|foreign key/)
+})
+
+test('two promotions of the same section race: one wins, one is told it is finalised, one audit row', async () => {
+  const c = await campus()
+  const y = await year(c)
+  let release!: () => void
+  const held = new Promise<void>((resolve) => (release = resolve))
+  let holding!: () => void
+  const locked = new Promise<void>((resolve) => (holding = resolve))
+  const holder = authDb.transaction(async (tx) => {
+    await tx.execute(sql`select 1 from academic_sections where id = ${y.s6} for update`)
+    holding()
+    await held
+  })
+  await locked
+  const go = () => call(c.admin, '/sections/promote', y.body()).then(() => null, (e: unknown) => e)
+  const both = [go(), go()]
+  try {
+    await blockedOn('%academic_sections%for update%', 2)
+  } finally {
+    release()
+    await holder
+  }
+  const outcomes = await Promise.all(both)
+  assert.equal(outcomes.filter((o) => o === null).length, 1)
+  assert.deepEqual(outcomes.filter((o) => o !== null).map(code), ['school_section_finalised'])
+  assert.equal((await promotions(c)).length, 1)
+  assert.deepEqual((await programsOf(c, c.asha)).map((p) => p.status), ['completed', 'active'])
 })
