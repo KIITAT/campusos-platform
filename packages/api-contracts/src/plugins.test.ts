@@ -155,8 +155,8 @@ test('the whole product still answers the same number of endpoints', () => {
   // P1-03a: +1 (fees: the reconciliation of the student ledgers to the receivable)
   // P1-07a: +1 (enrollment: a section's membership follows registration); P1-13a: +2 (attendance: the daily register, read and mark)
   // P1-03b: +3 (fees: void a receipt, a cheque returned unpaid, void an invoice)
-  // P1-03c: +4 (fees: account UPI, statement page, match, receipt a line)
-  assert.equal(total, 846, `expected 846 endpoints across all modules, found ${total}`)
+  // P1-03c: +5 (fees: account UPI, statement page, match, receipt a line; parents: report a child's payment)
+  assert.equal(total, 847, `expected 847 endpoints across all modules, found ${total}`)
 })
 
 test('a longer path is never swallowed by a shorter one', () => {

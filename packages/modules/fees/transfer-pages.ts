@@ -10,6 +10,7 @@ import {
   listDemandLetters,
   myClaims,
   pendingClaimOptions,
+  qrSection,
   statementPage,
   statementView,
   studentChoices,
@@ -41,16 +42,6 @@ async function termOptions(actor: Actor) {
     terms: s.terms.map((t) => ({ value: t.id, label: `${t.code} - ${t.name}${t.isCurrent ? ' (current)' : ''}` })),
     current: current?.id ?? '',
   }
-}
-
-/** The pay-by-UPI card: a QR of the payment link, what it carries, and what to do next (D8). */
-export function qrSection(u: UpiPay): PluginSection {
-  const how = u.dynamic
-    ? `Scan with any UPI app to pay ${formatPaise(u.amountPaise!)} to ${u.vpa}. The amount and the reference ${u.reference} are filled in. Your receipt appears when the accounts office matches the bank statement.`
-    : u.reference
-      ? `Scan with any UPI app to pay ${u.vpa}. Write ${u.reference} in the remarks. Then report the payment with its 12-digit UPI reference so the office can find it.`
-      : `Scan with any UPI app to pay ${u.vpa}. Then report the payment with its 12-digit UPI reference so the office can find it.`
-  return { kind: 'qr', title: 'Pay by UPI', value: u.link, caption: how, link: 'Open in a UPI app' }
 }
 
 const day = (d: Date | string | null) => (d ? new Date(d).toISOString().slice(0, 10) : '')

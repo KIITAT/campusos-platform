@@ -16,10 +16,11 @@ import {
   studentChoices,
   studentLedger,
   type Actor,
+  qrSection,
   upiFor,
   type UpiPay,
 } from './api'
-import { qrSection, transferPages } from './transfer-pages'
+import { transferPages } from './transfer-pages'
 
 /**
  * The finance desk, declared rather than drawn.
