@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNotNull } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNotNull, sql } from 'drizzle-orm'
 import { audit, auditLog, users, withTenant } from '@campusos/db'
 import { notify } from '@campusos/module-notices/api'
 import { assertCanAccessStudent, type Role, type ViewerScope } from '@campusos/module-framework'
@@ -46,7 +46,7 @@ export class ExamError extends Error {
   }
 }
 
-const tenantOf = (actor: Actor): string => {
+export const tenantOf = (actor: Actor): string => {
   if (!actor.institutionId) {
     throw new ExamError(400, 'no_institution', 'no institution for this session')
   }
@@ -54,21 +54,23 @@ const tenantOf = (actor: Actor): string => {
 }
 
 /** Who may enter marks: the lecturer of the offering, and staff above. */
-const canMark = (r: Role) =>
+export const canMark = (r: Role) =>
   r === 'faculty' || r === 'hod' || r === 'institution_admin' || r === 'super_admin'
 
-const isAdmin = (r: Role) => r === 'institution_admin' || r === 'super_admin'
+export const isAdmin = (r: Role) => r === 'institution_admin' || r === 'super_admin'
 
 const num = (v: string | null) => (v === null ? null : Number(v))
 
 type Tx = Parameters<Parameters<typeof withTenant>[1]>[0]
+/** A tenant transaction, for the review operations that share the offering lock. */
+export type MarkTx = Tx
 
 /**
  * A lecturer may only touch their own offering. Checked in one place because
  * every write in this module needs it and forgetting it once would let any
  * lecturer grade any cohort.
  */
-async function assertOwnsOffering(tx: Tx, actor: Actor, offeringId: string) {
+export async function assertOwnsOffering(tx: Tx, actor: Actor, offeringId: string) {
   const [row] = await tx
     .select({ faculty: offerings.facultyUserId })
     .from(offerings)
@@ -77,6 +79,29 @@ async function assertOwnsOffering(tx: Tx, actor: Actor, offeringId: string) {
   if (actor.role === 'faculty' && row.faculty !== actor.id) {
     throw new ExamError(403, 'not_your_offering', 'that is not your course')
   }
+}
+
+/**
+ * One lock per offering, taken by everything that decides a mark's result:
+ * entering marks, publishing, hiding, reviewing and finalising. They queue in
+ * the order they acquire it, so a review approved while a course is being
+ * finalised is either wholly before it or wholly after (P1-07c, decision 880).
+ * Held until the transaction ends.
+ */
+export async function lockOfferingMarks(tx: MarkTx, tenant: string, offeringId: string): Promise<void> {
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(hashtextextended('examinations:marks:' || ${tenant}::text || ':' || ${offeringId}::text, 0))`,
+  )
+}
+
+/** Resolve an exam, take its offering's lock, then re-read it so the state used is the state after any queued writer. */
+export async function lockedExam(tx: MarkTx, tenant: string, examId: string) {
+  const [first] = await tx.select({ offeringId: exams.offeringId }).from(exams).where(eq(exams.id, examId))
+  if (!first) throw new ExamError(404, 'no_such_exam', 'no such exam')
+  await lockOfferingMarks(tx, tenant, first.offeringId)
+  const [exam] = await tx.select().from(exams).where(eq(exams.id, examId))
+  if (!exam) throw new ExamError(404, 'no_such_exam', 'no such exam')
+  return exam
 }
 
 // --- grading schemes -------------------------------------------------------
@@ -291,17 +316,17 @@ export async function enterMarks(actor: Actor, input: unknown) {
   const data = enterMarksSchema.parse(input)
 
   await withTenant(tenant, async (tx) => {
-    const [exam] = await tx.select().from(exams).where(eq(exams.id, data.examId))
-    if (!exam) throw new ExamError(404, 'no_such_exam', 'no such exam')
+    const exam = await lockedExam(tx, tenant, data.examId)
     await assertOwnsOffering(tx, actor, exam.offeringId)
 
     // Refused here with a usable message; the database trigger refuses it too,
-    // which is what makes the guarantee rather than the convention.
-    if (exam.publishedAt) {
+    // which is what makes the guarantee rather than the convention. Hiding the
+    // results does not reopen the marks, so the test is "ever published".
+    if (exam.publishedAt || exam.everPublished) {
       throw new ExamError(
         409,
         'published',
-        'results are published — use a revision, which records a reason',
+        'results are published — a change needs a review, proposed by one person and approved by another administrator',
       )
     }
 
@@ -368,10 +393,25 @@ export async function publishExam(actor: Actor, input: unknown) {
   const { examId } = publishExamSchema.parse(input)
 
   await withTenant(tenant, async (tx) => {
-    const [exam] = await tx.select().from(exams).where(eq(exams.id, examId))
-    if (!exam) throw new ExamError(404, 'no_such_exam', 'no such exam')
+    const exam = await lockedExam(tx, tenant, examId)
     await assertOwnsOffering(tx, actor, exam.offeringId)
     if (exam.publishedAt) throw new ExamError(409, 'already_published', 'already published')
+
+    // Who has a mark to be told about, before the cohort is filled in below.
+    const marked = await tx.selectDistinct({ studentId: examMarks.studentId }).from(examMarks).where(eq(examMarks.examId, examId))
+
+    // First publication gives every student in the cohort a pending row, so a
+    // mark entered later is a reviewed revision and never a fresh insert into
+    // protected results. A republication has them already.
+    if (!exam.everPublished) {
+      await tx.execute(sql`
+        insert into exam_marks (institution_id, exam_id, student_id, entered_by)
+        select ${tenant}, ${examId}, sm.user_id, ${actor.id}
+          from academic_section_members sm
+          join academic_offerings o on o.section_id = sm.section_id
+         where o.id = ${exam.offeringId}
+        on conflict (exam_id, student_id) do nothing`)
+    }
 
     await tx
       .update(exams)
@@ -395,7 +435,6 @@ export async function publishExam(actor: Actor, input: unknown) {
       .from(offerings)
       .innerJoin(courses, eq(courses.id, offerings.courseId))
       .where(eq(offerings.id, exam.offeringId))
-    const marked = await tx.selectDistinct({ studentId: examMarks.studentId }).from(examMarks).where(eq(examMarks.examId, examId))
     if (marked.length > 0) {
       await notify(tx, tenant, {
         userIds: marked.map((m) => m.studentId),
@@ -474,8 +513,7 @@ export async function unpublishExam(actor: Actor, input: unknown) {
   const data = unpublishExamSchema.parse(input)
 
   await withTenant(tenant, async (tx) => {
-    const [exam] = await tx.select().from(exams).where(eq(exams.id, data.examId))
-    if (!exam) throw new ExamError(404, 'no_such_exam', 'no such exam')
+    const exam = await lockedExam(tx, tenant, data.examId)
     if (!exam.publishedAt) throw new ExamError(409, 'not_published', 'not published')
 
     await audit(tx, {
@@ -494,6 +532,10 @@ export async function unpublishExam(actor: Actor, input: unknown) {
       .update(exams)
       .set({ publishedAt: null, publishedBy: null })
       .where(eq(exams.id, data.examId))
+
+    // Hidden is not the same as unmarked: the official outputs wait for the
+    // course to be finalised again (decision 881).
+    await tx.update(examMarks).set({ needsRecompute: true }).where(eq(examMarks.examId, data.examId))
   })
 }
 

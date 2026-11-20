@@ -8,6 +8,7 @@ import {
   createExam,
   enterMarks,
   finaliseCourse,
+  lockOfferingMarks,
   officialTranscript,
   publishExam,
   reviseMark,
@@ -443,4 +444,63 @@ test('a draft mark deleted by hand is recorded with its value', async () => {
   const h = await historyOf(id)
   assert.deepEqual(h.map((r) => r.event), ['insert', 'delete'])
   assert.equal(h[1]!.before_mark?.obtained, 15)
+})
+
+// --- sticky publication and the offering lock ----------------------------------
+
+test('first publication gives the whole cohort a pending mark; hiding flags them; marks stay locked', async () => {
+  const e = await mkExam()
+  await enterMarks(fac(), { examId: e.id, marks: [{ studentId: ids.s1, obtained: 15 }] })
+  await publishExam(fac(), { examId: e.id })
+  const s2 = await markOf(e.id, ids.s2)
+  assert.equal(s2.obtained, null)
+  assert.equal(s2.absent, false)
+  assert.equal(s2.needsRecompute, false)
+
+  await unpublishExam(adm(), { examId: e.id, reason: 'withdrawn while the cohort is checked' })
+  assert.equal((await markOf(e.id, ids.s1)).needsRecompute, true)
+  assert.equal((await markOf(e.id, ids.s2)).needsRecompute, true)
+
+  await publishExam(fac(), { examId: e.id }) // republication needs no new rows
+  await assert.rejects(
+    () => enterMarks(fac(), { examId: e.id, marks: [{ studentId: ids.s2, obtained: 5 }] }),
+    (err: unknown) => code(err) === 'published',
+  )
+})
+
+test('marking requests queue behind the offering lock and run in the order they arrived', async () => {
+  const e = await mkExam()
+  const waiters = async () =>
+    Number(
+      (
+        await withTenant(inst, (tx) =>
+          tx.execute(
+            sql`select count(*)::int as n from pg_locks where locktype = 'advisory' and not granted
+                 and database = (select oid from pg_database where datname = current_database())`,
+          ),
+        )
+      ).rows[0]!.n,
+    )
+  const until = async (n: number) => {
+    for (let i = 0; i < 200 && (await waiters()) < n; i++) await new Promise((r) => setTimeout(r, 25))
+    assert.equal(await waiters(), n, 'the requests are not queued on the lock')
+  }
+  let release!: () => void
+  const held = new Promise<void>((r) => (release = r))
+  let locked!: () => void
+  const lockTaken = new Promise<void>((r) => (locked = r))
+  const holder = withTenant(inst, async (tx) => {
+    await lockOfferingMarks(tx, inst, ids.offering)
+    locked()
+    await held
+  })
+  await lockTaken
+
+  const first = enterMarks(fac(), { examId: e.id, marks: [{ studentId: ids.s1, obtained: 10 }] })
+  await until(1)
+  const second = enterMarks(fac(), { examId: e.id, marks: [{ studentId: ids.s1, obtained: 20 }] })
+  await until(2)
+  release()
+  await Promise.all([holder, first, second])
+  assert.equal(Number((await markOf(e.id, ids.s1)).obtained), 20, 'the later request must win')
 })

@@ -410,8 +410,11 @@ test('unpublishing is admin only, needs a reason, and is audited', async () => {
   assert.equal(trail.length, 2) // published, then unpublished
   assert.equal(trail[1]!.action, 'exam.unpublished')
 
-  // and marks are editable again
-  await enterMarks(A({}), { examId: e.id, marks: [{ studentId: ids.s1, obtained: 11 }] })
+  // hiding results does not reopen the marks (P1-07c, decision 875)
+  await assert.rejects(
+    () => enterMarks(A({}), { examId: e.id, marks: [{ studentId: ids.s1, obtained: 11 }] }),
+    (err: unknown) => code(err) === 'published',
+  )
 })
 
 test('the database refuses unpublishing without a reason in scope', async () => {
