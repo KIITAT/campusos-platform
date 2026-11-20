@@ -347,3 +347,21 @@ test('the statement page lists what is left, with a suggestion for our reference
   assert.equal(empty.account, null)
   assert.equal(page.sections(empty as never).length, 1)
 })
+
+test('a reference that is only a common word never auto-verifies a claim against someone else’s credit', async () => {
+  const matchStatement = await importing('matchStatement')
+  const c = await campus()
+  const fb = await bank(c)
+  const cl = await claimUpi(c, 'TRANSFER', '45,000', { mode: 'neft' })
+  const [line] = await statement(c, fb, [{ description: 'NEFT TRANSFER FROM BILAL KHAN FEES', deposit: 4_500_000 }])
+  const r = await matchStatement(c.clerk)
+  assert.equal(r.verified, 0)
+  assert.equal((await paymentOfClaim(c, cl.id)).status, 'pending')
+  assert.equal((await lineOf(c, line!)).status, 'unmatched')
+  // a real UTR (digits, 10 or more characters) in the description still matches
+  const ok = await claimUpi(c, 'SBIN526123456789', '46,000', { mode: 'neft' })
+  const [line2] = await statement(c, fb, [{ description: 'NEFT SBIN526123456789 ASHA ROY', deposit: 4_600_000 }])
+  assert.equal((await matchStatement(c.clerk)).verified, 1)
+  assert.equal((await paymentOfClaim(c, ok.id)).status, 'verified')
+  assert.equal((await lineOf(c, line2!)).status, 'matched')
+})
