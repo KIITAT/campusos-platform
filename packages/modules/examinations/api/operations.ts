@@ -11,13 +11,12 @@ import {
   sections,
   terms,
 } from './joins'
-import { bands, examMarks, exams, schemePrograms, schemes } from '../schema'
+import { bands, examMarks, exams, marksHistory, schemePrograms, schemes } from '../schema'
 import {
   createExamSchema,
   createSchemeSchema,
   enterMarksSchema,
   publishExamSchema,
-  reviseMarkSchema,
   setProgramSchemeSchema,
   unpublishExamSchema,
   type Transcript,
@@ -448,65 +447,6 @@ export async function publishExam(actor: Actor, input: unknown) {
   })
 }
 
-/**
- * The only path that changes a published mark. audit() sets the reason the
- * trigger looks for, in the same transaction, so the audit row and the change
- * cannot come apart.
- */
-export async function reviseMark(actor: Actor, input: unknown) {
-  const tenant = tenantOf(actor)
-  if (!canMark(actor.role)) throw new ExamError(403, 'forbidden', 'not permitted')
-  const data = reviseMarkSchema.parse(input)
-
-  await withTenant(tenant, async (tx) => {
-    const [exam] = await tx.select().from(exams).where(eq(exams.id, data.examId))
-    if (!exam) throw new ExamError(404, 'no_such_exam', 'no such exam')
-    await assertOwnsOffering(tx, actor, exam.offeringId)
-
-    const max = Number(exam.maxMarks)
-    if (data.obtained != null && data.obtained > max) {
-      throw new ExamError(400, 'above_max', `${data.obtained} exceeds the maximum of ${max}`)
-    }
-
-    const [before] = await tx
-      .select()
-      .from(examMarks)
-      .where(and(eq(examMarks.examId, data.examId), eq(examMarks.studentId, data.studentId)))
-    if (!before) throw new ExamError(404, 'no_such_mark', 'no mark to revise')
-
-    // Written first: it is what unlocks the row, and it means an aborted
-    // transaction leaves neither the change nor a dangling audit entry.
-    await audit(tx, {
-      institutionId: tenant,
-      actorId: actor.id,
-      actorEmail: actor.email ?? null,
-      moduleId: MODULE,
-      action: 'mark.revised',
-      entity: 'exam_marks',
-      entityId: before.id,
-      reason: data.reason,
-      detail: {
-        examName: exam.name,
-        studentId: data.studentId,
-        from: { obtained: num(before.obtained), absent: before.absent },
-        to: { obtained: data.obtained ?? null, absent: data.absent },
-        revision: before.revision + 1,
-      },
-    })
-
-    await tx
-      .update(examMarks)
-      .set({
-        obtained: data.absent ? null : (data.obtained?.toString() ?? null),
-        absent: data.absent,
-        enteredBy: actor.id,
-        enteredAt: new Date(),
-        revision: before.revision + 1,
-      })
-      .where(eq(examMarks.id, before.id))
-  })
-}
-
 export async function unpublishExam(actor: Actor, input: unknown) {
   const tenant = tenantOf(actor)
   if (!isAdmin(actor.role)) throw new ExamError(403, 'forbidden', 'not permitted')
@@ -539,13 +479,25 @@ export async function unpublishExam(actor: Actor, input: unknown) {
   })
 }
 
-/** The full history of one mark, which is what a dispute actually needs. */
+/**
+ * The full history of one mark, which is what a dispute actually needs: the
+ * audit trail (who and why) and the value before and after every change,
+ * drafts included.
+ */
 export async function markHistory(actor: Actor, markId: string) {
   const tenant = tenantOf(actor)
   if (!canMark(actor.role)) throw new ExamError(403, 'forbidden', 'not permitted')
 
-  return withTenant(tenant, (tx) =>
-    tx
+  return withTenant(tenant, async (tx) => {
+    const [row] = await tx
+      .select({ offeringId: exams.offeringId })
+      .from(examMarks)
+      .innerJoin(exams, eq(exams.id, examMarks.examId))
+      .where(eq(examMarks.id, markId))
+    if (!row) throw new ExamError(404, 'no_such_mark', 'No such mark.')
+    await assertOwnsOffering(tx, actor, row.offeringId)
+
+    const trail = await tx
       .select({
         at: auditLog.at,
         action: auditLog.action,
@@ -555,8 +507,19 @@ export async function markHistory(actor: Actor, markId: string) {
       })
       .from(auditLog)
       .where(and(eq(auditLog.entity, 'exam_marks'), eq(auditLog.entityId, markId)))
-      .orderBy(asc(auditLog.at)),
-  )
+      .orderBy(asc(auditLog.at))
+    const history = await tx
+      .select({
+        event: marksHistory.event,
+        before: marksHistory.beforeMark,
+        after: marksHistory.afterMark,
+        at: marksHistory.at,
+      })
+      .from(marksHistory)
+      .where(eq(marksHistory.markId, markId))
+      .orderBy(asc(marksHistory.at), asc(marksHistory.id))
+    return { audit: trail, history }
+  })
 }
 
 // --- grades and transcripts ------------------------------------------------

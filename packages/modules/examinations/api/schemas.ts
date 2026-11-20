@@ -58,15 +58,50 @@ export const publishExamSchema = z
  * audit row, and in the database trigger -- three places, because this is the
  * one path an institution will be asked to justify in a dispute.
  */
+const reviewReason = z.string().trim().min(10).max(500)
+
+/**
+ * A proposal, not a change: one person names the new value, a different
+ * administrator decides it (P1-07c). `expectedRevision` is the revision of the
+ * mark the proposer was looking at; a stale proposal is refused.
+ */
 export const reviseMarkSchema = z
-  .object({
+  .strictObject({
     examId: uuid,
     studentId: z.string().min(1),
     obtained: marks.nullish(),
     absent: z.boolean().default(false),
-    reason: z.string().trim().min(10).max(500),
+    expectedRevision: z.coerce.number().int().min(0).max(32766),
+    /** The student's open request this proposal answers, if any. */
+    requestId: uuid.optional(),
+    reason: reviewReason,
+  })
+  .refine((m) => (m.absent ? m.obtained == null : m.obtained != null), {
+    message: 'propose a score, or mark the student absent without one',
+    path: ['obtained'],
   })
   .meta({ id: 'ExamReviseMark' })
+
+/** A student asks for their own visible mark to be looked at again. */
+export const requestMarkReviewSchema = z
+  .strictObject({
+    markId: uuid,
+    kind: z.enum(['recheck', 're_evaluation']),
+    reason: reviewReason,
+  })
+  .meta({ id: 'ExamRequestMarkReview' })
+
+export const decideMarkReviewSchema = z
+  .strictObject({
+    requestId: uuid,
+    decision: z.enum(['approve', 'reject']),
+    reason: reviewReason,
+  })
+  .meta({ id: 'ExamDecideMarkReview' })
+
+export const listMarkReviewsSchema = z
+  .strictObject({ examId: uuid.optional(), after: uuid.optional() })
+  .meta({ id: 'ExamListMarkReviews' })
 
 export const unpublishExamSchema = z
   .object({

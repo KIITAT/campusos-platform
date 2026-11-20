@@ -6,11 +6,14 @@ import * as academic from '@campusos/module-academic/api'
 import {
   ExamError,
   createExam,
+  decideMarkReview,
   enterMarks,
   finaliseCourse,
   lockOfferingMarks,
   officialTranscript,
+  listMarkReviews,
   publishExam,
+  requestMarkReview,
   reviseMark,
   unpublishExam,
   type Actor,
@@ -168,12 +171,16 @@ async function wholeCourse(marks: { studentId: string; obtained: number }[]) {
   return { off, exam }
 }
 
-/**
- * The correction the way the code of the day does it. Step 4 replaces this body
- * with a proposal and an approval by a second administrator.
- */
-async function correct(examId: string, studentId: string, obtained: number) {
-  await reviseMark(fac(), { examId, studentId, obtained, reason: 'recount found a missed answer sheet page' })
+/** A correction as the workflow has it: a lecturer proposes, an administrator approves. */
+async function correct(examId: string, studentId: string, obtained: number, expectedRevision = 0) {
+  const p = await reviseMark(fac(), {
+    examId,
+    studentId,
+    obtained,
+    expectedRevision,
+    reason: 'recount found a missed answer sheet page',
+  })
+  await decideMarkReview(adm(), { requestId: p.requestId, decision: 'approve', reason: 'checked against the script' })
 }
 
 // --- the single-actor loophole ---------------------------------------------
@@ -187,8 +194,9 @@ test('revision requires separate approval', async () => {
     examId: e.id,
     studentId: ids.s1,
     obtained: 25,
+    expectedRevision: 0,
     reason: 'a lecturer alone proposes this change',
-  }).catch(() => undefined)
+  })
 
   const row = await markOf(e.id, ids.s1)
   assert.equal(Number(row.obtained), 15, 'a proposal must not move the score')
@@ -503,4 +511,213 @@ test('marking requests queue behind the offering lock and run in the order they 
   release()
   await Promise.all([holder, first, second])
   assert.equal(Number((await markOf(e.id, ids.s1)).obtained), 20, 'the later request must win')
+})
+
+// --- the maker-checker workflow --------------------------------------------------
+
+const published = async (marks: { studentId: string; obtained: number }[] = [{ studentId: ids.s1, obtained: 15 }]) => {
+  const e = await mkExam()
+  await enterMarks(fac(), { examId: e.id, marks })
+  await publishExam(fac(), { examId: e.id })
+  return e
+}
+const REASON = 'the sum of the parts was added up wrongly'
+const randomId = () => '00000000-0000-4000-8000-000000000001'
+const propose = (examId: string, studentId: string, over: Record<string, unknown> = {}, who: Actor = fac()) =>
+  reviseMark(who, { examId, studentId, obtained: 25, expectedRevision: 0, reason: REASON, ...over })
+const decide = (requestId: string, decision: 'approve' | 'reject', who: Actor = adm2()) =>
+  decideMarkReview(who, { requestId, decision, reason: 'decided after reading the script' })
+
+/** How many sessions are queued on an advisory lock in this database. */
+const advisoryWaiters = async () =>
+  Number(
+    (
+      await withTenant(inst, (tx) =>
+        tx.execute(
+          sql`select count(*)::int as n from pg_locks where locktype = 'advisory' and not granted
+               and database = (select oid from pg_database where datname = current_database())`,
+        ),
+      )
+    ).rows[0]!.n,
+  )
+
+test('a student asks for a review, staff propose, a different administrator approves', async () => {
+  const e = await published()
+  const m = await markOf(e.id, ids.s1)
+  const asked = await requestMarkReview(stu(ids.s1), { markId: m.id, kind: 'recheck', reason: 'I think a page was missed' })
+  assert.deepEqual([asked.status, asked.notice], ['requested', 'Review requested.'])
+
+  const mine = await listMarkReviews(stu(ids.s1), {})
+  const ownRows = mine.rows.filter((r) => r.markId === m.id)
+  assert.equal(ownRows.length, 1)
+  assert.equal(ownRows[0]!.staff, undefined, 'a student never sees the staff detail')
+  assert.ok(mine.rows.every((r) => !('staff' in r)))
+
+  const proposed = await propose(e.id, ids.s1, { requestId: asked.requestId })
+  assert.equal(proposed.requestId, asked.requestId)
+  assert.deepEqual([proposed.status, proposed.notice], ['proposed', 'Revision proposed.'])
+  assert.equal(Number((await markOf(e.id, ids.s1)).obtained), 15, 'a proposal does not move the score')
+
+  const staffView = await listMarkReviews(fac(), { examId: e.id })
+  assert.deepEqual(staffView.rows.find((r) => r.markId === m.id)!.staff, {
+    studentId: ids.s1,
+    makerId: ids.fac,
+    baseRevision: 0,
+    proposedScore: 25,
+    proposedAbsent: false,
+  })
+
+  const done = await decide(asked.requestId, 'approve')
+  assert.deepEqual([done.status, done.notice], ['approved', 'Revision approved. Re-finalise the course.'])
+  const after = await markOf(e.id, ids.s1)
+  assert.deepEqual([Number(after.obtained), after.revision, after.needsRecompute, after.enteredBy], [25, 1, true, ids.adm2])
+
+  const audit = await withTenant(inst, (tx) =>
+    tx.select().from(auditLog).where(and(eq(auditLog.entity, 'exam_marks'), eq(auditLog.entityId, m.id))),
+  )
+  assert.deepEqual(
+    audit.map((a) => a.action).sort(),
+    ['mark.review_requested', 'mark.revised', 'mark.revision_proposed'],
+  )
+  const revised = audit.find((a) => a.action === 'mark.revised')!
+  assert.equal(revised.id, asked.requestId)
+  assert.deepEqual(revised.detail, {
+    requestId: asked.requestId,
+    studentId: ids.s1,
+    revision: 1,
+    from: { obtained: 15, absent: false, revision: 0 },
+    to: { obtained: 25, absent: false, revision: 1 },
+  })
+})
+
+test('only the student who owns a visible mark may ask for its review', async () => {
+  const e = await published([
+    { studentId: ids.s1, obtained: 15 },
+    { studentId: ids.s2, obtained: 20 },
+  ])
+  const m1 = await markOf(e.id, ids.s1)
+  const ask = (who: Actor) => requestMarkReview(who, { markId: m1.id, kind: 'recheck', reason: 'please look again at it' })
+  await assert.rejects(() => ask(stu(ids.s2)), (err: unknown) => code(err) === 'no_such_mark')
+  await assert.rejects(() => ask(fac()), (err: unknown) => code(err) === 'forbidden')
+  await assert.rejects(() => ask(A(ids.otherStudent, 'student', 'os@x.test', other)), (err: unknown) => code(err) === 'no_such_mark')
+
+  await unpublishExam(adm(), { examId: e.id, reason: 'hidden while the cohort is checked' })
+  await assert.rejects(() => ask(stu(ids.s1)), (err: unknown) => code(err) === 'no_such_mark')
+})
+
+test('one open review per mark, and staff answer the open one by naming it', async () => {
+  const e = await published()
+  const m = await markOf(e.id, ids.s1)
+  const asked = await requestMarkReview(stu(ids.s1), { markId: m.id, kind: 're_evaluation', reason: 'please re-evaluate it' })
+  await assert.rejects(
+    () => requestMarkReview(stu(ids.s1), { markId: m.id, kind: 'recheck', reason: 'asking a second time' }),
+    (err: unknown) => code(err) === 'mark_request_open',
+  )
+  await assert.rejects(() => propose(e.id, ids.s1), (err: unknown) => code(err) === 'mark_request_open')
+  await propose(e.id, ids.s1, { requestId: asked.requestId })
+  await assert.rejects(
+    () => propose(e.id, ids.s1, { requestId: asked.requestId, obtained: 30 }),
+    (err: unknown) => code(err) === 'mark_request_open',
+  )
+})
+
+test('the proposer cannot decide, a lecturer cannot decide, another offering’s lecturer cannot propose', async () => {
+  const e = await published()
+  const p = await propose(e.id, ids.s1, {}, adm())
+  await assert.rejects(() => decide(p.requestId, 'approve', adm()), (err: unknown) => code(err) === 'mark_self_decision')
+  await assert.rejects(() => decide(p.requestId, 'reject', adm()), (err: unknown) => code(err) === 'mark_self_decision')
+  await assert.rejects(() => decide(p.requestId, 'approve', fac()), (err: unknown) => code(err) === 'forbidden')
+  assert.equal(Number((await markOf(e.id, ids.s1)).obtained), 15)
+
+  const e2 = await published()
+  await assert.rejects(() => propose(e2.id, ids.s1, {}, fac2()), (err: unknown) => code(err) === 'not_your_offering')
+  await decide(p.requestId, 'approve', adm2())
+})
+
+test('stale, unchanged and out-of-range proposals are refused', async () => {
+  const e = await published()
+  await assert.rejects(() => propose(e.id, ids.s1, { expectedRevision: 3 }), (err: unknown) => code(err) === 'mark_request_stale')
+  await assert.rejects(() => propose(e.id, ids.s1, { obtained: 15 }), (err: unknown) => code(err) === 'mark_proposal_unchanged')
+  await assert.rejects(() => propose(e.id, ids.s1, { obtained: 51 }), (err: unknown) => code(err) === 'above_max')
+  await assert.rejects(() => propose(e.id, ids.s1, { obtained: 12.345 }))
+  await assert.rejects(() => propose(e.id, ids.s1, { obtained: -1 }))
+  await assert.rejects(() => propose(e.id, 'nobody'), (err: unknown) => code(err) === 'no_such_mark')
+  // a draft exam has no published mark to revise
+  const draft = await mkExam()
+  await enterMarks(fac(), { examId: draft.id, marks: [{ studentId: ids.s1, obtained: 5 }] })
+  await assert.rejects(() => propose(draft.id, ids.s1), (err: unknown) => code(err) === 'not_published')
+})
+
+test('a rejected review changes nothing, is closed, and a new one may follow', async () => {
+  const e = await published()
+  const m = await markOf(e.id, ids.s1)
+  const asked = await requestMarkReview(stu(ids.s1), { markId: m.id, kind: 'recheck', reason: 'please look at it again' })
+  const closedNow = await decide(asked.requestId, 'reject', adm())
+  assert.deepEqual([closedNow.status, closedNow.notice], ['rejected', 'Review closed.'])
+  await assert.rejects(() => decide(asked.requestId, 'approve'), (err: unknown) => code(err) === 'mark_request_closed')
+  await assert.rejects(() => decide(randomId(), 'approve'), (err: unknown) => code(err) === 'no_such_mark_request')
+  assert.equal(Number((await markOf(e.id, ids.s1)).obtained), 15)
+
+  const again = await requestMarkReview(stu(ids.s1), { markId: m.id, kind: 'recheck', reason: 'a second, better argued request' })
+  const p = await propose(e.id, ids.s1, { requestId: again.requestId })
+  await decide(p.requestId, 'reject')
+  assert.equal(Number((await markOf(e.id, ids.s1)).obtained), 15)
+  // an administrator may close a request that was never proposed
+  const third = await requestMarkReview(stu(ids.s1), { markId: m.id, kind: 'recheck', reason: 'a third request for the record' })
+  await assert.rejects(() => decide(third.requestId, 'approve'), (err: unknown) => code(err) === 'mark_request_stale')
+  assert.equal((await decide(third.requestId, 'reject', adm())).notice, 'Review closed.')
+})
+
+test('a pending mark can be reviewed and an absence can be proposed', async () => {
+  const e = await published() // s2 holds a pending row created at publication
+  const m2 = await markOf(e.id, ids.s2)
+  const asked = await requestMarkReview(stu(ids.s2), { markId: m2.id, kind: 're_evaluation', reason: 'my result never appeared' })
+  const p = await propose(e.id, ids.s2, { requestId: asked.requestId, obtained: 20 })
+  await decide(p.requestId, 'approve')
+  const row = await markOf(e.id, ids.s2)
+  assert.deepEqual([Number(row.obtained), row.revision], [20, 1])
+  assert.deepEqual(
+    (await historyOf(m2.id)).map((h) => [h.event, h.before_mark?.obtained ?? null, h.after_mark?.obtained ?? null]),
+    [
+      ['insert', null, null],
+      ['update', null, 20],
+    ],
+  )
+
+  const second = await propose(e.id, ids.s2, { obtained: null, absent: true, expectedRevision: 1 })
+  await decide(second.requestId, 'approve')
+  const absent = await markOf(e.id, ids.s2)
+  assert.deepEqual([absent.obtained, absent.absent, absent.revision], [null, true, 2])
+})
+
+test('two administrators approving at once produce one revision and one audit row', async () => {
+  const e = await published()
+  const p = await propose(e.id, ids.s1)
+  let release!: () => void
+  const held = new Promise<void>((r) => (release = r))
+  let locked!: () => void
+  const taken = new Promise<void>((r) => (locked = r))
+  const holder = withTenant(inst, async (tx) => {
+    await lockOfferingMarks(tx, inst, ids.offering)
+    locked()
+    await held
+  })
+  await taken
+  const a = decide(p.requestId, 'approve', adm2()).then((v) => ({ ok: v }), (err: unknown) => ({ err }))
+  const b = decide(p.requestId, 'approve', adm()).then((v) => ({ ok: v }), (err: unknown) => ({ err }))
+  for (let i = 0; i < 200 && (await advisoryWaiters()) < 2; i++) await new Promise((r) => setTimeout(r, 25))
+  assert.equal(await advisoryWaiters(), 2)
+  release()
+  await holder
+  const out = await Promise.all([a, b])
+  // A lecturer proposed, so both administrators may decide; exactly one wins.
+  assert.equal(out.filter((o) => 'ok' in o).length, 1)
+  const lost = out.find((o) => 'err' in o) as { err: unknown }
+  assert.equal(code(lost.err), 'mark_request_closed')
+  const row = await markOf(e.id, ids.s1)
+  assert.equal(row.revision, 1)
+  const revised = await withTenant(inst, (tx) =>
+    tx.select().from(auditLog).where(and(eq(auditLog.entityId, row.id), eq(auditLog.action, 'mark.revised'))),
+  )
+  assert.equal(revised.length, 1)
 })

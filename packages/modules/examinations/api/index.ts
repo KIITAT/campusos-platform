@@ -1,4 +1,5 @@
 export * from './operations'
+export * from './mark-reviews'
 export * from './finalise'
 export * from './schemas'
 export * from './grading'

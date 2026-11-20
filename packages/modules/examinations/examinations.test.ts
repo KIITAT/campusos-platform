@@ -7,6 +7,7 @@ import {
   ExamError,
   createExam,
   createScheme,
+  decideMarkReview,
   enterMarks,
   listSchemes,
   markHistory,
@@ -304,17 +305,19 @@ test('publishing twice is refused', async () => {
 
 // --- the audited revision path --------------------------------------------
 
-test('a revision changes the mark, bumps the revision, and writes the trail', async () => {
+/** One person proposes, a different administrator approves: the only way a published mark moves. */
+async function reviseApproved(examId: string, studentId: string, obtained: number, expectedRevision: number, why: string) {
+  const p = await reviseMark(A({}), { examId, studentId, obtained, expectedRevision, reason: why })
+  await decideMarkReview(admin(), { requestId: p.requestId, decision: 'approve', reason: 'checked against the answer script' })
+  return p
+}
+
+test('an approved revision changes the mark, bumps the revision, and writes the trail', async () => {
   const e = await mkExam()
   await enterMarks(A({}), { examId: e.id, marks: [{ studentId: ids.s1, obtained: 30 }] })
   await publishExam(A({}), { examId: e.id })
 
-  await reviseMark(A({}), {
-    examId: e.id,
-    studentId: ids.s1,
-    obtained: 42,
-    reason: 'question 4 was mis-totalled during first marking',
-  })
+  await reviseApproved(e.id, ids.s1, 42, 0, 'question 4 was mis-totalled during first marking')
 
   const s = await sheet(A({}), e.id)
   const row = s.entries.find((x) => x.studentId === ids.s1)!
@@ -322,24 +325,26 @@ test('a revision changes the mark, bumps the revision, and writes the trail', as
   assert.equal(row.revision, 1)
 
   const trail = await markHistory(A({}), row.markId!)
-  assert.equal(trail.length, 1)
-  assert.equal(trail[0]!.action, 'mark.revised')
-  assert.match(trail[0]!.reason, /mis-totalled/)
-  assert.equal(trail[0]!.actorEmail, 'f@exam.test')
   assert.deepEqual(
-    (trail[0]!.detail as { from: unknown }).from,
-    { obtained: 30, absent: false },
+    trail.audit.map((t) => t.action),
+    ['mark.revision_proposed', 'mark.revised'],
   )
-  assert.deepEqual((trail[0]!.detail as { to: unknown }).to, { obtained: 42, absent: false })
+  const revised = trail.audit[1]!
+  assert.match(revised.reason, /answer script/)
+  assert.equal(revised.actorEmail, 'adm@exam.test')
+  assert.deepEqual((revised.detail as { from: unknown }).from, { obtained: 30, absent: false, revision: 0 })
+  assert.deepEqual((revised.detail as { to: unknown }).to, { obtained: 42, absent: false, revision: 1 })
+  assert.match(trail.audit[0]!.reason, /mis-totalled/)
+  assert.deepEqual(trail.history.map((h) => h.event), ['insert', 'update'])
 })
 
-test('a revision without a real reason is refused', async () => {
+test('a proposal without a real reason is refused', async () => {
   const e = await mkExam()
   await enterMarks(A({}), { examId: e.id, marks: [{ studentId: ids.s1, obtained: 30 }] })
   await publishExam(A({}), { examId: e.id })
   for (const reason of ['', 'oops', '   spaces   ']) {
     await assert.rejects(() =>
-      reviseMark(A({}), { examId: e.id, studentId: ids.s1, obtained: 40, reason }),
+      reviseMark(A({}), { examId: e.id, studentId: ids.s1, obtained: 40, expectedRevision: 0, reason }),
     )
   }
 })
@@ -349,12 +354,13 @@ test('successive revisions each leave a row, so the whole history survives', asy
   await enterMarks(A({}), { examId: e.id, marks: [{ studentId: ids.s1, obtained: 10 }] })
   await publishExam(A({}), { examId: e.id })
 
+  let rev = 0
   for (const [to, why] of [
     [20, 'first recount after student query'],
     [30, 'second recount, moderation applied'],
     [25, 'moderation reversed on appeal'],
   ] as [number, string][]) {
-    await reviseMark(A({}), { examId: e.id, studentId: ids.s1, obtained: to, reason: why })
+    await reviseApproved(e.id, ids.s1, to, rev++, why)
   }
 
   const s = await sheet(A({}), e.id)
@@ -363,32 +369,27 @@ test('successive revisions each leave a row, so the whole history survives', asy
   assert.equal(row.revision, 3)
 
   const trail = await markHistory(A({}), row.markId!)
-  assert.equal(trail.length, 3)
+  const revised = trail.audit.filter((t) => t.action === 'mark.revised')
   assert.deepEqual(
-    trail.map((t) => (t.detail as { to: { obtained: number } }).to.obtained),
+    revised.map((t) => (t.detail as { to: { obtained: number } }).to.obtained),
     [20, 30, 25],
   )
 })
 
 test('the reason does not leak into a later transaction on the same connection', async () => {
   // set_config is transaction-local; if it were not, the next write to a
-  // published exam would sail through with no reason at all.
+  // published exam would sail through with no evidence at all.
   const e = await mkExam()
   await enterMarks(A({}), { examId: e.id, marks: [{ studentId: ids.s1, obtained: 30 }] })
   await publishExam(A({}), { examId: e.id })
-  await reviseMark(A({}), {
-    examId: e.id,
-    studentId: ids.s1,
-    obtained: 40,
-    reason: 'legitimate correction to establish a reason in one transaction',
-  })
+  await reviseApproved(e.id, ids.s1, 40, 0, 'legitimate correction to establish a reason in one transaction')
 
   await assert.rejects(
     () =>
       withTenant(inst, (tx) =>
         tx.update(examMarks).set({ obtained: '50' }).where(eq(examMarks.examId, e.id)),
       ),
-    (err: unknown) => /audited revision/i.test(String((err as Error).cause ?? err)),
+    (err: unknown) => /approved audited revision/i.test(String((err as Error).cause ?? err)),
   )
 })
 
