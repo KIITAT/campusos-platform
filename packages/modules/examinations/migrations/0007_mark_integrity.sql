@@ -214,7 +214,6 @@ BEGIN
 END $$;--> statement-breakpoint
 CREATE TRIGGER exam_marks_history_protect BEFORE INSERT OR UPDATE OR DELETE ON public.exam_marks_history
   FOR EACH ROW EXECUTE FUNCTION public.exam_marks_history_protect();--> statement-breakpoint
-REVOKE TRUNCATE ON public.exam_marks_history, public.exam_mark_requests FROM PUBLIC, campusos_app;--> statement-breakpoint
 GRANT SELECT, INSERT ON public.exam_marks_history TO campusos_app;--> statement-breakpoint
 GRANT SELECT, INSERT, UPDATE ON public.exam_mark_requests TO campusos_app;--> statement-breakpoint
 -- Conservative: every mark of an exam that was ever published and is now hidden,
