@@ -1,6 +1,6 @@
 {
   "name": "@campusos/module-ceremonies",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -21,7 +21,9 @@
   "dependencies": {
     "@campusos/db": "workspace:*",
     "@campusos/module-academic": "workspace:*",
+    "@campusos/module-fees": "workspace:*",
     "@campusos/module-framework": "workspace:*",
+    "@campusos/module-library": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "pdf-lib": "^1.17.1",
     "zod": "^4.4.3"
