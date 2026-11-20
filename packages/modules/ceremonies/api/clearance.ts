@@ -1,7 +1,6 @@
 import { sql, type SQL } from 'drizzle-orm'
 import type { withTenant } from '@campusos/db'
 import { postedSql } from '@campusos/module-fees/api'
-import { loans } from '@campusos/module-library/schema'
 import { PluginError } from '@campusos/module-framework'
 
 type Tx = Parameters<Parameters<typeof withTenant>[1]>[0]
@@ -56,9 +55,9 @@ export async function checkCertificateClearanceWithin(tx: Tx, institutionId: str
                                              and i.term_id = c.term_id and i.voided_at is null))))`
     : none
   const owesLibrary: SQL = probe.library_present
-    ? sql`exists (select 1 from ${loans}
-                   where ${loans.institutionId} = ${institutionId}::uuid and ${loans.borrowerId} = ${studentId}
-                     and ${loans.finePaidAt} is null and ${loans.finePaise} > ${loans.fineWaivedPaise})`
+    ? sql`exists (select 1 from library_loans l
+                   where l.institution_id = ${institutionId}::uuid and l.borrower_id = ${studentId}
+                     and l.fine_paid_at is null and l.fine_paise > l.fine_waived_paise)`
     : none
   const row = (await tx.execute(sql`select not (${owesFees} or ${owesLibrary}) as clear`)).rows[0] as { clear: boolean }
   return { clear: row.clear === true }

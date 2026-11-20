@@ -328,9 +328,6 @@ importers:
       '@campusos/module-framework':
         specifier: workspace:*
         version: link:../../module-framework
-      '@campusos/module-library':
-        specifier: workspace:*
-        version: link:../library
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@types/pg@8.23.1)(pg@8.23.0)
