@@ -109,14 +109,14 @@ export async function eligibilityWithin(tx: Tx, tenant: string, studentId: strin
   return { attendance, dues, blocker }
 }
 
-const REFUSAL: Record<Blocker, string> = {
+export const BLOCKER_TEXT: Record<Blocker, string> = {
   exam_attendance_short: 'Attendance is below the required minimum.',
   exam_attendance_unavailable: 'Attendance is not available for this term.',
   exam_dues_outstanding: 'Posted fees are outstanding for this term.',
 }
 
 export function assertEligible(value: Eligibility): void {
-  if (value.blocker) throw new ExamError(409, value.blocker, REFUSAL[value.blocker])
+  if (value.blocker) throw new ExamError(409, value.blocker, BLOCKER_TEXT[value.blocker])
 }
 
 // --- the examination cell's waiver ---------------------------------------------------

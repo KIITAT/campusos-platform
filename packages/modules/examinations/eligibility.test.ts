@@ -8,6 +8,7 @@ import * as attendance from '@campusos/module-attendance/api'
 import * as fees from '@campusos/module-fees/api'
 import * as exams from './api'
 import { plugin } from './plugin'
+import { cyclePages } from './cycle-pages'
 
 /**
  * The exam gate (FUNC-01, P1-07b): an enrolment and an admit card need the
@@ -395,4 +396,61 @@ test('a card request waits for a revoke in flight and then refuses', async () =>
   const r = await card!
   assert.equal(r.ok, false)
   assert.equal(code(r.error), 'exam_dues_outstanding')
+})
+
+// --- 7. the pages --------------------------------------------------------------------------
+
+const pageOf = (path: string) => cyclePages.find((p) => p.path === path)!
+const sectionsFor = async (path: string, who: Actor, query = '') => {
+  const page = pageOf(path)
+  const data = await page.load!(who as never, new Request(`http://x/${query}`))
+  return JSON.stringify({ sections: page.sections!(data as never), data })
+}
+
+test('Booking shows the gate, hides the controls while held, and gives them back on a waiver', async () => {
+  const c = await campus({ fees: true })
+  await owe(c)
+  let held = await sectionsFor('/booking', c.asha)
+  assert.match(held, /Exam eligibility/)
+  assert.match(held, /Posted fees/)
+  assert.match(held, /Blocked/)
+  assert.ok(held.includes('Posted fees are outstanding for this term.'))
+  assert.ok(!held.includes('"path":"/enrol"'), 'no enrol form while held')
+  await waive(c, 'dues', 'grant')
+  const open = await sectionsFor('/booking', c.asha)
+  assert.match(open, /Waived/)
+  assert.ok(open.includes('"path":"/enrol"'))
+  await enrolWith(c)
+  assert.ok((await sectionsFor('/booking', c.asha)).includes('admit-card.pdf'))
+  await waive(c, 'dues', 'revoke')
+  held = await sectionsFor('/booking', c.asha)
+  assert.ok(!held.includes('admit-card.pdf'), 'no card link while held')
+  assert.match(held, /Posted fees are outstanding/)
+})
+
+test('Booking shows attendance as a percentage against the minimum', async () => {
+  const c = await campus({ attendance: true })
+  await register(c, c.offDs, c.slot, [true, true, true, false])
+  const text = await sectionsFor('/booking', c.asha)
+  assert.match(text, /Cleared/)
+  assert.ok(text.includes('75.0% / 75% required'))
+  const d = await campus({})
+  assert.match(await sectionsFor('/booking', d.asha), /Not applicable/)
+})
+
+test('only the examination cell gets the waiver form', async () => {
+  const c = await campus({ fees: true })
+  const sections = async (who: Actor) => {
+    const page = pageOf('/cycle')
+    const data = await page.load!(who as never, new Request('http://x/'))
+    return page.sections!(data as never) as { kind: string; title?: string; path?: string; submit?: string; roles?: string[]; note?: string; fields?: { name: string; label: string; options?: unknown }[] }[]
+  }
+  const form = (await sections(c.admin)).find((x) => x.kind === 'form' && x.path === '/eligibility/waiver')
+  assert.ok(form, 'the cell sees the form')
+  assert.equal(form.title, 'Set eligibility waiver')
+  assert.equal(form.submit, 'Save waiver')
+  assert.deepEqual(form.roles, ['institution_admin', 'super_admin'])
+  assert.ok(!form.roles!.includes('hod'), 'a head of department does not')
+  assert.ok((form.note ?? '').includes('Use an administrative reason. Leave out medical and payment details.'))
+  assert.deepEqual(form.fields!.map((f) => f.label).filter(Boolean), ['Student', 'Check', 'Action', 'Reason'])
 })
