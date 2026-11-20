@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { and, eq, like, sql } from 'drizzle-orm'
@@ -13,6 +14,7 @@ import {
   officialTranscript,
   listMarkReviews,
   publishExam,
+  reviewableMarks,
   requestMarkReview,
   reviseMark,
   unpublishExam,
@@ -851,4 +853,27 @@ test('the student page offers the visible marks and the form; the exam page show
   const proposal = sections.find((s) => s.path === '/marks/revise')!
   assert.equal(proposal.title, 'Propose revision')
   assert.ok(sections.some((s) => s.title === 'Mark reviews'))
+})
+
+// --- review fixes (P1-07c FIX) -----------------------------------------------
+
+test('the application role cannot clear the re-finalise flag by hand', async () => {
+  const id = await publishedMark()
+  await rawRevision(id, ids.s1, { sameTx: true, requestScore: 25, markScore: 25, withAudit: true })
+  await assert.rejects(
+    () => withTenant(inst, (tx) => tx.execute(sql`update exam_marks set needs_recompute = false where id = ${id}`)),
+    (err: unknown) => /re-finalis/i.test(cause(err)),
+  )
+})
+
+test('a malformed paging cursor on the student marks list is a 400, not a 500', async () => {
+  await assert.rejects(() => reviewableMarks(stu(ids.s1), 'x'), (err: unknown) => (err as ExamError).status === 400)
+})
+
+test('a lecturer who does not own the exam learns nothing about its marks', async () => {
+  const e = await published()
+  await assert.rejects(
+    () => reviseMark(fac2(), { examId: e.id, studentId: randomUUID(), obtained: 5, expectedRevision: 0, reason: 'checking something' }),
+    (err: unknown) => code(err) === 'not_your_offering',
+  )
 })
