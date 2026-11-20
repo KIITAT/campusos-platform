@@ -398,6 +398,46 @@ test('a card request waits for a revoke in flight and then refuses', async () =>
   assert.equal(code(r.error), 'exam_dues_outstanding')
 })
 
+test('a card request in another UUID spelling still waits for a revoke in flight', async () => {
+  const c = await campus({ fees: true })
+  await owe(c)
+  await waive(c, 'dues', 'grant')
+  await enrolWith(c)
+  let card: Promise<{ ok: boolean; error: unknown }> | undefined
+  await withTenant(c.id, async (tx) => {
+    await (exams as unknown as { lockEligibility(tx: unknown, t: string, s: string, term: string): Promise<void> }).lockEligibility(tx, c.id, c.ashaId, c.termId)
+    await tx.execute(sql`delete from exam_eligibility_waivers where student_id = ${c.ashaId}`)
+    card = settle(exams.admitCard(c.asha, c.ashaId, c.termId.toUpperCase()))
+    await waiters(1)
+  })
+  const r = await card!
+  assert.equal(r.ok, false)
+  assert.equal(code(r.error), 'exam_dues_outstanding')
+})
+
+test('a waiver in upper-case UUIDs audits under the canonical entity id', async () => {
+  const c = await campus({ fees: true })
+  await waive(c, 'dues', 'grant', { studentId: c.ashaId.toUpperCase(), termId: c.termId.toUpperCase() })
+  const [row] = await authDb.select().from(auditLog).where(and(eq(auditLog.institutionId, c.id), eq(auditLog.action, 'eligibility.waiver_granted')))
+  assert.equal(row!.entityId, `${c.termId}:${c.ashaId}:dues`)
+})
+
+test('a burst of checks at pool capacity all complete', async () => {
+  const c = await campus({ attendance: true, fees: true })
+  const N = 5
+  let ready = 0
+  let release!: () => void
+  const gate = new Promise<void>((r) => (release = r))
+  const check = () =>
+    withTenant(c.id, async (tx) => {
+      if (++ready === N) release()
+      await gate
+      return (exams as unknown as { eligibilityWithin(tx: unknown, t: string, s: string, term: string): Promise<unknown> }).eligibilityWithin(tx, c.id, c.ashaId, c.termId)
+    })
+  const done = await Promise.all(Array.from({ length: N }, () => settle(check())))
+  assert.deepEqual(done.map((d) => d.ok), Array(N).fill(true))
+})
+
 // --- 7. the pages --------------------------------------------------------------------------
 
 const pageOf = (path: string) => cyclePages.find((p) => p.path === path)!
