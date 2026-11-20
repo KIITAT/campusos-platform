@@ -5,12 +5,13 @@ import { test } from 'node:test'
 
 /**
  * Admission, enrolment and fees never depend on the APAAR ID or the consent to
- * it (P1-08b, D15; FUNC-09). Only academic keeps them, and the parents page
- * shows them: any other module naming APAAR is a dependency by another door.
+ * it (P1-08b, D15; FUNC-09). Only academic keeps them, the parents page shows them and
+ * the guardian consent test names them: any other module naming APAAR is a
+ * dependency by another door.
  */
 
 const modules = join(import.meta.dirname, '..', 'packages', 'modules')
-const allowed = (path) => path.startsWith(`academic${sep}`) || path === join('parents', 'pages.ts')
+const allowed = (path) => path.startsWith(`academic${sep}`) || path === join('parents', 'pages.ts') || path === join('parents', 'guardians.test.ts')
 
 function* sources(dir) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {

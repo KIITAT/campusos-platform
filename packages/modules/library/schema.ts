@@ -143,6 +143,8 @@ export const loans = pgTable(
     fineWaivedPaise: paise('fine_waived_paise').notNull().default(0),
     fineWaiverReason: text('fine_waiver_reason'),
     finePaidAt: timestamp('fine_paid_at', { withTimezone: true }),
+    /** How the fine was settled: cash, upi, bank_transfer or fee_account (ACC-27). */
+    fineSettledBy: text('fine_settled_by'),
     issuedBy: text('issued_by').references(() => users.id, { onDelete: 'set null' }),
     returnedBy: text('returned_by').references(() => users.id, { onDelete: 'set null' }),
     createdAt: createdAt(),
@@ -164,6 +166,11 @@ export const loans = pgTable(
       sql`fine_waived_paise <= fine_paise`,
     ),
     check('library_loans_renewals', sql`renewals >= 0`),
+    check(
+      'library_loans_settled_by',
+      sql`fine_settled_by is null or fine_settled_by in ('cash', 'upi', 'bank_transfer', 'fee_account')`,
+    ),
+    check('library_loans_settled_by_paid', sql`fine_settled_by is null or fine_paid_at is not null`),
     tenantPolicy('library_loans'),
   ],
 )

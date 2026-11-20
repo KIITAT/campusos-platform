@@ -153,9 +153,33 @@ export const paths = {
   ...transfersAndLetters(),
   [`${base}/charges`]: {
     get: {
-      summary: 'Charges on single students -- a backlog paper, a duplicate admit card -- optionally for one term',
+      summary: 'Charges on single students -- a backlog paper, a duplicate admit card -- optionally for one term, newest first, a page at a time',
       tags: ['fees'],
-      responses: { '200': { description: 'OK' }, ...gated },
+      responses: {
+        '200': {
+          description: 'OK',
+          content: json(
+            z.object({
+              rows: z.array(
+                z.object({
+                  id: z.string(),
+                  studentId: z.string(),
+                  student: z.string(),
+                  termId: z.string(),
+                  term: z.string(),
+                  label: z.string(),
+                  amountPaise: z.number().int(),
+                  sourceModule: z.string(),
+                  state: z.enum(['pending', 'invoiced', 'cancelled']),
+                }),
+              ),
+              total: z.number().int(),
+              next: z.string().nullable(),
+            }),
+          ),
+        },
+        ...gated,
+      },
     },
     post: {
       summary: 'Charge one student, billed on their next invoice',

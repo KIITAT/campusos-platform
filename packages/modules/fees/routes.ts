@@ -28,6 +28,7 @@ import {
   cancelStudentCharge,
   chargeStudent,
   listStudentCharges,
+  chargePage,
   assessAid,
   awardScholarship,
   createFeeItem,
@@ -91,7 +92,7 @@ export const routes: PluginRoute[] = [
   {
     method: 'GET',
     path: '/charges',
-    handler: (actor, req) => listStudentCharges(actor as Actor, param(req, 'termId') ?? undefined),
+    handler: (actor, req) => listStudentCharges(actor as Actor, param(req, 'termId') ?? undefined, chargePage(req, '')),
   },
   {
     method: 'POST',

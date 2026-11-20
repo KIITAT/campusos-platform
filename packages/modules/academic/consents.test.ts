@@ -204,3 +204,22 @@ test('a refusal cannot lose to a first save of the ID: both wait on the student,
   assert.equal(now!.decision, 'refused')
   assert.equal((await studentProfile(c.admin, c.kid.id)).apaarId, null)
 })
+
+test('the office records a category; the student, a guardian and the office read it, a teacher does not (FUNC-09)', async () => {
+  const c = await campus()
+  const category = async (actor: Actor) => ((await studentProfile(actor, c.kid.id)) as unknown as { category: string | null }).category
+  await setStudentProfile(c.admin, { studentId: c.kid.id, category: 'obc' })
+  assert.equal(await category(c.admin), 'obc')
+  assert.equal(await category(c.kid), 'obc')
+  assert.equal(await category(c.kidParent), 'obc')
+  // The class teacher may read the profile, but not the category.
+  assert.equal(await category(c.teacher), null)
+  await assert.rejects(setStudentProfile(c.admin, { studentId: c.kid.id, category: 'other' }))
+  await assert.rejects(setStudentProfile(c.kid, { studentId: c.kid.id, category: 'sc' }), (e) => code(e) === 'forbidden')
+  const trail = await withTenant(c.id, (tx) =>
+    tx.select().from(auditLog).where(and(eq(auditLog.entity, 'academic_student_profiles'), eq(auditLog.entityId, c.kid.id))),
+  )
+  assert.ok(trail.some((t) => /category/.test(t.reason ?? '')))
+  await setStudentProfile(c.admin, { studentId: c.kid.id, category: '' })
+  assert.equal(await category(c.admin), null)
+})

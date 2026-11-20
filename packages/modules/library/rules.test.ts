@@ -11,16 +11,18 @@ import {
   type LoanRules,
 } from './api/rules'
 
-const at = (iso: string) => new Date(iso)
+// Every instant is written in India's time, so the tests mean the same on a
+// server in any zone (LOW-09).
+const at = (iso: string) => new Date(/[zZ]|[+-]\d\d:\d\d$/.test(iso) ? iso : `${iso}+05:30`)
+/** An instant as India reads it: `2026-09-15 23:59`. */
+const india = (d: Date) => new Date(d.getTime() + 330 * 60_000).toISOString().slice(0, 16).replace('T', ' ')
 const rules = (over: Partial<LoanRules> = {}): LoanRules => ({ ...DEFAULT_RULES, ...over })
 
 // --- due dates -------------------------------------------------------------
 
 test('a due date lands at the end of the day, not at the hour of issue', () => {
   const due = dueDate(at('2026-09-01T16:05:00'), 14)
-  assert.equal(due.getDate(), 15)
-  assert.equal(due.getHours(), 23)
-  assert.equal(due.getMinutes(), 59)
+  assert.equal(india(due), '2026-09-15 23:59')
 })
 
 test('a book issued in the afternoon is not overdue that same hour a fortnight on', () => {
@@ -32,8 +34,13 @@ test('a book issued in the afternoon is not overdue that same hour a fortnight o
 test('a renewal extends from the due date, not from today', () => {
   const due = at('2026-09-15T23:59:59.999')
   const next = renewedDueDate(due, 14)
-  assert.equal(next.getMonth(), 8) // September
-  assert.equal(next.getDate(), 29)
+  assert.equal(india(next), '2026-09-29 23:59')
+})
+
+test('a due date ends the day in the institution zone, not the server zone (LOW-09)', () => {
+  // 20:00 UTC on the 1st is 01:30 on the 2nd in India.
+  assert.equal(dueDate(new Date('2026-09-01T20:00:00Z'), 14).toISOString(), '2026-09-16T18:29:59.999Z')
+  assert.equal(dueDate(new Date('2026-09-01T20:00:00Z'), 14, 'UTC').toISOString(), '2026-09-15T23:59:59.999Z')
 })
 
 // --- overdue days ----------------------------------------------------------
@@ -191,4 +198,13 @@ test('a library that forbids renewal says so rather than silently allowing one',
     refusalToRenew(openLoan, rules({ maxRenewals: 0 }), at('2026-09-14T10:00:00')),
     'renewal_limit_reached',
   )
+})
+
+test('a due date is the end of the local day N calendar days on, across clock changes (review HIGH 7)', () => {
+  // New York springs forward on 8 March 2026: 14 days from 22 February 01:00 is the end of 8 March (EDT).
+  assert.equal(dueDate(new Date('2026-02-22T06:00:00Z'), 14, 'America/New_York').toISOString(), '2026-03-09T03:59:59.999Z')
+  // And falls back on 1 November 2026: 14 days from 18 October 23:30 EDT is the end of 1 November, which closes in EST.
+  assert.equal(dueDate(new Date('2026-10-19T03:30:00Z'), 14, 'America/New_York').toISOString(), '2026-11-02T04:59:59.999Z')
+  // A renewal from a due date near the change keeps the same rule.
+  assert.equal(renewedDueDate(new Date('2026-02-22T06:00:00Z'), 14, 'America/New_York').toISOString(), '2026-03-09T03:59:59.999Z')
 })

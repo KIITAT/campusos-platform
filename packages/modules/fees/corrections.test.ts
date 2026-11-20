@@ -219,7 +219,7 @@ test('a bounced cheque reverses the receipt and its GL entry and re-opens the du
   assert.equal(rev.length, 1)
   assert.equal(rev[0]!.posting_date, on)
   const charges = await listStudentCharges(c.admin, c.termId)
-  const fee = charges.find((x) => x.label === `Cheque returned unpaid, receipt ${p.receiptNo}`)
+  const fee = charges.rows.find((x) => x.label === `Cheque returned unpaid, receipt ${p.receiptNo}`)
   assert.ok(fee)
   assert.equal(fee.amountPaise, 50_000)
   await reconciled(c)

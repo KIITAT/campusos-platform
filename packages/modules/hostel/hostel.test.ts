@@ -29,6 +29,7 @@ import {
   visitorIn,
   visitorLog,
   visitorOut,
+  visitorPage,
   type Actor,
 } from './api'
 import { allocations, blocks, checkIns, leaves, rooms, visitors } from './schema'
@@ -67,7 +68,8 @@ const saysDb = (re: RegExp) => (e: unknown) => {
   return re.test(text)
 }
 
-const today = () => new Date().toISOString().slice(0, 10)
+// The institution's day (India by default), not the server's UTC date: the module defaults to it (NEW-100).
+const today = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10)
 
 /** Turn the Attendance entitlement on or off for this institution. */
 async function setAttendance(on: boolean) {
@@ -235,8 +237,8 @@ test('vacating frees the bed, is audited, and keeps the history', async () => {
   const trail = await withTenant(inst, (tx) =>
     tx.select({ action: auditLog.action, reason: auditLog.reason }).from(auditLog).where(gte(auditLog.at, since)),
   )
-  assert.equal(trail[0]!.action, 'hostel.vacated')
-  assert.match(trail[0]!.reason!, /new block/)
+  const vacated = trail.find((t) => t.action === 'hostel.vacated')!
+  assert.match(vacated.reason!, /new block/)
 
   // The closed allocation is still there: who slept where is a record.
   const history = await withTenant(inst, (tx) =>
@@ -345,6 +347,26 @@ test('a resident scans in and is marked present', async () => {
   const r = await rollCall(warden(), blockId)
   assert.equal(r.present, 1)
   assert.equal(r.unmarked, 0)
+})
+
+test('a student who does not live in the block cannot scan in there (NEW-20)', async () => {
+  await setAttendance(true)
+  await allocate(warden(), { roomId: roomA, studentId: ids.s1 })
+  const qr = await rollCallCode(warden(), blockId, SECRET)
+  await assert.rejects(
+    () => scanCheckIn(student(ids.s2), { code: encodeQr(qr), blockId }, SECRET),
+    (e: unknown) => code(e) === 'not_resident' && status(e) === 409,
+  )
+})
+
+test('allocating a bed is audited (LOW-11)', async () => {
+  const a = await allocate(warden(), { roomId: roomA, studentId: ids.s1 })
+  const trail = await withTenant(inst, (tx) =>
+    tx.select({ action: auditLog.action, entityId: auditLog.entityId, detail: auditLog.detail }).from(auditLog).where(gte(auditLog.at, since)),
+  )
+  const row = trail.find((t) => t.action === 'hostel.allocated')!
+  assert.equal(row.entityId, a.id)
+  assert.equal((row.detail as { roomId: string }).roomId, roomA)
 })
 
 test('a code from another block does not work here', async () => {
@@ -483,11 +505,24 @@ test('a visitor is signed in and out, and the open register shows who is inside'
     phone: '9000000000',
     relation: 'father',
   })
-  assert.equal((await visitorLog(warden(), blockId, true)).length, 1)
+  assert.equal((await visitorLog(warden(), blockId, true)).rows.length, 1)
 
   await visitorOut(warden(), { visitorId: v.id })
-  assert.equal((await visitorLog(warden(), blockId, true)).length, 0)
-  assert.equal((await visitorLog(warden(), blockId)).length, 1)
+  assert.equal((await visitorLog(warden(), blockId, true)).rows.length, 0)
+  assert.equal((await visitorLog(warden(), blockId)).rows.length, 1)
+})
+
+test('the visitor log pages (NEW-66)', async () => {
+  for (const name of ['First Visitor', 'Second Visitor', 'Third Visitor']) {
+    await visitorIn(warden(), { blockId, name })
+  }
+  const first = await visitorLog(warden(), blockId, false, visitorPage(new Request('https://x/?n=2'), ''))
+  assert.equal(first.rows.length, 2)
+  assert.equal(first.total, 3)
+  assert.ok(first.next)
+  const rest = await visitorLog(warden(), blockId, false, visitorPage(new Request(`https://x/?n=2&after=${first.next}`), ''))
+  assert.equal(rest.rows.length, 1)
+  assert.equal(rest.next, null)
 })
 
 test('signing a visitor out twice is refused', async () => {

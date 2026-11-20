@@ -21,6 +21,7 @@ import {
   listWindows,
   myExamCycle,
   papersFor,
+  setEligibilityWaiver,
   setExamCycleSettings,
   setWindow,
   studentPerformance,
@@ -176,6 +177,7 @@ export const routes: PluginRoute[] = [
   post('/enrol', enrol),
   { method: 'GET', path: '/enrolments', handler: (actor, req) => enrolmentList(actor as Actor, requiredParam(req, 'termId')) },
   post('/enrolments/cancel', cancelEnrolment),
+  post('/eligibility/waiver', setEligibilityWaiver),
   pdf('/admit-card.pdf', async (actor, req) => {
     const termId = requiredParam(req, 'termId')
     const studentId = param(req, 'studentId') || actor.id

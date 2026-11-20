@@ -3,6 +3,7 @@ import { manifest } from '../manifest'
 import {
   addRoomsSchema,
   allocateSchema,
+  chargeTermSchema,
   createBlockSchema,
   grantLeaveSchema,
   markSchema,
@@ -10,6 +11,7 @@ import {
   rollCallSchema,
   roomRowSchema,
   scanSchema,
+  setRoomFeeSchema,
   vacateSchema,
   visitorInSchema,
   visitorOutSchema,
@@ -63,6 +65,28 @@ export const paths = {
         '200': { description: 'Added' },
         ...gated,
         '409': { description: 'A room number already exists', content: json(err) },
+      },
+    },
+  },
+
+  [`${base}/rooms/fee`]: {
+    post: {
+      summary: 'Set the fee per bed per term on a block\'s rooms (administrators). Reason mandatory and audited.',
+      tags: ['hostel'],
+      requestBody: { content: json(setRoomFeeSchema) },
+      responses: { '200': { description: 'Set' }, ...gated, '404': { description: 'No such block', content: json(err) } },
+    },
+  },
+  [`${base}/charges`]: {
+    post: {
+      summary: 'Charge every resident of a term who has no charge for it yet, through Fees (administrators)',
+      description: 'Prorated by the nights inside the term. Safe to repeat: a resident is charged once per term.',
+      tags: ['hostel'],
+      requestBody: { content: json(chargeTermSchema) },
+      responses: {
+        '200': { description: 'Charged' },
+        ...gated,
+        '409': { description: 'The Fees module is not enabled', content: json(err) },
       },
     },
   },
@@ -161,10 +185,13 @@ export const paths = {
 
   [`${base}/visitors`]: {
     get: {
-      summary: 'The gate register',
+      summary: 'The gate register, newest first, a page at a time',
       tags: ['hostel'],
       responses: {
-        '200': { description: 'OK', content: json(z.array(visitorRowSchema)) },
+        '200': {
+          description: 'OK',
+          content: json(z.object({ rows: z.array(visitorRowSchema), total: z.number().int(), next: z.string().nullable() })),
+        },
         ...gated,
       },
     },

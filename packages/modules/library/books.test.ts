@@ -97,6 +97,7 @@ async function overdueLoan(d: Desk, days: number) {
     finePerDay: '2',
     graceDays: 0,
     blockAtOutstanding: '0',
+    reason: 'the rules for this test',
   })
   const title = await createTitle(d.desk, {
     isbn: '978-0-262-03384-8',
