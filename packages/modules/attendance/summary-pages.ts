@@ -1,6 +1,6 @@
 import { param, type PluginPage, type PluginSection } from '@campusos/module-framework'
 import { listStructure } from '@campusos/module-academic/api'
-import { attendanceRules, attendanceSummary, classAbsentees, classChoices, dailySheet, excusableStudents, listExcuses, type Actor } from './api'
+import { attendanceRules, attendanceSummary, totalLines, classAbsentees, classChoices, dailySheet, excusableStudents, listExcuses, type Actor } from './api'
 
 const STAFF = ['institution_admin', 'super_admin', 'hod', 'faculty'] as const
 const KINDS = [
@@ -24,8 +24,9 @@ export const myAttendancePage: PluginPage = {
     const term =
       structure.terms.find((t) => t.id === param(req, 'termId')) ?? structure.terms.find((t) => t.isCurrent) ?? structure.terms.at(-1) ?? null
     const [lines, rules] = await Promise.all([attendanceSummary(a, a.id, term?.id ?? null), attendanceRules(a)])
-    const held = lines.reduce((n, l) => n + l.held, 0)
-    const counted = lines.reduce((n, l) => n + l.present + (rules.excusedCounts ? l.excused : 0), 0)
+    const total = totalLines(lines)
+    const held = total.reduce((n, l) => n + l.held, 0)
+    const counted = total.reduce((n, l) => n + l.present + (rules.excusedCounts ? l.excused : 0), 0)
     return {
       rules,
       term: term?.code ?? '',

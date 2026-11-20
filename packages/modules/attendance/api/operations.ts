@@ -866,6 +866,15 @@ export async function attendanceSummary(actor: Actor, studentId: string, termId?
   })
 }
 
+/**
+ * The lines a single percentage may add up. A register day and a period
+ * session are different units, so the two never share a total: period lines
+ * where there are any, else the register (a school student has only that).
+ */
+export function totalLines(lines: AttendanceLine[]): AttendanceLine[] {
+  return lines.some((l) => l.kind === 'period') ? lines.filter((l) => l.kind === 'period') : lines
+}
+
 /** One class's figures by the institution's rule. */
 export function line(
   r: { offering_id: string; code: string; title: string; teacher: string | null; term: string; held: number; present: number; excused: number },

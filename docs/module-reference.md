@@ -10,7 +10,7 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | [Academic Core](#academic) | 0.12.0 | 7 | 42 | None |
 | [Admissions](#admissions) | 0.8.0 | 3 | 9 | academic |
 | [Alumni and events](#alumni) | 0.5.0 | 4 | 12 | None |
-| [Attendance & QR](#attendance) | 0.15.0 | 8 | 30 | academic, notices |
+| [Attendance & QR](#attendance) | 0.16.0 | 8 | 30 | academic, notices |
 | [Student Care](#care) | 0.11.0 | 7 | 24 | academic, notices |
 | [Ceremonies](#ceremonies) | 0.7.0 | 5 | 18 | academic |
 | [Sales CRM](#crm) | 0.6.0 | 4 | 32 | finance, notices |
@@ -20,12 +20,12 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | [Fees & Finance](#fees) | 0.23.0 | 11 | 40 | academic, finance, notices |
 | [Finance & Books](#finance) | 0.20.0 | 92 | 208 | None |
 | [Helpdesk and grievance](#helpdesk) | 0.5.0 | 2 | 7 | None |
-| [Hostel](#hostel) | 0.10.0 | 5 | 18 | academic |
+| [Hostel](#hostel) | 0.11.0 | 5 | 18 | academic |
 | [HR & Payroll](#hr) | 0.23.0 | 18 | 134 | finance, notices |
 | [Library](#library) | 0.13.0 | 5 | 18 | academic |
-| [Mentoring](#mentoring) | 0.19.0 | 6 | 19 | academic, notices |
+| [Mentoring](#mentoring) | 0.20.0 | 6 | 19 | academic, notices |
 | [Communication & Notices](#notices) | 0.14.0 | 4 | 13 | academic |
-| [Parent Portal](#parents) | 0.19.0 | 4 | 11 | academic |
+| [Parent Portal](#parents) | 0.20.0 | 4 | 11 | academic |
 | [Placement](#placement) | 0.11.0 | 8 | 15 | academic, notices |
 | [Projects and timesheets](#projects) | 0.3.0 | 6 | 27 | finance |
 | [Quizzes](#quizzes) | 0.8.0 | 7 | 22 | academic |
