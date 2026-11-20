@@ -1,9 +1,10 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { like, sql } from 'drizzle-orm'
-import { authDb, institutions, users, withTenant } from '@campusos/db'
+import { authDb, corePool, institutions, users, withTenant } from '@campusos/db'
+import { printedText } from '@campusos/module-framework/pdf'
 import * as academic from '@campusos/module-academic/api'
-import { localToday, setSingleOfficer, trialBalance, updateSettings, type Actor as Books } from '@campusos/module-finance/api'
+import { localToday, reverseEntry, setSingleOfficer, trialBalance, updateSettings, type Actor as Books } from '@campusos/module-finance/api'
 import {
   awardScholarship,
   createFeeItem,
@@ -11,6 +12,7 @@ import {
   grantWaiver,
   issueInvoices,
   paymentForReceipt,
+  receiptPdf,
   listStudentCharges,
   receivableReport,
   reconcilePayment,
@@ -673,4 +675,113 @@ test("the receipt carries the institution's PAN and address", async () => {
   assert.equal(r.pan, 'AAATK1234F')
   assert.equal(r.status, 'live')
   assert.deepEqual(r.breakup, { heads: [{ label: 'Tuition', chargedPaise: 4_500_000, waivedPaise: 0 }] })
+})
+
+/** Until n sessions wait on a lock in a statement that matches. */
+async function waitingOn(pattern: string, n = 1) {
+  const until = Date.now() + 8000
+  for (;;) {
+    const r = await authDb.execute(sql`
+      select count(*)::int as n from pg_stat_activity
+       where wait_event_type = 'Lock' and datname = current_database() and query ilike ${pattern}`)
+    if ((r.rows[0] as { n: number }).n >= n) return
+    if (Date.now() > until) throw new Error(`fewer than ${n} sessions wait on ${pattern}`)
+    await new Promise((ok) => setTimeout(ok, 50))
+  }
+}
+
+test('a void and a waiver revoke at once post the waiver once (review P1-03b BLOCKER)', async () => {
+  const c = await campus()
+  const item = await charge(c, 'Tuition', '45000')
+  await grantWaiver(c.admin, { studentId: c.s1, feeItemId: item.id, amount: '5000', reason: 'hardship at admission' })
+  await issueInvoices(c.admin, { termId: c.termId })
+  const waiver = await one<{ id: string }>(c, sql`select id from fee_waivers where student_id = ${c.s1}`)
+
+  // Hold the journal, so both calls stop when they first post to it.
+  const holder = await corePool.connect()
+  await holder.query('begin')
+  await holder.query('lock table finance_journal_entries in share row exclusive mode')
+  try {
+    const voiding = api.voidInvoice(c.admin, { studentId: c.s1, termId: c.termId, reason: 'issued in error' })
+    await waitingOn('%finance_journal_entries%')
+    const revoking = revokeWaiver(c.admin, { waiverId: waiver.id, reason: 'granted by mistake' })
+    await waitingOn('%', 2)
+    await holder.query('rollback')
+    await Promise.all([voiding, revoking])
+  } finally {
+    await holder.query('rollback').catch(() => {})
+    holder.release()
+  }
+  await reconciled(c)
+  const l1 = await studentLedger(c.admin, c.s1, c.termId)
+  const l2 = await studentLedger(c.admin, c.s2, c.termId)
+  assert.equal(await balance(c, RECEIVABLE), l1.balancePaise + l2.balancePaise)
+})
+
+test('Finance does not reverse a receipt behind the fees module (review P1-03b HIGH)', async () => {
+  const c = await campus()
+  await charge(c, 'Tuition', '45000')
+  await issueInvoices(c.admin, { termId: c.termId })
+  const p = await cash(c, '1000')
+  const e = await one<{ id: string }>(c, sql`select id from finance_journal_entries where source_ref = ${'payment:' + p.id}`)
+  await assert.rejects(() => reverseEntry(books(c), { entryId: e.id, reason: 'free-hand reversal' }), code('owned_by_module'))
+  await api.voidPayment(c.admin, { paymentId: p.id, reason: 'entered against the wrong student' })
+  await reconciled(c)
+})
+
+test('a receipt voided for a reason with an emoji still downloads (review P1-03b HIGH)', async () => {
+  const c = await campus()
+  await charge(c, 'Tuition 😀', '45000')
+  const p = await cash(c, '1000')
+  await api.voidPayment(c.admin, { paymentId: p.id, reason: 'Entered twice 😀' })
+  const r = await paymentForReceipt(c.admin, p.id)
+  const bytes = await receiptPdf({ ...r, institutionName: r.legalName ?? 'College', address: 'Plot 1 😀\nBhubaneswar' } as never)
+  const printed = (await printedText(bytes)).join('|')
+  assert.match(printed, /VOID/)
+  assert.match(printed, /Entered twice/)
+})
+
+test('the receipt prints the day the books post it (review P1-03b HIGH)', async () => {
+  const c = await campus()
+  await charge(c, 'Tuition', '45000')
+  const at = '2026-03-31T20:00:00Z'
+  const p = await recordPayment(c.clerk, { studentId: c.s1, termId: c.termId, amount: '1000', method: 'cash', receivedAt: at, allowAdvance: true })
+  const gl = await one<{ d: string }>(c, sql`select posting_date::text as d from finance_journal_entries where source_ref = ${'payment:' + p.id}`)
+  assert.equal(gl.d, '2026-04-01')
+  assert.match(p.receiptNo, /\/2627\//)
+  const r = await paymentForReceipt(c.admin, p.id)
+  const printed = (await printedText(await receiptPdf({ ...r, institutionName: 'College' } as never))).join('|')
+  assert.ok(printed.includes('2026-04-01'), printed)
+})
+
+test('a time zone changed while a payment waits does not split its receipt year and its posting day (review P1-03b HIGH)', async () => {
+  const c = await campus()
+  await charge(c, 'Tuition', '45000')
+  const at = '2026-03-31T20:00:00Z'
+  const pay = () => recordPayment(c.clerk, { studentId: c.s1, termId: c.termId, amount: '1000', method: 'cash', receivedAt: at, allowAdvance: true })
+  await pay()
+  let release!: () => void
+  const held = new Promise<void>((ok) => (release = ok))
+  let holding!: () => void
+  const locked = new Promise<void>((ok) => (holding = ok))
+  const holder = authDb.transaction(async (tx) => {
+    await tx.execute(sql`select 1 from fee_receipt_series where institution_id = ${c.id} for update`)
+    holding()
+    await held
+  })
+  await locked
+  try {
+    const second = pay()
+    await waitingOn('%update "fee_receipt_series"%')
+    await updateSettings(books(c), { timeZone: 'UTC' })
+    release()
+    await holder
+    const p = await second
+    const gl = await one<{ d: string }>(c, sql`select posting_date::text as d from finance_journal_entries where source_ref = ${'payment:' + p.id}`)
+    assert.match(p.receiptNo, /\/2627\/000002$/)
+    assert.equal(gl.d, '2026-04-01')
+  } finally {
+    release()
+    await holder.catch(() => {})
+  }
 })
