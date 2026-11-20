@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import { and, eq, gte, sql } from 'drizzle-orm'
 import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
-import { AttendanceError, attendanceSummary, dailySheet, grantExcuse, markDay, type Actor } from './api'
+import { AttendanceError, attendanceSummary, dailySheet, totalLines, grantExcuse, markDay, type Actor } from './api'
 
 /**
  * A section's daily register, kept by its class teacher (P1-13a): one
@@ -252,4 +252,11 @@ test('the attendance summary carries the register', async () => {
   }
   check(await attendanceSummary(admin(), ids.s2), '')
   check(await attendanceSummary(admin(), ids.s2, ids.term), names.term)
+})
+
+test('a total never adds register days to period sessions', () => {
+  const l = (kind: 'period' | 'daily', held: number) => ({ kind, held }) as Awaited<ReturnType<typeof attendanceSummary>>[number]
+  assert.deepEqual(totalLines([l('daily', 20), l('period', 10)]).map((x) => x.kind), ['period'])
+  assert.deepEqual(totalLines([l('daily', 20)]).map((x) => x.kind), ['daily'], 'a school student has only the register')
+  assert.deepEqual(totalLines([]), [])
 })
