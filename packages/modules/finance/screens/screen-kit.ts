@@ -56,7 +56,8 @@ export function form(title: string, path: string, fields: PluginField[], values:
 }
 
 export const filter = (path: string, data: Data, fields: PluginField[]): PluginForm => ({ ...form('Apply filters', path, fields, { ...data, ...object(data.query) }), method: 'GET', roles: undefined, placement: 'inline' })
-export const col = (key: string, kind?: CellKind, extra: Partial<PluginColumn> = {}): PluginColumn => ({ key, label: label(key.replace(/Paise$/, '')), kind, ...extra })
+// A formatted amount (`totalFcText`) exports as its plain decimal (`totalFcPlain`), signed, at the currency's scale.
+export const col = (key: string, kind?: CellKind, extra: Partial<PluginColumn> = {}): PluginColumn => ({ key, label: label(key.replace(/Paise$/, '')), kind, ...(key.endsWith('FcText') ? { exportKey: key.replace(/Text$/, 'Plain') } : {}), ...extra })
 export const table = (title: string, key: string, columns: PluginColumn[], extra: Partial<PluginTable> = {}): PluginTable => ({ kind: 'table', title, rows: key, columns, empty: `No ${title.toLowerCase()} to show.`, ...extra })
 export const moneyCols = (...keys: string[]) => keys.map(key => col(key, 'money'))
 export const linkCol = (key: string, path: string, idKey = 'id') => col(key, undefined, { href: `/m/finance${path}?id={${idKey}}` })
@@ -68,7 +69,10 @@ export function display(source: Data, data: Data = {}, currency?: string): Data 
   const result: Data = { ...source }
   const code = currency || str(source.currency) || str(data.baseCurrency) || 'INR'
   for (const [key, value] of Object.entries(source)) {
-    if (key.endsWith('Fc') && typeof value === 'number') result[`${key}Text`] = fc(value, code, currencyMinor(data, code))
+    if (key.endsWith('Fc') && typeof value === 'number') {
+      result[`${key}Text`] = fc(value, code, currencyMinor(data, code))
+      result[`${key}Plain`] = formatDecimal(value, currencyMinor(data, code), currencyMinor(data, code))
+    }
     if (key.endsWith('Milli') && value !== null) result[`${key}Text`] = formatQty(Number(value))
     if (key.endsWith('Bp') && value !== null) result[`${key}Text`] = formatDecimal(Number(value), 2)
     if (value instanceof Date) result[key] = value.toISOString()

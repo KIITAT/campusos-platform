@@ -1,4 +1,4 @@
-import type { CellKind, PluginColumn, Tone } from './pages'
+import type { PluginColumn, Tone } from './pages'
 import { listRows } from './list-rows'
 
 /**
