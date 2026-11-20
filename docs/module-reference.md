@@ -15,17 +15,17 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | [Ceremonies](#ceremonies) | 0.7.0 | 5 | 18 | academic |
 | [Sales CRM](#crm) | 0.8.0 | 4 | 32 | finance, notices |
 | [Enrollment](#enrollment) | 0.8.0 | 3 | 9 | academic |
-| [Examinations & Grading](#examinations) | 0.22.0 | 9 | 36 | academic, notices |
+| [Examinations & Grading](#examinations) | 0.23.0 | 9 | 36 | academic, notices |
 | [Feedback](#feedback) | 0.8.0 | 8 | 19 | academic |
-| [Fees & Finance](#fees) | 0.26.0 | 11 | 43 | academic, finance, notices |
+| [Fees & Finance](#fees) | 0.27.0 | 12 | 47 | academic, finance, notices |
 | [Finance & Books](#finance) | 0.22.0 | 92 | 208 | None |
 | [Helpdesk and grievance](#helpdesk) | 0.5.0 | 2 | 7 | None |
 | [Hostel](#hostel) | 0.11.0 | 5 | 18 | academic |
 | [HR & Payroll](#hr) | 0.25.0 | 18 | 134 | finance, notices |
 | [Library](#library) | 0.15.0 | 5 | 18 | academic |
-| [Mentoring](#mentoring) | 0.22.0 | 6 | 19 | academic, notices |
+| [Mentoring](#mentoring) | 0.23.0 | 6 | 19 | academic, notices |
 | [Communication & Notices](#notices) | 0.14.0 | 4 | 13 | academic |
-| [Parent Portal](#parents) | 0.22.0 | 4 | 11 | academic |
+| [Parent Portal](#parents) | 0.23.0 | 4 | 12 | academic |
 | [Placement](#placement) | 0.11.0 | 8 | 15 | academic, notices |
 | [Projects and timesheets](#projects) | 0.5.0 | 6 | 27 | finance |
 | [Quizzes](#quizzes) | 0.8.0 | 7 | 22 | academic |
@@ -530,10 +530,11 @@ Source: `campusos-platform/packages/modules/fees/`.
 | `/m/fees/me` | My fees | student |
 | `/m/fees/aid` | Aid and refunds | institution_admin, super_admin |
 | `/m/fees/reconciliation` | Fee ledger against the books | institution_admin, super_admin, accounts_staff |
-| `/m/fees/transfer` | Pay by bank transfer | student |
+| `/m/fees/transfer` | Pay fees | student |
 | `/m/fees/letter` | Demand letter | student |
-| `/m/fees/transfers` | Reported transfers | institution_admin, super_admin, accounts_staff |
+| `/m/fees/transfers` | Reported payments | institution_admin, super_admin, accounts_staff |
 | `/m/fees/accounts` | Accounts and letters | institution_admin, super_admin, accounts_staff |
+| `/m/fees/statement` | Bank statement | institution_admin, accounts_staff |
 
 ### Operations
 
@@ -541,10 +542,14 @@ Source: `campusos-platform/packages/modules/fees/`.
 |---|---|---|
 | `GET /api/v1/modules/fees/bank-accounts` | The institution's accounts fees are paid into | See runtime OpenAPI schema |
 | `POST /api/v1/modules/fees/bank-accounts` | Add an account | `label`, `accountName`, `bankName`, `branch`, `accountNumber`, `ifsc` |
+| `POST /api/v1/modules/fees/bank-accounts/upi` | Set or clear an account's UPI ID | `accountId`, `vpa`, `merchant` |
+| `GET /api/v1/modules/fees/statement` | Unmatched credits on the fees bank account, a page at a time | `q` (query), `sort` (query), `dir` (query), `n` (query), `after` (query) |
+| `POST /api/v1/modules/fees/statement/match` | Match the bank statement to reported payments and payment references | See runtime OpenAPI schema |
+| `POST /api/v1/modules/fees/statement/receipt` | Receipt a statement line | `lineId`, `studentId`, `termId`, `method`, `reference`, `drawerIfsc`, `drawerAccount` |
 | `POST /api/v1/modules/fees/bank-accounts/retire` | Retire an account | `accountId` |
-| `POST /api/v1/modules/fees/transfers` | Report an RTGS, NEFT or IMPS transfer (the student who made it) | `termId`, `accountId`, `mode`, `remitterBank`, `remitterBranch`, `remitterIfsc`, `accountHolder`, `contactPhone`, `transferredOn`, `amount`, `utr`, `bankReference` |
+| `POST /api/v1/modules/fees/transfers` | Report a payment by RTGS, NEFT, IMPS, UPI or a deposited cheque | `termId`, `accountId`, `mode`, `remitterBank`, `remitterBranch`, `remitterIfsc`, `drawerAccount`, `accountHolder`, `contactPhone`, `transferredOn`, `amount`, `studentId`, `utr`, `bankReference` |
 | `GET /api/v1/modules/fees/transfers/mine` | The signed-in student's reported transfers | See runtime OpenAPI schema |
-| `GET /api/v1/modules/fees/transfers` | Reported transfers, pending first | `status` (query) |
+| `GET /api/v1/modules/fees/transfers` | Reported payments, pending first, a page at a time | `status` (query), `q` (query), `n` (query), `after` (query) |
 | `POST /api/v1/modules/fees/transfers/verify` | Verify a transfer against the bank statement | `claimId`, `note` |
 | `POST /api/v1/modules/fees/transfers/reject` | Reject a reported transfer, with a reason | `claimId`, `reason` |
 | `GET /api/v1/modules/fees/letters/settings` | Who signs demand letters, and what they say | See runtime OpenAPI schema |
@@ -1297,6 +1302,7 @@ Source: `campusos-platform/packages/modules/parents/`.
 | `POST /api/v1/modules/parents/links/decide` | Verify or refuse a claimed link. Reason mandatory and audited. | `linkId`, `approve`, `reason` |
 | `POST /api/v1/modules/parents/links/revoke` | Withdraw a verified link. Reason mandatory and audited. | `linkId`, `approve`, `reason` |
 | `POST /api/v1/modules/parents/consents` | A parent or guardian gives, refuses or withdraws a consent for a child under 18. Audited. | `studentId`, `purpose`, `decision` |
+| `POST /api/v1/modules/parents/fee-claims` | Report a payment made for your child | `termId`, `accountId`, `mode`, `remitterBank`, `remitterBranch`, `remitterIfsc`, `drawerAccount`, `accountHolder`, `contactPhone`, `transferredOn`, `amount`, `studentId`, `utr`, `bankReference` |
 | `POST /api/v1/modules/parents/links/adult` | A student aged 18 or over keeps or ends a guardian’s access. Audited. | `linkId`, `keep` |
 | `GET /api/v1/modules/parents/guardians` | Guardian invitations: open, accepted, expired or withdrawn, and for which children | See runtime OpenAPI schema |
 | `POST /api/v1/modules/parents/guardians/invite` | Invite a guardian, at their own address, for a child | `email`, `studentId`, `relation`, `days` |
