@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
+import { createRequire } from 'node:module'
 import { sql } from 'drizzle-orm'
 import { authDb, institutionModules, withTenant } from '@campusos/db'
 import { createDepartment, createProgram, createSection, createTerm, setStudentProfile } from '@campusos/module-academic/api'
@@ -228,4 +229,80 @@ test('the application keeps the applicant\'s details, and a future date of birth
   const [row] = await listApplications(actors.admin)
   assert.equal(row!.name, 'Asha Rao')
   assert.equal(row!.email, 'asha.applicant@example.test')
+})
+
+const ownerClient = () => {
+  const { Client } = createRequire(new URL('../../db/package.json', import.meta.url))('pg') as { Client: new (o: { connectionString?: string }) => { connect(): Promise<void>; query(q: string, v?: unknown[]): Promise<unknown>; end(): Promise<void> } }
+  return new Client({ connectionString: process.env.MIGRATION_DATABASE_URL })
+}
+
+test('a failure after the account is created leaves nothing behind (user, invitation, roll counter, seat, invoice)', async () => {
+  const actors = await setup()
+  await enableFees(actors.id)
+  await createFeeItem(actors.admin, { programId: actors.bsc.id, termId: actors.term.id, label: 'Tuition', amount: '50000' })
+  const { application } = await offered(actors, { applicantEmail: 'rollback.me@example.test' })
+  const owner = ownerClient()
+  await owner.connect()
+  try {
+    // The last step of acceptance, the invoice insert, is made to fail.
+    await owner.query(`create or replace function p112a_forced_failure() returns trigger language plpgsql as $$ begin raise exception 'forced failure'; end $$`)
+    await owner.query('create trigger p112a_forced_failure before insert on fee_invoices for each row execute function p112a_forced_failure()')
+    await assert.rejects(accept(actors.admin, { applicationId: application.id, sectionId: actors.section.id }), (e) => /forced failure/.test(String((e as { cause?: unknown }).cause)))
+  } finally {
+    await owner.query('drop trigger if exists p112a_forced_failure on fee_invoices').catch(() => {})
+    await owner.end()
+  }
+  const left = async (q: ReturnType<typeof sql>) => (await rows(actors.id, q))[0]!.n
+  assert.equal(await left(sql`select count(*)::int as n from users where email = 'rollback.me@example.test'`), 0)
+  assert.equal(await left(sql`select count(*)::int as n from invitations where email = 'rollback.me@example.test'`), 0)
+  assert.equal(await left(sql`select count(*)::int as n from admissions_roll_counters`), 0)
+  assert.equal(await left(sql`select count(*)::int as n from academic_section_members where section_id = ${actors.section.id}`), 0)
+  assert.equal(await left(sql`select count(*)::int as n from fee_invoices`), 0)
+  const [row] = await rows(actors.id, sql`select status from admissions_applications where id = ${application.id}`)
+  assert.equal(row!.status, 'offered')
+})
+
+test('a roll number typed by hand between the free check and the insert is a 409, not a 500', async () => {
+  const actors = await setup()
+  const { application } = await offered(actors)
+  const owner = ownerClient()
+  await owner.connect()
+  let pending: Promise<unknown> | undefined
+  try {
+    // An uncommitted hand-typed roll: the acceptance's free check cannot see it, its insert waits on it.
+    await owner.query('begin')
+    await owner.query('insert into academic_student_profiles (institution_id, student_id, roll_no) values ($1, $2, $3)', [actors.id, actors.other.id, '2026BSC0001'])
+    pending = accept(actors.admin, { applicationId: application.id, sectionId: actors.section.id }).then(() => null, (e: unknown) => e)
+    const deadline = Date.now() + 10_000
+    for (;;) {
+      const r = await authDb.execute<{ n: number }>(
+        sql`select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and query ilike '%academic_student_profiles%'`,
+      )
+      if (r.rows[0]!.n >= 1) break
+      if (Date.now() > deadline) throw new Error('the acceptance never waited on the roll number')
+      await new Promise((r) => setTimeout(r, 50))
+    }
+    await owner.query('commit')
+  } finally {
+    await owner.query('rollback').catch(() => {})
+    await owner.end()
+  }
+  const error = (await pending) as { code?: string; status?: number }
+  assert.equal(code(error), 'roll_just_taken')
+  assert.equal(error.status, 409)
+  const [row] = await rows(actors.id, sql`select status from admissions_applications where id = ${application.id}`)
+  assert.equal(row!.status, 'offered')
+})
+
+test('a reused student already seated in another section of the programme and year is refused, not seated twice', async () => {
+  const actors = await setup()
+  const other = await createSection(actors.admin, { programId: actors.bsc.id, label: 'B', admissionYear: 2026 })
+  await rows(actors.id, sql`insert into academic_section_members (institution_id, section_id, user_id) values (${actors.id}, ${actors.section.id}, ${actors.student.id}) returning 1 as n`)
+  const { application } = await offered(actors, { applicantEmail: actors.student.email })
+  await assert.rejects(accept(actors.admin, { applicationId: application.id, sectionId: other.id }), (e) => code(e) === 'already_seated' && (e as { status?: number }).status === 409)
+  const seats = await rows(actors.id, sql`select section_id from academic_section_members where user_id = ${actors.student.id}`)
+  assert.equal(seats.length, 1)
+  // The section the student already holds is not a conflict.
+  const result = await accept(actors.admin, { applicationId: application.id, sectionId: actors.section.id })
+  assert.equal(result.studentId, actors.student.id)
 })
