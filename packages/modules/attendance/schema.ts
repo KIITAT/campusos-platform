@@ -8,6 +8,7 @@ import {
   integer,
   pgEnum,
   pgTable,
+  primaryKey,
   smallint,
   text,
   timestamp,
@@ -15,7 +16,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core'
 import { institutions, tenantPolicy, users } from '@campusos/db'
-import { offerings, rooms, slots } from '@campusos/module-academic/schema'
+import { offerings, rooms, sections, slots } from '@campusos/module-academic/schema'
 
 /**
  * Attendance. dependsOn academic, so a session is always started against a
@@ -232,6 +233,30 @@ export const records = pgTable(
       sql`method <> 'manual_override' or (override_reason is not null and length(trim(override_reason)) > 0)`,
     ),
     tenantPolicy('attendance_records'),
+  ],
+)
+
+/**
+ * A section's register, once a day, kept by its class teacher (P1-13a). One
+ * row per student per day; absent is a row with present false, so a day is
+ * held for a section once it has any mark. Not a session: no slot, no token,
+ * no device -- a school's morning roll call.
+ */
+export const dailyMarks = pgTable(
+  'attendance_daily_marks',
+  {
+    institutionId: tenantId(),
+    sectionId: uuid('section_id').notNull().references(() => sections.id, { onDelete: 'cascade' }),
+    onDate: date('on_date').notNull(),
+    studentId: text('student_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    present: boolean().notNull(),
+    markedBy: text('marked_by').references(() => users.id, { onDelete: 'set null' }),
+    markedAt: timestamp('marked_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ name: 'attendance_daily_marks_pk', columns: [t.sectionId, t.onDate, t.studentId] }),
+    index('attendance_daily_marks_student').on(t.studentId, t.onDate),
+    tenantPolicy('attendance_daily_marks'),
   ],
 )
 

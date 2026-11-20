@@ -1,7 +1,8 @@
 import type { PluginPage } from '@campusos/module-framework'
-import { listOfferings, listStructure, type Actor as Academic } from '@campusos/module-academic/api'
+import { listOfferings, listSections, listStructure, type Actor as Academic } from '@campusos/module-academic/api'
 import {
   creditLoad,
+  listFedSections,
   listRegistrations,
   listRoster,
   listSeats,
@@ -220,12 +221,19 @@ export const pages: PluginPage[] = [
     roles: [...STAFF],
     async load(actor) {
       const a = actor as Actor
-      const [seats, offerings] = await Promise.all([
+      const [seats, offerings, fedSections, sections] = await Promise.all([
         listSeats(a),
         listOfferings(asAcademic(a)),
+        listFedSections(a),
+        listSections(asAcademic(a)),
       ])
       return {
         seats,
+        fedSections,
+        sectionOptions: sections.map((s) => ({
+          value: s.id,
+          label: `${s.programCode} ${s.admissionYear} ${s.label}`,
+        })),
         offeringOptions: offerings.map((o) => ({
           value: o.id,
           label: `${o.courseCode} ${o.sectionLabel} - ${o.courseTitle}`,
@@ -266,6 +274,33 @@ export const pages: PluginPage[] = [
           },
           { name: 'capacity', label: 'Seats', kind: 'number' },
           { name: 'waitlistCapacity', label: 'Waiting list', kind: 'number', optional: true },
+        ],
+      },
+      {
+        kind: 'table',
+        title: 'Sections that follow registration',
+        rows: 'fedSections',
+        empty: 'Every section is kept by hand.',
+        columns: [
+          { key: 'programCode', label: 'Programme', kind: 'code' },
+          { key: 'admissionYear', label: 'Year' },
+          { key: 'label', label: 'Section' },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Section membership',
+        note: 'Ticked: a student who registers for a course in this section joins it, and leaves it on dropping their last course in it. Students already registered join now. Unticked: membership is kept by hand again; nobody is removed.',
+        submit: 'Save',
+        path: '/sections/feed',
+        fields: [
+          {
+            name: 'sectionId',
+            label: 'Section',
+            kind: 'select',
+            options: 'sectionOptions',
+          },
+          { name: 'fed', label: 'Membership follows registration', kind: 'checkbox', optional: true },
         ],
       },
     ],

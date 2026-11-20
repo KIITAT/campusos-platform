@@ -7,31 +7,31 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 
 | Module | Version | Pages | API routes | Dependencies |
 |---|---|---:|---:|---|
-| [Academic Core](#academic) | 0.11.0 | 7 | 42 | None |
-| [Admissions](#admissions) | 0.7.0 | 3 | 9 | academic |
+| [Academic Core](#academic) | 0.12.0 | 7 | 42 | None |
+| [Admissions](#admissions) | 0.8.0 | 3 | 9 | academic |
 | [Alumni and events](#alumni) | 0.5.0 | 4 | 12 | None |
-| [Attendance & QR](#attendance) | 0.14.0 | 7 | 28 | academic, notices |
-| [Student Care](#care) | 0.10.0 | 7 | 24 | academic, notices |
-| [Ceremonies](#ceremonies) | 0.6.0 | 5 | 18 | academic |
-| [Sales CRM](#crm) | 0.5.0 | 4 | 32 | finance, notices |
-| [Enrollment](#enrollment) | 0.6.0 | 3 | 8 | academic |
-| [Examinations & Grading](#examinations) | 0.18.0 | 9 | 36 | academic, notices |
-| [Feedback](#feedback) | 0.7.0 | 8 | 19 | academic |
-| [Fees & Finance](#fees) | 0.22.0 | 11 | 40 | academic, finance, notices |
+| [Attendance & QR](#attendance) | 0.16.0 | 8 | 30 | academic, notices |
+| [Student Care](#care) | 0.11.0 | 7 | 24 | academic, notices |
+| [Ceremonies](#ceremonies) | 0.7.0 | 5 | 18 | academic |
+| [Sales CRM](#crm) | 0.7.0 | 4 | 32 | finance, notices |
+| [Enrollment](#enrollment) | 0.8.0 | 3 | 9 | academic |
+| [Examinations & Grading](#examinations) | 0.21.0 | 9 | 36 | academic, notices |
+| [Feedback](#feedback) | 0.8.0 | 8 | 19 | academic |
+| [Fees & Finance](#fees) | 0.25.0 | 11 | 40 | academic, finance, notices |
 | [Finance & Books](#finance) | 0.21.0 | 92 | 208 | None |
 | [Helpdesk and grievance](#helpdesk) | 0.5.0 | 2 | 7 | None |
-| [Hostel](#hostel) | 0.9.0 | 5 | 18 | academic |
-| [HR & Payroll](#hr) | 0.22.0 | 18 | 134 | finance, notices |
-| [Library](#library) | 0.13.0 | 5 | 18 | academic |
-| [Mentoring](#mentoring) | 0.18.0 | 6 | 19 | academic, notices |
-| [Communication & Notices](#notices) | 0.13.0 | 4 | 13 | academic |
-| [Parent Portal](#parents) | 0.18.0 | 4 | 11 | academic |
-| [Placement](#placement) | 0.10.0 | 8 | 15 | academic, notices |
-| [Projects and timesheets](#projects) | 0.3.0 | 6 | 27 | finance |
-| [Quizzes](#quizzes) | 0.7.0 | 7 | 22 | academic |
-| [Reports](#reports) | 0.1.0 | 5 | 10 | notices |
+| [Hostel](#hostel) | 0.11.0 | 5 | 18 | academic |
+| [HR & Payroll](#hr) | 0.24.0 | 18 | 134 | finance, notices |
+| [Library](#library) | 0.14.0 | 5 | 18 | academic |
+| [Mentoring](#mentoring) | 0.21.0 | 6 | 19 | academic, notices |
+| [Communication & Notices](#notices) | 0.14.0 | 4 | 13 | academic |
+| [Parent Portal](#parents) | 0.21.0 | 4 | 11 | academic |
+| [Placement](#placement) | 0.11.0 | 8 | 15 | academic, notices |
+| [Projects and timesheets](#projects) | 0.4.0 | 6 | 27 | finance |
+| [Quizzes](#quizzes) | 0.8.0 | 7 | 22 | academic |
+| [Reports](#reports) | 0.2.0 | 5 | 10 | notices |
 | [Skills](#skills) | 0.5.0 | 5 | 12 | None |
-| [Timetable](#timetable) | 0.8.0 | 12 | 42 | academic |
+| [Timetable](#timetable) | 0.9.0 | 12 | 42 | academic |
 | [Transport](#transport) | 0.4.0 | 4 | 12 | None |
 
 <a id="academic"></a>
@@ -84,7 +84,7 @@ Source: `campusos-platform/packages/modules/academic/`.
 | `POST /api/v1/modules/academic/eligibility` | Whether a student may take a course, and what is missing if not | `studentId`, `courseId` |
 | `POST /api/v1/modules/academic/completions/correct` | Correct a completed course, with a reason that goes on the record | `completionId`, `credits`, `gradePoints`, `gradeLabel`, `passed`, `reason` |
 | `POST /api/v1/modules/academic/degree-audit` | What a student's degree still needs, and what the average is | `studentId`, `studentProgramId` |
-| `POST /api/v1/modules/academic/profile` | Set a student's roll and registration numbers, phone and address (the office) | `studentId`, `rollNo`, `registrationNo`, `phone`, `addressLine`, `city`, `state`, `postalCode`, `emergencyContact`, `dateOfBirth`, `apaarId` |
+| `POST /api/v1/modules/academic/profile` | Set a student's roll and registration numbers, phone and address (the office) | `studentId`, `rollNo`, `registrationNo`, `phone`, `addressLine`, `city`, `state`, `postalCode`, `emergencyContact`, `house`, `dateOfBirth`, `apaarId` |
 | `POST /api/v1/modules/academic/consents` | Record a choice for a student: a guardian for a minor, the student once adult, or the office from a form | `studentId`, `purpose`, `decision`, `note` |
 | `POST /api/v1/modules/academic/classes/change` | Cancel, move or hand to a substitute one meeting of a class | `slotId`, `onDate`, `kind`, `movedOn`, `movedStarts`, `movedEnds`, `movedRoomId`, `substituteId`, `reason` |
 | `POST /api/v1/modules/academic/classes/change/withdraw` | Withdraw a change: the class meets as usual | `changeId`, `reason` |
@@ -183,6 +183,7 @@ Source: `campusos-platform/packages/modules/attendance/`.
 | `/m/attendance/device` | My attendance device | student |
 | `/m/attendance/me` | My attendance | student |
 | `/m/attendance/absentees` | Absentees | institution_admin, super_admin, hod, faculty |
+| `/m/attendance/daily` | Daily register | institution_admin, super_admin, hod, faculty |
 | `/m/attendance/excuses` | Excused absence | institution_admin, super_admin, hod, faculty |
 
 ### Operations
@@ -203,6 +204,8 @@ Source: `campusos-platform/packages/modules/attendance/`.
 | `GET /api/v1/modules/attendance/excuses` | Excused absences: a student’s own, a teacher’s classes’, or all for the office | See runtime OpenAPI schema |
 | `POST /api/v1/modules/attendance/excuses` | Excuse absence over days, for one class or all of a student’s classes | `studentId`, `offeringId`, `fromOn`, `toOn`, `kind`, `reason` |
 | `POST /api/v1/modules/attendance/excuses/revoke` | Revoke an excuse, with a reason | `excuseId`, `reason` |
+| `GET /api/v1/modules/attendance/daily` | A section’s daily register for a day: its students and who is marked absent | `sectionId` (query), `onDate` (query) |
+| `POST /api/v1/modules/attendance/daily` | Mark a section’s attendance for a day; everyone not listed absent is present | `sectionId`, `onDate`, `absent` |
 | `GET /api/v1/modules/attendance/absentees` | Everybody in a class with their attendance, those short of the minimum first, and who missed the last session | `offeringId` (query) |
 | `GET /api/v1/modules/attendance/summary` | A student’s attendance class by class: held, present, excused, absent, percentage, and classes needed to reach the minimum | `studentId` (query), `termId` (query) |
 | `GET /api/v1/modules/attendance/sessions` | Open sessions the caller may act on | See runtime OpenAPI schema |
@@ -393,6 +396,7 @@ Source: `campusos-platform/packages/modules/enrollment/`.
 | `POST /api/v1/modules/enrollment/register` | Register a student for an offering, or place them on its waiting list | `studentId`, `offeringId`, `effectiveOn`, `reason` |
 | `POST /api/v1/modules/enrollment/drop` | Drop or withdraw from an offering, whichever the term calendar allows | `studentId`, `offeringId`, `effectiveOn`, `reason` |
 | `POST /api/v1/modules/enrollment/seats` | Set how many may sit in an offering, and how many may queue | `offeringId`, `capacity`, `waitlistCapacity` |
+| `POST /api/v1/modules/enrollment/sections/feed` | Whether a section's membership follows registration; marking it brings in the students already registered | `sectionId`, `fed` |
 | `GET /api/v1/modules/enrollment/seats` | Every capped offering, with seats taken and queued | See runtime OpenAPI schema |
 | `GET /api/v1/modules/enrollment/roster` | Who is on an offering, with waiting-list places in order | See runtime OpenAPI schema |
 | `GET /api/v1/modules/enrollment/registrations` | A student's registrations; the caller's own without a studentId | See runtime OpenAPI schema |

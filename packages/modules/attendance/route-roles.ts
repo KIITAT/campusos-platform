@@ -22,6 +22,8 @@ export const routeRoles: Record<string, readonly Role[]> = {
   'POST /excuses': TEACHING,
   'POST /excuses/revoke': TEACHING,
   'GET /absentees': TEACHING,
+  'GET /daily': TEACHING,
+  'POST /daily': TEACHING,
   'GET /summary': [...TEACHING, 'student'],
   'GET /sessions': TEACHING,
   'POST /sessions': TEACHING,
