@@ -1,12 +1,13 @@
 import { sql } from 'drizzle-orm'
-import { withTenant } from '@campusos/db'
+import { audit, withTenant } from '@campusos/db'
 import { moduleEnabled } from '@campusos/module-framework'
 import { attendanceSummaryWithin, type AttendanceLine, type AttendanceRules } from '@campusos/module-attendance/api'
 import { manifest as attendanceManifest } from '@campusos/module-attendance/manifest'
 import { postedSql } from '@campusos/module-fees/api'
 import { manifest as feesManifest } from '@campusos/module-fees/manifest'
 import { manifest } from '../manifest'
-import { ExamError } from './operations'
+import { setEligibilityWaiverSchema } from './cycle-schemas'
+import { ExamError, type Actor } from './operations'
 
 /**
  * Who may sit (FUNC-01, P1-07b): attendance at the institution's own minimum
@@ -116,4 +117,72 @@ const REFUSAL: Record<Blocker, string> = {
 
 export function assertEligible(value: Eligibility): void {
   if (value.blocker) throw new ExamError(409, value.blocker, REFUSAL[value.blocker])
+}
+
+// --- the examination cell's waiver ---------------------------------------------------
+
+/**
+ * Grant or revoke one waiver for one student, term and check. Idempotent: a
+ * repeat changes nothing and audits nothing. The reason belongs to the audit
+ * event (actor included), not to the waiver row.
+ */
+export async function setEligibilityWaiver(actor: Actor, input: unknown) {
+  if (!actor.institutionId) throw new ExamError(400, 'no_institution', 'no institution for this session')
+  const tenant = actor.institutionId
+  if (actor.role !== 'institution_admin' && actor.role !== 'super_admin') throw new ExamError(403, 'forbidden', 'the examination cell does this')
+  const d = setEligibilityWaiverSchema.parse(input)
+  const none = () => new ExamError(404, 'no_such_exam_candidate', 'No such examination candidate.')
+  return withTenant(tenant, async (tx) => {
+    await lockEligibility(tx, tenant, d.studentId, d.termId)
+    const [term] = (await tx.execute(sql`select id from academic_terms where id = ${d.termId}`)).rows
+    const [student] = (
+      await tx.execute(sql`select 1 from users where id = ${d.studentId} and institution_id = ${tenant} and role = 'student' and erased_at is null`)
+    ).rows
+    if (!term || !student) throw none()
+    if (d.action === 'grant') {
+      // The roster test is the one enrolment uses; a revoke needs none, so a withdrawn student's waiver can still go.
+      const [rostered] = (
+        await tx.execute(sql`
+          select 1 from academic_offerings o
+            join academic_section_members m on m.section_id = o.section_id and m.user_id = ${d.studentId}
+           where o.term_id = ${d.termId} limit 1`)
+      ).rows
+      if (!rostered) throw none()
+    }
+    const rows =
+      d.action === 'grant'
+        ? (
+            await tx.execute(sql`
+              insert into exam_eligibility_waivers (institution_id, term_id, student_id, check_kind)
+              values (${tenant}, ${d.termId}, ${d.studentId}, ${d.check})
+              on conflict do nothing returning check_kind`)
+          ).rows
+        : (
+            await tx.execute(sql`
+              delete from exam_eligibility_waivers
+               where institution_id = ${tenant} and term_id = ${d.termId} and student_id = ${d.studentId} and check_kind = ${d.check}
+              returning check_kind`)
+          ).rows
+    if (rows.length) {
+      await audit(tx, {
+        institutionId: tenant,
+        actorId: actor.id,
+        actorEmail: actor.email ?? null,
+        moduleId: 'examinations',
+        action: d.action === 'grant' ? 'eligibility.waiver_granted' : 'eligibility.waiver_revoked',
+        entity: 'exam_eligibility_waivers',
+        entityId: `${d.termId}:${d.studentId}:${d.check}`,
+        reason: d.reason,
+        detail: { termId: d.termId, studentId: d.studentId, check: d.check },
+      })
+    }
+    return {
+      termId: d.termId,
+      studentId: d.studentId,
+      check: d.check,
+      waived: d.action === 'grant',
+      changed: rows.length > 0,
+      notice: d.action === 'grant' ? 'Eligibility waiver saved.' : 'Eligibility waiver revoked.',
+    }
+  })
 }
