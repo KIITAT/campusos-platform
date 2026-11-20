@@ -19,6 +19,10 @@ export const waitForCode = () => new DocumentError(409, 'challenge_wait', 'Wait 
 export const mailUnavailable = () => new DocumentError(503, 'document_mail_unavailable', 'Document confirmation email is unavailable.')
 export const badUpload = (error: unknown) => error instanceof UploadError ? new DocumentError(400, error.code, error.message) : error
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+/** A malformed id is a missing document, not a database error. */
+export const isUuid = (id: string) => UUID.test(id)
+
 /** The role gate every operation starts with; the record check comes after it. */
 export function tenant(actor: Actor, roles: readonly Role[] = MEMBERS): string {
   if (!actor.institutionId) throw new DocumentError(400, 'no_institution', 'An institution is required.')
@@ -58,7 +62,7 @@ export const ACCESS_COLUMNS = sql`d.id::text as id, d.institution_id::text as "i
  * `write` narrows to an administrator.
  */
 export async function requireDocument(tx: Tx, actor: Actor, id: string, write = false): Promise<DocumentAccess> {
-  if (!actor.institutionId || !/^[0-9a-f-]{36}$/i.test(id)) throw missing()
+  if (!actor.institutionId || !isUuid(id)) throw missing()
   const me = (await tx.execute(sql`select role from users where id = ${actor.id} and institution_id = ${actor.institutionId} and erased_at is null`)).rows[0] as { role: Role } | undefined
   if (!me || me.role === 'pending') throw missing()
   const row = (await tx.execute(sql`select ${ACCESS_COLUMNS} from documents_files d left join documents_sign_requests r on (r.institution_id, r.document_id) = (d.institution_id, d.id) where d.id = ${id}`)).rows[0] as unknown as DocumentAccess | undefined

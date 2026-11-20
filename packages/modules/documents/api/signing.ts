@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import { sql } from 'drizzle-orm'
 import { withTenant } from '@campusos/db'
 import { ADMIN, hasRole, type Role } from '@campusos/module-framework'
-import { DocumentError, closed, expired, integrity, invalidCode, logDocument, missing, openFirst, requireDocument, tenant, waitForCode, type Actor, type Tx } from './core'
+import { DocumentError, closed, expired, integrity, invalidCode, isUuid, logDocument, missing, openFirst, requireDocument, tenant, waitForCode, type Actor, type Tx } from './core'
 import { actualHash, failIntegrity } from './files'
 import { assentSchema, challengeSchema, closeSchema, requestSchema } from './schemas'
 
@@ -34,8 +34,9 @@ interface Locked {
  * every mutation, so no background job has to close a request.
  */
 async function lockRequest(tx: Tx, actor: Actor, requestId: string, who: 'signer' | 'any' = 'signer'): Promise<Locked> {
+  if (!isUuid(requestId)) throw missing()
   const [me] = (await tx.execute(sql`select email, role from users where id = ${actor.id} and institution_id = ${actor.institutionId} and erased_at is null for share`)).rows as { email: string; role: Role }[]
-  if (!me || (who === 'any' && !hasRole(me.role, ADMIN))) throw missing()
+  if (!me || me.role === 'pending' || (who === 'any' && !hasRole(me.role, ADMIN))) throw missing()
   const [ref] = (await tx.execute(sql`select document_id::text as "documentId" from documents_sign_requests where id = ${requestId}`)).rows as { documentId: string }[]
   if (!ref) throw missing()
   await tx.execute(sql`select 1 from documents_files where id = ${ref.documentId} for share`)
@@ -55,6 +56,7 @@ export async function requestAssent(actor: Actor, input: unknown): Promise<{ req
   const data = requestSchema.parse(input)
   const result = await withTenant(institutionId, async tx => {
     const access = await requireDocument(tx, actor, data.documentId, true)
+    if (access.subjectUserId === actor.id) throw new DocumentError(400, 'self_signing', 'Choose a signer other than the administrator who sends the request.')
     if (access.scope !== 'signer' || access.mediaType !== 'application/pdf') throw new DocumentError(400, 'not_signable', 'Only an offer, contract or agreement PDF can be sent for assent.')
     await tx.execute(sql`select 1 from users where id = ${actor.id} and erased_at is null for share`)
     const [subject] = (await tx.execute(sql`select 1 from users where id = ${access.subjectUserId} and institution_id = ${institutionId} and erased_at is null for share`)).rows
@@ -142,7 +144,7 @@ export async function recordAssent(actor: Actor, input: unknown): Promise<{ sign
     if (await actualHash(tx, request.documentId) !== request.fileSha256) { await failIntegrity(tx, actor, request.documentId); return null }
     const [clock] = (await tx.execute(sql`select to_char(date_trunc('milliseconds', clock_timestamp()) at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as iso`)).rows as { iso: string }[]
     const signatureId = randomUUID()
-    const detail = { requestId: request.id, signerId: actor.id, signedAt: clock!.iso, method: METHOD, intentVersion: INTENT_VERSION, sha256: request.fileSha256 }
+    const detail = { requestId: request.id, signerId: actor.id, signedAt: clock!.iso, method: METHOD, intentVersion: INTENT_VERSION, sha256: request.fileSha256, recipientDigest: request.recipientDigest }
     const reason = 'Signer recorded electronic assent'
     await tx.execute(sql`select set_config('app.audit_reason', ${reason}, true)`)
     await tx.execute(sql`insert into audit_log (id, institution_id, actor_id, actor_email, module_id, action, entity, entity_id, reason, detail)

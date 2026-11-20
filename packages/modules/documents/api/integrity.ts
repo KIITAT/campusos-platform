@@ -31,8 +31,9 @@ export async function evidenceHolds(tx: Tx, institutionId: string, documentId: s
   if (!link || link.id !== sig.id || link.institution_id !== institutionId || link.actor_id !== sig.signerId) return false
   if (link.module_id !== 'documents' || link.action !== 'document.assented' || link.entity !== 'documents_files' || link.entity_id !== documentId) return false
   const expected = { requestId: sig.requestId, signerId: sig.signerId, signedAt: sig.signedAt, method: sig.method, intentVersion: sig.intentVersion, sha256: sig.sha256 }
-  const recorded = link.detail ? JSON.parse(link.detail) as Record<string, unknown> : null
-  if (!recorded || JSON.stringify(Object.entries(recorded).sort()) !== JSON.stringify(Object.entries(expected).sort())) return false
+  const { recipientDigest, ...recorded } = (link.detail ? JSON.parse(link.detail) : {}) as Record<string, unknown>
+  // the confirming mailbox is sealed in the audit row only (the request row is cleared on signing)
+  if (typeof recipientDigest !== 'string' || !/^[0-9a-f]{64}$/.test(recipientDigest) || JSON.stringify(Object.entries(recorded).sort()) !== JSON.stringify(Object.entries(expected).sort())) return false
   const seq = Number(link.seq)
   let before: Buffer
   if (seq === 1) before = genesis(institutionId)

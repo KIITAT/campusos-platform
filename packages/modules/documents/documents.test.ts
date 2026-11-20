@@ -162,7 +162,7 @@ async function seedSigned(campus: Campus, over: { ageDays?: number; retainUntilD
   await authDb.execute(sql`update documents_sign_requests set viewed_at = created_at + interval '1 hour', code_digest = repeat('a', 64), recipient_digest = repeat('b', 64),
     code_issued_at = created_at + interval '1 hour', code_expires_at = created_at + interval '70 minutes' where id = ${requestId}`)
   const [row] = (await authDb.execute(sql`select to_char(date_trunc('milliseconds', created_at + interval '65 minutes') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as at from documents_files where id = ${file.id}`)).rows as { at: string }[]
-  const detail = { requestId, signerId: campus.signer.id, signedAt: row!.at, method: 'account_mailbox_v1', intentVersion: 'documents-assent-v1', sha256: file.sha256 }
+  const detail = { requestId, signerId: campus.signer.id, signedAt: row!.at, method: 'account_mailbox_v1', intentVersion: 'documents-assent-v1', sha256: file.sha256, recipientDigest: 'b'.repeat(64) }
   await authDb.execute(sql`insert into audit_log (id, institution_id, actor_id, module_id, action, entity, entity_id, reason, detail)
     values (${signatureId}, ${campus.id}, ${campus.signer.id}, 'documents', 'document.assented', 'documents_files', ${file.id}, 'Signer recorded assent', ${JSON.stringify(detail)}::jsonb)`)
   await authDb.execute(sql`insert into documents_signatures (id, institution_id, document_id, request_id, signer_id, signed_at, method, intent_version, sha256)

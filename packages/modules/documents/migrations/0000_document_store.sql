@@ -162,7 +162,8 @@ BEGIN
       AND a.entity='documents_files' AND a.entity_id=NEW.document_id::text
       AND a.detail=jsonb_build_object('requestId',NEW.request_id,'signerId',NEW.signer_id,
         'signedAt',to_char(NEW.signed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-        'method',NEW.method,'intentVersion',NEW.intent_version,'sha256',NEW.sha256)
+        'method',NEW.method,'intentVersion',NEW.intent_version,'sha256',NEW.sha256,
+        'recipientDigest',r.recipient_digest)
   ) THEN RETURN NEW; END IF;
   RAISE EXCEPTION 'signing evidence is append-only and requires matching sealed audit'
     USING ERRCODE='23514';
