@@ -92,9 +92,11 @@ export async function postPayment(
     method: Method
     receivedAt: Date
   },
+  postingDate: string,
 ): Promise<void> {
   await postWithin(tx, institutionId, actorId, {
     occurredAt: payment.receivedAt,
+    postingDate,
     memo: `Receipt ${payment.receiptNo}`,
     sourceModule: 'fees',
     sourceRef: `payment:${payment.id}`,

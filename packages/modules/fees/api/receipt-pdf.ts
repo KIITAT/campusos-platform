@@ -1,5 +1,5 @@
 import { PDFDocument, rgb } from 'pdf-lib'
-import { pdfText, type Weight } from '@campusos/module-framework/pdf'
+import { pdfText, unprintable, type Weight } from '@campusos/module-framework/pdf'
 import { plainPaise } from '@campusos/money'
 import { rupeesInWords } from './words'
 
@@ -14,6 +14,8 @@ export interface ReceiptData {
   method: string
   reference: string | null
   receivedAt: Date
+  /** The day the books post it, in the institution's zone (set at recording). */
+  receivedOn?: string | null
   reconciledAt: Date | null
   /** The institution's address and PAN, from finance's settings (ACC-30, D21). */
   address?: string | null
@@ -21,10 +23,22 @@ export interface ReceiptData {
   /** A voided or returned receipt is stamped so (D22). */
   status?: 'live' | 'voided' | 'bounced'
   voidedAt?: Date | null
+  /** The day the reversal posted. */
+  voidedOn?: string | null
   bouncedOn?: string | null
   voidReason?: string | null
   /** The fee heads as they stood when the money was received (D20). */
   breakup?: { heads: { label: string; chargedPaise: number; waivedPaise: number }[] } | null
+}
+
+/**
+ * Free text a clerk typed (a void reason, a fee head, an address line) can hold
+ * a character the fonts lack. The receipt prints a ? for it rather than refuse
+ * to render: the document that proves a receipt was voided must always open.
+ */
+function printable(s: string): string {
+  for (let bad = unprintable(s); bad; bad = unprintable(s)) s = s.split(bad).join('?')
+  return s
 }
 
 /** Heads printed before the rest are summed up in one line. */
@@ -58,7 +72,7 @@ export async function receiptPdf(d: ReceiptData): Promise<Uint8Array> {
   let y = H - M
 
   const text = (s: string, x: number, size = 10, f: Weight = font, color = ink) =>
-    t.draw(page, s, { x, y, size, weight: f, color })
+    t.draw(page, printable(s), { x, y, size, weight: f, color })
 
   text(d.institutionName || 'Institution', M, 15, bold)
   y -= 16
@@ -94,7 +108,7 @@ export async function receiptPdf(d: ReceiptData): Promise<Uint8Array> {
   row('Term', `${d.termCode} — ${d.termName}`)
   row('Method', d.method.replace(/_/g, ' '))
   if (d.reference) row('Reference', d.reference)
-  row('Received on', d.receivedAt.toISOString().slice(0, 10))
+  row('Received on', d.receivedOn ?? d.receivedAt.toISOString().slice(0, 10))
 
   y -= 10
   text('Amount', M, 10, bold)
@@ -124,7 +138,7 @@ export async function receiptPdf(d: ReceiptData): Promise<Uint8Array> {
 
   const reason = (d.voidReason ?? '').slice(0, 120)
   if (d.status === 'voided') {
-    text(`VOID: cancelled on ${(d.voidedAt ?? new Date()).toISOString().slice(0, 10)}. ${reason}`, M, 10, bold, rgb(0.7, 0.1, 0.1))
+    text(`VOID: cancelled on ${d.voidedOn ?? (d.voidedAt ?? new Date()).toISOString().slice(0, 10)}. ${reason}`, M, 10, bold, rgb(0.7, 0.1, 0.1))
   } else if (d.status === 'bounced') {
     text(`CHEQUE RETURNED UNPAID on ${d.bouncedOn ?? ''}. ${reason}`, M, 10, bold, rgb(0.7, 0.1, 0.1))
   } else if (d.reconciledAt) {

@@ -380,13 +380,13 @@ export async function revokeWaiver(actor: Actor, input: unknown) {
  * counter's; its own count is no longer used. Receipts issued before keep
  * their R-000001 numbers.
  */
-async function nextReceiptNo(tx: Tx, tenant: string, receivedAt: Date): Promise<string> {
+async function nextReceiptNo(tx: Tx, tenant: string, day: string): Promise<string> {
   const [counter] = await tx
     .select({ prefix: receiptCounters.prefix })
     .from(receiptCounters)
     .where(eq(receiptCounters.institutionId, tenant))
   const prefix = counter?.prefix ?? 'R'
-  const { short } = await fiscalShort(tx, tenant, await localDayOf(tx, tenant, receivedAt))
+  const { short } = await fiscalShort(tx, tenant, day)
 
   await tx.insert(receiptSeries).values({ institutionId: tenant, fiscalYear: short }).onConflictDoNothing()
   const [row] = await tx
@@ -557,7 +557,10 @@ export async function recordPaymentWithin(tx: Tx, tenant: string, actor: Actor, 
     }
   }
 
-  const receiptNo = await nextReceiptNo(tx, tenant, data.receivedAt)
+  // The accounting day, worked out once: the receipt's year, the day it prints and
+  // the journal's posting day all come from it, whatever the zone does meanwhile.
+  const day = await localDayOf(tx, tenant, data.receivedAt)
+  const receiptNo = await nextReceiptNo(tx, tenant, day)
 
   // The fee heads as they stand now, printed on the receipt and kept (ACC-30, D20).
   const breakup = {
@@ -627,7 +630,7 @@ export async function recordPaymentWithin(tx: Tx, tenant: string, actor: Actor, 
   // and not an accounting event: the entry the student's receipt describes
   // happened when the money changed hands. A cheque that bounces is a
   // reversing entry, which is what the journal is for.
-  await postPayment(tx, tenant, actor.id, row!)
+  await postPayment(tx, tenant, actor.id, row!, day)
 
   return row!
 }
@@ -1289,6 +1292,8 @@ export async function paymentForReceipt(actor: Actor, paymentId: string) {
         studentId: feePayments.studentId,
         studentName: users.name,
         studentEmail: users.email,
+        receivedOn: sql<string | null>`(select e.posting_date::text from finance_journal_entries e where e.source_module = 'fees' and e.source_ref = 'payment:' || ${feePayments.id})`,
+        voidedOn: sql<string | null>`(select r.posting_date::text from finance_journal_entries r join finance_journal_entries e on e.id = r.reversal_of where e.source_module = 'fees' and e.source_ref = 'payment:' || ${feePayments.id})`,
         termCode: terms.code,
         termName: terms.name,
       })
