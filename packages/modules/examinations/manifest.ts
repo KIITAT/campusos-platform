@@ -17,6 +17,7 @@ export const manifest: ModuleManifest = {
     'hod',
     'faculty',
     'student',
+    'parent',
   ],
 
   navEntries: [

@@ -20,6 +20,8 @@ import { routeRoles } from './route-roles'
  * Indic pupil name, in two tenants.
  */
 
+/** The text of every draw, joined: printedText gives one entry per draw call. */
+const printed = async (bytes: Uint8Array) => (await printedText(bytes)).join(' | ')
 const SLUG = 'exam-rc-'
 let n = 0
 const NAME = 'অভিষেক চট্টোপাধ্যায়'
@@ -214,7 +216,7 @@ test('a published Class 6 report prints Indic text, 87.00 and A2, with no colleg
   assert.equal(r.areas.find((a) => a.key === 'discipline')!.grade, null)
   assert.equal(r.remark, 'Steady progress this term.')
   assert.equal(r.legend[0]!.grade, 'A1')
-  const text = await printedText(await api.reportCardPdf(r))
+  const text = await printed(await api.reportCardPdf(r))
   for (const want of [NAME, 'School term report', 'Mathematics', '87.00', 'A2', 'Art Education', 'Pending', 'Class 6', 'Section A']) assert.ok(text.includes(want), want)
   for (const never of ['SGPA', 'CGPA', 'Second Pupil', 'Other Pupil']) assert.ok(!text.includes(never), never)
 })
@@ -231,10 +233,10 @@ test('PDF a draft refuses, a published one downloads, and a revised mark reprint
   assert.equal(res.headers.get('cache-control'), 'no-store')
   assert.match(res.headers.get('content-disposition')!, /^inline; filename="report-card-[A-Za-z0-9._-]+\.pdf"$/)
   assert.ok(!res.headers.get('content-disposition')!.includes(NAME))
-  const first = await printedText(new Uint8Array(await res.arrayBuffer()))
+  const first = await printed(new Uint8Array(await res.arrayBuffer()))
   assert.ok(first.includes('87.00') && first.includes(NAME))
   await api.reviseMark(c.teacher, { examId: c.exams.term, studentId: c.pupil.id, obtained: 80, absent: false, reason: 'Re-evaluated answer script' })
-  const again = await printedText(new Uint8Array(await (await download(c, c.pupil)).arrayBuffer()))
+  const again = await printed(new Uint8Array(await (await download(c, c.pupil)).arrayBuffer()))
   assert.ok(again.includes('97.00') && again.includes('A1'), 'the reprint shows the revised value')
   await api.reviseMark(c.teacher, { examId: c.exams.term, studentId: c.pupil.id, obtained: null, absent: false, reason: 'Pending re-evaluation of paper' })
   await assert.rejects(download(c, c.pupil), (e) => code(e) === 'report_card_incomplete' && status(e) === 409)
@@ -279,7 +281,7 @@ test('PDF a long list of subjects wraps onto further pages and keeps every Indic
   const subjects = Array.from({ length: 30 }, (_, i) => ({ ...base.subjects[0]!, courseCode: `S${i}`, title: `${long}${i}` }))
   const bytes = await api.reportCardPdf({ ...base, subjects })
   assert.ok((await PDFDocument.load(bytes)).getPageCount() > 1)
-  const text = await printedText(bytes)
+  const text = await printed(bytes)
   assert.ok(text.includes('29'), 'the last subject is printed')
   assert.ok(text.includes('Class teacher'), 'signature lines are printed')
 })
@@ -355,7 +357,7 @@ test('an observation class publishes when every scholastic area is rated', async
   const r = await reportOf(c, c.pupil)
   assert.deepEqual([r.mode, r.subjects.length, r.templateName], ['observations', 0, 'Foundational progress'])
   assert.equal(r.areas.filter((x) => x.group === 'co_scholastic').every((x) => x.grade === null), true)
-  assert.ok((await printedText(await api.reportCardPdf(r))).includes('Language and literacy'))
+  assert.ok((await printed(await api.reportCardPdf(r))).includes('Language and literacy'))
 })
 
 test('who is a pupil: the section, the term and the roster decide, and an erased pupil has no report', async () => {

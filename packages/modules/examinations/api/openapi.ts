@@ -21,10 +21,27 @@ import {
   transcriptSchema,
   unpublishExamSchema,
 } from './schemas'
+import { schoolTemplateSchema } from './school-policy'
 
 const base = manifest.apiBasePath
 const err = z.object({ error: z.string(), message: z.string() })
 const json = (schema: z.ZodType) => ({ 'application/json': { schema } })
+const identity = { termId: z.uuid(), sectionId: z.uuid(), studentId: z.string() }
+const reportCardTemplateBody = z
+  .object({ termId: z.uuid(), programId: z.uuid(), expectedRevision: z.number().int().min(0), template: z.union([schoolTemplateSchema, z.string()]) })
+  .meta({ id: 'ExamReportCardTemplate' })
+const reportCardEntryBody = z.object({ ...identity, area: z.string(), value: z.string() }).meta({ id: 'ExamReportCardEntry' })
+const reportCardPublicationBody = z
+  .object({ ...identity, published: z.boolean(), reason: z.string().min(10).max(240) })
+  .meta({ id: 'ExamReportCardPublication' })
+const reportCardErrors = {
+  '400': { description: 'invalid_report_card_template or unknown_report_card_value', content: json(err) },
+  '404': { description: 'no_such_school_pupil', content: json(err) },
+  '409': {
+    description: 'report_card_stale, report_card_template_locked, report_card_published, report_card_incomplete, report_card_unpublished or no_report_card_template',
+    content: json(err),
+  },
+}
 const gated = {
   '403': { description: 'Forbidden, or the module is not enabled', content: json(err) },
 }
@@ -245,6 +262,42 @@ function cycle() {
       ['termId', 'studentId?'],
       'Held for a student whose required feedback is outstanding, where the institution says so.',
     ),
+    [`${base}/report-card/template`]: {
+      post: {
+        summary: 'Save a class’s school report template for a term (administrators)',
+        description: 'Compare-and-swap on expectedRevision (0 when no template has been saved). Refused once any pupil entry exists for the class and term. A repeat of the stored template changes nothing.',
+        tags: ['examinations'],
+        requestBody: { content: json(reportCardTemplateBody) },
+        responses: { '200': { description: 'OK', content: json(z.object({ revision: z.number(), notice: z.string() })) }, ...gated, ...reportCardErrors },
+      },
+    },
+    [`${base}/report-card/entry`]: {
+      post: {
+        summary: 'Set one area’s grade, or the remark, on a pupil’s school report (the class teacher or an administrator)',
+        description: 'value is a key from the template; __clear removes it. area remark sets the class teacher’s remark.',
+        tags: ['examinations'],
+        requestBody: { content: json(reportCardEntryBody) },
+        responses: { '200': { description: 'OK', content: json(z.object({ changed: z.boolean(), notice: z.string() })) }, ...gated, ...reportCardErrors },
+      },
+    },
+    [`${base}/report-card/publication`]: {
+      post: {
+        summary: 'Publish or withdraw a pupil’s school report, with a reason (the class teacher or an administrator)',
+        description: 'Publishing needs every subject’s result, or every scholastic area’s rating, to be complete.',
+        tags: ['examinations'],
+        requestBody: { content: json(reportCardPublicationBody) },
+        responses: { '200': { description: 'OK', content: json(z.object({ changed: z.boolean(), notice: z.string() })) }, ...gated, ...reportCardErrors },
+      },
+    },
+    [`${base}/report-card.pdf`]: {
+      get: {
+        summary: 'A published school term report as a PDF, read live from the published marks',
+        description: 'The pupil, a verified guardian (who names studentId) and staff related to the pupil. The pupil’s name, class, section, term and roll number only.',
+        tags: ['examinations'],
+        parameters: ['termId', 'sectionId', 'studentId?'].map((name) => ({ name: name.replace('?', ''), in: 'query', required: !name.endsWith('?'), schema: { type: 'string' } })),
+        responses: { '200': { description: 'OK', content: { 'application/pdf': {} } }, ...gated, ...reportCardErrors },
+      },
+    },
     [`${base}/papers`]: {
       ...get('The sealed question papers for an exam, without their contents', ['examId']),
       ...post('Upload a question paper (PDF), sealed until shortly before the exam', uploadPaperSchema),
