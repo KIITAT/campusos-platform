@@ -83,7 +83,7 @@ test('a stay is charged once per term, prorated', async () => {
   const first = await withTenant(c.id, (tx) => chargeStayWithin(tx, c.id, c.admin.id, s, c.termId))
   assert.equal(first?.amountPaise, 910_000)
   const again = await withTenant(c.id, (tx) => chargeStayWithin(tx, c.id, c.admin.id, s, c.termId))
-  assert.equal(again, null)
+  assert.equal(again?.existing, true)
   const rows = await charges(c.id)
   assert.equal(rows.length, 1)
   assert.equal(rows[0]!.sourceId, `a1:${c.termId}`)

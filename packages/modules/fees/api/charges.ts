@@ -155,7 +155,9 @@ const sourceOf = (stay: Stay, termId: string) => `${stay.stayId}:${termId}`
 
 /**
  * Charge a stay for one term, for the nights it covers. Nothing when it
- * covers none, and nothing twice: a live charge for the stay and term stands.
+ * covers none, and nothing twice: a live charge for the stay and term stands
+ * and comes back marked `existing`, so a run can tell "already charged" from
+ * "nothing to charge" (null).
  */
 export async function chargeStayWithin(tx: Tx, tenant: string, actorId: string, stay: Stay, termId: string) {
   const [t] = await tx.select(termColumns).from(terms).where(eq(terms.id, termId))
@@ -168,7 +170,7 @@ export async function chargeStayWithin(tx: Tx, tenant: string, actorId: string, 
     .select({ id: studentCharges.id })
     .from(studentCharges)
     .where(and(eq(studentCharges.sourceModule, stay.sourceModule), eq(studentCharges.sourceId, sourceId), isNull(studentCharges.cancelledAt)))
-  if (live) return null
+  if (live) return { id: live.id, amountPaise: 0, existing: true as const }
   const row = await chargeStudentWithin(tx, tenant, actorId, {
     studentId: stay.studentId,
     termId,
@@ -177,7 +179,7 @@ export async function chargeStayWithin(tx: Tx, tenant: string, actorId: string, 
     sourceModule: stay.sourceModule,
     sourceId,
   })
-  return { id: row.id, amountPaise }
+  return { id: row.id, amountPaise, existing: false as const }
 }
 
 /**
@@ -186,8 +188,26 @@ export async function chargeStayWithin(tx: Tx, tenant: string, actorId: string, 
  * term named, because the way back from an invoice is a waiver.
  */
 export async function endStayWithin(tx: Tx, tenant: string, actorId: string, stay: Stay & { until: string }) {
+  // Take the term locks a term run takes, before reading the charges, so a run
+  // that read this stay as open lands its charge first and is shrunk below.
+  // Locks go in term order; a run holds only one.
+  const spanning = await tx
+    .select({ id: terms.id })
+    .from(terms)
+    .where(gte(terms.endsOn, stay.from))
+    .orderBy(asc(terms.id))
+  for (const t of spanning) {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${stay.sourceModule + '.charge:' + t.id}, 0))`)
+  }
   const rows = await tx
-    .select({ termId: studentCharges.termId, invoicedAt: studentCharges.invoicedAt, code: terms.code })
+    .select({
+      termId: studentCharges.termId,
+      invoicedAt: studentCharges.invoicedAt,
+      amountPaise: studentCharges.amountPaise,
+      code: terms.code,
+      startsOn: terms.startsOn,
+      endsOn: terms.endsOn,
+    })
     .from(studentCharges)
     .innerJoin(terms, eq(terms.id, studentCharges.termId))
     .where(
@@ -204,8 +224,13 @@ export async function endStayWithin(tx: Tx, tenant: string, actorId: string, sta
       invoiced.push(r.code)
       continue
     }
+    // The charge is cut to the nights used at the fee it was raised at, not
+    // the tariff as it stands now (which may have changed, or been cleared).
+    const span = { id: r.termId, code: r.code, startsOn: r.startsOn, endsOn: r.endsOn }
+    const was = stayDays(span, stay.from, null)
+    const termFeePaise = (r.amountPaise * was.termDays) / Math.max(was.days, 1)
     await cancelChargeForSourceWithin(tx, stay.sourceModule, sourceOf(stay, r.termId), `stay ended on ${stay.until}`)
-    await chargeStayWithin(tx, tenant, actorId, stay, r.termId)
+    await chargeStayWithin(tx, tenant, actorId, { ...stay, termFeePaise }, r.termId)
   }
   return { invoiced }
 }

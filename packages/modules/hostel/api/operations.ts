@@ -121,13 +121,14 @@ const stayOf = (a: { id: string; studentId: string; allocatedOn: string; vacated
 })
 
 /** The room's name and fee, or null when it is not charged. */
-async function roomPrice(tx: Tx, roomId: string): Promise<Priced | null> {
+async function roomPrice(tx: Tx, roomId: string, unpriced = false): Promise<Priced | null> {
   const [r] = await tx
     .select({ blockCode: blocks.code, number: rooms.number, termFeePaise: rooms.termFeePaise })
     .from(rooms)
     .innerJoin(blocks, eq(blocks.id, rooms.blockId))
     .where(eq(rooms.id, roomId))
-  return r && r.termFeePaise ? { blockCode: r.blockCode, number: r.number, termFeePaise: r.termFeePaise } : null
+  // `unpriced`: the room's name even with no fee, for ending a stay already charged.
+  return r && (r.termFeePaise || unpriced) ? { blockCode: r.blockCode, number: r.number, termFeePaise: r.termFeePaise ?? 0 } : null
 }
 
 const invoicedNotice = (codes: string[]) =>
@@ -374,8 +375,8 @@ export async function vacate(actor: Actor, input: unknown) {
       .returning()
 
     // Charges not yet invoiced shrink to the nights used (ACC-28, decision 575),
-    // re-priced at the room's fee as it stands.
-    const price = billed ? await roomPrice(tx, updated!.roomId) : null
+    // each at the fee it was raised at, so a changed or cleared tariff does not matter.
+    const price = billed ? await roomPrice(tx, updated!.roomId, true) : null
     const invoiced = price
       ? (await endStayWithin(tx, tenant, actor.id, { ...stayOf(updated!, price), until: updated!.vacatedOn! })).invoiced
       : []
@@ -462,11 +463,10 @@ export async function chargeTerm(actor: Actor, input: unknown) {
     let amountPaise = 0
     for (const s of stays) {
       const r = await chargeStayWithin(tx, tenant, actor.id, stayOf(s, { ...s, termFeePaise: s.termFeePaise! }), term.id)
-      if (r) {
+      if (r?.existing) alreadyCharged++
+      else if (r) {
         charged++
         amountPaise += r.amountPaise
-      } else {
-        alreadyCharged++
       }
     }
     return {

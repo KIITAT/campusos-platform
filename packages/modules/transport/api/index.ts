@@ -107,8 +107,9 @@ export async function release(actor: Actor, input: unknown) {
     await log(transaction, actor, 'student.released', row.id, data.reason)
     // Charges not yet invoiced shrink to the days used (ACC-28, decision 575).
     let invoiced: string[] = []
-    if (billed && route!.termFeePaise) {
-      const stay = stayOf(row, { name: route!.name, termFeePaise: route!.termFeePaise }, await localDay(transaction, row.createdAt), null)
+    // Each at the fee it was raised at, so a changed or cleared fee does not matter.
+    if (billed) {
+      const stay = stayOf(row, { name: route!.name, termFeePaise: route!.termFeePaise ?? 0 }, await localDay(transaction, row.createdAt), null)
       invoiced = (await endStayWithin(transaction, institutionId, actor.id, { ...stay, until: await localDay(transaction, row.releasedAt!) })).invoiced
     }
     return { ...row, invoiced, notice: `Released.${invoicedNotice(invoiced)}` }
@@ -162,7 +163,8 @@ export async function chargeTerm(actor: Actor, input: unknown) {
     let amountPaise = 0
     for (const r of riders) {
       const out = await chargeStayWithin(transaction, institutionId, actor.id, stayOf({ id: r.id, studentId: r.student_id }, { name: r.name, termFeePaise: Number(r.fee) }, r.from_day, r.until_day), term.id)
-      if (out) { charged++; amountPaise += out.amountPaise } else alreadyCharged++
+      if (out?.existing) alreadyCharged++
+      else if (out) { charged++; amountPaise += out.amountPaise }
     }
     await log(transaction, actor, 'term.charged', term.id, `Charged ${charged} riders for ${term.code}`)
     return { termCode: term.code, charged, alreadyCharged, amountPaise, notice: `Charged ${charged} riders ${formatPaise(amountPaise)} for ${term.code}. ${alreadyCharged} already had their charge. Billed on the next invoice.` }
