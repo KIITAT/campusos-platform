@@ -68,7 +68,8 @@ const saysDb = (re: RegExp) => (e: unknown) => {
   return re.test(text)
 }
 
-const today = () => new Date().toISOString().slice(0, 10)
+// The institution's day (India by default), not the server's UTC date: the module defaults to it (NEW-100).
+const today = () => new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10)
 
 /** Turn the Attendance entitlement on or off for this institution. */
 async function setAttendance(on: boolean) {

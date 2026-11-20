@@ -134,7 +134,8 @@ async function roomPrice(tx: Tx, roomId: string, unpriced = false): Promise<Pric
 const invoicedNotice = (codes: string[]) =>
   codes.length ? ` Already invoiced for ${codes.join(', ')}: the unused days stay billed, and Fees has no credit for them yet (NEW-102).` : ''
 
-const today = () => new Date().toISOString().slice(0, 10)
+/** The institution's own day (not the server's UTC date): allocation, roll call and leave must agree on it. */
+const dayOf = (tenant: string) => withTenant(tenant, (tx) => localToday(tx, tenant))
 
 /**
  * The soft dependency, in one function.
@@ -518,13 +519,13 @@ export async function rollCallCode(actor: Actor, blockId: string, secret?: strin
       'scan roll call needs the Attendance module; take the manual register instead',
     )
   }
-  return rollCallQr(secret ?? rollCallSecret(tenant), blockId, today())
+  return rollCallQr(secret ?? rollCallSecret(tenant), blockId, await dayOf(tenant))
 }
 
 export async function scanCheckIn(actor: Actor, input: unknown, secret?: string) {
   const tenant = tenantOf(actor)
   const d = scanSchema.parse(input)
-  const night = d.onNight ?? today()
+  const night = d.onNight ?? (await dayOf(tenant))
 
   if ((await rollCallMode(tenant)) !== 'scan') {
     throw new HostelError(
@@ -568,7 +569,7 @@ export async function mark(actor: Actor, input: unknown) {
   return recordNight(tenant, {
     blockId: d.blockId,
     studentId: d.studentId,
-    onNight: d.onNight ?? today(),
+    onNight: d.onNight ?? (await dayOf(tenant)),
     status: d.status,
     method: 'manual',
     note: d.note ?? null,
@@ -637,7 +638,7 @@ export async function rollCall(
   night?: string,
 ): Promise<RollCall> {
   const tenant = requireWarden(actor)
-  const onNight = night ?? today()
+  const onNight = night ?? (await dayOf(tenant))
   const mode = await rollCallMode(tenant)
 
   return withTenant(tenant, async (tx): Promise<RollCall> => {
@@ -843,7 +844,7 @@ export async function myHostel(actor: Actor, studentId?: string): Promise<MyHost
     const upcoming = await tx
       .select({ fromOn: leaves.fromOn, toOn: leaves.toOn, reason: leaves.reason })
       .from(leaves)
-      .where(and(eq(leaves.studentId, target), gte(leaves.toOn, today())))
+      .where(and(eq(leaves.studentId, target), gte(leaves.toOn, await localToday(tx, tenant))))
       .orderBy(asc(leaves.fromOn))
 
     if (!mine) {
