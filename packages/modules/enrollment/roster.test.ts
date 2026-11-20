@@ -259,3 +259,16 @@ test('a student or a lecturer cannot change how a section is kept', async () => 
     )
   }
 })
+
+test('leaving a queue does not remove a member who was added by hand', async () => {
+  const c = await campus()
+  const o = await offering(c, c.ML)
+  await feed(c, c.ML, true)
+  await api.setOfferingLimit(c.admin, { offeringId: o.id, capacity: 1, waitlistCapacity: 1 })
+  await academicApi.addSectionMember(academic(c.admin), { sectionId: c.ML, userId: c.b.id })
+  await api.register(c.a, { offeringId: o.id })
+  const b = await api.register(c.b, { offeringId: o.id })
+  assert.equal(b.status, 'waitlisted')
+  await api.drop(c.b, { offeringId: o.id })
+  assert.equal(await member(c, c.ML, c.b.id), true)
+})
