@@ -594,8 +594,16 @@ export async function reverseEntry(actor: Actor, input: unknown) {
   const { entryId, reason } = reverseEntrySchema.parse(input)
 
   return withTenant(tenant, async (tx) => {
-    const [original] = await tx.select({ id: entries.id }).from(entries).where(eq(entries.id, entryId))
+    const [original] = await tx
+      .select({ id: entries.id, sourceModule: entries.sourceModule })
+      .from(entries)
+      .where(eq(entries.id, entryId))
     if (!original) throw new FinanceError(404, 'no_such_entry', 'no such journal entry')
+    // The fee ledger moves with its entries. A free-hand reversal here would leave
+    // the student's receipt standing against books that no longer hold it.
+    if (original.sourceModule === 'fees') {
+      throw new FinanceError(409, 'owned_by_module', 'this entry belongs to Fees; void the receipt or invoice there, which reverses it and the ledger of the student together')
+    }
     // A free-hand reversal is a correction made now, so it is dated today.
     const reversalId = await reverseWithin(tx, tenant, actor.id, entryId, reason, await localToday(tx, tenant))
 
