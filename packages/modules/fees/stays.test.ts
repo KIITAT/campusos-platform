@@ -179,10 +179,13 @@ test('an invoice marks only the charges it priced as billed', async () => {
   let open!: () => void
   const gate = new Promise<void>((r) => (open = r))
   let ready!: () => void
+  let holder = 0
   const held = new Promise<void>((r) => (ready = r))
-  // Hold the invoice register shut after the invoice has priced, so a charge can land in between.
+  // Hold the priced charge's row after the invoice has priced, so its marking waits and a charge can land in between. A row lock, not a table lock: other test files invoice in the same database at the same time.
   const intruder = withTenant(c.id, async (tx) => {
-    await tx.execute(sql`lock table fee_invoices in exclusive mode`)
+    const [own] = await tx.select({ id: studentCharges.id }).from(studentCharges).where(isNull(studentCharges.cancelledAt)).for('update')
+    assert.ok(own)
+    holder = Number((await tx.execute(sql`select pg_backend_pid() as pid`)).rows[0]!.pid)
     ready()
     await gate
     await chargeStudentWithin(tx, c.id, c.admin.id, { studentId: c.studentId, termId: c.termId, label: 'Late library fine', amountPaise: 5000 })
@@ -190,7 +193,7 @@ test('an invoice marks only the charges it priced as billed', async () => {
   await held
   const invoiced = issueInvoices(c.admin, { termId: c.termId })
   await waitFor(async () => {
-    const r = await authDb.execute(sql`select 1 from pg_stat_activity where wait_event_type = 'Lock' and query ilike '%insert into "fee_invoices"%'`)
+    const r = await authDb.execute(sql`select 1 from pg_stat_activity where wait_event_type = 'Lock' and ${holder} = any(pg_blocking_pids(pid))`)
     return r.rows.length > 0
   })
   open()
