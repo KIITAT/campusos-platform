@@ -4,7 +4,7 @@ import { createRequire } from 'node:module'
 import { and, eq, like, sql } from 'drizzle-orm'
 import { auditLog, authDb, institutionModules, institutions, users, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
-import * as attendance from '../attendance/api'
+import * as attendance from '@campusos/module-attendance/api'
 import * as fees from '@campusos/module-fees/api'
 import * as exams from './api'
 import { plugin } from './plugin'
@@ -243,15 +243,17 @@ test('a balance in another term does not block this one', async () => {
 
 // --- 3. who may print while held ----------------------------------------------------------
 
-test('a hold stops every reader, and access is checked first', async () => {
+test('a hold stops every permitted reader, and access is checked first', async () => {
   const c = await campus({ fees: true })
   await enrolWith(c)
   await owe(c)
   await assert.rejects(exams.admitCard(c.asha, c.ashaId, c.termId), (e) => code(e) === 'exam_dues_outstanding')
-  await assert.rejects(exams.admitCard(c.teacher, c.ashaId, c.termId), (e) => code(e) === 'exam_dues_outstanding')
+  await assert.rejects(exams.admitCard(c.admin, c.ashaId, c.termId), (e) => code(e) === 'exam_dues_outstanding')
+  // A lecturer has no admit-card access today; that refusal comes first, before any eligibility state.
+  await assert.rejects(exams.admitCard(c.teacher, c.ashaId, c.termId), (e) => code(e) === 'not_your_student')
   await assert.rejects(exams.admitCard(c.bilal, c.ashaId, c.termId), (e) => code(e) === 'not_your_student')
   const other = await campus({})
-  await assert.rejects(exams.admitCard(other.admin, c.ashaId, c.termId), (e) => code(e) === 'not_your_student')
+  await assert.rejects(exams.admitCard(other.teacher, c.ashaId, c.termId), (e) => code(e) === 'not_your_student')
   const route = plugin.routes.find((r) => r.path === '/admit-card.pdf')!
   await assert.rejects(
     Promise.resolve(route.handler(c.asha, new Request(`http://x/?termId=${c.termId}&studentId=${c.ashaId}`)) as Promise<Response>),
