@@ -1,6 +1,6 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { eq, like } from 'drizzle-orm'
+import { eq, like, sql } from 'drizzle-orm'
 import {
   authDb,
   corePool,
@@ -672,4 +672,46 @@ test('another institution cannot award out of this one', async () => {
     (e: unknown) => errorCode(e) === 'no_such_user',
   )
   assert.equal((await listAwards(one.admin, { termId: one.termId })).length, 0)
+})
+
+test('an award and a drop of its only qualifying course take turns (review P1-03b HIGH 3)', async () => {
+  const c = await campus()
+  await charges(c)
+  const only = await takes(c, c.a, 4)
+  const rule = await createScholarship(c.admin, {
+    code: 'MERIT',
+    name: 'Merit scholarship',
+    kind: 'merit',
+    basis: 'fixed',
+    amountPaise: '10000',
+    minCredits: 4,
+  })
+
+  // Stop the award at its insert, after it has assessed four credits.
+  const blocker = await corePool.connect()
+  await blocker.query('begin')
+  await blocker.query('lock table fee_scholarship_awards in share row exclusive mode')
+  const waitFor = async (pattern: string) => {
+    for (let i = 0; i < 100; i++) {
+      const r = await authDb.execute(sql`
+        select count(*)::int as n from pg_stat_activity
+         where wait_event_type = 'Lock' and datname = current_database() and query ilike ${pattern}`)
+      if ((r.rows[0] as { n: number }).n > 0) return
+      await new Promise((ok) => setTimeout(ok, 50))
+    }
+    throw new Error(`nobody waits on ${pattern}`)
+  }
+  try {
+    const award = awardScholarship(c.admin, { scholarshipId: rule.id, studentId: c.a, termId: c.termId })
+    await waitFor('%fee_scholarship_awards%')
+    const drop = enrollment.drop(asEnrollment(c.admin), { studentId: c.a, offeringId: only.id, effectiveOn: day(3) })
+    const early = await Promise.race([drop.then(() => 'dropped'), new Promise((ok) => setTimeout(() => ok('waiting'), 800))])
+    assert.equal(early, 'waiting', 'the drop must not commit while the award holds the credit load it assessed')
+    await blocker.query('rollback')
+    const [a] = await Promise.all([award, drop])
+    assert.equal(a.creditsAtAward, 4)
+  } finally {
+    await blocker.query('rollback').catch(() => {})
+    blocker.release()
+  }
 })
