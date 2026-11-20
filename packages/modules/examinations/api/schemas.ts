@@ -89,7 +89,8 @@ export const bandSchema = z
 export const createSchemeSchema = z
   .object({
     name,
-    kind: z.enum(schemeKindEnum.enumValues),
+    // A school scheme is made by the report card operations, never by hand (D808).
+    kind: z.enum(['percentage', 'gpa', 'custom']),
     maxPoints: z.coerce.number().min(1).max(100).nullish(),
     isDefault: z.boolean().default(false),
     bands: z.array(bandSchema).max(30).default([]),
