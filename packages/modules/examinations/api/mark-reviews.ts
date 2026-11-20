@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import * as z from 'zod'
 import { and, desc, eq, inArray, lt, sql } from 'drizzle-orm'
 import { audit, auditLog, withTenant } from '@campusos/db'
 import { courses, offerings } from './joins'
@@ -9,6 +10,7 @@ import {
   canMark,
   isAdmin,
   lockOfferingMarks,
+  lockedExam,
   tenantOf,
   type Actor,
   type MarkTx,
@@ -141,6 +143,9 @@ export async function reviseMark(actor: Actor, input: unknown): Promise<ReviewRe
   const data = reviseMarkSchema.parse(input)
 
   return withTenant(tenant, async (tx) => {
+    // Ownership first, so a 404 never tells a lecturer about another offering's marks.
+    const owned = await lockedExam(tx, tenant, data.examId)
+    await assertOwnsOffering(tx, actor, owned.offeringId)
     const [found] = await tx
       .select({ id: examMarks.id })
       .from(examMarks)
@@ -361,6 +366,9 @@ export async function reviewableMarks(
 ): Promise<{ rows: { markId: string; label: string }[]; next: string | null }> {
   const tenant = tenantOf(actor)
   if (actor.role !== 'student') return { rows: [], next: null }
+  if (after !== undefined && !z.uuid().safeParse(after).success) {
+    throw new ExamError(400, 'bad_cursor', 'invalid paging cursor')
+  }
   return withTenant(tenant, async (tx) => {
     const rows = await tx
       .select({ id: examMarks.id, exam: exams.name, code: courses.code, title: courses.title })

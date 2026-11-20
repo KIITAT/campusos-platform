@@ -83,6 +83,8 @@ export async function finaliseCourse(actor: Actor, input: unknown): Promise<Fina
     // Before anything is read: an approval racing this run is either wholly
     // before it (and finalised here) or wholly after it (and flagged again).
     await lockOfferingMarks(tx, tenant, data.offeringId)
+    // Lets the database guard on exam_marks accept clearing needs_recompute below.
+    await tx.execute(sql`select set_config('app.finalising', 'on', true)`)
     const [offering] = await tx
       .select({
         id: offerings.id,

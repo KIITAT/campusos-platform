@@ -118,6 +118,12 @@ BEGIN
        IS DISTINCT FROM (NEW.id, NEW.institution_id, NEW.exam_id, NEW.student_id) THEN
       RAISE EXCEPTION 'mark identity is immutable' USING ERRCODE = '23514';
     END IF;
+    -- The flag holds the official outputs back: only finaliseCourse, under the
+    -- offering lock, may clear it (it sets app.finalising for its transaction).
+    IF OLD.needs_recompute AND NOT NEW.needs_recompute
+       AND coalesce(current_setting('app.finalising', true), '') <> 'on' THEN
+      RAISE EXCEPTION 'the re-finalise flag is cleared only by finalising the course' USING ERRCODE = '23514';
+    END IF;
     IF (OLD.obtained, OLD.absent, OLD.revision) IS NOT DISTINCT FROM
        (NEW.obtained, NEW.absent, NEW.revision) THEN RETURN NEW; END IF;
   END IF;
