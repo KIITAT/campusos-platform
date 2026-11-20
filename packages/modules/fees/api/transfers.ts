@@ -505,6 +505,7 @@ export async function verifyWithin(
   termId: string,
   note: string | null,
   detail: Record<string, unknown> = {},
+  receivedAt?: Date,
 ) {
   await lockTermIssue(tx, termId)
   const [c] = await tx.select().from(transferClaims).where(eq(transferClaims.id, claimId)).for('update')
@@ -516,7 +517,7 @@ export async function verifyWithin(
     amountPaise: c.amountPaise,
     method: METHOD[c.mode],
     reference: c.utr,
-    receivedAt: new Date(`${c.transferredOn}T00:00:00+05:30`),
+    receivedAt: receivedAt ?? new Date(`${c.transferredOn}T00:00:00+05:30`),
     notes:
       c.mode === 'upi'
         ? `UPI from ${c.remitterBank} (${c.accountHolder})`

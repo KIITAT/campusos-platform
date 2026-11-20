@@ -365,3 +365,19 @@ test('a reference that is only a common word never auto-verifies a claim against
   assert.equal((await paymentOfClaim(c, ok.id)).status, 'verified')
   assert.equal((await lineOf(c, line2!)).status, 'matched')
 })
+
+test('a statement match is dated by the bank line, and voiding the receipt offers the line again', async () => {
+  const matchStatement = await importing('matchStatement')
+  const voidPayment = await importing('voidPayment')
+  const c = await campus()
+  const fb = await bank(c)
+  const claimed = new Date(Date.now() - 3 * 86_400_000).toISOString().slice(0, 10)
+  const cl = await claimUpi(c, '812345678901', '45,000', { transferredOn: claimed })
+  const [line] = await statement(c, fb, [{ description: 'UPI/812345678901/ASHA ROY', deposit: 4_500_000 }])
+  assert.equal((await matchStatement(c.clerk)).verified, 1)
+  const paymentId = (await paymentOfClaim(c, cl.id)).paymentId!
+  const [row] = (await withTenant(c.id, (tx) => tx.execute(sql`select (received_at at time zone 'Asia/Kolkata')::date::text as d from fee_payments where id = ${paymentId}`))).rows as { d: string }[]
+  assert.equal(row!.d, today())
+  await voidPayment(c.admin, { paymentId, reason: 'entered in error' })
+  assert.equal((await lineOf(c, line!)).status, 'unmatched')
+})

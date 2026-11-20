@@ -24,6 +24,17 @@ export const MATCH_LIMIT = 500
 const IST = (d: string) => new Date(`${d}T00:00:00+05:30`)
 const tokens = (s: string) => new Set(s.toUpperCase().split(/[^A-Z0-9]+/).filter((t) => t.length >= 6))
 const addDays = (d: string, n: number) => new Date(Date.parse(`${d}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10)
+/**
+ * A reference strong enough to match a claim to a credit with nobody looking
+ * (P1-03c review): a UPI reference is the 12-digit RRN; anything else needs a
+ * digit and 10 or more characters, or must be the line's own reference column.
+ * A word like TRANSFER, or a 6-digit date or cheque number, is left to a person.
+ */
+const strongRef = (c: { mode: string; utr: string }, l: { reference: string | null }) => {
+  const u = c.utr.toUpperCase()
+  if (c.mode === 'upi') return /^[0-9]{12}$/.test(u)
+  return (/[0-9]/.test(u) && u.length >= 10) || l.reference?.trim().toUpperCase() === u
+}
 const literal = (ids: string[]) => `{${ids.join(',')}}`
 
 /** The finance bank account fees are banked in (the books' account of purpose bank). */
@@ -145,6 +156,11 @@ export async function matchStatement(actor: Actor) {
       [...new Set([...tokensOf.values()].flatMap((t) => [...t].filter((k) => PAY_REFERENCE.test(k))))],
     )
 
+    // Every term lock up front, in id order, as P1-03e's charge runs take theirs: no lock cycle.
+    const termIds = new Set<string>([...fitsLine.values()].flatMap((f) => f.map((c) => c.termId)))
+    for (const o of codes.values()) termIds.add(o.termId)
+    for (const t of [...termIds].sort()) await lockTermIssue(tx, t)
+
     let verified = 0
     let receipted = 0
     let done = 0
@@ -160,10 +176,10 @@ export async function matchStatement(actor: Actor) {
       }
       const fit = fitsLine.get(l.id)!
       // A claim and a line that fit only each other: the payer's reference and the amount agree.
-      if (fit.length === 1 && fitsClaim.get(fit[0]!.id)!.size === 1) {
+      if (fit.length === 1 && fitsClaim.get(fit[0]!.id)!.size === 1 && strongRef(fit[0]!, l)) {
         const c = fit[0]!
         const why = await attempt(tx, async (sp) => {
-          const { payment } = await verifyWithin(sp, tenant, actor, c.id, c.termId, `found on the bank statement of ${l.txnDate}`, { statementLineId: l.id })
+          const { payment } = await verifyWithin(sp, tenant, actor, c.id, c.termId, `found on the bank statement of ${l.txnDate}`, { statementLineId: l.id }, IST(l.txnDate))
           await linkLine(sp, actor.id, l.id, payment.id, bank.glId)
         })
         if (why) skip(l.id, why)

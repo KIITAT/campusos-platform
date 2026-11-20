@@ -78,6 +78,13 @@ export async function voidPayment(actor: Actor, input: unknown) {
       .where(eq(feePayments.id, p.id))
       .returning()
     await reversePayment(tx, tenant, actor.id, p.id, `voided: ${data.reason}`, await localToday(tx, tenant))
+    // A bank line matched to this receipt's debit is offered again (P1-03c review).
+    await tx.execute(sql`
+      update finance_bank_statement_lines
+         set status = 'unmatched', matched_by = null, matched_at = null, matched_line_id = null
+       where status = 'matched' and matched_line_id in (
+             select l.id from finance_journal_lines l join finance_journal_entries e on e.id = l.entry_id
+              where e.source_ref = ${'payment:' + p.id} and l.debit_paise > 0)`)
 
     await notify(tx, tenant, {
       userIds: [p.studentId],
