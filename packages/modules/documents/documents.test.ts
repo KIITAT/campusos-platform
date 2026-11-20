@@ -6,9 +6,11 @@ import type { PluginActor, Role } from '@campusos/module-framework'
 
 interface Workflow {
   uploadDocument(actor: PluginActor, input: unknown): Promise<{ documentId: string; notice: string }>
-  requestAssent(actor: PluginActor, input: unknown): Promise<{ requestId: string }>
-  issueAssentChallenge(actor: PluginActor, input: unknown): Promise<{ code: string }>
-  recordAssent(actor: PluginActor, input: unknown): Promise<{ signatureId: string }>
+  requestAssent(actor: PluginActor, input: unknown): Promise<{ requestId: string; notice: string }>
+  issueAssentChallenge(actor: PluginActor, input: unknown): Promise<{ requestId: string; recipient: string; code: string }>
+  markChallengeDeliveryFailed(actor: PluginActor, requestId: string, code: string): Promise<void>
+  closeAssent(actor: PluginActor, input: unknown): Promise<{ notice: string }>
+  recordAssent(actor: PluginActor, input: unknown): Promise<{ signatureId: string; notice: string }>
   downloadDocument(actor: PluginActor, id: string): Promise<Response>
   signingReceipt(actor: PluginActor, id: string): Promise<Response>
   verifyDocument(actor: PluginActor, input: unknown): Promise<{ integrity: string; copyMatches: boolean | null }>
@@ -514,4 +516,216 @@ test('reads: the evidence PDF states the record and never carries the original',
   const unsigned = await seedFile(campus, { scope: 'signer' })
   await pendingRequest(campus, unsigned.id, signer.id)
   await assert.rejects(() => api.signingReceipt(signer, unsigned.id), status('document_missing', 404))
+})
+
+// Sign request lifecycle (Step 5).
+async function ready(api: Workflow, campus: Campus) {
+  const sent = await offer(api, campus)
+  await api.downloadDocument(campus.signer, sent.documentId)
+  return sent
+}
+
+/** Hold a request's row lock in another transaction until `release` runs, so two callers queue behind it. */
+async function holdingRequest<T>(requestId: string, during: () => Promise<T>): Promise<T> {
+  const { authDb } = await import('@campusos/db')
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  let locked!: () => void
+  const held = new Promise<void>(resolve => { locked = resolve })
+  const holder = authDb.transaction(async tx => {
+    await tx.execute(sql`select 1 from documents_sign_requests where id = ${requestId} for update`)
+    locked()
+    await gate
+  })
+  await held
+  const pending = during()
+  await new Promise(resolve => setTimeout(resolve, 400))
+  release()
+  await holder
+  return pending
+}
+
+const never = (value: unknown, name: string) => assert.ok(!JSON.stringify(value).includes(name), `${name} leaked`)
+
+test('signing: only the named signer asks for a code, and only after downloading the exact file', async () => {
+  const api = await workflow()
+  const campus = await college()
+  const { admin, signer, faculty, other } = campus
+  const { documentId, requestId } = await offer(api, campus)
+  await assert.rejects(() => api.issueAssentChallenge(admin, { requestId }), status('document_missing', 404))
+  await assert.rejects(() => api.issueAssentChallenge(other, { requestId }), status('document_missing', 404))
+  await assert.rejects(() => api.issueAssentChallenge(signer, { requestId }), status('document_open_first', 409))
+  await api.downloadDocument(admin, documentId)
+  await assert.rejects(() => api.issueAssentChallenge(signer, { requestId }), status('document_open_first', 409))
+  await api.downloadDocument(faculty, documentId).catch(() => null)
+  await api.downloadDocument(signer, documentId)
+  const first = await api.issueAssentChallenge(signer, { requestId })
+  assert.equal(first.code.length, 32)
+  assert.equal(first.recipient, signer.email)
+  await assert.rejects(() => api.issueAssentChallenge(signer, { requestId }), status('challenge_wait', 409))
+  const [row] = (await (await import('@campusos/db')).authDb.execute(sql`select code_digest, recipient_digest, code_expires_at - code_issued_at as ttl from documents_sign_requests where id = ${requestId}`)).rows as { code_digest: string; recipient_digest: string; ttl: unknown }[]
+  assert.match(row!.code_digest, /^[0-9a-f]{64}$/)
+  assert.notEqual(row!.code_digest, first.code)
+  const { authDb } = await import('@campusos/db')
+  const audits = (await authDb.execute(sql`select detail::text as d, reason from audit_log where entity_id = ${documentId}`)).rows
+  never(audits, first.code)
+  never(audits, signer.email!)
+})
+
+test('signing: a code works once, for its own request, signer, mailbox and time', async () => {
+  const api = await workflow()
+  const campus = await college()
+  const { signer } = campus
+  const { authDb } = await import('@campusos/db')
+  const one = await ready(api, campus)
+  const twin = await ready(api, { ...campus })
+  const { code: oneCode } = await api.issueAssentChallenge(signer, { requestId: one.requestId })
+  await assert.rejects(() => api.recordAssent(signer, { requestId: twin.requestId, code: oneCode, consent: true }), status('challenge_invalid', 409))
+  await assert.rejects(() => api.recordAssent(signer, { requestId: one.requestId, code: oneCode, consent: false }), /Tick the box/)
+  await assert.rejects(() => api.recordAssent(signer, { requestId: one.requestId, code: oneCode.toUpperCase(), consent: true }), status('challenge_invalid', 409))
+  // a resend replaces the digest: the old code stops working
+  await authDb.execute(sql`update documents_sign_requests set code_issued_at = code_issued_at - interval '2 minutes' where id = ${one.requestId}`)
+  const { code: resent } = await api.issueAssentChallenge(signer, { requestId: one.requestId })
+  assert.notEqual(resent, oneCode)
+  await assert.rejects(() => api.recordAssent(signer, { requestId: one.requestId, code: oneCode, consent: true }), status('challenge_invalid', 409))
+  // expired
+  await tamper(sql`update documents_sign_requests set code_expires_at = clock_timestamp() - interval '1 second' where id = ${one.requestId}`)
+  await assert.rejects(() => api.recordAssent(signer, { requestId: one.requestId, code: resent, consent: true }), status('challenge_invalid', 409))
+  await authDb.execute(sql`update documents_sign_requests set code_issued_at = code_issued_at - interval '2 minutes' where id = ${one.requestId}`)
+  const { code: again } = await api.issueAssentChallenge(signer, { requestId: one.requestId })
+  // the mailbox changed after the code was sent
+  await authDb.execute(sql`update users set email = ${`changed-${randomUUID()}@example.test`} where id = ${signer.id}`)
+  await assert.rejects(() => api.recordAssent(signer, { requestId: one.requestId, code: again, consent: true }), status('challenge_invalid', 409))
+  await authDb.execute(sql`update users set email = ${signer.email!} where id = ${signer.id}`)
+  const done = await api.recordAssent(signer, { requestId: one.requestId, code: again, consent: true })
+  assert.equal(done.notice, 'Assent recorded.')
+  // the used code is gone, and a later erasure takes the access with it
+  const [after] = (await authDb.execute(sql`select status, code_digest, recipient_digest, code_expires_at, code_issued_at from documents_sign_requests where id = ${one.requestId}`)).rows as Record<string, unknown>[]
+  assert.deepEqual(after, { status: 'signed', code_digest: null, recipient_digest: null, code_expires_at: null, code_issued_at: null })
+  const lateCode = await api.issueAssentChallenge(signer, { requestId: twin.requestId })
+  await authDb.execute(sql`update users set erased_at = now() where id = ${signer.id}`)
+  await assert.rejects(() => api.recordAssent(signer, { requestId: twin.requestId, code: lateCode.code, consent: true }), status('document_missing', 404))
+})
+
+test('signing: a failed delivery clears only the code that was sent', async () => {
+  const api = await workflow()
+  const campus = await college()
+  const { signer, other } = campus
+  const { authDb } = await import('@campusos/db')
+  const { requestId, documentId } = await ready(api, campus)
+  const { code } = await api.issueAssentChallenge(signer, { requestId })
+  await api.markChallengeDeliveryFailed(signer, requestId, 'not-the-code')
+  const [kept] = (await authDb.execute(sql`select code_digest from documents_sign_requests where id = ${requestId}`)).rows as { code_digest: string | null }[]
+  assert.ok(kept!.code_digest)
+  await assert.rejects(() => api.markChallengeDeliveryFailed(other, requestId, code), status('document_missing', 404))
+  await api.markChallengeDeliveryFailed(signer, requestId, code)
+  await assert.rejects(() => api.recordAssent(signer, { requestId, code, consent: true }), status('challenge_invalid', 409))
+  assert.equal(await auditCount(documentId, 'document.challenge_delivery_failed'), 1)
+  const next = await api.issueAssentChallenge(signer, { requestId })
+  await api.markChallengeDeliveryFailed(signer, requestId, code)
+  assert.equal((await api.recordAssent(signer, { requestId, code: next.code, consent: true })).notice, 'Assent recorded.')
+  assert.equal(await auditCount(documentId, 'document.challenge_delivery_failed'), 1)
+})
+
+test('signing: two callers at once produce one signature and one audit event', async () => {
+  const api = await workflow()
+  const campus = await college()
+  const { signer } = campus
+  const { requestId, documentId } = await ready(api, campus)
+  const { code } = await api.issueAssentChallenge(signer, { requestId })
+  const both = await holdingRequest(requestId, () => Promise.all([
+    api.recordAssent(signer, { requestId, code, consent: true }),
+    api.recordAssent(signer, { requestId, code, consent: true }),
+  ]))
+  assert.equal(both[0]!.signatureId, both[1]!.signatureId)
+  assert.equal(await auditCount(documentId, 'document.assented'), 1)
+  const { authDb } = await import('@campusos/db')
+  const [count] = (await authDb.execute(sql`select count(*)::int as n from documents_signatures where document_id = ${documentId}`)).rows as { n: number }[]
+  assert.equal(count!.n, 1)
+})
+
+test('signing: a decline racing a signature leaves exactly one terminal state', async () => {
+  const api = await workflow()
+  const campus = await college()
+  const { signer } = campus
+  const { authDb } = await import('@campusos/db')
+  const { requestId, documentId } = await ready(api, campus)
+  const { code } = await api.issueAssentChallenge(signer, { requestId })
+  const results = await holdingRequest(requestId, () => Promise.allSettled([
+    api.recordAssent(signer, { requestId, code, consent: true }),
+    api.closeAssent(signer, { requestId, decision: 'decline', reason: 'I do not accept these terms' }),
+  ]))
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1)
+  const failure = results.find(result => result.status === 'rejected') as PromiseRejectedResult
+  assert.equal(failure.reason.code, 'document_closed')
+  const [row] = (await authDb.execute(sql`select r.status, (select count(*) from documents_signatures s where s.request_id = r.id)::int as signatures from documents_sign_requests r where r.id = ${requestId}`)).rows as { status: string; signatures: number }[]
+  assert.equal(row!.signatures, row!.status === 'signed' ? 1 : 0)
+  assert.ok(['signed', 'declined'].includes(row!.status))
+  assert.equal(await auditCount(documentId, 'document.assented') + await auditCount(documentId, 'document.declined'), 1)
+})
+
+test('signing: an expired request records nothing', async () => {
+  const api = await workflow()
+  const campus = await college()
+  const { signer } = campus
+  const { authDb } = await import('@campusos/db')
+  const { requestId, documentId } = await ready(api, campus)
+  const { code } = await api.issueAssentChallenge(signer, { requestId })
+  await tamper(sql`update documents_sign_requests set expires_at = created_at + interval '1 millisecond', code_expires_at = created_at + interval '1 millisecond' where id = ${requestId}`)
+  await assert.rejects(() => api.recordAssent(signer, { requestId, code, consent: true }), status('document_expired', 409))
+  await assert.rejects(() => api.issueAssentChallenge(signer, { requestId }), status('document_expired', 409))
+  await assert.rejects(() => api.closeAssent(signer, { requestId, decision: 'decline', reason: 'Too late to answer now' }), status('document_expired', 409))
+  assert.equal((await readable(signer, documentId)).status, 'expired')
+  const [count] = (await authDb.execute(sql`select count(*)::int as n from documents_signatures where document_id = ${documentId}`)).rows as { n: number }[]
+  assert.equal(count!.n, 0)
+})
+
+test('signing: requests are one per file, closed for good once decided, and only an administrator cancels', async () => {
+  const api = await workflow()
+  const campus = await college()
+  const { admin, signer, faculty } = campus
+  const sent = await offer(api, campus)
+  const second = await api.uploadDocument(admin, { title: 'Contract', kind: 'contract', scope: 'signer', subjectUserId: signer.id, file: (await pdf()).file,
+    retainUntil: new Date(Date.now() + 30 * 86400_000).toISOString(), retentionBasis: 'legal_obligation', authorityRef: 'Contracts register' })
+  const raced = await Promise.allSettled([
+    api.requestAssent(admin, { documentId: second.documentId, reason: 'Send the contract for acceptance', approvedInternalUse: true }),
+    api.requestAssent(admin, { documentId: second.documentId, reason: 'Send the contract for acceptance', approvedInternalUse: true }),
+  ])
+  assert.equal(raced.filter(result => result.status === 'fulfilled').length, 1)
+  assert.equal((raced.find(result => result.status === 'rejected') as PromiseRejectedResult).reason.code, 'document_closed')
+  await assert.rejects(() => api.requestAssent(admin, { documentId: sent.documentId, reason: 'Send the offer again please', approvedInternalUse: true }), status('document_closed', 409))
+  await assert.rejects(() => api.requestAssent(admin, { documentId: sent.documentId, reason: 'short', approvedInternalUse: true }), /10/)
+  await assert.rejects(() => api.requestAssent(admin, { documentId: sent.documentId, reason: 'Send the offer again please', approvedInternalUse: false }), /approved for internal/)
+  await assert.rejects(() => api.requestAssent(faculty, { documentId: sent.documentId, reason: 'Send the offer again please', approvedInternalUse: true }), status('forbidden', 403))
+  const office = await api.uploadDocument(admin, { title: 'Circular', kind: 'record', scope: 'office', subjectUserId: faculty.id, file: (await pdf()).file })
+  await assert.rejects(() => api.requestAssent(admin, { documentId: office.documentId, reason: 'Send the circular for acceptance', approvedInternalUse: true }), status('not_signable', 400))
+  await assert.rejects(() => api.closeAssent(signer, { requestId: sent.requestId, decision: 'cancel', reason: 'Signer cannot cancel this' }), status('forbidden', 403))
+  await assert.rejects(() => api.closeAssent(faculty, { requestId: sent.requestId, decision: 'decline', reason: 'Not the named signer here' }), status('document_missing', 404))
+  assert.deepEqual(await api.closeAssent(admin, { requestId: sent.requestId, decision: 'cancel', reason: 'Offer withdrawn by the office' }), { notice: 'Signing cancelled.' })
+  await assert.rejects(() => api.closeAssent(signer, { requestId: sent.requestId, decision: 'decline', reason: 'Declining after the cancel' }), status('document_closed', 409))
+  await assert.rejects(() => api.issueAssentChallenge(signer, { requestId: sent.requestId }), status('document_closed', 409))
+  await assert.rejects(() => api.requestAssent(admin, { documentId: sent.documentId, reason: 'Reopen the cancelled request', approvedInternalUse: true }), status('document_closed', 409))
+  assert.equal((await readable(signer, sent.documentId)).status, 'cancelled')
+  const declined = await ready(api, campus)
+  assert.deepEqual(await api.closeAssent(signer, { requestId: declined.requestId, decision: 'decline', reason: 'I do not accept these terms' }), { notice: 'Signing declined.' })
+  assert.equal(await auditCount(declined.documentId, 'document.declined'), 1)
+  assert.equal(await auditCount(sent.documentId, 'document.cancelled'), 1)
+  assert.equal(await auditCount(sent.documentId, 'document.requested'), 1)
+})
+
+test('signing: a changed original cannot be requested, confirmed or signed', async () => {
+  const api = await workflow()
+  const campus = await college()
+  const { admin, signer } = campus
+  const sent = await ready(api, campus)
+  const { code } = await api.issueAssentChallenge(signer, { requestId: sent.requestId })
+  await tamper(sql`update documents_files set body = ${Buffer.from('%PDF-1.4 swapped')} where id = ${sent.documentId}`)
+  await assert.rejects(() => api.recordAssent(signer, { requestId: sent.requestId, code, consent: true }), status('document_integrity', 409))
+  assert.equal(await auditCount(sent.documentId, 'document.integrity_failed'), 1)
+  const fresh = await college()
+  const upload = await api.uploadDocument(fresh.admin, { title: 'Offer', kind: 'offer', scope: 'signer', subjectUserId: fresh.signer.id, file: (await pdf()).file,
+    retainUntil: new Date(Date.now() + 30 * 86400_000).toISOString(), retentionBasis: 'specified_purpose', authorityRef: 'Offer records policy' })
+  await tamper(sql`update documents_files set body = ${Buffer.from('%PDF-1.4 swapped')} where id = ${upload.documentId}`)
+  await assert.rejects(() => api.requestAssent(fresh.admin, { documentId: upload.documentId, reason: 'Send the offer for acceptance', approvedInternalUse: true }), status('document_integrity', 409))
+  void admin
 })
