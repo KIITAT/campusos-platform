@@ -1,7 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { csvCell } from './csv'
-import { listRows } from './views'
+import * as framework from './index'
+import { listRows } from './list-rows'
 
 test('a cell a spreadsheet would run is made text, numbers stay numbers (SEC-08)', () => {
   assert.equal(csvCell('=1+1'), "'=1+1")
@@ -27,4 +28,8 @@ test('listRows filters and sorts like the list view, without a cut (UX-07)', () 
   assert.equal(listRows(rows, columns, {}).length, 600)
   assert.equal(listRows(rows, columns, { sort: 'fee', dir: 'desc' })[0]!.fee, 599)
   assert.equal(listRows(rows, columns, { q: 'n59' }).length, 10)
+})
+
+test('listRows stays out of the plugin-facing exports: a host built before it must still load new archives (P1-09a)', () => {
+  assert.equal('listRows' in framework, false)
 })
