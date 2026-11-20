@@ -4,7 +4,7 @@ import { after, test } from 'node:test'
 import type { PluginActor, Role } from '@campusos/module-framework'
 
 interface Workflow {
-  uploadDocument(actor: PluginActor, input: unknown): Promise<{ documentId: string }>
+  uploadDocument(actor: PluginActor, input: unknown): Promise<{ documentId: string; notice: string }>
   requestAssent(actor: PluginActor, input: unknown): Promise<{ requestId: string }>
   issueAssentChallenge(actor: PluginActor, input: unknown): Promise<{ code: string }>
   recordAssent(actor: PluginActor, input: unknown): Promise<{ signatureId: string }>
@@ -285,4 +285,112 @@ test('purge: expired unsigned and signed files are removed, current ones are kep
   assert.deepEqual([old.id, fresh.id, expiredSigned.documentId, heldSigned.documentId, pending.id].map(id => left.has(id)), [false, true, false, true, true])
   const [req] = (await authDb.execute(sql`select code_digest from documents_sign_requests where id = ${request}`)).rows as { code_digest: string | null }[]
   assert.equal(req!.code_digest, null)
+})
+
+// Upload and audited authorization (Step 3).
+const relationViews: string[] = []
+after(async () => {
+  if (relationViews.length === 0) return
+  const { authDb } = await import('@campusos/db')
+  const { sql } = await import('drizzle-orm')
+  for (const view of relationViews) await authDb.execute(sql.raw(`drop view if exists student_relations.${view}`))
+})
+
+async function teaches(viewerId: string, studentId: string) {
+  const { authDb } = await import('@campusos/db')
+  const { sql } = await import('drizzle-orm')
+  const view = `zz_documents_${randomUUID().replaceAll('-', '')}`
+  relationViews.push(view)
+  await authDb.execute(sql.raw(`create view student_relations.${view} with (security_invoker = true) as
+    select '${viewerId}'::text as viewer_id, '${studentId}'::text as student_id, 'test'::text as relation, array['academic_record']::text[] as purposes`))
+  await authDb.execute(sql.raw(`grant select on student_relations.${view} to campusos_app`))
+}
+
+async function readable(actor: PluginActor, documentId: string, write = false) {
+  const { withTenant } = await import('@campusos/db')
+  const core = await import('./api/index')
+  return withTenant(actor.institutionId!, tx => core.requireDocument(tx, actor, documentId, write))
+}
+
+const status = (code: string, status: number) => (error: unknown) => (error as { code?: string }).code === code && (error as { status?: number }).status === status
+
+test('authorization: academic records follow the student relation, never the role alone', async () => {
+  const api = await workflow()
+  const campus = await college()
+  const { admin, signer: student, faculty, other, parent } = campus
+  const { file } = await pdf()
+  const { documentId } = await api.uploadDocument(admin, { title: 'Marksheet', kind: 'record', scope: 'student_academic', subjectUserId: student.id, file })
+  await assert.rejects(() => readable(faculty, documentId), status('document_missing', 404))
+  await teaches(faculty.id, student.id)
+  const row = await readable(faculty, documentId)
+  assert.equal(row.id, documentId)
+  assert.equal(row.scope, 'student_academic')
+  assert.equal(row.requestId, null)
+  assert.equal((await readable(student, documentId)).id, documentId)
+  assert.equal((await readable(admin, documentId)).id, documentId)
+  assert.equal((await readable({ ...parent, viewerOf: [student.id] }, documentId)).id, documentId)
+  for (const denied of [other, parent, { ...parent, viewerOf: [other.id] }]) {
+    await assert.rejects(() => readable(denied, documentId), status('document_missing', 404))
+  }
+  await assert.rejects(() => readable(faculty, documentId, true), status('document_missing', 404))
+  await assert.rejects(() => readable({ ...admin, id: 'no-such-user' }, documentId), status('document_missing', 404))
+  await assert.rejects(() => readable(admin, 'not-a-uuid'), status('document_missing', 404))
+  const { authDb } = await import('@campusos/db')
+  const { sql } = await import('drizzle-orm')
+  await authDb.execute(sql`update users set erased_at = now() where id = ${faculty.id}`)
+  await assert.rejects(() => readable(faculty, documentId), status('document_missing', 404))
+})
+
+test('authorization: office files are for administrators and a signable file shows only to its signer after a request', async () => {
+  const api = await workflow()
+  const campus = await college()
+  const { admin, signer, faculty, other } = campus
+  const { file } = await pdf()
+  const office = await api.uploadDocument(admin, { title: 'Circular', kind: 'record', scope: 'office', subjectUserId: faculty.id, file })
+  for (const denied of [signer, faculty, other]) await assert.rejects(() => readable(denied, office.documentId), status('document_missing', 404))
+  assert.equal((await readable(admin, office.documentId)).title, 'Circular')
+  const signable = await api.uploadDocument(admin, { title: 'Offer', kind: 'offer', scope: 'signer', subjectUserId: signer.id, file, retainUntil: new Date(Date.now() + 30 * 86400_000).toISOString(), retentionBasis: 'specified_purpose', authorityRef: 'Offer records policy' })
+  const documentId = signable.documentId
+  await assert.rejects(() => readable(signer, documentId), status('document_missing', 404))
+  assert.equal((await readable(admin, documentId)).status, null)
+  await pendingRequest(campus, documentId, signer.id)
+  const row = await readable(signer, documentId)
+  assert.equal(row.status, 'pending')
+  assert.ok(row.expiresAt)
+  for (const denied of [faculty, other, { ...signer, institutionId: (await college()).id }]) await assert.rejects(() => readable(denied, documentId), status('document_missing', 404))
+})
+
+test('upload: only administrators file documents, and every file is checked and audited', async () => {
+  const api = await workflow()
+  const { authDb } = await import('@campusos/db')
+  const { sql } = await import('drizzle-orm')
+  const campus = await college()
+  const foreign = await college()
+  const { admin, signer, faculty } = campus
+  const good = await pdf()
+  const base = { title: '  Policy  ', kind: 'record', scope: 'office', subjectUserId: faculty.id, file: good.file }
+  await assert.rejects(() => api.uploadDocument(faculty, base), status('forbidden', 403))
+  await assert.rejects(() => api.uploadDocument(signer, base), status('forbidden', 403))
+  await assert.rejects(() => api.uploadDocument(admin, { ...base, subjectUserId: foreign.signer.id }), status('invalid_subject', 400))
+  await assert.rejects(() => api.uploadDocument(admin, { ...base, scope: 'student_academic', subjectUserId: faculty.id }), status('invalid_subject', 400))
+  const fake = { ...good.file, base64: Buffer.from('MZ not a pdf at all').toString('base64') }
+  await assert.rejects(() => api.uploadDocument(admin, { ...base, file: fake }), status('wrong_type', 400))
+  const big = Buffer.concat([Buffer.from('%PDF-1.4\n'), Buffer.alloc(5 * 1024 * 1024)])
+  await assert.rejects(() => api.uploadDocument(admin, { ...base, file: { ...good.file, size: big.length, base64: big.toString('base64') } }), status('too_large', 400))
+  const png = { name: 'a.png', type: 'image/png', size: 8, base64: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString('base64') }
+  await assert.rejects(() => api.uploadDocument(admin, { ...base, kind: 'offer', scope: 'signer', subjectUserId: signer.id, file: png, retainUntil: new Date(Date.now() + 30 * 86400_000).toISOString(), retentionBasis: 'specified_purpose', authorityRef: 'Policy 1' }), status('wrong_type', 400))
+  const signable = { ...base, kind: 'offer', scope: 'signer', subjectUserId: signer.id }
+  await assert.rejects(() => api.uploadDocument(admin, signable), status('retention_required', 400))
+  await assert.rejects(() => api.uploadDocument(admin, { ...signable, retainUntil: new Date(Date.now() + 2 * 86400_000).toISOString(), retentionBasis: 'legal_obligation', authorityRef: 'Policy 1' }), status('retention_range', 400))
+  await assert.rejects(() => api.uploadDocument(admin, { ...base, retainUntil: new Date(Date.now() + 30 * 86400_000).toISOString(), retentionBasis: 'legal_obligation', authorityRef: 'Policy 1' }), status('retention_required', 400))
+  await assert.rejects(() => api.uploadDocument(admin, { ...base, kind: 'contract' }), /Offers, contracts and agreements/)
+  const stored = await api.uploadDocument(admin, base)
+  assert.equal(stored.notice, 'Document stored.')
+  const [row] = (await authDb.execute(sql`select title, encode(body, 'hex') as hex, sha256, media_type from documents_files where id = ${stored.documentId}`)).rows as { title: string; hex: string; sha256: string; media_type: string }[]
+  assert.deepEqual([row!.title, row!.hex, row!.sha256, row!.media_type], ['Policy', good.bytes.toString('hex'), good.sha256, 'application/pdf'])
+  const audits = (await authDb.execute(sql`select actor_id, actor_email, detail::text as detail from audit_log where entity_id = ${stored.documentId} and action = 'document.uploaded'`)).rows as { actor_id: string; actor_email: string | null; detail: string }[]
+  assert.equal(audits.length, 1)
+  assert.equal(audits[0]!.actor_id, admin.id)
+  assert.equal(audits[0]!.actor_email, null)
+  assert.ok(!audits[0]!.detail.includes('Policy'))
 })

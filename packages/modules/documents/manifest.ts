@@ -8,8 +8,8 @@ export const manifest: ModuleManifest = {
   alwaysEnabled: false,
   dependsOn: [],
   pricing: { model: 'not_priced_yet', priceINR: null },
-  rolesWithAccess: MEMBERS,
-  navEntries: [{ label: 'Documents', href: '/m/documents', roles: MEMBERS }],
+  rolesWithAccess: [...MEMBERS],
+  navEntries: [{ label: 'Documents', href: '/m/documents', roles: [...MEMBERS] }],
   routeRoles: true,
   apiBasePath: '/api/v1/modules/documents',
 }
