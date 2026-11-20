@@ -15,7 +15,7 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | [Ceremonies](#ceremonies) | 0.7.0 | 5 | 18 | academic |
 | [Sales CRM](#crm) | 0.8.0 | 4 | 32 | finance, notices |
 | [Enrollment](#enrollment) | 0.8.0 | 3 | 9 | academic |
-| [Examinations & Grading](#examinations) | 0.22.0 | 9 | 36 | academic, notices |
+| [Examinations & Grading](#examinations) | 0.23.0 | 9 | 39 | academic, notices |
 | [Feedback](#feedback) | 0.8.0 | 8 | 19 | academic |
 | [Fees & Finance](#fees) | 0.26.0 | 11 | 43 | academic, finance, notices |
 | [Finance & Books](#finance) | 0.22.0 | 92 | 208 | None |
@@ -23,9 +23,9 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | [Hostel](#hostel) | 0.11.0 | 5 | 18 | academic |
 | [HR & Payroll](#hr) | 0.25.0 | 18 | 134 | finance, notices |
 | [Library](#library) | 0.15.0 | 5 | 18 | academic |
-| [Mentoring](#mentoring) | 0.22.0 | 6 | 19 | academic, notices |
+| [Mentoring](#mentoring) | 0.23.0 | 6 | 19 | academic, notices |
 | [Communication & Notices](#notices) | 0.14.0 | 4 | 13 | academic |
-| [Parent Portal](#parents) | 0.22.0 | 4 | 11 | academic |
+| [Parent Portal](#parents) | 0.23.0 | 4 | 11 | academic |
 | [Placement](#placement) | 0.11.0 | 8 | 15 | academic, notices |
 | [Projects and timesheets](#projects) | 0.5.0 | 6 | 27 | finance |
 | [Quizzes](#quizzes) | 0.8.0 | 7 | 22 | academic |
@@ -435,7 +435,10 @@ Source: `campusos-platform/packages/modules/examinations/`.
 | `POST /api/v1/modules/examinations/exams/unpublish` | Withdraw published results. Admin only, reason mandatory. | `examId`, `reason` |
 | `GET /api/v1/modules/examinations/marks` | The marks sheet for one exam, absent students included | See runtime OpenAPI schema |
 | `POST /api/v1/modules/examinations/marks` | Enter or amend marks for an unpublished exam | `examId`, `marks` |
-| `POST /api/v1/modules/examinations/marks/revise` | Change a published mark. The reason is mandatory and audited. | `examId`, `studentId`, `obtained`, `absent`, `reason` |
+| `POST /api/v1/modules/examinations/marks/revise` | Propose a different score or an absence for a published mark | `examId`, `studentId`, `obtained`, `absent`, `expectedRevision`, `requestId`, `reason` |
+| `POST /api/v1/modules/examinations/marks/recheck` | A student asks for a recheck or re-evaluation of their own published mark | `markId`, `kind`, `reason` |
+| `POST /api/v1/modules/examinations/marks/decide` | Approve a proposed revision, or close a review. Administrator only, never the proposer. | `requestId`, `decision`, `reason` |
+| `GET /api/v1/modules/examinations/marks/requests` | Reviews of marks, newest first, 50 at a time | See runtime OpenAPI schema |
 | `POST /api/v1/modules/examinations/finalise` | Turn a course’s published marks into the academic record, correcting it where a mark has since been revised | `offeringId`, `reason` |
 | `GET /api/v1/modules/examinations/scales` | Grading schemes for this institution | See runtime OpenAPI schema |
 | `GET /api/v1/modules/examinations/scales/programs` | Programmes that grade on their own scale rather than the default | See runtime OpenAPI schema |
