@@ -25,6 +25,7 @@ import timetable from '@campusos/module-timetable/plugin'
 import admissions from '@campusos/module-admissions/plugin'
 import alumni from '@campusos/module-alumni/plugin'
 import crm from '@campusos/module-crm/plugin'
+import documents from '@campusos/module-documents/plugin'
 import helpdesk from '@campusos/module-helpdesk/plugin'
 import placement from '@campusos/module-placement/plugin'
 import projects from '@campusos/module-projects/plugin'
@@ -60,6 +61,7 @@ const PLUGINS: Plugin[] = [
   admissions,
   alumni,
   crm,
+  documents,
   helpdesk,
   placement,
   projects,
@@ -156,7 +158,8 @@ test('the whole product still answers the same number of endpoints', () => {
   // P1-07a: +1 (enrollment: a section's membership follows registration); P1-13a: +2 (attendance: the daily register, read and mark)
   // P1-03b: +3 (fees: void a receipt, a cheque returned unpaid, void an invoice)
   // P1-03e: +4 (hostel: room fee and term charges; transport: route fee and term charges)
-  assert.equal(total, 846, `expected 846 endpoints across all modules, found ${total}`)
+  // P2-19: +8 (documents: list, file, assent record, verify, upload, request, sign, close)
+  assert.equal(total, 854, `expected 854 endpoints across all modules, found ${total}`)
 })
 
 test('a longer path is never swallowed by a shorter one', () => {
@@ -183,6 +186,8 @@ test('only the document routes return bytes instead of JSON', () => {
     'admissions/imports/template',
     'alumni/imports/template',
     'ceremonies/certificate.pdf',
+    'documents/file',
+    'documents/receipt.pdf',
     'examinations/admit-card.pdf',
     'examinations/grade-report.pdf',
     'examinations/imports/template',

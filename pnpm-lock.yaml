@@ -66,6 +66,9 @@ importers:
       '@campusos/module-crm':
         specifier: workspace:*
         version: link:../modules/crm
+      '@campusos/module-documents':
+        specifier: workspace:*
+        version: link:../modules/documents
       '@campusos/module-enrollment':
         specifier: workspace:*
         version: link:../modules/enrollment
