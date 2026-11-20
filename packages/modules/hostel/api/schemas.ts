@@ -37,7 +37,8 @@ export const setRoomFeeSchema = z
     blockId: uuid,
     /** Only the rooms with this many beds: single, double and triple are priced apart. */
     capacity: z.coerce.number().int().min(1).max(20).nullish(),
-    termFee: z.string().trim().max(20),
+    // Omitted is empty: a web form drops a blank field, and a blank fee is the clear.
+    termFee: z.string().trim().max(20).default(''),
     reason: z.string().trim().min(5).max(500),
   })
   .meta({ id: 'HostelRoomFeeSet' })

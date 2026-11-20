@@ -586,8 +586,12 @@ async function issueChunk(
   const ids = students.map((s) => s.studentId)
   const lines = (await tx.execute(priceListSql(termId, ids))).rows as Record<string, unknown>[]
   const priced = new Map<string, { listed: number; unposted: number; freshWaivers: string[] }>()
+  // The student charges this run priced: only these are marked billed below, so
+  // a charge raised or replaced after pricing is left for the next run.
+  const pricedCharges: string[] = []
   for (const l of lines) {
     const g = priced.get(String(l.student_id)) ?? { listed: 0, unposted: 0, freshWaivers: [] }
+    if (l.student_charge_id) pricedCharges.push(String(l.student_charge_id))
     g.listed += Number(l.charged)
     g.unposted += Number(l.unposted_waived)
     if (l.waiver_id && Number(l.unposted_waived) > 0) g.freshWaivers.push(String(l.waiver_id))
@@ -681,6 +685,7 @@ async function issueChunk(
       .set({ invoicedAt: new Date() })
       .where(
         and(
+          inArray(studentCharges.id, pricedCharges),
           eq(studentCharges.termId, termId),
           inArray(studentCharges.studentId, issuedIds),
           isNull(studentCharges.cancelledAt),

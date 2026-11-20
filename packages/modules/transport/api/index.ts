@@ -17,7 +17,8 @@ export const stopSchema = z.object({ routeId: z.uuid(), name: z.string().trim().
 export const assignSchema = z.object({ routeId: z.uuid(), stopId: z.uuid(), studentId: z.string().min(1) })
 export const releaseSchema = z.object({ assignmentId: z.uuid(), reason: z.string().trim().min(5).max(500) })
 /** The fee per seat per term, as typed in rupees; empty clears it (decision 578). */
-export const routeFeeSchema = z.object({ routeId: z.uuid(), termFee: z.string().trim().max(20), reason: z.string().trim().min(5).max(500) })
+// Omitted is empty: a web form drops a blank field, and a blank fee is the clear.
+export const routeFeeSchema = z.object({ routeId: z.uuid(), termFee: z.string().trim().max(20).default(''), reason: z.string().trim().min(5).max(500) })
 export const chargeTermSchema = z.object({ termId: z.uuid() })
 
 /** Whether seats are charged through the student's fee account here. */
@@ -30,7 +31,7 @@ const localDay = async (tx: Tx, at: Date) =>
 const stayOf = (a: { id: string; studentId: string }, route: { name: string; termFeePaise: number }, from: string, until: string | null): Stay => ({
   sourceModule: 'transport', stayId: a.id, studentId: a.studentId, label: `Transport ${route.name}`, termFeePaise: route.termFeePaise, from, until,
 })
-const invoicedNotice = (codes: string[]) => codes.length ? ` Already invoiced for ${codes.join(', ')}: grant a waiver in Fees for the days not used.` : ''
+const invoicedNotice = (codes: string[]) => codes.length ? ` Already invoiced for ${codes.join(', ')}: the unused days stay billed, and Fees has no credit for them yet (NEW-102).` : ''
 export const listVehicles = (actor: Actor) => withTenant(tenant(actor, ADMIN), transaction => transaction.select().from(vehicles).orderBy(asc(vehicles.registration)))
 export const listRoutes = (actor: Actor) => withTenant(tenant(actor), transaction => transaction.select({ id: routes.id, name: routes.name, vehicleId: routes.vehicleId, registration: vehicles.registration, capacity: vehicles.capacity, termFeePaise: routes.termFeePaise }).from(routes).innerJoin(vehicles, eq(vehicles.id, routes.vehicleId)).orderBy(asc(routes.name)))
 export const listStops = (actor: Actor) => withTenant(tenant(actor), transaction => transaction.select().from(stops).orderBy(asc(stops.position)))

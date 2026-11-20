@@ -188,15 +188,17 @@ export async function chargeStayWithin(tx: Tx, tenant: string, actorId: string, 
  * term named, because the way back from an invoice is a waiver.
  */
 export async function endStayWithin(tx: Tx, tenant: string, actorId: string, stay: Stay & { until: string }) {
-  // Take the term locks a term run takes, before reading the charges, so a run
-  // that read this stay as open lands its charge first and is shrunk below.
-  // Locks go in term order; a run holds only one.
+  // Take the term locks a term run and an invoice run take, before reading the
+  // charges: a run that read this stay as open lands its charge first and is
+  // shrunk below, and an invoice that priced a charge commits it as billed
+  // before it can be replaced. Terms in id order; each run holds only one.
   const spanning = await tx
     .select({ id: terms.id })
     .from(terms)
     .where(gte(terms.endsOn, stay.from))
     .orderBy(asc(terms.id))
   for (const t of spanning) {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'fees.issue:' + t.id}, 0))`)
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${stay.sourceModule + '.charge:' + t.id}, 0))`)
   }
   const rows = await tx
@@ -234,6 +236,8 @@ export async function endStayWithin(tx: Tx, tenant: string, actorId: string, sta
   }
   return { invoiced }
 }
+
+export { localToday } from '@campusos/module-finance/api'
 
 /** Terms, newest first, for a picker. */
 export async function termChoicesWithin(tx: Tx) {

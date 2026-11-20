@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, gte, isNull, lte, sql } from 'drizzle-orm'
 import { audit, users, withTenant } from '@campusos/db'
 import { formatPaise, parseRupeesToPaise } from '@campusos/money'
-import { chargeStayWithin, endStayWithin, termChoicesWithin, termOnWithin, type Stay } from '@campusos/module-fees/api'
+import { chargeStayWithin, endStayWithin, localToday, termChoicesWithin, termOnWithin, type Stay } from '@campusos/module-fees/api'
 import { manifest as feesManifest } from '@campusos/module-fees/manifest'
 import { terms } from '@campusos/module-academic/schema'
 import {
@@ -132,7 +132,7 @@ async function roomPrice(tx: Tx, roomId: string, unpriced = false): Promise<Pric
 }
 
 const invoicedNotice = (codes: string[]) =>
-  codes.length ? ` Already invoiced for ${codes.join(', ')}: grant a waiver in Fees for the days not used.` : ''
+  codes.length ? ` Already invoiced for ${codes.join(', ')}: the unused days stay billed, and Fees has no credit for them yet (NEW-102).` : ''
 
 const today = () => new Date().toISOString().slice(0, 10)
 
@@ -314,7 +314,7 @@ export async function allocate(actor: Actor, input: unknown) {
         institutionId: tenant,
         roomId: d.roomId,
         studentId: d.studentId,
-        allocatedOn: d.allocatedOn ?? today(),
+        allocatedOn: d.allocatedOn ?? (await localToday(tx, tenant)),
         allocatedBy: actor.id,
       })
       .returning()
@@ -370,7 +370,7 @@ export async function vacate(actor: Actor, input: unknown) {
 
     const [updated] = await tx
       .update(allocations)
-      .set({ vacatedOn: d.vacatedOn ?? today() })
+      .set({ vacatedOn: d.vacatedOn ?? (await localToday(tx, tenant)) })
       .where(eq(allocations.id, d.allocationId))
       .returning()
 
