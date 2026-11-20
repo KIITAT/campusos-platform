@@ -201,7 +201,7 @@ test('board, direct notice, files and old inbox copies obey the same scope', asy
   assert.equal((await noticeView(stu('s1'), draft.id)).notice.id, draft.id)
   assert.equal((await attachmentFile(stu('s1'), doc!.id)).id, doc!.id)
   for (const outsider of [stu('s2'), facB()]) {
-    assert.equal((await board1(outsider)).total, 0)
+    assert.equal((await board1(outsider)).total, 0, outsider.role + ' ' + JSON.stringify(await board1(outsider)))
     await assert.rejects(noticeView(outsider, draft.id), notFound('no_such_notice'))
     await assert.rejects(attachmentFile(outsider, doc!.id), notFound('no_such_document'))
   }
