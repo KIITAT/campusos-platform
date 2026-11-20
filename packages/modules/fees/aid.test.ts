@@ -715,3 +715,35 @@ test('an award and a drop of its only qualifying course take turns (review P1-03
     blocker.release()
   }
 })
+
+test('prorating drops waits for a void holding the term lock (re-review P1-03b NOTE)', async () => {
+  const c = await campus()
+  await charges(c)
+  await issueInvoices(c.admin, { termId: c.termId })
+  const one = await takes(c, c.a, 4, 'Algorithms')
+  await takes(c, c.a, 4, 'Databases')
+  await setRefundRules(c.admin, { termId: c.termId, brackets: [{ throughOn: day(7), refundBps: 10_000 }] })
+  await enrollment.drop(asEnrollment(c.admin), { studentId: c.a, offeringId: one.id, effectiveOn: day(3) })
+
+  let release!: () => void
+  const held = new Promise<void>((ok) => (release = ok))
+  let holding!: () => void
+  const locked = new Promise<void>((ok) => (holding = ok))
+  const holder = authDb.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'fees.issue:' + c.termId}, 0))`)
+    holding()
+    await held
+  })
+  await locked
+  try {
+    const prorating = prorateDrops(c.admin, { termId: c.termId })
+    const waiting = await Promise.race([prorating.then(() => false), new Promise<boolean>((ok) => setTimeout(() => ok(true), 700))])
+    assert.equal(waiting, true, 'a drop credit waits for the term lock')
+    release()
+    await holder
+    assert.equal((await prorating).credited.length, 1)
+  } finally {
+    release()
+    await holder.catch(() => {})
+  }
+})

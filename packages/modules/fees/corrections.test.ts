@@ -4,7 +4,7 @@ import { like, sql } from 'drizzle-orm'
 import { authDb, corePool, institutions, users, withTenant } from '@campusos/db'
 import { printedText } from '@campusos/module-framework/pdf'
 import * as academic from '@campusos/module-academic/api'
-import { localToday, reverseEntry, setSingleOfficer, trialBalance, updateSettings, type Actor as Books } from '@campusos/module-finance/api'
+import { localToday, postWithin, reverseEntry, setSingleOfficer, trialBalance, updateSettings, type Actor as Books } from '@campusos/module-finance/api'
 import {
   awardScholarship,
   createFeeItem,
@@ -784,4 +784,64 @@ test('a time zone changed while a payment waits does not split its receipt year 
     release()
     await holder.catch(() => {})
   }
+})
+
+test('Finance reverses no entry Fees owns, whatever its prefix (re-review P1-03b HIGH)', async () => {
+  const c = await campus()
+  const day = await today(c)
+  for (const prefix of ['invoice', 'invoice-void', 'refund', 'waiver', 'award', 'award-revoked', 'drop', 'payment']) {
+    const id = await withTenant(c.id, (tx) =>
+      postWithin(tx, c.id, c.admin.id, {
+        memo: `fixture ${prefix}`,
+        sourceModule: 'fees',
+        sourceRef: `${prefix}:fixture-${prefix}`,
+        postingDate: day,
+        lines: [
+          { purpose: 'fees_receivable', debitPaise: 100 },
+          { purpose: 'fee_income', creditPaise: 100 },
+        ],
+      }),
+    )
+    await assert.rejects(() => reverseEntry(books(c), { entryId: id.id, reason: 'free-hand reversal' }), code('owned_by_module'), prefix)
+  }
+})
+
+/** Hold the term's issue lock, as an issue run or a void would. */
+async function holdingTermLock(termId: string, during: () => Promise<void>) {
+  let release!: () => void
+  const held = new Promise<void>((ok) => (release = ok))
+  let holding!: () => void
+  const locked = new Promise<void>((ok) => (holding = ok))
+  const holder = authDb.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'fees.issue:' + termId}, 0))`)
+    holding()
+    await held
+  })
+  await locked
+  try {
+    await during()
+  } finally {
+    release()
+    await holder
+  }
+}
+
+const stillWaiting = (p: Promise<unknown>) =>
+  Promise.race([p.then(() => false), new Promise<boolean>((ok) => setTimeout(() => ok(true), 700))])
+
+test('a receipt and an award wait for a void holding the term lock (re-review P1-03b NOTE)', async () => {
+  const c = await campus()
+  await charge(c, 'Tuition', '45000')
+  await issueInvoices(c.admin, { termId: c.termId })
+  const rule = await createScholarship(c.admin, { code: 'MERIT', name: 'Merit', kind: 'merit', basis: 'fixed', amountPaise: '1000' })
+  let paying!: Promise<unknown>
+  let awarding!: Promise<unknown>
+  await holdingTermLock(c.termId, async () => {
+    paying = cash(c, '1000')
+    awarding = awardScholarship(c.admin, { scholarshipId: rule.id, studentId: c.s2, termId: c.termId })
+    assert.equal(await stillWaiting(paying), true, 'a receipt waits for the term lock')
+    assert.equal(await stillWaiting(awarding), true, 'an award waits for the term lock')
+  })
+  await Promise.all([paying, awarding])
+  await reconciled(c)
 })
