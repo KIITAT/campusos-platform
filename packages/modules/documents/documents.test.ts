@@ -729,3 +729,14 @@ test('signing: a changed original cannot be requested, confirmed or signed', asy
   await assert.rejects(() => api.requestAssent(fresh.admin, { documentId: upload.documentId, reason: 'Send the offer for acceptance', approvedInternalUse: true }), status('document_integrity', 409))
   void admin
 })
+
+test('plugin: the signed export carries a read-only mail hook beside its routes', async () => {
+  const exported = await import('./plugin')
+  const core = await import('./api/index')
+  assert.equal(exported.default, exported.plugin)
+  assert.equal(exported.plugin.manifest.id, 'documents')
+  assert.ok(Object.isFrozen(exported.plugin) && Object.isFrozen(exported.plugin.assentMailer))
+  assert.equal(exported.plugin.assentMailer.issue, core.issueAssentChallenge)
+  assert.equal(exported.plugin.assentMailer.deliveryFailed, core.markChallengeDeliveryFailed)
+  assert.throws(() => { (exported.plugin.assentMailer as { issue: unknown }).issue = () => undefined }, TypeError)
+})
