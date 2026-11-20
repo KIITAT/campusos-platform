@@ -1,6 +1,6 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { eq, like } from 'drizzle-orm'
+import { eq, like, sql } from 'drizzle-orm'
 import { authDb, institutions, users, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
 import { trialBalance, type Actor as Books } from '@campusos/module-finance/api'
@@ -25,7 +25,7 @@ import {
   verifyDemandLetter,
   type Actor,
 } from './api'
-import { demandLetters, transferClaims } from './schema'
+import { demandLetters, feePayments, transferClaims } from './schema'
 
 /**
  * KIIT's "RTGS Submit Application" and "Download Demand Letter": a transfer
@@ -196,4 +196,62 @@ test('a demand letter states the term’s fees and what is due, numbered and kep
     withTenant(c.id, (tx) => tx.update(demandLetters).set({ addressee: 'Somebody else' }).where(eq(demandLetters.id, first.id))),
     (e) => String((e as { cause?: { constraint?: string } }).cause?.constraint) === 'fee_demand_letter_kept',
   )
+})
+
+test('a UPI payment is claimed by its 12-digit reference and verified as UPI', async () => {
+  const c = await campus()
+  await issueInvoices(c.admin, { termId: c.termId })
+  const cl = await claim(c, { mode: 'upi', utr: '412345678901', amount: '45,000' })
+  assert.equal(cl.status, 'pending')
+  await assert.rejects(claim(c, { mode: 'upi', utr: '41234567890A' }), (e) => code(e) === 'fee_transfer_claims_upi_shape')
+  await verifyClaim(c.clerk, { claimId: cl.id })
+  const p = (await studentLedger(c.asha, c.asha.id, c.termId)).payments[0]!
+  assert.equal(p.method, 'upi')
+  assert.equal(p.reference, '412345678901')
+})
+
+test('a deposited cheque is claimed with its drawer and verified as a cheque', async () => {
+  const c = await campus()
+  await issueInvoices(c.admin, { termId: c.termId })
+  const cl = await claim(c, { mode: 'cheque', utr: '000123', remitterIfsc: 'sbin0001234', drawerAccount: '1234 5678 901', amount: '45,000' })
+  assert.equal(cl.drawerAccount, '12345678901')
+  assert.equal(cl.remitterIfsc, 'SBIN0001234')
+  await assert.rejects(claim(c, { mode: 'cheque', utr: '000124', remitterIfsc: 'SBIN0001234' }), (e) => code(e) === 'fee_transfer_claims_cheque_shape')
+  await assert.rejects(
+    claim(c, { mode: 'cheque', utr: '12345', remitterIfsc: 'SBIN0001234', drawerAccount: '12345678901' }),
+    (e) => code(e) === 'fee_transfer_claims_cheque_shape',
+  )
+  const v = await verifyClaim(c.clerk, { claimId: cl.id })
+  const [pay] = await withTenant(c.id, (tx) => tx.select().from(feePayments).where(eq(feePayments.receiptNo, v.receiptNo)))
+  assert.equal(pay!.method, 'cheque')
+  assert.equal(pay!.reference, '000123')
+  assert.equal(pay!.drawerIfsc, 'SBIN0001234')
+  assert.equal(pay!.drawerAccount, '12345678901')
+})
+
+test('the same cheque number on another account is another cheque, on the same account it is refused', async () => {
+  const c = await campus()
+  const cheque = (ifsc: string, account: string) => claim(c, { mode: 'cheque', utr: '000555', remitterIfsc: ifsc, drawerAccount: account, amount: '1,000' })
+  await cheque('SBIN0001234', '11111111')
+  await cheque('HDFC0000123', '11111111')
+  await assert.rejects(cheque('SBIN0001234', '11111111'), (e) => code(e) === 'fee_transfer_claims_cheque')
+  await claim(c, { mode: 'neft', utr: '000555AB', amount: '1,000' })
+})
+
+test('a claim takes the term issue lock, as every other money path does (NEW-93)', async () => {
+  const c = await campus()
+  await issueInvoices(c.admin, { termId: c.termId })
+  const cl = await claim(c, { utr: 'LOCK00000001', amount: '1,000' })
+  let verified = false
+  let pending: Promise<void> | undefined
+  await authDb.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'fees.issue:' + c.termId}, 0))`)
+    pending = verifyClaim(c.clerk, { claimId: cl.id }).then(() => {
+      verified = true
+    })
+    await new Promise((r) => setTimeout(r, 500))
+    assert.equal(verified, false, 'verifying waits for the term lock')
+  })
+  await pending
+  assert.equal(verified, true)
 })
