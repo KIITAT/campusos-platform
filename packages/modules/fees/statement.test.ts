@@ -323,3 +323,26 @@ test('a line the books will not take is skipped, not fatal', async () => {
   assert.equal((await lineOf(c, fresh!)).status, 'matched')
   assert.equal((await lineOf(c, old!)).status, 'unmatched')
 })
+
+test('the statement page lists what is left, with a suggestion for our reference', async () => {
+  const { transferPages } = await import('./transfer-pages')
+  const page = transferPages.find((p) => p.path === '/statement')!
+  const c = await campus()
+  const fb = await bank(c)
+  const ref = await referenceOf(c, c.asha.id)
+  await statement(c, fb, [
+    { description: `FEES ${ref} NO UTR`, deposit: 500_000 },
+    { description: 'SOMETHING ELSE', deposit: 100_000 },
+  ])
+  const data = (await page.load!(c.clerk as never, new Request('https://x/m/fees/statement'))) as Record<string, any>
+  const hit = data.rows.find((r: { description: string }) => r.description.includes(ref))
+  assert.match(hit.suggested, /^CF[0-9A-F]{10} → Asha Roy \(T1\)$/)
+  assert.equal(data.rows.find((r: { description: string }) => r.description === 'SOMETHING ELSE').suggested, '')
+  assert.equal(data.totals.count, 2)
+  const forms = page.sections(data as never).filter((s) => s.kind === 'form') as { path: string }[]
+  assert.ok(forms.some((f) => f.path === '/statement/receipt'))
+  const fresh = await campus()
+  const empty = (await page.load!(fresh.clerk as never, new Request('https://x/m/fees/statement'))) as Record<string, any>
+  assert.equal(empty.account, null)
+  assert.equal(page.sections(empty as never).length, 1)
+})
