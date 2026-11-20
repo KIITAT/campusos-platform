@@ -12,15 +12,20 @@ import {
   cancelBacklog,
   cancelEnrolment,
   createExam,
+  decideMarkReview,
   downloadPaper,
   enrol,
   enrolmentList,
   ExamError,
+  enterMarks,
   examStats,
+  finaliseCourse,
   gradeReport,
   gradeReportPdf,
   myExamCycle,
   papersFor,
+  publishExam,
+  reviseMark,
   setExamCycleSettings,
   setWindow,
   studentPerformance,
@@ -317,4 +322,27 @@ test('statistics: an exam’s spread and pass rate, and a student beside their c
   const mine = await studentPerformance(c.asha, c.asha.id)
   assert.deepEqual(mine.map((r) => [r.exam, r.percent, r.classMean, r.versus]), [['Quiz', 90, 60, 30]])
   await assert.rejects(studentPerformance(c.asha, c.bilal.id), (e) => code(e) === 'not_your_student')
+})
+
+test('a grade report waits for a revised mark’s course to be finalised again', async () => {
+  const c = await campus()
+  const mid = await createExam(c.admin, { offeringId: c.offDs, name: 'Mid semester', kind: 'midterm', maxMarks: 100, weightPercent: 50 })
+  for (const exam of [mid.id, c.finalDs]) {
+    await enterMarks(c.admin, { examId: exam, marks: [{ studentId: c.asha.id, obtained: 80 }, { studentId: c.bilal.id, obtained: 70 }] })
+    await publishExam(c.admin, { examId: exam })
+  }
+  await finaliseCourse(c.admin, { offeringId: c.offDs })
+  assert.equal((await gradeReport(c.asha, c.asha.id, c.termId)).courses.length, 1)
+
+  const p = await reviseMark(c.teacher, { examId: c.finalDs, studentId: c.asha.id, obtained: 95, expectedRevision: 0, reason: 'a page of the answer book was missed' })
+  // Proposed only: nothing has moved, so the report still prints.
+  assert.equal((await gradeReport(c.asha, c.asha.id, c.termId)).courses.length, 1)
+  await decideMarkReview(c.admin, { requestId: p.requestId, decision: 'approve', reason: 'checked against the script' })
+
+  await assert.rejects(gradeReport(c.asha, c.asha.id, c.termId), (e) => code(e) === 'marks_recompute_required')
+  // Bilal's mark was not revised, and the staff view of the office is held the same way for Asha only.
+  assert.equal((await gradeReport(c.bilal, c.bilal.id, c.termId)).courses.length, 1)
+
+  await finaliseCourse(c.admin, { offeringId: c.offDs, reason: 'corrected after the approved revision' })
+  assert.equal((await gradeReport(c.asha, c.asha.id, c.termId)).courses.length, 1)
 })

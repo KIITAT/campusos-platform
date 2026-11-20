@@ -22,6 +22,7 @@ import {
 } from '../schema'
 import { courseCompletions, courses, institutions, offerings, programs, sectionMembers, sections, studentPrograms, terms, users } from './joins'
 import { ExamError, type Actor } from './operations'
+import { recomputePending, recomputeRequired } from './finalise'
 import {
   bookBacklogSchema,
   cancelBacklogSchema,
@@ -662,12 +663,16 @@ export async function gradeReport(actor: Actor, studentId: string, termId: strin
         grade: courseCompletions.gradeLabel,
         points: courseCompletions.gradePoints,
         passed: courseCompletions.passed,
+        pending: recomputePending(studentId),
       })
       .from(courseCompletions)
       .innerJoin(courses, eq(courses.id, courseCompletions.courseId))
       .innerJoin(terms, eq(terms.id, courseCompletions.termId))
       .where(and(eq(courseCompletions.studentId, studentId), sql`${terms.startsOn} <= ${t.startsOn}`))
       .orderBy(asc(courses.code))
+    // The cumulative average reads every term up to this one, so a revised mark
+    // in any of them holds the report until its course is finalised again.
+    if (rows.some((r) => r.pending)) throw recomputeRequired()
     const shape = (r: (typeof rows)[number]): Attempt => ({
       courseId: r.courseId,
       termStartsOn: r.startsOn,

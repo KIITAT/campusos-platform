@@ -721,3 +721,68 @@ test('two administrators approving at once produce one revision and one audit ro
   )
   assert.equal(revised.length, 1)
 })
+
+// --- official output and finalisation -----------------------------------------------
+
+test('transfer credit and an unrelated student never wait; unpublish and republish still wait for a re-finalise', async () => {
+  const { off, exam } = await wholeCourse([
+    { studentId: ids.s1, obtained: 49 },
+    { studentId: ids.s2, obtained: 80 },
+  ])
+  const abroad = await academic.createCourse(adm(), { departmentId: ids.dept, code: `tr${++n}`, title: 'Accepted elsewhere', credits: 3 })
+  await academic.recordCompletion(adm(), { studentId: ids.s1, courseId: abroad.id, gradeLabel: 'P', gradePoints: 5, passed: true, source: 'transfer' })
+  await finaliseCourse(adm(), { offeringId: off.id })
+  await officialTranscript(adm(), ids.s1)
+
+  // Hide and republish with no change: the course must be finalised again before official output.
+  await unpublishExam(adm(), { examId: exam.id, reason: 'withdrawn to fix the cohort list' })
+  await assert.rejects(
+    () => finaliseCourse(adm(), { offeringId: off.id }),
+    (err: unknown) => code(err) === 'marks_recompute_required',
+  )
+  await assert.rejects(() => officialTranscript(adm(), ids.s2), (err: unknown) => code(err) === 'marks_recompute_required')
+  await publishExam(fac(), { examId: exam.id })
+  await assert.rejects(() => officialTranscript(adm(), ids.s2), (err: unknown) => code(err) === 'marks_recompute_required')
+  await finaliseCourse(adm(), { offeringId: off.id, reason: 'republished, finalising again' })
+  await officialTranscript(adm(), ids.s2)
+  const flags = await withTenant(inst, (tx) =>
+    tx.execute(sql`select count(*)::int as n from exam_marks where exam_id = ${exam.id} and needs_recompute`),
+  )
+  assert.equal((flags.rows[0] as { n: number }).n, 0)
+})
+
+test('an incomplete student keeps the flag and the last completion; a finalise racing an approval lands consistently', async () => {
+  const { off, exam } = await wholeCourse([
+    { studentId: ids.s1, obtained: 60 },
+    { studentId: ids.s2, obtained: 70 },
+  ])
+  await finaliseCourse(adm(), { offeringId: off.id })
+  const p = await reviseMark(fac(), { examId: exam.id, studentId: ids.s1, obtained: 90, expectedRevision: 0, reason: 'recount after a missed page' })
+
+  // Hold the lock, queue a finalise first and the approval second.
+  let release!: () => void
+  const held = new Promise<void>((r) => (release = r))
+  let locked!: () => void
+  const taken = new Promise<void>((r) => (locked = r))
+  const holder = withTenant(inst, async (tx) => {
+    await lockOfferingMarks(tx, inst, off.id)
+    locked()
+    await held
+  })
+  await taken
+  const wait = async (n: number) => {
+    for (let i = 0; i < 200 && (await advisoryWaiters()) < n; i++) await new Promise((r) => setTimeout(r, 25))
+    assert.equal(await advisoryWaiters(), n)
+  }
+  const fin = finaliseCourse(adm(), { offeringId: off.id, reason: 'finalising before the decision' })
+  await wait(1)
+  const dec = decideMarkReview(adm2(), { requestId: p.requestId, decision: 'approve', reason: 'checked against the script' })
+  await wait(2)
+  release()
+  await Promise.all([holder, fin, dec])
+
+  // The finalise ran first (unchanged), the approval second: the mark is flagged and the outputs wait.
+  const row = await markOf(exam.id, ids.s1)
+  assert.deepEqual([Number(row.obtained), row.needsRecompute], [90, true])
+  await assert.rejects(() => officialTranscript(adm(), ids.s1), (err: unknown) => code(err) === 'marks_recompute_required')
+})
