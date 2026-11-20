@@ -81,6 +81,7 @@ const NEW_FILES = new Set([
   'reports/0000_reports.sql',
   'finance/0018_reporting.sql',
   'fees/0008_reporting.sql',
+  'fees/0009_void_bounce_receipts.sql',
   'hr/0019_reporting.sql',
 ])
 const NEW_CORE_FROM = 5
