@@ -1,6 +1,6 @@
 import { after, before, beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { eq, gte, sql } from 'drizzle-orm'
+import { and, eq, gte, sql } from 'drizzle-orm'
 import { auditLog, authDb, db, institutions, users, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
 import {
@@ -303,9 +303,12 @@ test('withdrawing takes the notice and its inbox copies away, and is audited', a
   assert.equal((await board(student(ids.s1))).rows.length, 0)
 
   const trail = await withTenant(inst, (tx) =>
-    tx.select({ action: auditLog.action, reason: auditLog.reason }).from(auditLog).where(gte(auditLog.at, since)),
+    tx
+      .select({ action: auditLog.action, reason: auditLog.reason })
+      .from(auditLog)
+      .where(and(gte(auditLog.at, since), eq(auditLog.action, 'notice.withdrawn'), eq(auditLog.entityId, n.id))),
   )
-  assert.equal(trail[0]!.action, 'notice.withdrawn')
+  assert.equal(trail.length, 1)
   assert.match(trail[0]!.reason!, /wrong cohort/)
 })
 
