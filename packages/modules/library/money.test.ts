@@ -202,3 +202,31 @@ test('two issues to one borrower at once cannot pass the limit (LOW-10)', async 
   const refused = out.find((o) => o.status === 'rejected') as PromiseRejectedResult
   assert.equal(code(refused.reason), 'loan_limit_reached')
 })
+
+test('a fine cannot be settled before the book is back, or when nothing is due (review BLOCKER 2)', async () => {
+  const d = await library('finance')
+  await setSettings(d.desk, RULES)
+  const title = await createTitle(d.desk, { title: 'Introduction to Algorithms', author: 'Cormen' })
+  const [copy] = await addCopies(d.desk, { titleId: title.id, accessionNos: ['A-9'] })
+  const loan = await issue(d.desk, { copyId: copy!.id, borrowerId: d.studentId })
+  await withTenant(d.id, async (tx) => {
+    await tx.execute(sql`select set_config('app.audit_reason', 'test backdate', true)`)
+    await tx.execute(sql`update library_loans
+                            set issued_at = now() - interval '19 days',
+                                due_on = date_trunc('day', now() - interval '5 days') + interval '23:59:59.999'
+                          where id = ${loan.id}`)
+  })
+  // Overdue and still out: the stored fine is zero, so settling would record a method and post nothing.
+  await assert.rejects(settleFine(d.desk, { loanId: loan.id, method: 'upi' }), (e) => code(e) === 'not_returned')
+  const back = await returnCopy(d.desk, { copyId: copy!.id })
+  assert.equal(back.finePaise, 1000)
+  const row = await settleFine(d.desk, { loanId: loan.id, method: 'upi' })
+  assert.equal(row.fineSettledBy, 'upi')
+  assert.equal(await balance(d, '1010'), 1000)
+
+  // A returned loan with no fine has nothing to settle.
+  const [copy2] = await addCopies(d.desk, { titleId: title.id, accessionNos: ['A-10'] })
+  const fresh = await issue(d.desk, { copyId: copy2!.id, borrowerId: d.studentId })
+  await returnCopy(d.desk, { copyId: copy2!.id })
+  await assert.rejects(settleFine(d.desk, { loanId: fresh.id, method: 'cash' }), (e) => code(e) === 'nothing_due')
+})

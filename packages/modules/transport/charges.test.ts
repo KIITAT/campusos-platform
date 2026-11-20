@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { like, sql } from 'drizzle-orm'
 import { authDb, institutionModules, institutions, users, withTenant } from '@campusos/db'
 import { chargeStayWithin } from '@campusos/module-fees/api'
+import { specs } from './routes'
 import { addRoute, addStop, addVehicle, assign, chargeTerm, release, setRouteFee, type Actor } from './api'
 
 /**
@@ -145,4 +146,26 @@ test('a rider released the day they began is not reported as already charged', a
   const r = await chargeTerm(c.admin, { termId: c.termId })
   assert.equal(r.charged, 0)
   assert.equal(r.alreadyCharged, 0)
+})
+
+test('the release notice does not send the office to a waiver Fees cannot grant (review HIGH 5)', async () => {
+  const c = await campus()
+  await setRouteFee(c.admin, { routeId: c.routeId, termFee: '10000', reason: 'bus fees for 2026' })
+  const a = await assign(c.admin, { routeId: c.routeId, stopId: c.stopId, studentId: c.studentId })
+  await withTenant(c.id, (tx) => tx.execute(sql`update fee_student_charges set invoiced_at = now() where source_module = 'transport'`))
+  const out = await release(c.admin, { assignmentId: a.id, reason: 'moved closer to campus' })
+  assert.deepEqual(out.invoiced, ['T1'])
+  assert.doesNotMatch(out.notice, /waiver/i)
+})
+
+test('a route fee left blank on the form clears the price, as the form adapter sends it (review HIGH 6)', async () => {
+  const c = await campus()
+  await setRouteFee(c.admin, { routeId: c.routeId, termFee: '10000', reason: 'bus fees for 2026' })
+  const spec = specs.find((s) => s.path === '/routes/fee')!
+  await spec.handler(c.admin, new Request('http://college.test/api/v1/modules/transport/routes/fee', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ routeId: c.routeId, reason: 'cleared for review' }),
+  }))
+  const rows = (await withTenant(c.id, (tx) => tx.execute(sql`select term_fee_paise from transport_routes`))).rows as { term_fee_paise: number | null }[]
+  assert.deepEqual(rows.map((x) => x.term_fee_paise), [null])
 })

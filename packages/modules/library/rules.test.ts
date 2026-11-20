@@ -199,3 +199,12 @@ test('a library that forbids renewal says so rather than silently allowing one',
     'renewal_limit_reached',
   )
 })
+
+test('a due date is the end of the local day N calendar days on, across clock changes (review HIGH 7)', () => {
+  // New York springs forward on 8 March 2026: 14 days from 22 February 01:00 is the end of 8 March (EDT).
+  assert.equal(dueDate(new Date('2026-02-22T06:00:00Z'), 14, 'America/New_York').toISOString(), '2026-03-09T03:59:59.999Z')
+  // And falls back on 1 November 2026: 14 days from 18 October 23:30 EDT is the end of 1 November, which closes in EST.
+  assert.equal(dueDate(new Date('2026-10-19T03:30:00Z'), 14, 'America/New_York').toISOString(), '2026-11-02T04:59:59.999Z')
+  // A renewal from a due date near the change keeps the same rule.
+  assert.equal(renewedDueDate(new Date('2026-02-22T06:00:00Z'), 14, 'America/New_York').toISOString(), '2026-03-09T03:59:59.999Z')
+})

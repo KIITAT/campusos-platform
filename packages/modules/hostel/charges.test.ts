@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { like, sql } from 'drizzle-orm'
 import { authDb, institutionModules, institutions, users, withTenant } from '@campusos/db'
 import { chargeStayWithin } from '@campusos/module-fees/api'
+import { routes as specs } from './routes'
 import { addRooms, allocate, chargeTerm, createBlock, setRoomFee, vacate, type Actor } from './api'
 
 /**
@@ -194,4 +195,45 @@ test('a stay that ended the day it began is not reported as already charged', as
   const r = await chargeTerm(c.admin, { termId: c.termId })
   assert.equal(r.charged, 0)
   assert.equal(r.alreadyCharged, 0)
+})
+
+// --- review round 2: HIGH 5 (notice), 6 (clear a fee from a form), 8 (zone) -------
+
+test('the departure notice does not send the office to a waiver Fees cannot grant (review HIGH 5)', async () => {
+  const c = await campus()
+  await setRoomFee(c.admin, { blockId: c.blockId, termFee: '14600', reason: 'fees for 2026' })
+  const a = await allocate(c.warden, { roomId: c.roomA, studentId: c.s1, allocatedOn: '2026-01-05' })
+  await withTenant(c.id, (tx) => tx.execute(sql`update fee_student_charges set invoiced_at = now() where source_module = 'hostel'`))
+  const out = await vacate(c.warden, { allocationId: a.id, vacatedOn: '2026-02-04', reason: 'left the hostel' })
+  assert.deepEqual(out.invoiced, ['T1'])
+  assert.doesNotMatch(out.notice, /waiver/i)
+  assert.match(out.notice, /T1/)
+})
+
+test('a fee left blank on the form clears the price, as the form adapter sends it (review HIGH 6)', async () => {
+  const c = await campus()
+  await setRoomFee(c.admin, { blockId: c.blockId, termFee: '14600', reason: 'fees for 2026' })
+  // The web form drops blank fields: no termFee key at all.
+  const spec = specs.find((s) => s.path === '/rooms/fee')!
+  const req = new Request('http://college.test/api/v1/modules/hostel/rooms/fee', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ blockId: c.blockId, reason: 'cleared for review' }),
+  })
+  await spec.handler(c.admin, req)
+  const fees = (await withTenant(c.id, (tx) => tx.execute(sql`select term_fee_paise from hostel_rooms`))).rows as { term_fee_paise: number | null }[]
+  assert.deepEqual(fees.map((x) => x.term_fee_paise), [null, null])
+})
+
+test('a blank allocation or vacate date is the institution\'s day, not the server\'s UTC day (review HIGH 8)', async () => {
+  const c = await campus()
+  // A zone whose date differs from UTC's right now: one of UTC+14 and UTC-11 always does.
+  const dayIn = (tz: string) => new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date())
+  const utc = dayIn('UTC')
+  const zone = dayIn('Pacific/Kiritimati') !== utc ? 'Pacific/Kiritimati' : 'Pacific/Pago_Pago'
+  assert.notEqual(dayIn(zone), utc)
+  await withTenant(c.id, (tx) => tx.execute(sql`insert into finance_settings (institution_id, time_zone) values (${c.id}, ${zone})`))
+  const a = await allocate(c.warden, { roomId: c.roomA, studentId: c.s1 })
+  assert.equal(a.allocatedOn, dayIn(zone))
+  const v = await vacate(c.warden, { allocationId: a.id, reason: 'left the hostel' })
+  assert.equal(v.vacatedOn, dayIn(zone))
 })
