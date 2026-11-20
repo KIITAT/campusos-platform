@@ -5,6 +5,7 @@ import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
 import type { Role } from '@campusos/module-framework'
 import { printedText } from '@campusos/module-framework/pdf'
 import { taxTemplates } from './schema'
+import { toCsv } from './api/gst'
 import {
   FinanceError,
   cancelInvoice,
@@ -267,4 +268,8 @@ test('an IFF filing stops a B2B invoice being cancelled, not a B2C one', async (
   await markFiled(b.admin, filing('iff', '2026-04-01', '2026-04-30'))
   await refused(cancelInvoice(b.admin, { invoiceId: registered.id, reason: 'wrong party' }), 'gst_return_filed', 409)
   await cancelInvoice(b.admin, { invoiceId: unregistered.id, reason: 'wrong party' })
+})
+
+test('the report CSV defuses formulas and keeps negative amounts as numbers (SEC-08)', () => {
+  assert.equal(toCsv([{ party: '=1+1', amountPaise: -125050 }]), "Party,Amount\n'=1+1,-1250.50")
 })

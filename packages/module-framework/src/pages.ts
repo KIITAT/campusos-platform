@@ -38,6 +38,8 @@ export interface PluginColumn {
   key: string
   label: string
   kind?: CellKind
+  /** The row key a CSV export writes instead of `key`, when `key` holds display text: the plain amount behind a formatted one. */
+  exportKey?: string
   /**
    * A row template for a link, `{key}` substituted from the row:
    * `/m/fees/student?studentId={studentId}`. Absent means plain text.

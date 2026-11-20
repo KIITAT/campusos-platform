@@ -5,7 +5,7 @@ import { logSensitiveRead } from '@campusos/db/sensitive-reads'
 import { assertCanAccessStudent, canAccessStudent, moduleEnabled, readUpload, UploadError, type Role } from '@campusos/module-framework'
 import { sectionMembers, sections, programs, terms } from '@campusos/module-academic/schema'
 import { studentProfile } from '@campusos/module-academic/api'
-import { attendanceSummary, excuseWithin, revokeExcuseForSourceWithin } from '@campusos/module-attendance/api'
+import { attendanceSummary, totalLines, excuseWithin, revokeExcuseForSourceWithin } from '@campusos/module-attendance/api'
 import { manifest as attendanceManifest } from '@campusos/module-attendance/manifest'
 import { officialTranscript } from '@campusos/module-examinations/api'
 import { manifest as examinationsManifest } from '@campusos/module-examinations/manifest'
@@ -290,8 +290,9 @@ export async function myMentees(actor: Actor) {
     let attendance: number | null = null
     if (attendanceOn) {
       const lines = await attendanceSummary(actor as Any, r.student_id)
-      const held = lines.reduce((n, l) => n + l.held, 0)
-      const present = lines.reduce((n, l) => n + l.present, 0)
+      const total = totalLines(lines)
+      const held = total.reduce((n, l) => n + l.held, 0)
+      const present = total.reduce((n, l) => n + l.present, 0)
       attendance = held ? Math.round((present / held) * 1000) / 10 : null
     }
     out.push({
@@ -374,8 +375,9 @@ export async function menteeView(actor: Actor, studentId: string) {
         () => null,
       )
     : null
-  const held = attendance?.reduce((n, l) => n + l.held, 0) ?? 0
-  const present = attendance?.reduce((n, l) => n + l.present, 0) ?? 0
+  const total = attendance ? totalLines(attendance) : []
+  const held = total.reduce((n, l) => n + l.held, 0)
+  const present = total.reduce((n, l) => n + l.present, 0)
   return {
     profile,
     programme: base.programme,

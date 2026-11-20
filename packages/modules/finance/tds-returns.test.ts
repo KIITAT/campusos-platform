@@ -412,6 +412,17 @@ test('the quarter file lists deductions, challans and what is still undeposited'
   assert.equal(total('Difference'), '200.00')
 })
 
+test('a deductee named like a formula is text in the quarter file (SEC-08)', async () => {
+  const b = await books()
+  const f = await april(b)
+  await recordChallan(b.admin, { ...CHALLAN, accountId: f.bank })
+  const formula = (await createParty(b.clerk, { code: `F${++n}`, name: '=1+1 Advisor', isSupplier: true, stateCode: '29', tdsSectionId: f.section })).id
+  const june = ((await saveInvoice(b.clerk, { kind: 'purchase', partyId: formula, postingDate: '2026-06-10', billNo: 'J-1', lines: [{ description: 'Advice', qty: '1', rate: '1000' }] })) as { id: string }).id
+  await submitInvoice(b.admin, { invoiceId: june })
+  const rows = parseCsv((await tdsQuarterFile(b.clerk, { fy: 2026, quarter: 1, form: '26Q' })).bytes)
+  assert.ok(rows.some((r) => r[0] === 'DEDUCTEE' && r[2] === "'=1+1 Advisor"))
+})
+
 test('quarter four runs January to March of the next year', async () => {
   const b = await books()
   const d = await deducting(b)

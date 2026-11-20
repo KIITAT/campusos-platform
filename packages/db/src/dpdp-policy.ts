@@ -103,6 +103,7 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
 
   // attendance. The QR signing secrets are the teacher's credential for the
   // class: anybody holding one can mint scans for it (NEW-01).
+  attendance_daily_marks: 'export',
   attendance_devices: { omit: ['device_hash'] },
   attendance_excuses: 'export',
   attendance_offline_credentials: 'exclude',

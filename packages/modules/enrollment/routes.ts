@@ -8,6 +8,7 @@ import {
   listSeats,
   register,
   setOfferingLimit,
+  setSectionFeed,
   type Actor,
 } from './api'
 
@@ -25,6 +26,7 @@ export const routes: PluginRoute[] = [
   post('/register', register),
   post('/drop', drop),
   post('/seats', setOfferingLimit),
+  post('/sections/feed', setSectionFeed),
 
   { method: 'GET', path: '/seats', handler: (actor) => listSeats(actor as Actor) },
   {

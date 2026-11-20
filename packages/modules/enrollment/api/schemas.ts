@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { ticked } from '@campusos/module-framework'
 
 /**
  * The module owns its own contract; api-contracts imports these to build the
@@ -93,3 +94,11 @@ export const creditLoadSchema = z
   .meta({ id: 'EnrollmentCreditLoad' })
 
 export type CreditLoad = z.infer<typeof creditLoadSchema>
+
+export const sectionFeedSchema = z
+  .object({
+    sectionId: uuid,
+    /** Ticked: the section's membership follows registration (decision 701). */
+    fed: z.preprocess(ticked, z.boolean()),
+  })
+  .meta({ id: 'EnrollmentSectionFeed' })

@@ -101,7 +101,7 @@ export const imports: ImportSpec[] = [
       { name: 'code', required: true, note: 'Short code, unique here', example: 'BTCS' },
       { name: 'name', required: true, note: 'The full name', example: 'B.Tech Computer Science' },
       { name: 'department', required: true, note: 'The department code', example: 'CSE' },
-      { name: 'level', required: true, note: 'certificate, diploma, undergraduate, postgraduate or doctoral', example: 'undergraduate' },
+      { name: 'level', required: true, note: 'school, certificate, diploma, undergraduate, postgraduate or doctoral', example: 'undergraduate' },
       { name: 'duration_terms', required: true, note: 'Terms to complete it', example: '8' },
     ],
     row: async (actor, { values: v }) => {

@@ -10,6 +10,7 @@ export const routeRoles: Record<string, readonly Role[]> = {
   'POST /register': [...ADMIN, 'hod', 'student'],
   'POST /drop': [...ADMIN, 'hod', 'student'],
   'POST /seats': [...ADMIN, 'hod'],
+  'POST /sections/feed': [...ADMIN, 'hod'],
   'GET /seats': [...ADMIN, 'hod'],
   'GET /roster': TEACHING,
   'GET /registrations': [...TEACHING, 'student'],
