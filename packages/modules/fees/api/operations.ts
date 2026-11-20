@@ -417,6 +417,13 @@ async function assertWithinDue(tx: Tx, studentId: string, termId: string, amount
  * number above all -- so a form submitted twice waits for the first
  * submission and is answered with its receipt, and the series keeps no gap.
  */
+/**
+ * What a payment key is hashed on. allowAdvance joined the request after keys
+ * were being kept, so an unticked box stays out of the hash: a retry of a
+ * payment recorded before the upgrade must still match its stored fingerprint.
+ */
+const fingerprint = (d: ReturnType<typeof recordPaymentSchema.parse>) => (d.allowAdvance ? d : { ...d, allowAdvance: undefined })
+
 export async function recordPayment(actor: Actor, input: unknown) {
   const tenant = requireFinance(actor)
   const data = recordPaymentSchema.parse(input)
@@ -424,7 +431,7 @@ export async function recordPayment(actor: Actor, input: unknown) {
     const { value, replayed } = await withIdempotencyKey(
       tx,
       feeIdempotencyKeys,
-      { institutionId: tenant, actorId: actor.id, operation: 'payment', key: actor.idempotencyKey, request: data },
+      { institutionId: tenant, actorId: actor.id, operation: 'payment', key: actor.idempotencyKey, request: fingerprint(data) },
       async () => {
         if (!data.allowAdvance) await assertWithinDue(tx, data.studentId, data.termId, data.amount)
         return recordPaymentWithin(tx, tenant, actor, {
