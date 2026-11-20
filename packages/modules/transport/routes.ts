@@ -12,5 +12,7 @@ export const specs: RouteSpec[] = [
   { method: 'POST', path: '/stops', summary: 'Add stop', body: api.stopSchema, handler: async (actor, request) => api.addStop(actor, await jsonBody(request)) },
   { method: 'POST', path: '/assignments', summary: 'Allocate student seat', body: api.assignSchema, handler: async (actor, request) => api.assign(actor, await jsonBody(request)) },
   { method: 'POST', path: '/assignments/release', summary: 'Release student seat', body: api.releaseSchema, handler: async (actor, request) => api.release(actor, await jsonBody(request)) },
+  { method: 'POST', path: '/routes/fee', summary: 'Set the fee per seat per term on a route (reason mandatory, audited)', body: api.routeFeeSchema, handler: async (actor, request) => api.setRouteFee(actor, await jsonBody(request)) },
+  { method: 'POST', path: '/charges', summary: 'Charge every rider of a term who has no charge for it yet, through Fees', body: api.chargeTermSchema, handler: async (actor, request) => api.chargeTerm(actor, await jsonBody(request)) },
 ]
 export const routes: PluginRoute[] = specs

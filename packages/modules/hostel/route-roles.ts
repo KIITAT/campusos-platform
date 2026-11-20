@@ -1,4 +1,4 @@
-import { HOSTEL, type Role } from '@campusos/module-framework'
+import { ADMIN, HOSTEL, type Role } from '@campusos/module-framework'
 
 /**
  * Who may call each route (decision 192). The host refuses every other role
@@ -11,6 +11,8 @@ export const routeRoles: Record<string, readonly Role[]> = {
   'POST /blocks': HOSTEL,
   'GET /rooms': HOSTEL,
   'POST /rooms': HOSTEL,
+  'POST /rooms/fee': ADMIN,
+  'POST /charges': ADMIN,
   'POST /allocations': HOSTEL,
   'POST /allocations/vacate': HOSTEL,
   'POST /leave': HOSTEL,

@@ -294,10 +294,12 @@ export const pages: PluginPage[] = [
             label: 'Level',
             kind: 'select',
             options: [
+              { value: 'school', label: 'school class' },
+              { value: 'certificate', label: 'certificate' },
+              { value: 'diploma', label: 'diploma' },
               { value: 'undergraduate', label: 'undergraduate' },
               { value: 'postgraduate', label: 'postgraduate' },
               { value: 'doctoral', label: 'doctoral' },
-              { value: 'diploma', label: 'diploma' },
             ],
           },
           { name: 'durationTerms', label: 'Terms', kind: 'number' },
@@ -452,7 +454,7 @@ export const pages: PluginPage[] = [
         fields: [
           { name: 'programId', label: 'Programme', kind: 'select', options: 'programOptions' },
           { name: 'label', label: 'Label', hint: 'e.g. a, b' },
-          { name: 'admissionYear', label: 'Admission year', kind: 'number' },
+          { name: 'admissionYear', label: 'Admission year', kind: 'number', hint: 'For a school class, the year the session starts (2026 for 2026-27).' },
         ],
       },
       {
@@ -836,6 +838,7 @@ export const pages: PluginPage[] = [
               { what: 'Phone', value: profile.phone ?? 'not recorded' },
               { what: 'Address', value: profile.address ?? 'not recorded' },
               { what: 'Emergency contact', value: profile.emergencyContact ?? 'not recorded' },
+              { what: 'House', value: profile.house ?? 'not recorded' },
               { what: 'Date of birth', value: profile.dateOfBirth ?? 'not recorded' },
               { what: 'APAAR ID (as given; not verified with APAAR)', value: profile.apaarId ?? 'not recorded' },
               { what: 'Category', value: profile.category ? CATEGORY_LABELS[profile.category] : 'not recorded' },
@@ -962,6 +965,7 @@ export const pages: PluginPage[] = [
                   optional: true,
                   value: (data.profile as { emergencyContact: string | null }).emergencyContact ?? '',
                 },
+                { name: 'house', label: 'House', optional: true, value: (data.profile as { house: string | null }).house ?? '' },
                 { name: 'dateOfBirth', label: 'Date of birth (YYYY-MM-DD)', optional: true, value: (data.profile as { dateOfBirth: string | null }).dateOfBirth ?? '' },
                 { name: 'apaarId', label: 'APAAR ID (12 digits, as given)', optional: true, value: (data.profile as { apaarId: string | null }).apaarId ?? '' },
                 {

@@ -81,7 +81,10 @@ const NEW_FILES = new Set([
   'reports/0000_reports.sql',
   'finance/0018_reporting.sql',
   'fees/0008_reporting.sql',
+  'fees/0009_void_bounce_receipts.sql',
   'hr/0019_reporting.sql',
+  'academic/0011_school_classes_and_houses.sql',
+  'attendance/0005_daily_register.sql',
   'academic/0012_student_category.sql',
   'admissions/0003_applicant_and_roll_numbers.sql',
 ])
@@ -352,6 +355,18 @@ test('academic 0008 applies as an upgrade: GPA rules under RLS (FUNC-03)', { ski
         (select count(*)::int from pg_policy where polrelid = to_regclass('public.academic_gpa_policies')) as policies,
         (select count(*)::int from pg_indexes where indexname = 'academic_gpa_policies_from') as idx`)
     assert.deepEqual(rows[0], { rls: true, policies: 1, idx: 1 })
+  })
+})
+
+test('academic 0011 and attendance 0005 apply as an upgrade: the school level, the house check, the daily register under RLS (P1-13a)', { skip: !url && 'MIGRATION_DATABASE_URL is not set' }, async () => {
+  await withClient(at(DB), async (c) => {
+    const { rows } = await c.query(`
+      select
+        (select count(*)::int from pg_enum e join pg_type t on t.oid = e.enumtypid where t.typname = 'academic_program_level' and e.enumlabel = 'school') as school,
+        (select count(*)::int from pg_constraint where conname = 'academic_student_profiles_house') as house,
+        (select relrowsecurity from pg_class where oid = to_regclass('public.attendance_daily_marks')) as rls,
+        (select count(*)::int from pg_policy where polrelid = to_regclass('public.attendance_daily_marks')) as policies`)
+    assert.deepEqual(rows[0], { school: 1, house: 1, rls: true, policies: 1 })
   })
 })
 

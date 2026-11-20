@@ -64,7 +64,7 @@ after(async () => {
 })
 
 test('a clerk reconciling their own payment is marked so in the trail', async () => {
-  const p = await recordPayment(clerk(), { studentId: ids.s1, termId: ids.term, amount: '1000', method: 'cheque', reference: '000777' })
+  const p = await recordPayment(clerk(), { studentId: ids.s1, termId: ids.term, amount: '1000', method: 'cheque', reference: '000777', allowAdvance: true })
   await reconcilePayment(clerk(), { paymentId: p.id, reason: 'cleared on the statement' })
   const d = await reconciledDetail(p.id)
   assert.equal(d.recordedBy, ids.clerk)
@@ -72,7 +72,7 @@ test('a clerk reconciling their own payment is marked so in the trail', async ()
 })
 
 test('someone else reconciling it is marked not self-reconciled', async () => {
-  const p = await recordPayment(clerk(), { studentId: ids.s1, termId: ids.term, amount: '1000', method: 'cheque', reference: '000778' })
+  const p = await recordPayment(clerk(), { studentId: ids.s1, termId: ids.term, amount: '1000', method: 'cheque', reference: '000778', allowAdvance: true })
   await reconcilePayment(adm(), { paymentId: p.id, reason: 'cleared on the statement' })
   const d = await reconciledDetail(p.id)
   assert.equal(d.recordedBy, ids.clerk)

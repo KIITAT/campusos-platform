@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import {
+  bigint,
   check,
   date,
   index,
@@ -80,6 +81,8 @@ export const rooms = pgTable(
     number: text().notNull(),
     floor: smallint().notNull().default(0),
     capacity: smallint().notNull().default(2),
+    /** What one bed costs a term, charged through fees. Null: not charged. */
+    termFeePaise: bigint('term_fee_paise', { mode: 'number' }),
     createdAt: createdAt(),
   },
   (t) => [
@@ -87,6 +90,7 @@ export const rooms = pgTable(
     index('hostel_rooms_block').on(t.blockId),
     check('hostel_rooms_capacity', sql`capacity between 1 and 20`),
     check('hostel_rooms_floor', sql`floor between -2 and 60`),
+    check('hostel_rooms_term_fee', sql`term_fee_paise is null or term_fee_paise > 0`),
     tenantPolicy('hostel_rooms'),
   ],
 )

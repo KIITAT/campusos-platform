@@ -27,7 +27,7 @@ const as = (id: string, role: Actor['role'], institutionId: string): Actor => ({
 const clerk = () => as(ids.clerk, 'accounts_staff', inst)
 const keyed = (actor: Actor, key: string) => ({ ...actor, idempotencyKey: key }) as Actor
 const pay = (over: Record<string, unknown>, actor = clerk()) =>
-  recordPayment(actor, { studentId: ids.s1, termId: ids.term, amount: '1000', ...over })
+  recordPayment(actor, { studentId: ids.s1, termId: ids.term, amount: '1000', allowAdvance: true, ...over })
 const code = (e: unknown) => (e as { code?: string }).code
 /** A fresh UTR-shaped reference per test, so the tests do not meet. */
 const utr = () => `UTR${randomUUID().replaceAll('-', '').slice(0, 16).toUpperCase()}`
@@ -141,7 +141,7 @@ test('another institution may receipt the same UTR', async () => {
   const ref = utr()
   await pay({ method: 'bank_transfer', reference: ref })
   const theirs = await recordPayment(as(ids.otherClerk, 'accounts_staff', other), {
-    studentId: ids.otherStudent, termId: ids.otherTerm, amount: '1000', method: 'bank_transfer', reference: ref,
+    studentId: ids.otherStudent, termId: ids.otherTerm, amount: '1000', method: 'bank_transfer', reference: ref, allowAdvance: true,
   })
   assert.equal(theirs.institutionId, other)
 })
@@ -168,19 +168,21 @@ test('two requests racing with one UTR under different keys: exactly one receipt
   let holding!: () => void
   const locked = new Promise<void>((resolve) => (holding = resolve))
   const holder = authDb.transaction(async (tx) => {
-    await tx.execute(sql`select 1 from fee_receipt_counters where institution_id = ${inst} for update`)
+    await tx.execute(sql`select 1 from fee_receipt_series where institution_id = ${inst} for update`)
     holding()
     await held
   })
   await locked
 
   // Both get past any look-up while neither has committed, and wait at the
-  // receipt counter; only the database can tell them apart after that.
+  // receipt counter; only the database can tell them apart after that. Two terms,
+  // because receipts for one term take turns on its lock (P1-03b re-review).
+  const second = await academic.createTerm(as(ids.adm, 'institution_admin', inst), { code: 't-race', name: 'Race', startsOn: '2027-01-05', endsOn: '2027-05-30' })
   const a = pay({ method: 'bank_transfer', reference: ref }, keyed(clerk(), randomUUID()))
-  await waitingOn('%update "fee_receipt_counters"%', 1)
-  const b = pay({ method: 'bank_transfer', reference: ref }, keyed(clerk(), randomUUID()))
+  await waitingOn('%update "fee_receipt_series"%', 1)
+  const b = pay({ method: 'bank_transfer', reference: ref, termId: second.id }, keyed(clerk(), randomUUID()))
   try {
-    await waitingOn('%update "fee_receipt_counters"%', 2)
+    await waitingOn('%update "fee_receipt_series"%', 2)
   } finally {
     release()
     await holder

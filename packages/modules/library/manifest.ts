@@ -5,7 +5,7 @@ export const manifest: ModuleManifest = {
   name: 'Library',
   description:
     'Catalogue of titles and physical copies, issue and return at the desk, overdue fines with configurable rules, and a borrowing status view for students.',
-  version: '0.13.0',
+  version: '0.16.0',
   alwaysEnabled: false,
   dependsOn: ['academic'],
   /**
@@ -13,7 +13,7 @@ export const manifest: ModuleManifest = {
    * and simply taken when it does not. A library that refuses five rupees
    * because nobody bought the ledger is a library that has stopped working.
    */
-  softDependsOn: ['finance'],
+  softDependsOn: ['finance', 'fees'],
   pricing: { model: 'not_priced_yet', priceINR: null },
 
   rolesWithAccess: [

@@ -777,6 +777,8 @@ export async function rulesOf(tx: Tx, tenant: string): Promise<AttendanceRules> 
 }
 
 export interface AttendanceLine {
+  /** A class's sessions, or a section's daily register (P1-13a). */
+  kind: 'period' | 'daily'
   offeringId: string
   courseCode: string
   courseTitle: string
@@ -839,20 +841,50 @@ export async function attendanceSummary(actor: Actor, studentId: string, termId?
         left join users f on f.id = o.faculty_user_id
        where (${termId ?? null}::uuid is null or o.term_id = ${termId ?? null}::uuid)
        order by t.starts_on desc, c.code`)
-    return (rows.rows as { offering_id: string; code: string; title: string; teacher: string | null; term: string; held: number; present: number; excused: number }[]).map(
-      (r) => line(r, rules),
-    )
+    // The section's daily register (P1-13a): a day held is a day marked; excused is an absent day under a whole-day excuse.
+    const daily = await tx.execute(sql`
+      select s.id as offering_id, 'Daily' as code, p.code || '-' || s.label as title,
+             coalesce(ct.name, ct.email) as teacher,
+             coalesce((select code from academic_terms where id = ${termId ?? null}::uuid), '') as term,
+             count(*)::int as held,
+             (count(*) filter (where d.present))::int as present,
+             (count(*) filter (where not d.present and exists (
+                select 1 from attendance_excuses e
+                 where e.student_id = d.student_id and e.revoked_at is null and e.offering_id is null
+                   and d.on_date between e.from_on and e.to_on)))::int as excused
+        from attendance_daily_marks d
+        join academic_sections s on s.id = d.section_id
+        join academic_programs p on p.id = s.program_id
+        left join users ct on ct.id = s.class_teacher_id
+       where d.student_id = ${studentId}
+         and (${termId ?? null}::uuid is null or exists (
+               select 1 from academic_terms t where t.id = ${termId ?? null}::uuid and d.on_date between t.starts_on and t.ends_on))
+       group by s.id, p.code, s.label, ct.name, ct.email, s.admission_year
+       order by s.admission_year desc, p.code, s.label`)
+    type Row = { offering_id: string; code: string; title: string; teacher: string | null; term: string; held: number; present: number; excused: number }
+    return [...(rows.rows as Row[]).map((r) => line(r, rules)), ...(daily.rows as Row[]).map((r) => line(r, rules, 'daily'))]
   })
+}
+
+/**
+ * The lines a single percentage may add up. A register day and a period
+ * session are different units, so the two never share a total: period lines
+ * where there are any, else the register (a school student has only that).
+ */
+export function totalLines(lines: AttendanceLine[]): AttendanceLine[] {
+  return lines.some((l) => l.kind === 'period') ? lines.filter((l) => l.kind === 'period') : lines
 }
 
 /** One class's figures by the institution's rule. */
 export function line(
   r: { offering_id: string; code: string; title: string; teacher: string | null; term: string; held: number; present: number; excused: number },
   rules: AttendanceRules,
+  kind: 'period' | 'daily' = 'period',
 ): AttendanceLine {
   const counted = r.present + (rules.excusedCounts ? r.excused : 0)
   const percent = r.held ? Math.round((counted / r.held) * 1000) / 10 : null
   return {
+    kind,
     offeringId: r.offering_id,
     courseCode: r.code,
     courseTitle: r.title,

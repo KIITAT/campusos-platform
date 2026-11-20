@@ -10,7 +10,7 @@ export const manifest: ModuleManifest = {
   name: 'Attendance & QR',
   description:
     'Rotating-QR attendance with GPS geofencing and one-device-per-student binding.',
-  version: '0.15.0',
+  version: '0.17.0',
   alwaysEnabled: false,
   dependsOn: ['academic', 'notices'],
   pricing: { model: 'included_in_base', priceINR: null },
@@ -33,6 +33,7 @@ export const manifest: ModuleManifest = {
     { label: 'My device', href: '/m/attendance/device', roles: ['student'] },
     { label: 'Offline policy', href: '/m/attendance/offline-policy', roles: ['institution_admin', 'super_admin'] },
     { label: 'Absentees', href: '/m/attendance/absentees', roles: ['institution_admin', 'hod', 'faculty'] },
+    { label: 'Daily register', href: '/m/attendance/daily', roles: ['institution_admin', 'hod', 'faculty'] },
     { label: 'Excuses', href: '/m/attendance/excuses', roles: ['institution_admin', 'hod', 'faculty'] },
     {
       label: 'Devices',

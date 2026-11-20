@@ -576,12 +576,21 @@ importers:
       '@campusos/db':
         specifier: workspace:*
         version: link:../../db
+      '@campusos/module-academic':
+        specifier: workspace:*
+        version: link:../academic
       '@campusos/module-attendance':
         specifier: workspace:*
         version: link:../attendance
+      '@campusos/module-fees':
+        specifier: workspace:*
+        version: link:../fees
       '@campusos/module-framework':
         specifier: workspace:*
         version: link:../../module-framework
+      '@campusos/money':
+        specifier: workspace:*
+        version: link:../../money
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@types/pg@8.23.1)(pg@8.23.0)
@@ -647,6 +656,9 @@ importers:
       '@campusos/db':
         specifier: workspace:*
         version: link:../../db
+      '@campusos/module-fees':
+        specifier: workspace:*
+        version: link:../fees
       '@campusos/module-finance':
         specifier: workspace:*
         version: link:../finance
@@ -963,9 +975,18 @@ importers:
       '@campusos/db':
         specifier: workspace:*
         version: link:../../db
+      '@campusos/module-fees':
+        specifier: workspace:*
+        version: link:../fees
+      '@campusos/module-finance':
+        specifier: workspace:*
+        version: link:../finance
       '@campusos/module-framework':
         specifier: workspace:*
         version: link:../../module-framework
+      '@campusos/money':
+        specifier: workspace:*
+        version: link:../../money
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@types/pg@8.23.1)(pg@8.23.0)

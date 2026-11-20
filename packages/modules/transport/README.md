@@ -1,6 +1,6 @@
 # Transport
 
-Institution transport allocation: register a vehicle and capacity, give it one route, order that route's stops, assign an existing student to a stop, and release the seat with a reason. One vehicle serves one route in this version; there are no trip schedules, GPS feeds, driver payroll, fare collection or external booking portal.
+Institution transport allocation: register a vehicle and capacity, give it one route, order that route's stops, assign an existing student to a stop, and release the seat with a reason. One vehicle serves one route in this version; there are no trip schedules, GPS feeds, driver payroll or external booking portal. A route may carry a fee per seat per term, charged to the student's fee account through Fees when that module is enabled (prorated on assignment, re-raised for the days used on release, and by a term run for the terms after).
 
 Administrators maintain inventory and assignments. Institution members can read route information and only their own assignment history. A student has at most one active transport assignment. Route locks serialize allocation and release, so concurrent requests cannot oversubscribe the vehicle. The stop must belong to the chosen route, and the non-erased student must belong to the institution.
 

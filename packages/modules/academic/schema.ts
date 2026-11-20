@@ -44,6 +44,8 @@ export const programLevelEnum = pgEnum('academic_program_level', [
   'undergraduate',
   'postgraduate',
   'doctoral',
+  /** A school's class (Class 1 to 12, Nursery, LKG, UKG): P1-13a, decision D3. */
+  'school',
 ])
 
 // --- departments -----------------------------------------------------------
@@ -685,6 +687,8 @@ export const studentProfiles = pgTable(
     emergencyContact: text('emergency_contact'),
     /** Stored as given, only while consent to it stands (P1-08b). Not verified with APAAR. */
     apaarId: text('apaar_id'),
+    /** The house a school puts the student in (P1-13a). A name, up to 40 characters. */
+    house: text(),
     /** One of STUDENT_CATEGORIES; read only by the student, a guardian and the office. */
     category: text(),
     updatedBy: text('updated_by').references(() => users.id, { onDelete: 'set null' }),
@@ -696,6 +700,7 @@ export const studentProfiles = pgTable(
     check('academic_student_profiles_phone', sql`phone is null or phone ~ '^[0-9+() -]{7,20}$'`),
     uniqueIndex('academic_student_profiles_apaar_unique').on(t.institutionId, t.apaarId),
     check('academic_student_profiles_apaar', sql`apaar_id is null or apaar_id ~ '^[0-9]{12}$'`),
+    check('academic_student_profiles_house', sql`house is null or length(trim(house)) between 1 and 40`),
     check('academic_student_profiles_category', sql`category is null or category in ('general','ews','obc','sc','st')`),
     tenantPolicy('academic_student_profiles'),
   ],
