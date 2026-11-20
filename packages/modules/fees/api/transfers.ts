@@ -1,7 +1,17 @@
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm'
 import * as z from 'zod'
 import { audit, users, withTenant } from '@campusos/db'
-import type { Role } from '@campusos/module-framework'
+import {
+  assertCanAccessStudent,
+  cursorColumn,
+  finishPage,
+  keyset,
+  orderKeys,
+  readPage,
+  searchAny,
+  type Role,
+  type SortSpec,
+} from '@campusos/module-framework'
 import { programs, terms } from '@campusos/module-academic/schema'
 import { studentProfile, type Actor as AcademicActor } from '@campusos/module-academic/api'
 import { formatPaise, parseRupeesToPaise } from '@campusos/money'
@@ -44,6 +54,14 @@ const requireAdmin = (actor: Actor) => {
 const requireStudent = (actor: Actor) => {
   const t = tenantOf(actor)
   if (actor.role !== 'student') throw new FeeError(403, 'forbidden', 'a transfer is claimed by the student who made it')
+  return t
+}
+/** The student, or a guardian (who then names the student, and is checked in the transaction). */
+const requireReporter = (actor: Actor) => {
+  const t = tenantOf(actor)
+  if (actor.role !== 'student' && actor.role !== 'parent') {
+    throw new FeeError(403, 'forbidden', 'a payment is reported by the student, or by a guardian through the parents portal')
+  }
   return t
 }
 
@@ -123,6 +141,8 @@ export const claimTransferSchema = z
     transferredOn: z.iso.date(),
     /** Rupees, as typed. */
     amount: z.string().trim().min(1),
+    /** For the guardian reporting a child's payment; a student's own claim ignores it. */
+    studentId: z.preprocess(blankToUndefined, z.string().min(1).optional()),
     utr: z
       .string()
       .trim()
@@ -255,17 +275,22 @@ export async function setAccountUpi(actor: Actor, input: unknown) {
 // --- claims ------------------------------------------------------------------------
 
 export async function claimTransfer(actor: Actor, input: unknown) {
-  const tenant = requireStudent(actor)
+  const tenant = requireReporter(actor)
   const d = claimTransferSchema.parse(input)
+  // A student reports for themselves, whatever the input says (D12).
+  const studentId = actor.role === 'student' ? actor.id : d.studentId
+  if (!studentId) throw new FeeError(400, 'no_student', 'say which student the payment is for')
   const amountPaise = parseRupeesToPaise(d.amount)
   if (amountPaise === null || amountPaise <= 0) throw new FeeError(400, 'bad_amount', 'enter the amount in rupees, as transferred')
   return named(() =>
     withTenant(tenant, async (tx) => {
+      // A guardian passes only through the parents portal's viewerOf (not_your_student otherwise).
+      await assertCanAccessStudent(tx, actor, studentId, 'fee_ledger')
       const [c] = await tx
         .insert(transferClaims)
         .values({
           institutionId: tenant,
-          studentId: actor.id,
+          studentId,
           termId: d.termId,
           accountId: d.accountId,
           mode: d.mode,
@@ -281,6 +306,17 @@ export async function claimTransfer(actor: Actor, input: unknown) {
           bankReference: d.bankReference ?? null,
         })
         .returning()
+      await audit(tx, {
+        institutionId: tenant,
+        actorId: actor.id,
+        actorEmail: actor.email ?? null,
+        moduleId: MODULE,
+        action: 'fee.transfer_claimed',
+        entity: 'fee_transfer_claims',
+        entityId: c!.id,
+        reason: `${d.mode.toUpperCase()} ${c!.utr} for ${formatPaise(amountPaise)}`,
+        detail: { studentId, submittedBy: actor.id, role: actor.role },
+      })
       return {
         ...c!,
         notice: `Submitted: ${formatPaise(amountPaise)} (${rupeesInWords(amountPaise)}), UTR ${c!.utr}. The accounts office checks it against the bank statement; it becomes a receipt when they do.`,
@@ -326,21 +362,84 @@ function claimsQuery(tx: Tx) {
     .leftJoin(feePayments, eq(feePayments.id, transferClaims.paymentId))
 }
 
-export async function myClaims(actor: Actor) {
-  const tenant = requireStudent(actor)
-  return withTenant(tenant, async (tx) =>
-    (await claimsQuery(tx).where(eq(transferClaims.studentId, actor.id)).orderBy(desc(transferClaims.submittedAt))).map(shapeClaim),
-  )
+/** One student's claims, for the student or a guardian through the parents portal. */
+export async function studentClaims(actor: Actor, studentId: string) {
+  const tenant = tenantOf(actor)
+  return withTenant(tenant, async (tx) => {
+    await assertCanAccessStudent(tx, actor, studentId, 'fee_ledger')
+    return (await claimsQuery(tx).where(eq(transferClaims.studentId, studentId)).orderBy(desc(transferClaims.submittedAt))).map(shapeClaim)
+  })
 }
 
-export async function claimQueue(actor: Actor, status?: string | null) {
+export async function myClaims(actor: Actor) {
+  requireStudent(actor)
+  return studentClaims(actor, actor.id)
+}
+
+// Pending first, then oldest first; the one sort, because the office works the queue in order.
+const CLAIM_SORTS: SortSpec = {
+  queue: {
+    dir: 'asc',
+    keys: [
+      { sql: sql`case when ${transferClaims.status} = 'pending' then 0 else 1 end`, type: 'bigint' },
+      { sql: sql`${transferClaims.submittedAt}`, type: 'timestamptz' },
+      { sql: sql`${transferClaims.id}`, type: 'uuid' },
+    ],
+  },
+}
+export const claimPage = (req: Request, prefix: string) => readPage(req, prefix, CLAIM_SORTS, 'queue', 50)
+
+export async function claimQueue(actor: Actor, status?: string | null, page = claimPage(new Request('https://x/'), '')) {
+  const tenant = requireFinance(actor)
+  return withTenant(tenant, async (tx) => {
+    const keys = CLAIM_SORTS[page.sort]!.keys
+    const filter = and(
+      status === 'pending' || status === 'verified' || status === 'rejected' ? eq(transferClaims.status, status) : undefined,
+      searchAny(page.q, [sql`${users.name}`, sql`${users.email}`, sql`${transferClaims.utr}`]),
+    )
+    const rows = await tx
+      .select({ ...CLAIM_COLUMNS, _cursor: cursorColumn(keys) })
+      .from(transferClaims)
+      .innerJoin(users, eq(users.id, transferClaims.studentId))
+      .innerJoin(terms, eq(terms.id, transferClaims.termId))
+      .innerJoin(bankAccounts, eq(bankAccounts.id, transferClaims.accountId))
+      .leftJoin(feePayments, eq(feePayments.id, transferClaims.paymentId))
+      .where(and(filter, keyset(keys, page)))
+      .orderBy(...orderKeys(keys, page.dir))
+      .limit(page.limit + 1)
+    const [count] = await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(transferClaims)
+      .innerJoin(users, eq(users.id, transferClaims.studentId))
+      .where(filter)
+    const out = finishPage(rows, page, Number(count!.n))
+    return { ...out, rows: out.rows.map(shapeClaim) }
+  })
+}
+
+/** What the queue's header shows: every claim, not just the page. */
+export async function claimCounts(actor: Actor) {
+  const tenant = requireFinance(actor)
+  return withTenant(tenant, async (tx) => {
+    const [r] = (
+      await tx.execute(sql`
+        select count(*) filter (where status = 'pending')::int as pending,
+               coalesce(sum(amount_paise) filter (where status = 'pending'), 0)::bigint as paise,
+               count(*) filter (where status = 'verified')::int as verified
+          from fee_transfer_claims`)
+    ).rows as { pending: number; paise: string | number; verified: number }[]
+    return { pending: Number(r!.pending), pendingPaise: Number(r!.paise), verified: Number(r!.verified) }
+  })
+}
+
+/** The oldest pending claims, for the verify and reject pickers. */
+// ponytail: a cap of 200 until P1-09's searchable picker; the queue page itself is complete.
+export async function pendingClaimOptions(actor: Actor) {
   const tenant = requireFinance(actor)
   return withTenant(tenant, async (tx) =>
-    (
-      await claimsQuery(tx)
-        .where(status === 'pending' || status === 'verified' || status === 'rejected' ? eq(transferClaims.status, status) : undefined)
-        .orderBy(sql`${transferClaims.status} = 'pending' desc`, asc(transferClaims.submittedAt))
-    ).map(shapeClaim),
+    (await claimsQuery(tx).where(eq(transferClaims.status, 'pending')).orderBy(asc(transferClaims.submittedAt), asc(transferClaims.id)).limit(200))
+      .map(shapeClaim)
+      .map((c) => ({ value: c.id, label: `${c.student}: ${c.amount} ${c.modeText} ${c.utr} (${c.transferredOn})` })),
   )
 }
 

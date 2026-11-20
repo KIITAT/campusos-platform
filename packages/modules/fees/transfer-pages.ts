@@ -2,11 +2,14 @@ import type { PluginPage, PluginSection } from '@campusos/module-framework'
 import { formatPaise } from '@campusos/money'
 import { listStructure } from '@campusos/module-academic/api'
 import {
+  claimCounts,
+  claimPage,
   claimQueue,
   letterSettingsOf,
   listBankAccounts,
   listDemandLetters,
   myClaims,
+  pendingClaimOptions,
   studentChoices,
   type Actor,
 } from './api'
@@ -164,17 +167,18 @@ export const transferPages: PluginPage[] = [
     title: 'Reported transfers',
     menu: 'Transfers',
     roles: [...OFFICE],
-    async load(actor) {
-      const claims = await claimQueue(actor as Actor)
-      const pending = claims.filter((c) => c.status === 'pending')
+    async load(actor, req) {
+      const a = actor as Actor
+      const [claims, pendingOptions, counts] = await Promise.all([
+        claimQueue(a, null, claimPage(req, 'claims')),
+        pendingClaimOptions(a),
+        claimCounts(a),
+      ])
       return {
-        claims: claims.map((c) => ({ ...c, submitted: day(c.submittedAt) })),
-        pendingOptions: pending.map((c) => ({ value: c.id, label: `${c.student}: ${c.amount} ${c.modeText} ${c.utr} (${c.transferredOn})` })),
-        counts: {
-          pending: pending.length,
-          pendingAmount: pending.reduce((n, c) => n + c.amountPaise, 0),
-          verified: claims.filter((c) => c.status === 'verified').length,
-        },
+        claims: claims.rows.map((c) => ({ ...c, submitted: day(c.submittedAt) })),
+        claimsPage: { total: claims.total, next: claims.next },
+        pendingOptions,
+        counts: { pending: counts.pending, pendingAmount: counts.pendingPaise, verified: counts.verified },
       }
     },
     sections: (data) => {
@@ -199,7 +203,7 @@ export const transferPages: PluginPage[] = [
           title: 'Transfers',
           rows: 'claims',
           empty: 'Nothing reported.',
-          pageSize: 50,
+          paging: { data: 'claimsPage', sorts: ['queue'] },
           columns: [
             { key: 'student', label: 'Student' },
             { key: 'term', label: 'Term', kind: 'code' },
