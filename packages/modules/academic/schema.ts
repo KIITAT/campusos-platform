@@ -657,6 +657,11 @@ export const courseCompletions = pgTable(
   ],
 )
 
+/** Reservation category as the central lists name them (P1-12a, D7). State lists and PwD are P1-12b's. */
+export const STUDENT_CATEGORIES = ['general', 'ews', 'obc', 'sc', 'st'] as const
+export type StudentCategory = (typeof STUDENT_CATEGORIES)[number]
+export const CATEGORY_LABELS: Record<StudentCategory, string> = { general: 'General', ews: 'EWS', obc: 'OBC', sc: 'SC', st: 'ST' }
+
 /**
  * Who a student is on paper, beyond their sign-in: the roll and registration
  * numbers a hall ticket prints, and the phone and address an examination
@@ -684,6 +689,8 @@ export const studentProfiles = pgTable(
     apaarId: text('apaar_id'),
     /** The house a school puts the student in (P1-13a). A name, up to 40 characters. */
     house: text(),
+    /** One of STUDENT_CATEGORIES; read only by the student, a guardian and the office. */
+    category: text(),
     updatedBy: text('updated_by').references(() => users.id, { onDelete: 'set null' }),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -694,6 +701,7 @@ export const studentProfiles = pgTable(
     uniqueIndex('academic_student_profiles_apaar_unique').on(t.institutionId, t.apaarId),
     check('academic_student_profiles_apaar', sql`apaar_id is null or apaar_id ~ '^[0-9]{12}$'`),
     check('academic_student_profiles_house', sql`house is null or length(trim(house)) between 1 and 40`),
+    check('academic_student_profiles_category', sql`category is null or category in ('general','ews','obc','sc','st')`),
     tenantPolicy('academic_student_profiles'),
   ],
 )

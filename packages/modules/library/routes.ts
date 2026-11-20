@@ -7,6 +7,8 @@ import {
   createTitle,
   getSettings,
   issue,
+  loanPage,
+  titlePage,
   openLoans,
   overdueReport,
   renew,
@@ -29,7 +31,7 @@ export const routes: PluginRoute[] = [
   {
     method: 'GET',
     path: '/titles',
-    handler: (actor, req) => catalogue(actor as Actor, param(req, 'q')),
+    handler: (actor, req) => catalogue(actor as Actor, param(req, 'q'), titlePage(req, '')),
   },
   {
     method: 'POST',
@@ -53,7 +55,7 @@ export const routes: PluginRoute[] = [
     handler: async (actor, req) => setCopyStatus(actor as Actor, await jsonBody(req)),
   },
 
-  { method: 'GET', path: '/loans', handler: (actor) => openLoans(actor as Actor) },
+  { method: 'GET', path: '/loans', handler: (actor, req) => openLoans(actor as Actor, loanPage(req, '')) },
   {
     method: 'POST',
     path: '/loans/issue',
@@ -88,7 +90,7 @@ export const routes: PluginRoute[] = [
     handler: (actor, req) =>
       borrowerStatus(actor as Actor, param(req, 'borrowerId') ?? actor.id),
   },
-  { method: 'GET', path: '/overdue', handler: (actor) => overdueReport(actor as Actor) },
+  { method: 'GET', path: '/overdue', handler: (actor, req) => overdueReport(actor as Actor, loanPage(req, '')) },
 
   { method: 'GET', path: '/settings', handler: (actor) => getSettings(actor as Actor) },
   {

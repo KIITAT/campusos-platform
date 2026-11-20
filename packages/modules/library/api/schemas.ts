@@ -85,8 +85,11 @@ export const waiveFineSchema = z
   })
   .meta({ id: 'LibraryFineWaive' })
 
+/** How a fine was paid (ACC-27, decision 586). Cash when not said, as before. */
+export const settlementMethods = ['cash', 'upi', 'bank_transfer', 'fee_account'] as const
+
 export const settleFineSchema = z
-  .object({ loanId: uuid })
+  .object({ loanId: uuid, method: z.enum(settlementMethods).default('cash') })
   .meta({ id: 'LibraryFineSettle' })
 
 export const librarySettingsSchema = z
@@ -98,6 +101,8 @@ export const librarySettingsSchema = z
     maxRenewals: z.coerce.number().int().min(0).max(20),
     maxFine: rupees.nullish(),
     blockAtOutstanding: rupees,
+    /** Why the rules change: on the audit trail (AUD-12). */
+    reason: z.string().trim().min(5).max(500),
   })
   .meta({ id: 'LibrarySettings' })
 
@@ -135,6 +140,8 @@ export const loanRowSchema = z
     finePaise: z.number().int(),
     fineWaivedPaise: z.number().int(),
     finePaidAt: z.string().nullable(),
+    /** cash, upi, bank_transfer or fee_account; null while unsettled. */
+    fineSettledBy: z.string().nullable(),
     daysOverdue: z.number().int(),
   })
   .meta({ id: 'LibraryLoan' })
@@ -144,7 +151,10 @@ export const borrowerStatusSchema = z
     borrowerId: z.string(),
     borrowerName: z.string().nullable(),
     open: z.array(loanRowSchema),
+    /** The 100 most recent returned loans. */
     history: z.array(loanRowSchema),
+    /** Every returned loan, so a screen can say when the history is cut. */
+    historyTotal: z.number().int(),
     openCount: z.number().int(),
     maxConcurrentLoans: z.number().int(),
     outstandingFinePaise: z.number().int(),
@@ -156,6 +166,9 @@ export const borrowerStatusSchema = z
 export const overdueReportSchema = z
   .object({
     rows: z.array(loanRowSchema),
+    total: z.number().int(),
+    next: z.string().nullable(),
+    /** Over every overdue loan, not this page. */
     totalAccruedPaise: z.number().int(),
   })
   .meta({ id: 'LibraryOverdueReport' })

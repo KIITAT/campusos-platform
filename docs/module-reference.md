@@ -7,32 +7,32 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 
 | Module | Version | Pages | API routes | Dependencies |
 |---|---|---:|---:|---|
-| [Academic Core](#academic) | 0.12.0 | 7 | 42 | None |
-| [Admissions](#admissions) | 0.8.0 | 3 | 9 | academic |
+| [Academic Core](#academic) | 0.13.0 | 7 | 42 | None |
+| [Admissions](#admissions) | 0.9.0 | 3 | 9 | academic |
 | [Alumni and events](#alumni) | 0.5.0 | 4 | 12 | None |
-| [Attendance & QR](#attendance) | 0.16.0 | 8 | 30 | academic, notices |
-| [Student Care](#care) | 0.11.0 | 7 | 24 | academic, notices |
-| [Ceremonies](#ceremonies) | 0.7.0 | 5 | 18 | academic |
-| [Sales CRM](#crm) | 0.6.0 | 4 | 32 | finance, notices |
-| [Enrollment](#enrollment) | 0.8.0 | 3 | 9 | academic |
-| [Examinations & Grading](#examinations) | 0.20.0 | 9 | 36 | academic, notices |
-| [Feedback](#feedback) | 0.8.0 | 8 | 19 | academic |
-| [Fees & Finance](#fees) | 0.24.0 | 11 | 40 | academic, finance, notices |
-| [Finance & Books](#finance) | 0.20.0 | 92 | 208 | None |
+| [Attendance & QR](#attendance) | 0.18.0 | 8 | 30 | academic, notices |
+| [Student Care](#care) | 0.12.0 | 7 | 24 | academic, notices |
+| [Ceremonies](#ceremonies) | 0.8.0 | 5 | 18 | academic |
+| [Sales CRM](#crm) | 0.9.0 | 4 | 32 | finance, notices |
+| [Enrollment](#enrollment) | 0.9.0 | 3 | 9 | academic |
+| [Examinations & Grading](#examinations) | 0.25.0 | 9 | 37 | academic, notices |
+| [Feedback](#feedback) | 0.9.0 | 8 | 19 | academic |
+| [Fees & Finance](#fees) | 0.28.0 | 11 | 43 | academic, finance, notices |
+| [Finance & Books](#finance) | 0.22.0 | 92 | 208 | None |
 | [Helpdesk and grievance](#helpdesk) | 0.5.0 | 2 | 7 | None |
-| [Hostel](#hostel) | 0.11.0 | 5 | 18 | academic |
-| [HR & Payroll](#hr) | 0.23.0 | 18 | 134 | finance, notices |
-| [Library](#library) | 0.13.0 | 5 | 18 | academic |
-| [Mentoring](#mentoring) | 0.20.0 | 6 | 19 | academic, notices |
-| [Communication & Notices](#notices) | 0.14.0 | 4 | 13 | academic |
-| [Parent Portal](#parents) | 0.20.0 | 4 | 11 | academic |
-| [Placement](#placement) | 0.11.0 | 8 | 15 | academic, notices |
-| [Projects and timesheets](#projects) | 0.3.0 | 6 | 27 | finance |
-| [Quizzes](#quizzes) | 0.8.0 | 7 | 22 | academic |
-| [Reports](#reports) | 0.2.0 | 5 | 10 | notices |
+| [Hostel](#hostel) | 0.14.0 | 5 | 20 | academic |
+| [HR & Payroll](#hr) | 0.26.0 | 18 | 134 | finance, notices |
+| [Library](#library) | 0.16.0 | 5 | 18 | academic |
+| [Mentoring](#mentoring) | 0.25.0 | 6 | 19 | academic, notices |
+| [Communication & Notices](#notices) | 0.15.0 | 4 | 13 | academic |
+| [Parent Portal](#parents) | 0.25.0 | 4 | 11 | academic |
+| [Placement](#placement) | 0.12.0 | 8 | 15 | academic, notices |
+| [Projects and timesheets](#projects) | 0.5.0 | 6 | 27 | finance |
+| [Quizzes](#quizzes) | 0.9.0 | 7 | 22 | academic |
+| [Reports](#reports) | 0.3.0 | 5 | 10 | notices |
 | [Skills](#skills) | 0.5.0 | 5 | 12 | None |
-| [Timetable](#timetable) | 0.9.0 | 12 | 42 | academic |
-| [Transport](#transport) | 0.4.0 | 4 | 12 | None |
+| [Timetable](#timetable) | 0.10.0 | 12 | 42 | academic |
+| [Transport](#transport) | 0.5.0 | 4 | 14 | None |
 
 <a id="academic"></a>
 ## Academic Core
@@ -84,7 +84,7 @@ Source: `campusos-platform/packages/modules/academic/`.
 | `POST /api/v1/modules/academic/eligibility` | Whether a student may take a course, and what is missing if not | `studentId`, `courseId` |
 | `POST /api/v1/modules/academic/completions/correct` | Correct a completed course, with a reason that goes on the record | `completionId`, `credits`, `gradePoints`, `gradeLabel`, `passed`, `reason` |
 | `POST /api/v1/modules/academic/degree-audit` | What a student's degree still needs, and what the average is | `studentId`, `studentProgramId` |
-| `POST /api/v1/modules/academic/profile` | Set a student's roll and registration numbers, phone and address (the office) | `studentId`, `rollNo`, `registrationNo`, `phone`, `addressLine`, `city`, `state`, `postalCode`, `emergencyContact`, `house`, `dateOfBirth`, `apaarId` |
+| `POST /api/v1/modules/academic/profile` | Set a student's roll and registration numbers, phone and address (the office) | `studentId`, `rollNo`, `registrationNo`, `phone`, `addressLine`, `city`, `state`, `postalCode`, `emergencyContact`, `house`, `dateOfBirth`, `apaarId`, `category` |
 | `POST /api/v1/modules/academic/consents` | Record a choice for a student: a guardian for a minor, the student once adult, or the office from a form | `studentId`, `purpose`, `decision`, `note` |
 | `POST /api/v1/modules/academic/classes/change` | Cancel, move or hand to a substitute one meeting of a class | `slotId`, `onDate`, `kind`, `movedOn`, `movedStarts`, `movedEnds`, `movedRoomId`, `substituteId`, `reason` |
 | `POST /api/v1/modules/academic/classes/change/withdraw` | Withdraw a change: the class meets as usual | `changeId`, `reason` |
@@ -124,9 +124,9 @@ Source: `campusos-platform/packages/modules/admissions/`.
 | `GET /api/v1/modules/admissions/enquiries` | List enquiries | See runtime OpenAPI schema |
 | `GET /api/v1/modules/admissions/applications` | List applications | See runtime OpenAPI schema |
 | `POST /api/v1/modules/admissions/enquiries` | Record an enquiry | `name`, `email`, `phone`, `note` |
-| `POST /api/v1/modules/admissions/applications` | Submit an application | `enquiryId`, `programId`, `termId` |
+| `POST /api/v1/modules/admissions/applications` | Submit an application | `enquiryId`, `programId`, `termId`, `applicantName`, `applicantEmail`, `dateOfBirth`, `category` |
 | `POST /api/v1/modules/admissions/applications/decision` | Offer, reject or withdraw | `applicationId`, `decision`, `reason` |
-| `POST /api/v1/modules/admissions/applications/accept` | Accept and link academic student | `applicationId`, `studentId` |
+| `POST /api/v1/modules/admissions/applications/accept` | Accept and enrol | `applicationId`, `sectionId`, `studentId` |
 | `GET /api/v1/modules/admissions/imports` | What this module can import from CSV, with each file’s columns | See runtime OpenAPI schema |
 | `GET /api/v1/modules/admissions/imports/template` | A CSV template: the header and one example row (binary response) | `id` (query) |
 | `POST /api/v1/modules/admissions/imports/run` | Check a CSV file, or with apply import it: all rows or none | `importId`, `file`, `csv`, `apply` |
@@ -452,6 +452,7 @@ Source: `campusos-platform/packages/modules/examinations/`.
 | `POST /api/v1/modules/examinations/enrol` | Enrol for the term’s examinations, confirming one’s details | `termId`, `confirm` |
 | `GET /api/v1/modules/examinations/enrolments` | Who is enrolled for a term, and who has classes but is not | `termId` (query) |
 | `POST /api/v1/modules/examinations/enrolments/cancel` | Cancel an enrolment, with a reason | `enrolmentId`, `reason` |
+| `POST /api/v1/modules/examinations/eligibility/waiver` | Grant or revoke a per-term eligibility waiver (attendance or posted fees), with an audited reason | `termId`, `studentId`, `check`, `action`, `reason` |
 | `GET /api/v1/modules/examinations/admit-card.pdf` | The admit card for an enrolment (binary response) | `termId` (query), `studentId` (query) |
 | `POST /api/v1/modules/examinations/backlogs` | Book a failed paper to sit again | `termId`, `courseId`, `bookingType` |
 | `POST /api/v1/modules/examinations/backlogs/cancel` | Cancel a backlog booking and its fee | `bookingId`, `reason` |
@@ -553,7 +554,7 @@ Source: `campusos-platform/packages/modules/fees/`.
 | `GET /api/v1/modules/fees/letters` | Demand letters: a student's own, or the office's register | See runtime OpenAPI schema |
 | `GET /api/v1/modules/fees/letters/verify` | Confirm a letter by its number | `number` (query) |
 | `GET /api/v1/modules/fees/demand-letter.pdf` | A demand letter as a PDF (binary response) | `letterId` (query) |
-| `GET /api/v1/modules/fees/charges` | Charges on single students -- a backlog paper, a duplicate admit card -- optionally for one term | See runtime OpenAPI schema |
+| `GET /api/v1/modules/fees/charges` | Charges on single students -- a backlog paper, a duplicate admit card -- optionally for one term, newest first, a page at a time | See runtime OpenAPI schema |
 | `POST /api/v1/modules/fees/charges` | Charge one student, billed on their next invoice | `studentId`, `termId`, `label`, `amount`, `Idempotency-Key` (header) |
 | `POST /api/v1/modules/fees/charges/cancel` | Cancel a charge not yet invoiced | `chargeId`, `reason` |
 | `GET /api/v1/modules/fees/scholarships` | The scholarships this institution funds and defines | See runtime OpenAPI schema |
@@ -570,11 +571,14 @@ Source: `campusos-platform/packages/modules/fees/`.
 | `POST /api/v1/modules/fees/items` | Define a charge for a programme and term | `programId`, `termId`, `label`, `amount`, `proratable`, `dueOn` |
 | `POST /api/v1/modules/fees/waivers` | Grant or revise a scholarship or waiver. Reason mandatory and audited. | `studentId`, `feeItemId`, `amount`, `reason` |
 | `POST /api/v1/modules/fees/waivers/revoke` | Withdraw a waiver. Reason mandatory and audited. | `waiverId`, `reason` |
-| `POST /api/v1/modules/fees/payments` | Record a payment and issue a receipt number | `studentId`, `termId`, `amount`, `method`, `reference`, `receivedAt`, `notes`, `Idempotency-Key` (header) |
+| `POST /api/v1/modules/fees/payments` | Record a payment and issue a receipt number | `studentId`, `termId`, `amount`, `method`, `reference`, `receivedAt`, `notes`, `drawerIfsc`, `drawerAccount`, `allowAdvance`, `Idempotency-Key` (header) |
 | `POST /api/v1/modules/fees/payments/reconcile` | Confirm a payment against the bank. Reason mandatory and audited. | `paymentId`, `reason` |
 | `GET /api/v1/modules/fees/invoices` | What has been issued for a term, and for how much, a page at a time | See runtime OpenAPI schema |
 | `POST /api/v1/modules/fees/invoices` | Issue a term's charges and post them to the books | `termId`, `studentId` |
 | `POST /api/v1/modules/fees/refunds` | Return money against the payment it came in on | `paymentId`, `amount`, `reason`, `method`, `reference`, `Idempotency-Key` (header) |
+| `POST /api/v1/modules/fees/payments/void` | Void a receipt recorded by mistake | `paymentId`, `reason` |
+| `POST /api/v1/modules/fees/payments/bounce` | Record a cheque returned unpaid by the bank | `paymentId`, `bouncedOn`, `reason`, `drawerIfsc`, `drawerAccount`, `charge` |
+| `POST /api/v1/modules/fees/invoices/void` | Void a student's invoice for a term, issued in error | `studentId`, `termId`, `reason` |
 | `GET /api/v1/modules/fees/ledger` | One student’s charges, waivers and payments for a term | See runtime OpenAPI schema |
 | `GET /api/v1/modules/fees/reconciliation` | The student ledgers against the fees receivable account | See runtime OpenAPI schema |
 | `GET /api/v1/modules/fees/dues` | Balances for a term from the books, worst first, a page at a time | See runtime OpenAPI schema |
@@ -960,6 +964,8 @@ Source: `campusos-platform/packages/modules/hostel/`.
 | `POST /api/v1/modules/hostel/blocks` | Create a block | `code`, `name`, `kind`, `wardenUserId` |
 | `GET /api/v1/modules/hostel/rooms` | Rooms with their current residents and free beds | See runtime OpenAPI schema |
 | `POST /api/v1/modules/hostel/rooms` | Add rooms to a block, a floor at a time | `blockId`, `numbers`, `floor`, `capacity` |
+| `POST /api/v1/modules/hostel/rooms/fee` | Set the fee per bed per term on a block's rooms (administrators). Reason mandatory and audited. | `blockId`, `capacity`, `termFee`, `reason` |
+| `POST /api/v1/modules/hostel/charges` | Charge every resident of a term who has no charge for it yet, through Fees (administrators) | `termId` |
 | `POST /api/v1/modules/hostel/allocations` | Allocate a bed | `roomId`, `studentId`, `allocatedOn` |
 | `POST /api/v1/modules/hostel/allocations/vacate` | Vacate a bed. Reason mandatory and audited. | `allocationId`, `vacatedOn`, `reason` |
 | `POST /api/v1/modules/hostel/leave` | Record approved leave, so an empty bed is expected rather than missing | `studentId`, `fromOn`, `toOn`, `reason` |
@@ -967,7 +973,7 @@ Source: `campusos-platform/packages/modules/hostel/`.
 | `GET /api/v1/modules/hostel/rollcall/qr` | The rotating code for a gate screen | See runtime OpenAPI schema |
 | `POST /api/v1/modules/hostel/rollcall/scan` | A resident scanning in at the gate | `code`, `blockId`, `onNight` |
 | `POST /api/v1/modules/hostel/rollcall/mark` | The manual register: a warden ticking names off a list | `blockId`, `studentId`, `onNight`, `status`, `note` |
-| `GET /api/v1/modules/hostel/visitors` | The gate register | See runtime OpenAPI schema |
+| `GET /api/v1/modules/hostel/visitors` | The gate register, newest first, a page at a time | See runtime OpenAPI schema |
 | `POST /api/v1/modules/hostel/visitors` | Sign a visitor in | `blockId`, `studentId`, `name`, `phone`, `relation`, `purpose` |
 | `POST /api/v1/modules/hostel/visitors/out` | Sign a visitor out | `visitorId` |
 | `GET /api/v1/modules/hostel/me` | Where a student lives, who with, and their recent nights | See runtime OpenAPI schema |
@@ -1172,16 +1178,16 @@ Source: `campusos-platform/packages/modules/library/`.
 | `GET /api/v1/modules/library/copies` | The physical copies of one title, with who holds each | See runtime OpenAPI schema |
 | `POST /api/v1/modules/library/copies` | Add copies of a title, one accession number each | `titleId`, `accessionNos`, `shelf`, `replacement` |
 | `POST /api/v1/modules/library/copies/status` | Withdraw a copy, write it off as lost, or return it to service | `copyId`, `status`, `reason` |
-| `GET /api/v1/modules/library/loans` | Everything currently out, soonest due first | See runtime OpenAPI schema |
+| `GET /api/v1/modules/library/loans` | Everything currently out, soonest due first, a page at a time | See runtime OpenAPI schema |
 | `POST /api/v1/modules/library/loans/issue` | Issue a copy to a borrower | `copyId`, `accessionNo`, `borrowerId` |
 | `POST /api/v1/modules/library/loans/return` | Take a copy back and settle the fine | `copyId`, `accessionNo`, `markLost` |
 | `POST /api/v1/modules/library/loans/renew` | Extend a loan from its current due date | `loanId` |
-| `POST /api/v1/modules/library/fines/waive` | Forgive part or all of a fine. Reason mandatory and audited. | `loanId`, `amount`, `reason` |
-| `POST /api/v1/modules/library/fines/settle` | Record a fine paid at the desk | `loanId` |
+| `POST /api/v1/modules/library/fines/waive` | Forgive part or all of a fine not yet settled. Reason mandatory and audited. | `loanId`, `amount`, `reason` |
+| `POST /api/v1/modules/library/fines/settle` | Record how a fine was paid: cash, UPI, bank transfer, or moved to the student's fee account | `loanId`, `method` |
 | `GET /api/v1/modules/library/status` | One borrower's open loans, history, fines and whether they may borrow | See runtime OpenAPI schema |
-| `GET /api/v1/modules/library/overdue` | Loans past their due date, longest overdue first | See runtime OpenAPI schema |
+| `GET /api/v1/modules/library/overdue` | Loans past their due date, longest overdue first, a page at a time; the fine total covers all of them | See runtime OpenAPI schema |
 | `GET /api/v1/modules/library/settings` | Circulation rules in force, or the built-in defaults | See runtime OpenAPI schema |
-| `PUT /api/v1/modules/library/settings` | Set the circulation rules | `loanDays`, `graceDays`, `finePerDay`, `maxConcurrentLoans`, `maxRenewals`, `maxFine`, `blockAtOutstanding` |
+| `PUT /api/v1/modules/library/settings` | Set the circulation rules. Reason mandatory and audited. | `loanDays`, `graceDays`, `finePerDay`, `maxConcurrentLoans`, `maxRenewals`, `maxFine`, `blockAtOutstanding`, `reason` |
 | `GET /api/v1/modules/library/imports` | What this module can import from CSV, with each file’s columns | See runtime OpenAPI schema |
 | `GET /api/v1/modules/library/imports/template` | A CSV template: the header and one example row (binary response) | `id` (query) |
 | `POST /api/v1/modules/library/imports/run` | Check a CSV file, or with apply import it: all rows or none | `importId`, `file`, `csv`, `apply` |
@@ -1618,6 +1624,8 @@ Source: `campusos-platform/packages/modules/transport/`.
 | `POST /api/v1/modules/transport/stops` | Add stop | `routeId`, `name`, `position` |
 | `POST /api/v1/modules/transport/assignments` | Allocate student seat | `routeId`, `stopId`, `studentId` |
 | `POST /api/v1/modules/transport/assignments/release` | Release student seat | `assignmentId`, `reason` |
+| `POST /api/v1/modules/transport/routes/fee` | Set the fee per seat per term on a route (reason mandatory, audited) | `routeId`, `termFee`, `reason` |
+| `POST /api/v1/modules/transport/charges` | Charge every rider of a term who has no charge for it yet, through Fees | `termId` |
 | `GET /api/v1/modules/transport/imports` | What this module can import from CSV, with each file’s columns | See runtime OpenAPI schema |
 | `GET /api/v1/modules/transport/imports/template` | A CSV template: the header and one example row (binary response) | `id` (query) |
 | `POST /api/v1/modules/transport/imports/run` | Check a CSV file, or with apply import it: all rows or none | `importId`, `file`, `csv`, `apply` |

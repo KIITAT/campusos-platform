@@ -4,7 +4,8 @@ import { moduleEnabled } from '@campusos/module-framework'
 import { degreeAudit, type Actor as Academic } from '@campusos/module-academic/api'
 import { terms } from '@campusos/module-academic/schema'
 import { manifest as enrollmentManifest } from '@campusos/module-enrollment/manifest'
-import { creditLoad, listRegistrationEvents } from '@campusos/module-enrollment/api'
+import { listRegistrationEvents } from '@campusos/module-enrollment/api'
+import { registrations } from '@campusos/module-enrollment/schema'
 import { manifest as feesManifest } from '../manifest'
 import {
   dropCredits,
@@ -13,7 +14,7 @@ import {
   scholarshipAwards,
   scholarships,
 } from '../schema'
-import { FeeError, requireAdmin, type Actor } from './operations'
+import { FeeError, lockTermIssue, requireAdmin, type Actor } from './operations'
 import {
   assessAidSchema,
   awardScholarshipSchema,
@@ -42,6 +43,34 @@ import { enrolledPrograms } from './enrolment'
 const MODULE = 'fees'
 
 type Tx = Parameters<Parameters<typeof withTenant>[1]>[0]
+
+/**
+ * The credits a student is carrying this term, registered only, in the
+ * caller's transaction: the same sum as enrollment's creditLoad, without a
+ * second connection while this one is held (LOW-02).
+ */
+async function creditsWithin(tx: Tx, studentId: string, termId: string, hold = false): Promise<number> {
+  // An award holds the rows it counted, so a drop of one of those courses waits
+  // for the award to commit instead of changing the load under it.
+  if (hold) {
+    await tx
+      .select({ id: registrations.id })
+      .from(registrations)
+      .where(and(eq(registrations.studentId, studentId), eq(registrations.termId, termId), eq(registrations.status, 'registered')))
+      .for('share')
+  }
+  const [row] = await tx
+    .select({ credits: sql<number>`coalesce(sum(${registrations.credits}), 0)::int` })
+    .from(registrations)
+    .where(
+      and(
+        eq(registrations.studentId, studentId),
+        eq(registrations.termId, termId),
+        eq(registrations.status, 'registered'),
+      ),
+    )
+  return Number(row?.credits ?? 0)
+}
 
 /**
  * Whether registration is being kept in the product at all. A soft dependency:
@@ -136,77 +165,86 @@ export async function assessAid(actor: Actor, input: unknown): Promise<AidAssess
   const data = assessAidSchema.parse(input)
 
   const registration = await registrationIsKept(tenant)
-  const load = registration
-    ? await creditLoad(actor as never, { studentId: data.studentId, termId: data.termId })
-    : null
-  const record = await degreeAudit(asAcademic(actor), { studentId: data.studentId }).catch(
-    () => null,
-  )
-  const cgpa = record?.cgpa ?? null
+  const cgpa = await cgpaOf(actor, data.studentId)
+  return withTenant(tenant, (tx) => assessWithin(tx, data, registration, cgpa))
+}
 
-  return withTenant(tenant, async (tx): Promise<AidAssessment> => {
-    const [student] = await tx
-      .select({ name: users.name })
-      .from(users)
-      .where(eq(users.id, data.studentId))
-    if (!student) throw new FeeError(404, 'no_such_user', 'no such user')
+/** The cumulative average on the academic record, or null; read before any transaction (another module). */
+async function cgpaOf(actor: Actor, studentId: string): Promise<number | null> {
+  const record = await degreeAudit(asAcademic(actor), { studentId }).catch(() => null)
+  return record?.cgpa ?? null
+}
 
-    const rules = await tx
-      .select()
-      .from(scholarships)
-      .where(eq(scholarships.isActive, true))
-      .orderBy(asc(scholarships.code))
+/** The assessment, in the caller's transaction (LOW-02). */
+async function assessWithin(
+  tx: Tx,
+  data: { studentId: string; termId: string },
+  registration: boolean,
+  cgpa: number | null,
+  hold = false,
+): Promise<AidAssessment> {
+  const credits = registration ? await creditsWithin(tx, data.studentId, data.termId, hold) : null
+  const [student] = await tx
+    .select({ name: users.name })
+    .from(users)
+    .where(eq(users.id, data.studentId))
+  if (!student) throw new FeeError(404, 'no_such_user', 'no such user')
 
-    const held = await tx
-      .select({ scholarshipId: scholarshipAwards.scholarshipId })
-      .from(scholarshipAwards)
-      .where(
-        and(
-          eq(scholarshipAwards.studentId, data.studentId),
-          eq(scholarshipAwards.termId, data.termId),
-          eq(scholarshipAwards.status, 'awarded'),
-        ),
-      )
+  const rules = await tx
+    .select()
+    .from(scholarships)
+    .where(eq(scholarships.isActive, true))
+    .orderBy(asc(scholarships.code))
 
-    const charges = await chargedPaise(tx, data.studentId, data.termId)
+  const held = await tx
+    .select({ scholarshipId: scholarshipAwards.scholarshipId })
+    .from(scholarshipAwards)
+    .where(
+      and(
+        eq(scholarshipAwards.studentId, data.studentId),
+        eq(scholarshipAwards.termId, data.termId),
+        eq(scholarshipAwards.status, 'awarded'),
+      ),
+    )
 
-    return {
-      studentId: data.studentId,
-      studentName: student.name ?? null,
-      termId: data.termId,
-      credits: load?.credits ?? null,
-      cgpa,
-      chargedPaise: charges,
-      offers: rules.map((r) => {
-        const why: string[] = []
-        if (held.some((h) => h.scholarshipId === r.id)) why.push('already_awarded')
-        if (r.minCredits > 0) {
-          if (load === null) why.push('credit_load_unknown')
-          else if (load.credits < r.minCredits) why.push('below_minimum_credits')
-        }
-        if (r.minCgpa !== null) {
-          if (cgpa === null) why.push('no_grades_yet')
-          else if (cgpa < Number(r.minCgpa)) why.push('below_minimum_average')
-        }
+  const charges = await chargedPaise(tx, data.studentId, data.termId)
 
-        const amountPaise =
-          r.basis === 'fixed'
-            ? (r.amountPaise ?? 0)
-            : Math.round((charges * (r.percentBps ?? 0)) / 10000)
-        if (amountPaise <= 0) why.push('nothing_to_award')
+  return {
+    studentId: data.studentId,
+    studentName: student.name ?? null,
+    termId: data.termId,
+    credits,
+    cgpa,
+    chargedPaise: charges,
+    offers: rules.map((r) => {
+      const why: string[] = []
+      if (held.some((h) => h.scholarshipId === r.id)) why.push('already_awarded')
+      if (r.minCredits > 0) {
+        if (credits === null) why.push('credit_load_unknown')
+        else if (credits < r.minCredits) why.push('below_minimum_credits')
+      }
+      if (r.minCgpa !== null) {
+        if (cgpa === null) why.push('no_grades_yet')
+        else if (cgpa < Number(r.minCgpa)) why.push('below_minimum_average')
+      }
 
-        return {
-          scholarshipId: r.id,
-          code: r.code,
-          name: r.name,
-          kind: r.kind,
-          amountPaise,
-          eligible: why.length === 0,
-          reasons: why,
-        }
-      }),
-    }
-  })
+      const amountPaise =
+        r.basis === 'fixed'
+          ? (r.amountPaise ?? 0)
+          : Math.round((charges * (r.percentBps ?? 0)) / 10000)
+      if (amountPaise <= 0) why.push('nothing_to_award')
+
+      return {
+        scholarshipId: r.id,
+        code: r.code,
+        name: r.name,
+        kind: r.kind,
+        amountPaise,
+        eligible: why.length === 0,
+        reasons: why,
+      }
+    }),
+  }
 }
 
 /**
@@ -221,21 +259,24 @@ export async function awardScholarship(actor: Actor, input: unknown) {
   const tenant = requireAdmin(actor)
   const data = awardScholarshipSchema.parse(input)
 
-  const assessment = await assessAid(actor, {
-    studentId: data.studentId,
-    termId: data.termId,
-  })
-  const offer = assessment.offers.find((o) => o.scholarshipId === data.scholarshipId)
-  if (!offer) throw new FeeError(404, 'no_such_scholarship', 'no such live scholarship')
-  if (!offer.eligible) {
-    throw new FeeError(
-      409,
-      'not_eligible',
-      `not eligible: ${offer.reasons.join(', ')}`,
-    )
-  }
+  const registration = await registrationIsKept(tenant)
+  const cgpa = await cgpaOf(actor, data.studentId)
 
+  // Assessed and awarded in one transaction (LOW-02): nothing can change
+  // between the check and the write.
   return withTenant(tenant, async (tx) => {
+    await lockTermIssue(tx, data.termId)
+    const assessment = await assessWithin(tx, { studentId: data.studentId, termId: data.termId }, registration, cgpa, true)
+    const offer = assessment.offers.find((o) => o.scholarshipId === data.scholarshipId)
+    if (!offer) throw new FeeError(404, 'no_such_scholarship', 'no such live scholarship')
+    if (!offer.eligible) {
+      throw new FeeError(
+        409,
+        'not_eligible',
+        `not eligible: ${offer.reasons.join(', ')}`,
+      )
+    }
+
     const [term] = await tx
       .select({ code: terms.code })
       .from(terms)
@@ -461,6 +502,7 @@ export async function prorateDrops(actor: Actor, input: unknown) {
       .from(terms)
       .where(eq(terms.id, data.termId))
     if (!term) throw new FeeError(404, 'no_such_term', 'no such term')
+    await lockTermIssue(tx, data.termId)
 
     const brackets = await tx
       .select({ throughOn: refundRules.throughOn, refundBps: refundRules.refundBps })
@@ -495,10 +537,7 @@ export async function prorateDrops(actor: Actor, input: unknown) {
         continue
       }
 
-      const load = await creditLoad(actor as never, {
-        studentId: event.studentId,
-        termId: data.termId,
-      })
+      const load = await creditsWithin(tx, event.studentId, data.termId)
       const droppedHere = events
         .filter(
           (e) =>
@@ -506,7 +545,7 @@ export async function prorateDrops(actor: Actor, input: unknown) {
             (e.kind === 'dropped' || e.kind === 'withdrawn'),
         )
         .reduce((n, e) => n + e.credits, 0)
-      const carried = load.credits + droppedHere
+      const carried = load + droppedHere
       if (carried === 0) {
         skipped++
         continue

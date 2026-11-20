@@ -1,8 +1,9 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { eq, like } from 'drizzle-orm'
+import { eq, like, sql } from 'drizzle-orm'
 import {
   authDb,
+  corePool,
   institutionModules,
   institutions,
   users,
@@ -486,6 +487,35 @@ test('a course dropped inside the window comes back at the bracket that covers i
   assert.equal(l.payablePaise, 2_200_000)
 })
 
+test('a drop is prorated on one connection (LOW-02)', async () => {
+  const c = await campus()
+  await charges(c)
+  await issueInvoices(c.admin, { termId: c.termId })
+  const one = await takes(c, c.a, 4, 'Algorithms')
+  await takes(c, c.a, 4, 'Databases')
+  await setRefundRules(c.admin, {
+    termId: c.termId,
+    brackets: [
+      { throughOn: day(7), refundBps: 10_000 },
+      { throughOn: day(21), refundBps: 5_000 },
+    ],
+  })
+  await enrollment.drop(asEnrollment(c.admin), {
+    studentId: c.a,
+    offeringId: one.id,
+    effectiveOn: day(3),
+  })
+
+  // Four of the pool's five connections held: prorating must not need a second.
+  const held = await Promise.all([1, 2, 3, 4].map(() => corePool.connect()))
+  try {
+    const out = await prorateDrops(c.admin, { termId: c.termId })
+    assert.equal(out.credited.length, 1)
+  } finally {
+    for (const h of held) h.release()
+  }
+})
+
 test('the later bracket returns less, and past every bracket nothing comes back', async () => {
   const c = await campus()
   await charges(c)
@@ -642,4 +672,78 @@ test('another institution cannot award out of this one', async () => {
     (e: unknown) => errorCode(e) === 'no_such_user',
   )
   assert.equal((await listAwards(one.admin, { termId: one.termId })).length, 0)
+})
+
+test('an award and a drop of its only qualifying course take turns (review P1-03b HIGH 3)', async () => {
+  const c = await campus()
+  await charges(c)
+  const only = await takes(c, c.a, 4)
+  const rule = await createScholarship(c.admin, {
+    code: 'MERIT',
+    name: 'Merit scholarship',
+    kind: 'merit',
+    basis: 'fixed',
+    amountPaise: '10000',
+    minCredits: 4,
+  })
+
+  // Stop the award at its insert, after it has assessed four credits.
+  const blocker = await corePool.connect()
+  await blocker.query('begin')
+  await blocker.query('lock table fee_scholarship_awards in share row exclusive mode')
+  const waitFor = async (pattern: string) => {
+    for (let i = 0; i < 100; i++) {
+      const r = await authDb.execute(sql`
+        select count(*)::int as n from pg_stat_activity
+         where wait_event_type = 'Lock' and datname = current_database() and query ilike ${pattern}`)
+      if ((r.rows[0] as { n: number }).n > 0) return
+      await new Promise((ok) => setTimeout(ok, 50))
+    }
+    throw new Error(`nobody waits on ${pattern}`)
+  }
+  try {
+    const award = awardScholarship(c.admin, { scholarshipId: rule.id, studentId: c.a, termId: c.termId })
+    await waitFor('%fee_scholarship_awards%')
+    const drop = enrollment.drop(asEnrollment(c.admin), { studentId: c.a, offeringId: only.id, effectiveOn: day(3) })
+    const early = await Promise.race([drop.then(() => 'dropped'), new Promise((ok) => setTimeout(() => ok('waiting'), 800))])
+    assert.equal(early, 'waiting', 'the drop must not commit while the award holds the credit load it assessed')
+    await blocker.query('rollback')
+    const [a] = await Promise.all([award, drop])
+    assert.equal(a.creditsAtAward, 4)
+  } finally {
+    await blocker.query('rollback').catch(() => {})
+    blocker.release()
+  }
+})
+
+test('prorating drops waits for a void holding the term lock (re-review P1-03b NOTE)', async () => {
+  const c = await campus()
+  await charges(c)
+  await issueInvoices(c.admin, { termId: c.termId })
+  const one = await takes(c, c.a, 4, 'Algorithms')
+  await takes(c, c.a, 4, 'Databases')
+  await setRefundRules(c.admin, { termId: c.termId, brackets: [{ throughOn: day(7), refundBps: 10_000 }] })
+  await enrollment.drop(asEnrollment(c.admin), { studentId: c.a, offeringId: one.id, effectiveOn: day(3) })
+
+  let release!: () => void
+  const held = new Promise<void>((ok) => (release = ok))
+  let holding!: () => void
+  const locked = new Promise<void>((ok) => (holding = ok))
+  const holder = authDb.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'fees.issue:' + c.termId}, 0))`)
+    holding()
+    await held
+  })
+  await locked
+  try {
+    const prorating = prorateDrops(c.admin, { termId: c.termId })
+    const waiting = await Promise.race([prorating.then(() => false), new Promise<boolean>((ok) => setTimeout(() => ok(true), 700))])
+    assert.equal(waiting, true, 'a drop credit waits for the term lock')
+    release()
+    await holder
+    assert.equal((await prorating).credited.length, 1)
+  } finally {
+    release()
+    await holder.catch(() => {})
+  }
 })

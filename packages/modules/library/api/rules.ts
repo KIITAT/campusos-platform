@@ -1,3 +1,5 @@
+import { sql, type SQL } from 'drizzle-orm'
+
 /**
  * Circulation arithmetic, as pure functions.
  *
@@ -30,15 +32,44 @@ export const DEFAULT_RULES: LoanRules = {
 
 const DAY_MS = 86_400_000
 
+/** The institution's zone when it keeps none of its own (decision 583). */
+export const DEFAULT_ZONE = 'Asia/Kolkata'
+
+/** How far `timeZone` is ahead of UTC at `at`, in milliseconds. */
+function offsetMs(at: Date, timeZone: string): number {
+  const p = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    })
+      .formatToParts(at)
+      .map((x) => [x.type, x.value]),
+  )
+  const wall = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(p.hour), Number(p.minute), Number(p.second))
+  return wall - (at.getTime() - at.getUTCMilliseconds())
+}
+
 /**
  * Due dates land at the end of the day, not at the hour the book was handed
  * over. A book issued at 16:05 is not overdue at 16:06 a fortnight later, and
  * telling a student otherwise is the argument this function exists to avoid.
+ * The day is the institution's, not the server's (LOW-09).
  */
-export function dueDate(issuedAt: Date, loanDays: number): Date {
-  const due = new Date(issuedAt.getTime() + loanDays * DAY_MS)
-  due.setHours(23, 59, 59, 999)
-  return due
+export function dueDate(issuedAt: Date, loanDays: number, timeZone = DEFAULT_ZONE): Date {
+  // Add days to the local calendar date, then resolve the end of that date with
+  // the offset in force on it: a clock change in between must not move the day.
+  const wall = new Date(issuedAt.getTime() + offsetMs(issuedAt, timeZone))
+  wall.setUTCDate(wall.getUTCDate() + loanDays)
+  wall.setUTCHours(23, 59, 59, 999)
+  let at = new Date(wall.getTime() - offsetMs(wall, timeZone))
+  at = new Date(wall.getTime() - offsetMs(at, timeZone))
+  return at
 }
 
 /** Whole days late, counting from the end of the due day. Never negative. */
@@ -123,5 +154,18 @@ export function refusalToRenew(
 }
 
 /** A renewal extends from the current due date, not from today. */
-export const renewedDueDate = (dueOn: Date, loanDays: number) =>
-  dueDate(dueOn, loanDays)
+export const renewedDueDate = (dueOn: Date, loanDays: number, timeZone = DEFAULT_ZONE) =>
+  dueDate(dueOn, loanDays, timeZone)
+
+/**
+ * `fineFor` in SQL, for an open loan read now: the overdue total is summed in
+ * the database over every overdue loan, not over a page of them (LOW-08,
+ * decision 582). Keep the two in step; a test pins them together.
+ */
+export function fineSql(rules: LoanRules, dueOn: SQL, replacementPaise: SQL): SQL {
+  if (rules.finePerDayPaise === 0) return sql`0::bigint`
+  const days = sql`greatest(ceil(extract(epoch from (now() - ${dueOn})) / 86400)::bigint - ${rules.graceDays}::bigint, 0)`
+  const accrued = sql`(${days} * ${rules.finePerDayPaise}::bigint)`
+  const cap = rules.maxFinePaise === null ? accrued : sql`${rules.maxFinePaise}::bigint`
+  return sql`least(${accrued}, ${cap}, coalesce(${replacementPaise}, ${accrued}))`
+}

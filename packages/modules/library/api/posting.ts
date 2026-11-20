@@ -34,6 +34,8 @@ export async function postFineSettled(
     amountPaise: number
     borrowerName: string | null
     title: string
+    /** Where the money landed: cash at the desk, or the bank for UPI and transfers (ACC-27). */
+    landed: 'cash' | 'bank'
   },
 ): Promise<void> {
   if (fine.amountPaise <= 0) return
@@ -43,9 +45,7 @@ export async function postFineSettled(
     sourceModule: 'library',
     sourceRef: `fine:${fine.loanId}`,
     lines: [
-      // Cash, because this is a desk taking coins. A library that starts
-      // collecting by transfer wants a method on the settlement first.
-      { purpose: 'cash', debitPaise: fine.amountPaise },
+      { purpose: fine.landed, debitPaise: fine.amountPaise },
       { purpose: 'fine_income', creditPaise: fine.amountPaise },
     ],
   })

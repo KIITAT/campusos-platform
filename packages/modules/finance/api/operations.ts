@@ -594,8 +594,17 @@ export async function reverseEntry(actor: Actor, input: unknown) {
   const { entryId, reason } = reverseEntrySchema.parse(input)
 
   return withTenant(tenant, async (tx) => {
-    const [original] = await tx.select({ id: entries.id }).from(entries).where(eq(entries.id, entryId))
+    const [original] = await tx
+      .select({ id: entries.id, sourceModule: entries.sourceModule, reversalOf: entries.reversalOf })
+      .from(entries)
+      .where(eq(entries.id, entryId))
     if (!original) throw new FinanceError(404, 'no_such_entry', 'no such journal entry')
+    // The fee ledger is built from fee documents and moves with their entries. A
+    // free-hand reversal here would leave a receipt, invoice, refund, waiver, award
+    // or drop credit standing against books that no longer hold it.
+    if (original.sourceModule === 'fees' && !original.reversalOf) {
+      throw new FinanceError(409, 'owned_by_module', 'this entry belongs to Fees; void the receipt or invoice there (or revoke the waiver or award), which reverses it and the ledger of the student together')
+    }
     // A free-hand reversal is a correction made now, so it is dated today.
     const reversalId = await reverseWithin(tx, tenant, actor.id, entryId, reason, await localToday(tx, tenant))
 

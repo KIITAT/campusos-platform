@@ -13,6 +13,9 @@ import {
 import {
   aidAssessmentSchema,
   awardScholarshipSchema,
+  bouncePaymentSchema,
+  voidInvoiceSchema,
+  voidPaymentSchema,
   createFeeItemSchema,
   createScholarshipSchema,
   prorateDropsSchema,
@@ -150,9 +153,33 @@ export const paths = {
   ...transfersAndLetters(),
   [`${base}/charges`]: {
     get: {
-      summary: 'Charges on single students -- a backlog paper, a duplicate admit card -- optionally for one term',
+      summary: 'Charges on single students -- a backlog paper, a duplicate admit card -- optionally for one term, newest first, a page at a time',
       tags: ['fees'],
-      responses: { '200': { description: 'OK' }, ...gated },
+      responses: {
+        '200': {
+          description: 'OK',
+          content: json(
+            z.object({
+              rows: z.array(
+                z.object({
+                  id: z.string(),
+                  studentId: z.string(),
+                  student: z.string(),
+                  termId: z.string(),
+                  term: z.string(),
+                  label: z.string(),
+                  amountPaise: z.number().int(),
+                  sourceModule: z.string(),
+                  state: z.enum(['pending', 'invoiced', 'cancelled']),
+                }),
+              ),
+              total: z.number().int(),
+              next: z.string().nullable(),
+            }),
+          ),
+        },
+        ...gated,
+      },
     },
     post: {
       summary: 'Charge one student, billed on their next invoice',
@@ -252,6 +279,68 @@ export const paths = {
           content: json(err),
         },
         '404': { description: 'No such payment', content: json(err) },
+        ...gated,
+      },
+    },
+  },
+
+  [`${base}/payments/void`]: {
+    post: {
+      summary: 'Void a receipt recorded by mistake',
+      description:
+        'The receipt stays on record marked void; its journal entry is reversed today in the ' +
+        "institution's zone and the amount is owed again. An administrator who did not record " +
+        'the payment voids it; the student and their guardians are told.',
+      tags: ['fees'],
+      requestBody: { content: json(voidPaymentSchema) },
+      responses: {
+        '200': { description: 'Voided' },
+        '400': { description: 'Invalid input', content: json(err) },
+        '403': { description: 'separation_of_duties: you recorded it; forbidden: not an administrator; or the module is not enabled', content: json(err) },
+        '404': { description: 'no_such_payment', content: json(err) },
+        '409': { description: 'payment_not_live: already void or returned; payment_refunded: refunds stand against it', content: json(err) },
+      },
+    },
+  },
+  [`${base}/payments/bounce`]: {
+    post: {
+      summary: 'Record a cheque returned unpaid by the bank',
+      description:
+        "The receipt stays on record marked returned unpaid; its journal entry is reversed on the bank's " +
+        "date of return and the amount is owed again. The drawer's IFSC and account are required if the " +
+        'receipt lacks them. An optional bounce charge is billed when the term is next issued.',
+      tags: ['fees'],
+      requestBody: { content: json(bouncePaymentSchema) },
+      responses: {
+        '200': { description: 'Marked returned unpaid' },
+        '400': {
+          description: 'not_a_cheque, drawer_required, bounce_before_receipt, future_bounce or bad_charge',
+          content: json(err),
+        },
+        '403': { description: 'separation_of_duties: you recorded it; forbidden; or the module is not enabled', content: json(err) },
+        '404': { description: 'no_such_payment', content: json(err) },
+        '409': { description: 'payment_not_live: already void or returned; payment_refunded: refunds stand against it', content: json(err) },
+      },
+    },
+  },
+
+  [`${base}/invoices/void`]: {
+    post: {
+      summary: "Void a student's invoice for a term, issued in error",
+      description:
+        'For an invoice issued to a student who was not enrolled, for example. Nothing may be paid or ' +
+        'credited against the term. One entry today takes the student back to owing nothing; issuing ' +
+        'the term again bills them afresh if they are enrolled.',
+      tags: ['fees'],
+      requestBody: { content: json(voidInvoiceSchema) },
+      responses: {
+        '200': { description: 'Voided' },
+        '400': { description: 'Invalid input', content: json(err) },
+        '404': { description: 'no_such_invoice: no live invoice for that student and term', content: json(err) },
+        '409': {
+          description: 'invoice_has_payments: money is paid against the term; invoice_has_credits: scholarship awards or drop credits',
+          content: json(err),
+        },
         ...gated,
       },
     },

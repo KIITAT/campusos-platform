@@ -161,10 +161,14 @@ before(async () => {
   await q(`insert into helpdesk_messages (institution_id, case_id, author_id, body) values ($1, $2, $3, $4)`, [I, kase, A, X])
   const enquiry = uid()
   await q(`insert into admissions_enquiries (id, institution_id, name, email, phone, note) values ($1, $2, 'Enquirer', 'enq@example.test', '9999999999', $3)`, [enquiry, I, X])
-  await q(`insert into admissions_applications (institution_id, enquiry_id, program_id, term_id, student_id) values ($1, $2, $3, $4, $5)`, [I, enquiry, uid(), uid(), S])
+  await q(
+    `insert into admissions_applications (institution_id, enquiry_id, program_id, term_id, student_id, applicant_name, applicant_email, date_of_birth, category)
+     values ($1, $2, $3, $4, $5, $6, $7, '2007-01-01', 'sc')`,
+    [I, enquiry, uid(), uid(), S, X, 'applicant+' + X + '@example.test'],
+  )
 
   // academic, parents, notices
-  await q(`insert into academic_student_profiles (student_id, institution_id, roll_no, address_line) values ($1, $2, 'R-1', $3)`, [S, I, X])
+  await q(`insert into academic_student_profiles (student_id, institution_id, roll_no, address_line, category) values ($1, $2, 'R-1', $3, 'sc')`, [S, I, X])
   await q(`insert into parent_links (institution_id, parent_id, student_id, relation, refused_reason) values ($1, $2, $3, 'mother', $4)`, [I, G, S, X])
   await q(
     `insert into notifications (institution_id, user_id, module_id, title, body)
@@ -258,6 +262,11 @@ test('erasure leaves no free text about the person in any table (AUD-03)', async
   }
   assert.deepEqual(found, [])
   assert.equal(await count('mentor_leave_applications', 'student_id = $1 and document is null', id.S), 1)
+  // P1-12a: the applicant's own details and the category go too.
+  assert.deepEqual((await q(`select applicant_email, date_of_birth, category from admissions_applications where student_id = $1`, [id.S])).rows, [
+    { applicant_email: null, date_of_birth: null, category: null },
+  ])
+  assert.deepEqual((await q(`select category from academic_student_profiles where student_id = $1`, [id.S])).rows, [{ category: null }])
 })
 
 test('erasure keeps the institution’s record and other people’s data (AUD-03)', async () => {

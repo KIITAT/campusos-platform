@@ -1,4 +1,5 @@
-import type { CellKind, PluginColumn, Tone } from './pages'
+import type { PluginColumn, Tone } from './pages'
+import { listRows } from './list-rows'
 
 /**
  * The parts of rendering that are decisions rather than markup, kept here so
@@ -45,19 +46,6 @@ export interface ListView<T> {
   limit: number
 }
 
-const text = (v: unknown, kind?: CellKind): string => {
-  if (v === null || v === undefined) return ''
-  if (kind === 'bool') return v ? 'yes' : 'no'
-  return String(v)
-}
-
-const comparable = (v: unknown): number | string | null => {
-  if (v === null || v === undefined || v === '') return null
-  if (typeof v === 'number') return v
-  if (typeof v === 'boolean') return v ? 1 : 0
-  return String(v).toLowerCase()
-}
-
 /**
  * Filter, sort and cut a table's rows the way the list view's toolbar asks.
  *
@@ -71,26 +59,9 @@ export function listView<T extends Record<string, unknown>>(
   query: ListQuery,
   pageSize = 20,
 ): ListView<T> {
-  const q = query.q?.trim().toLowerCase()
-  const filtered = q
-    ? rows.filter((r) => columns.some((c) => text(r[c.key], c.kind).toLowerCase().includes(q)))
-    : rows
-
-  const col = columns.find((c) => c.key === query.sort)
-  const sorted = col
-    ? [...filtered].sort((a, b) => {
-        const x = comparable(a[col.key])
-        const y = comparable(b[col.key])
-        if (x === null && y === null) return 0
-        if (x === null) return 1
-        if (y === null) return -1
-        const order = x < y ? -1 : x > y ? 1 : 0
-        return query.dir === 'desc' ? -order : order
-      })
-    : filtered
-
+  const sorted = listRows(rows, columns, query)
   const limit = Math.min(Math.max(query.limit ?? pageSize, 1), 500)
-  return { rows: sorted.slice(0, limit), matched: filtered.length, total: rows.length, limit }
+  return { rows: sorted.slice(0, limit), matched: sorted.length, total: rows.length, limit }
 }
 
 /** Nice round steps for a chart's axis, from zero to at least the largest value. */

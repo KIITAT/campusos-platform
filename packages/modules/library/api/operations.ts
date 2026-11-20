@@ -1,19 +1,33 @@
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm'
 import { audit, auditLog, users, withTenant } from '@campusos/db'
 import {
+  cursorColumn,
+  finishPage,
+  keyset,
   moduleEnabled,
+  orderKeys,
+  readPage,
+  searchAny,
   viewsOnBehalf,
+  type Page,
+  type SortSpec,
   type Role,
   type ViewerScope,
 } from '@campusos/module-framework'
 import { manifest as financeManifest } from '@campusos/module-finance/manifest'
+import { localToday, settingsWithin } from '@campusos/module-finance/api'
+import { chargeStudentWithin, termOnWithin } from '@campusos/module-fees/api'
+import { manifest as feesManifest } from '@campusos/module-fees/manifest'
+import { formatPaise } from '@campusos/money'
 import { manifest as libraryManifest } from '../manifest'
 import { copies, loans, settings, titles } from '../schema'
 import {
   DEFAULT_RULES,
+  DEFAULT_ZONE,
   daysOverdue,
   dueDate,
   fineFor,
+  fineSql,
   refusalToBorrow,
   refusalToRenew,
   renewedDueDate,
@@ -44,6 +58,17 @@ const MODULE = 'library'
  */
 const booksAreOn = (institutionId: string) =>
   moduleEnabled([libraryManifest, financeManifest], 'finance', institutionId)
+
+/** Whether a fine may be moved to the student's fee account here. */
+const feesAreOn = (institutionId: string) =>
+  moduleEnabled([libraryManifest, financeManifest, feesManifest], 'fees', institutionId)
+
+/**
+ * The institution's zone: the one its books keep, or India's (LOW-09,
+ * decision 583). `booksOn` is asked before the transaction.
+ */
+const zoneFor = async (tx: Tx, tenant: string, booksOn: boolean) =>
+  booksOn ? (await settingsWithin(tx, tenant)).timeZone : DEFAULT_ZONE
 
 export interface Actor extends ViewerScope {
   id: string
@@ -119,6 +144,7 @@ export async function setSettings(actor: Actor, input: unknown) {
   const d = librarySettingsSchema.parse(input)
 
   return withTenant(tenant, async (tx) => {
+    const from = await rulesFor(tx, tenant)
     const values = {
       institutionId: tenant,
       loanDays: d.loanDays,
@@ -135,6 +161,18 @@ export async function setSettings(actor: Actor, input: unknown) {
       .values(values)
       .onConflictDoUpdate({ target: settings.institutionId, set: values })
       .returning()
+    // The fine rules are a lever on what students pay: say who moved them and why (AUD-12).
+    await audit(tx, {
+      institutionId: tenant,
+      actorId: actor.id,
+      actorEmail: actor.email ?? null,
+      moduleId: MODULE,
+      action: 'library.settings_changed',
+      entity: 'library_settings',
+      entityId: tenant,
+      reason: d.reason,
+      detail: { from, to: await rulesFor(tx, tenant) },
+    })
     return row!
   })
 }
@@ -244,12 +282,28 @@ export async function setCopyStatus(actor: Actor, input: unknown) {
   })
 }
 
-export async function catalogue(actor: Actor, q?: string): Promise<CatalogueRow[]> {
-  const tenant = requireReader(actor)
-  const needle = q?.trim()
+const TITLE_SORTS: SortSpec = {
+  title: { dir: 'asc', keys: [{ sql: sql`${titles.title}`, type: 'text' }, { sql: sql`${titles.id}`, type: 'uuid' }] },
+}
+export const titlePage = (req: Request, prefix: string) => readPage(req, prefix, TITLE_SORTS, 'title', 50)
 
-  return withTenant(tenant, (tx) =>
-    tx
+/** The catalogue, by title, a page at a time (NEW-66). `q` wins over the page's own search. */
+export async function catalogue(
+  actor: Actor,
+  q?: string | null,
+  page = titlePage(new Request('https://x/'), ''),
+): Promise<Page<CatalogueRow>> {
+  const tenant = requireReader(actor)
+  const needle = (q ?? page.q)?.trim()
+  const keys = TITLE_SORTS[page.sort]!.keys
+  const where = needle
+    ? sql`(${titles.title} ilike ${'%' + needle + '%'}
+           or ${titles.author} ilike ${'%' + needle + '%'}
+           or ${titles.isbn} = ${needle.replace(/[\s-]/g, '')})`
+    : undefined
+
+  return withTenant(tenant, async (tx) => {
+    const rows = await tx
       .select({
         titleId: titles.id,
         isbn: titles.isbn,
@@ -259,23 +313,18 @@ export async function catalogue(actor: Actor, q?: string): Promise<CatalogueRow[
         year: titles.year,
         category: titles.category,
         copies: sql<number>`count(${copies.id})`.mapWith(Number),
-        available: sql<number>`count(*) filter (where ${copies.status} = 'available')`.mapWith(
-          Number,
-        ),
+        available: sql<number>`count(*) filter (where ${copies.status} = 'available')`.mapWith(Number),
+        _cursor: cursorColumn(keys),
       })
       .from(titles)
       .leftJoin(copies, eq(copies.titleId, titles.id))
-      .where(
-        needle
-          ? sql`(${titles.title} ilike ${'%' + needle + '%'}
-                 or ${titles.author} ilike ${'%' + needle + '%'}
-                 or ${titles.isbn} = ${needle.replace(/[\s-]/g, '')})`
-          : undefined,
-      )
+      .where(and(where, keyset(keys, page)))
       .groupBy(titles.id)
-      .orderBy(asc(titles.title))
-      .limit(200),
-  )
+      .orderBy(...orderKeys(keys, page.dir))
+      .limit(page.limit + 1)
+    const [{ n }] = (await tx.select({ n: sql<number>`count(*)::int` }).from(titles).where(where)) as [{ n: number }]
+    return finishPage(rows, page, Number(n))
+  })
 }
 
 export async function copiesOf(actor: Actor, titleId: string) {
@@ -328,8 +377,12 @@ async function outstandingFine(tx: Tx, borrowerId: string): Promise<number> {
 export async function issue(actor: Actor, input: unknown) {
   const tenant = requireDesk(actor)
   const d = issueSchema.parse(input)
+  const booksOn = await booksAreOn(tenant)
 
   return withTenant(tenant, async (tx) => {
+    // Two desks issuing to one borrower take turns, so the count below is the
+    // count the insert lands on (LOW-10, decision 584).
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'library.borrower:' + d.borrowerId}, 0))`)
     const [borrower] = await tx
       .select({ role: users.role })
       .from(users)
@@ -369,7 +422,7 @@ export async function issue(actor: Actor, input: unknown) {
         copyId: copy.id,
         borrowerId: d.borrowerId,
         issuedAt,
-        dueOn: dueDate(issuedAt, rules.loanDays),
+        dueOn: dueDate(issuedAt, rules.loanDays, await zoneFor(tx, tenant, booksOn)),
         issuedBy: actor.id,
       })
       .returning()
@@ -410,14 +463,18 @@ export async function returnCopy(actor: Actor, input: unknown) {
       replacementPaise: copy.replacementPaise,
     })
 
+    // A book that did not come back is paid for at what it would cost to
+    // replace, on top of any fine for lateness (ACC-27, decision 587).
+    const replacementPaise = d.markLost ? (copy.replacementPaise ?? 0) : 0
+    const owed = fine + replacementPaise
     const [row] = await tx
       .update(loans)
       .set({
         returnedAt: at,
         returnedBy: actor.id,
-        finePaise: fine,
+        finePaise: owed,
         // Nothing owed is nothing to chase: settle it in the same breath.
-        finePaidAt: fine === 0 ? at : null,
+        finePaidAt: owed === 0 ? at : null,
       })
       .where(eq(loans.id, loan.id))
       .returning()
@@ -432,19 +489,30 @@ export async function returnCopy(actor: Actor, input: unknown) {
         entity: 'library_copies',
         entityId: copy.id,
         reason: 'reported lost or damaged beyond use on return',
-        detail: { accessionNo: copy.accessionNo, loanId: loan.id },
+        detail: { accessionNo: copy.accessionNo, loanId: loan.id, replacementPaise },
       })
       // The return trigger has already shelved it; this takes it back out.
       await tx.update(copies).set({ status: 'lost' }).where(eq(copies.id, copy.id))
     }
 
-    return { loan: row!, finePaise: fine, daysOverdue: daysOverdue(loan.dueOn, at) }
+    return {
+      loan: row!,
+      finePaise: owed,
+      replacementPaise,
+      daysOverdue: daysOverdue(loan.dueOn, at),
+      notice: !d.markLost
+        ? owed > 0 ? `Returned. Fine ${formatPaise(owed)}.` : 'Returned.'
+        : replacementPaise > 0
+          ? `Written off. Replacement ${formatPaise(replacementPaise)} added to the fine.`
+          : 'Written off. This copy has no replacement value, so nothing was added for it.',
+    }
   })
 }
 
 export async function renew(actor: Actor, input: unknown) {
   const tenant = tenantOf(actor)
   const d = renewSchema.parse(input)
+  const booksOn = await booksAreOn(tenant)
 
   return withTenant(tenant, async (tx) => {
     const [loan] = await tx.select().from(loans).where(eq(loans.id, d.loanId))
@@ -472,7 +540,7 @@ export async function renew(actor: Actor, input: unknown) {
     const [row] = await tx
       .update(loans)
       .set({
-        dueOn: renewedDueDate(loan.dueOn, rules.loanDays),
+        dueOn: renewedDueDate(loan.dueOn, rules.loanDays, await zoneFor(tx, tenant, booksOn)),
         renewals: loan.renewals + 1,
       })
       .where(eq(loans.id, d.loanId))
@@ -493,6 +561,11 @@ export async function waiveFine(actor: Actor, input: unknown) {
   return withTenant(tenant, async (tx) => {
     const [loan] = await tx.select().from(loans).where(eq(loans.id, d.loanId))
     if (!loan) throw new LibraryError(404, 'no_such_loan', 'no such loan')
+    if (loan.finePaidAt) {
+      // The money is banked (or on the fee account): forgiving it now would
+      // leave the loan and the books disagreeing (ACC-27, decision 585).
+      throw new LibraryError(409, 'already_settled', 'that fine is settled; it cannot be waived now')
+    }
     if (d.amount > loan.finePaise) {
       throw new LibraryError(400, 'waiver_exceeds_fine', 'a waiver cannot exceed the fine')
     }
@@ -543,11 +616,48 @@ export async function waiveFine(actor: Actor, input: unknown) {
 export async function settleFine(actor: Actor, input: unknown) {
   const tenant = requireDesk(actor)
   const d = settleFineSchema.parse(input)
+  const toFees = d.method === 'fee_account'
+  if (toFees && !(await feesAreOn(tenant))) {
+    throw new LibraryError(409, 'fees_not_enabled', 'the fee account needs the Fees module; take the fine at the desk')
+  }
+  const booksOn = !toFees && (await booksAreOn(tenant))
 
   return withTenant(tenant, async (tx) => {
-    const [loan] = await tx.select().from(loans).where(eq(loans.id, d.loanId))
+    const [loan] = await tx.select().from(loans).where(eq(loans.id, d.loanId)).for('update')
     if (!loan) throw new LibraryError(404, 'no_such_loan', 'no such loan')
     if (loan.finePaidAt) throw new LibraryError(409, 'already_settled', 'that fine is settled')
+    // The stored fine is written when the book comes back: before that it is
+    // zero, and "settling" it would record a method and post nothing.
+    if (!loan.returnedAt) throw new LibraryError(409, 'not_returned', 'the book is not back yet; take the fine when it is returned')
+    const takenPaise = loan.finePaise - loan.fineWaivedPaise
+    if (takenPaise <= 0) throw new LibraryError(409, 'nothing_due', 'there is no fine to settle on that loan')
+    const [about] = await tx
+      .select({ borrowerName: users.name, borrowerRole: users.role, title: titles.title, accessionNo: copies.accessionNo })
+      .from(loans)
+      .innerJoin(users, eq(users.id, loans.borrowerId))
+      .innerJoin(copies, eq(copies.id, loans.copyId))
+      .innerJoin(titles, eq(titles.id, copies.titleId))
+      .where(eq(loans.id, d.loanId))
+
+    if (toFees) {
+      // The fee account owes it now: a charge billed with the term's fees,
+      // and nothing from the library to the books (ACC-27, decision 586).
+      if (about?.borrowerRole !== 'student') {
+        throw new LibraryError(409, 'not_a_student', 'only a student has a fee account')
+      }
+      const term = await termOnWithin(tx, await localToday(tx, tenant))
+      if (!term) throw new LibraryError(409, 'no_current_term', 'no term is running today; take the fine at the desk')
+      if (takenPaise > 0) {
+        await chargeStudentWithin(tx, tenant, actor.id, {
+          studentId: loan.borrowerId,
+          termId: term.id,
+          label: `Library fine: ${about.title} (${about.accessionNo})`,
+          amountPaise: takenPaise,
+          sourceModule: MODULE,
+          sourceId: loan.id,
+        })
+      }
+    }
 
     await audit(tx, {
       institutionId: tenant,
@@ -557,35 +667,34 @@ export async function settleFine(actor: Actor, input: unknown) {
       action: 'library.fine_settled',
       entity: 'library_loans',
       entityId: loan.id,
-      reason: `fine of ${loan.finePaise - loan.fineWaivedPaise} paise taken at the desk`,
-      detail: { borrowerId: loan.borrowerId, finePaise: loan.finePaise },
+      reason: toFees
+        ? `fine of ${takenPaise} paise moved to the fee account`
+        : `fine of ${takenPaise} paise taken by ${d.method.replace('_', ' ')}`,
+      detail: { borrowerId: loan.borrowerId, finePaise: loan.finePaise, method: d.method },
     })
 
     const [row] = await tx
       .update(loans)
-      .set({ finePaidAt: new Date() })
+      .set({ finePaidAt: new Date(), fineSettledBy: d.method })
       .where(eq(loans.id, d.loanId))
       .returning()
 
-    const takenPaise = loan.finePaise - loan.fineWaivedPaise
-    if (takenPaise > 0 && (await booksAreOn(tenant))) {
-      const [about] = await tx
-        .select({ borrowerName: users.name, title: titles.title })
-        .from(loans)
-        .innerJoin(users, eq(users.id, loans.borrowerId))
-        .innerJoin(copies, eq(copies.id, loans.copyId))
-        .innerJoin(titles, eq(titles.id, copies.titleId))
-        .where(eq(loans.id, d.loanId))
-
+    if (takenPaise > 0 && booksOn) {
       await postFineSettled(tx, tenant, actor.id, {
         loanId: loan.id,
         amountPaise: takenPaise,
         borrowerName: about?.borrowerName ?? null,
         title: about?.title ?? 'a book',
+        landed: d.method === 'cash' ? 'cash' : 'bank',
       })
     }
 
-    return row!
+    return {
+      ...row!,
+      notice: toFees
+        ? 'Moved to the student\'s fee account: billed with the term\'s fees, and counted as fee income in the books.'
+        : 'Settled.',
+    }
   })
 }
 
@@ -607,6 +716,7 @@ const loanColumns = {
   finePaise: loans.finePaise,
   fineWaivedPaise: loans.fineWaivedPaise,
   finePaidAt: loans.finePaidAt,
+  fineSettledBy: loans.fineSettledBy,
   replacementPaise: copies.replacementPaise,
 }
 
@@ -643,6 +753,7 @@ function toLoanRow(r: RawLoan, rules: LoanRules, at: Date): LoanRow {
     finePaise: accrued,
     fineWaivedPaise: r.fineWaivedPaise as number,
     finePaidAt: (r.finePaidAt as Date | null)?.toISOString() ?? null,
+    fineSettledBy: (r.fineSettledBy as string | null) ?? null,
     daysOverdue: late,
   }
 }
@@ -671,20 +782,31 @@ export async function borrowerStatus(actor: Actor, borrowerId: string): Promise<
 
     const rules = await rulesFor(tx, tenant)
     const at = new Date()
-    const rows = await loanQuery(tx)
-      .where(eq(loans.borrowerId, borrowerId))
-      .orderBy(desc(loans.issuedAt))
-      .limit(100)
-
-    const all = rows.map((r) => toLoanRow(r, rules, at))
-    const open = all.filter((l) => !l.returnedAt)
+    // Open loans are bounded by the loan limit; the history is the 100 most
+    // recent, and its count says when it is cut (NEW-66, decision 581).
+    const open = (
+      await loanQuery(tx)
+        .where(and(eq(loans.borrowerId, borrowerId), isNull(loans.returnedAt)))
+        .orderBy(desc(loans.issuedAt))
+    ).map((r) => toLoanRow(r, rules, at))
+    const history = (
+      await loanQuery(tx)
+        .where(and(eq(loans.borrowerId, borrowerId), sql`${loans.returnedAt} is not null`))
+        .orderBy(desc(loans.issuedAt))
+        .limit(100)
+    ).map((r) => toLoanRow(r, rules, at))
+    const [{ n: historyTotal }] = (await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(loans)
+      .where(and(eq(loans.borrowerId, borrowerId), sql`${loans.returnedAt} is not null`))) as [{ n: number }]
     const outstandingFinePaise = await outstandingFine(tx, borrowerId)
 
     return {
       borrowerId,
       borrowerName: person.name,
       open,
-      history: all.filter((l) => l.returnedAt),
+      history,
+      historyTotal: Number(historyTotal),
       openCount: open.length,
       maxConcurrentLoans: rules.maxConcurrentLoans,
       outstandingFinePaise,
@@ -693,36 +815,68 @@ export async function borrowerStatus(actor: Actor, borrowerId: string): Promise<
   })
 }
 
-export async function overdueReport(actor: Actor): Promise<OverdueReport> {
+const LOAN_SORTS: SortSpec = {
+  due: { dir: 'asc', keys: [{ sql: sql`${loans.dueOn}`, type: 'timestamptz' }, { sql: sql`${loans.id}`, type: 'uuid' }] },
+}
+export const loanPage = (req: Request, prefix: string) => readPage(req, prefix, LOAN_SORTS, 'due', 50)
+
+/** Loans out, a page at a time, with counts and the fine total over all of them. */
+async function loansOut(tx: Tx, tenant: string, page: ReturnType<typeof loanPage>, overdueOnly: boolean) {
+  const rules = await rulesFor(tx, tenant)
+  const at = new Date()
+  const keys = LOAN_SORTS[page.sort]!.keys
+  const where = and(
+    isNull(loans.returnedAt),
+    overdueOnly ? sql`${loans.dueOn} < now()` : undefined,
+    searchAny(page.q, [sql`${users.name}`, sql`${users.email}`, sql`${titles.title}`, sql`${copies.accessionNo}`]),
+  )
+  const rows = await tx
+    .select({ ...loanColumns, _cursor: cursorColumn(keys) })
+    .from(loans)
+    .innerJoin(copies, eq(copies.id, loans.copyId))
+    .innerJoin(titles, eq(titles.id, copies.titleId))
+    .innerJoin(users, eq(users.id, loans.borrowerId))
+    .where(and(where, keyset(keys, page)))
+    .orderBy(...orderKeys(keys, page.dir))
+    .limit(page.limit + 1)
+  const owed = fineSql(rules, sql`${loans.dueOn}`, sql`${copies.replacementPaise}`)
+  const [sum] = (await tx
+    .select({
+      total: sql<number>`count(*)::int`,
+      late: sql<number>`(count(*) filter (where ${loans.dueOn} < now()))::int`,
+      accrued: sql<number>`coalesce(sum(${owed} - ${loans.fineWaivedPaise}) filter (where ${loans.dueOn} < now()), 0)::bigint`,
+    })
+    .from(loans)
+    .innerJoin(copies, eq(copies.id, loans.copyId))
+    .innerJoin(titles, eq(titles.id, copies.titleId))
+    .innerJoin(users, eq(users.id, loans.borrowerId))
+    .where(where)) as [{ total: number; late: number; accrued: number }]
+  return {
+    ...finishPage(
+      rows.map((r) => ({ ...toLoanRow(r, rules, at), _cursor: r._cursor })),
+      page,
+      Number(sum.total),
+    ),
+    late: Number(sum.late),
+    totalAccruedPaise: Number(sum.accrued),
+  }
+}
+
+/** Loans past their due date, longest overdue first, a page at a time (LOW-08). */
+export async function overdueReport(actor: Actor, page = loanPage(new Request('https://x/'), '')): Promise<OverdueReport> {
   const tenant = requireDesk(actor)
-
-  return withTenant(tenant, async (tx): Promise<OverdueReport> => {
-    const rules = await rulesFor(tx, tenant)
-    const at = new Date()
-    const rows = await loanQuery(tx)
-      .where(and(isNull(loans.returnedAt), sql`${loans.dueOn} < now()`))
-      .orderBy(asc(loans.dueOn))
-      .limit(500)
-
-    const out = rows.map((r) => toLoanRow(r, rules, at))
-    return {
-      rows: out,
-      totalAccruedPaise: out.reduce((n, l) => n + l.finePaise - l.fineWaivedPaise, 0),
-    }
+  return withTenant(tenant, async (tx) => {
+    const r = await loansOut(tx, tenant, page, true)
+    return { rows: r.rows, total: r.total, next: r.next, totalAccruedPaise: r.totalAccruedPaise }
   })
 }
 
-/** Everything currently out, for the desk's own view. */
-export async function openLoans(actor: Actor): Promise<LoanRow[]> {
+/** Everything currently out, for the desk's own view, a page at a time (NEW-66). */
+export async function openLoans(actor: Actor, page = loanPage(new Request('https://x/'), '')) {
   const tenant = requireDesk(actor)
   return withTenant(tenant, async (tx) => {
-    const rules = await rulesFor(tx, tenant)
-    const at = new Date()
-    const rows = await loanQuery(tx)
-      .where(isNull(loans.returnedAt))
-      .orderBy(asc(loans.dueOn))
-      .limit(500)
-    return rows.map((r) => toLoanRow(r, rules, at))
+    const r = await loansOut(tx, tenant, page, false)
+    return { rows: r.rows, total: r.total, next: r.next, late: r.late }
   })
 }
 

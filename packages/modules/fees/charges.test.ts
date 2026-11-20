@@ -8,6 +8,8 @@ import {
   FeeError,
   cancelChargeForSourceWithin,
   cancelStudentCharge,
+  cancellableCharges,
+  chargePage,
   chargeStudent,
   chargeStudentWithin,
   createFeeItem,
@@ -75,7 +77,7 @@ test('a charge on one student is billed with the rest, and fixed once it is', as
   await issueInvoices(c.admin, { termId: c.termId })
   const tb = await trialBalance(c.admin as unknown as Books)
   assert.equal(tb.rows.find((r) => r.code === '1100')?.balancePaise, 4_650_000, 'the books have both')
-  assert.equal((await listStudentCharges(c.clerk, c.termId))[0]!.state, 'invoiced')
+  assert.equal((await listStudentCharges(c.clerk, c.termId)).rows[0]!.state, 'invoiced')
 
   await assert.rejects(
     cancelStudentCharge(c.clerk, { chargeId: ch.id, reason: 'booked in error' }),
@@ -112,7 +114,7 @@ test('until it is invoiced a charge can be cancelled, with a reason; only by the
     ),
     (e) => code(e) === 'fee_student_charges_source',
   )
-  const theirs = (await listStudentCharges(c.clerk)).find((x) => x.sourceModule === 'examinations')!
+  const theirs = (await listStudentCharges(c.clerk)).rows.find((x) => x.sourceModule === 'examinations')!
   await assert.rejects(cancelStudentCharge(c.clerk, { chargeId: theirs.id, reason: 'not ours to cancel' }), (e) => code(e) === 'not_ours')
   assert.equal(await withTenant(c.id, (tx) => cancelChargeForSourceWithin(tx, 'examinations', 'booking-1', 'booking withdrawn')), 1)
 
@@ -125,4 +127,22 @@ test('until it is invoiced a charge can be cancelled, with a reason; only by the
     chargeStudent(c.clerk, { studentId: c.facultyId, termId: c.termId, label: 'Staff canteen', amount: '10' }),
     (e) => code(e) === 'fee_student_charge_student',
   )
+})
+
+test('the charge list pages, and the cancel picker lists only what can be cancelled (LOW-04)', async () => {
+  const c = await campus()
+  for (const label of ['Duplicate ID card', 'Lost admit card', 'Late library return']) {
+    await chargeStudent(c.clerk, { studentId: c.studentId, termId: c.termId, label, amount: '100' })
+  }
+  const first = await listStudentCharges(c.clerk, c.termId, chargePage(new Request('https://x/?n=2'), ''))
+  assert.equal(first.rows.length, 2)
+  assert.equal(first.total, 3)
+  assert.ok(first.next)
+  const second = await listStudentCharges(c.clerk, c.termId, chargePage(new Request(`https://x/?n=2&after=${first.next}`), ''))
+  assert.equal(second.rows.length, 1)
+  assert.equal(second.next, null)
+  assert.equal(new Set([...first.rows, ...second.rows].map((r) => r.id)).size, 3)
+  assert.equal((await cancellableCharges(c.clerk)).length, 3)
+  await issueInvoices(c.admin, { termId: c.termId })
+  assert.equal((await cancellableCharges(c.clerk)).length, 0, 'invoiced charges are not offered')
 })

@@ -158,7 +158,7 @@ async function owe(c: Campus, termId = c.termId, amount = '45000') {
   await fees.issueInvoices(c.admin as unknown as fees.Actor, { termId })
 }
 const pay = (c: Campus, amount: string, termId = c.termId) =>
-  fees.recordPayment(c.clerk as unknown as fees.Actor, { studentId: c.ashaId, termId, amount, method: 'cash' })
+  fees.recordPayment(c.clerk as unknown as fees.Actor, { studentId: c.ashaId, termId, amount, method: 'cash', allowAdvance: true })
 
 // --- 1. attendance ---------------------------------------------------------------
 
@@ -240,6 +240,36 @@ test('a balance in another term does not block this one', async () => {
   const c = await campus({ fees: true })
   await owe(c, c.pastTermId)
   await enrolWith(c)
+})
+
+test('a voided receipt or a bounced cheque re-opens the dues and holds the student again (P1-03b)', async () => {
+  const c = await campus({ fees: true })
+  const admin = c.admin as unknown as fees.Actor
+  await fees.createFeeItem(admin, { programId: c.programId, termId: c.termId, label: 'Tuition', amount: '45000' })
+  await enrolWith(c)
+  await fees.issueInvoices(admin, { termId: c.termId })
+  await assert.rejects(exams.admitCard(c.asha, c.ashaId, c.termId), (e) => code(e) === 'exam_dues_outstanding')
+
+  // A receipt clears the dues; voiding it (by someone who did not record it) brings them back.
+  const receipt = await pay(c, '45000')
+  await exams.admitCard(c.asha, c.ashaId, c.termId)
+  await fees.voidPayment(admin, { paymentId: receipt.id, reason: 'entered against the wrong student' })
+  await assert.rejects(exams.admitCard(c.asha, c.ashaId, c.termId), (e) => code(e) === 'exam_dues_outstanding' && status(e) === 409)
+
+  // A cheque clears them too; the bank returning it unpaid brings them back.
+  const cheque = await fees.recordPayment(c.clerk as unknown as fees.Actor, {
+    studentId: c.ashaId,
+    termId: c.termId,
+    amount: '45000',
+    method: 'cheque',
+    reference: '000456',
+    drawerIfsc: 'SBIN0001234',
+    drawerAccount: '12345678901',
+  })
+  await exams.admitCard(c.asha, c.ashaId, c.termId)
+  await fees.bouncePayment(admin, { paymentId: cheque.id, bouncedOn: day(0), reason: 'funds insufficient' })
+  await assert.rejects(exams.admitCard(c.asha, c.ashaId, c.termId), (e) => code(e) === 'exam_dues_outstanding' && status(e) === 409)
+  assert.equal((await counts(c)).e, 1, 'the enrolment survives; only the card is held')
 })
 
 // --- 3. who may print while held ----------------------------------------------------------

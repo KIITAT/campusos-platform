@@ -20,7 +20,7 @@ import {
   type Actor,
 } from './api'
 import { setSingleOfficer } from '@campusos/module-finance/api'
-import { feeInvoices, feeItems, feePayments, feeWaivers, receiptCounters } from './schema'
+import { feeInvoices, feeItems, feePayments, feeWaivers, receiptCounters, receiptSeries } from './schema'
 
 // The audit trail is append-only (AUD-01): a reset cannot empty it, so each
 // test reads only the rows written since its own reset.
@@ -76,6 +76,7 @@ const pay = (over: Record<string, unknown> = {}) =>
     termId: ids.term,
     amount: '10000',
     method: 'upi',
+    allowAdvance: true,
     ...over,
   })
 
@@ -151,13 +152,21 @@ before(async () => {
 })
 
 beforeEach(async () => {
+  // A payment is never deleted (ACC-23), so the reset goes round the guards as
+  // the owner, with triggers off for this transaction only.
+  await authDb.transaction(async (tx) => {
+    await tx.execute(sql`set local session_replication_role = replica`)
+    await tx.execute(sql`delete from fee_refunds where institution_id = ${inst}`)
+    await tx.execute(sql`delete from fee_payments where institution_id = ${inst}`)
+    if ((await tx.execute(sql`select to_regclass('public.fee_receipt_series') as t`)).rows[0]?.t) {
+      await tx.execute(sql`delete from fee_receipt_series where institution_id = ${inst}`)
+    }
+  })
   await withTenant(inst, async (tx) => {
     // The guards refuse a silent delete, so the reset states its reason too.
     await tx.execute(sql`select set_config('app.audit_reason', 'test reset', true)`)
     await tx.execute(sql`delete from notifications`)
-    await tx.update(feePayments).set({ reconciledAt: null, reconciledBy: null })
     await tx.delete(feeInvoices)
-    await tx.delete(feePayments)
     await tx.delete(feeWaivers)
     await tx.delete(feeItems)
     await tx.delete(receiptCounters)
@@ -305,10 +314,18 @@ test('a waiver without a real reason is refused before it reaches the database',
 
 test('receipt numbers are sequential and unique', async () => {
   await tuition()
-  const a = await pay()
-  const b = await pay({ amount: '5000' })
-  assert.equal(a.receiptNo, 'R-000001')
-  assert.equal(b.receiptNo, 'R-000002')
+  const a = await pay({ receivedAt: '2026-06-15T10:00:00.000Z' })
+  const b = await pay({ amount: '5000', receivedAt: '2026-06-15T10:00:00.000Z' })
+  assert.equal(a.receiptNo, 'R/2627/000001')
+  assert.equal(b.receiptNo, 'R/2627/000002')
+})
+
+test("a fiscal year starts its own series, by the institution's clock (ACC-30)", async () => {
+  await tuition()
+  // 22:30 IST on 31 March, then 01:30 IST on 1 April.
+  assert.equal((await pay({ receivedAt: '2026-03-31T17:00:00.000Z' })).receiptNo, 'R/2526/000001')
+  assert.equal((await pay({ receivedAt: '2026-03-31T20:00:00.000Z' })).receiptNo, 'R/2627/000001')
+  assert.equal((await pay({ receivedAt: '2026-06-15T10:00:00.000Z' })).receiptNo, 'R/2627/000002')
 })
 
 test('two clerks taking money at the same time never share a receipt number', async () => {
@@ -320,13 +337,13 @@ test('two clerks taking money at the same time never share a receipt number', as
   assert.equal(numbers.size, 12)
 })
 
-test('a receipt counter cannot be wound back', async () => {
+test('a receipt series cannot be wound back', async () => {
   await tuition()
   await pay()
   await assert.rejects(
     () =>
       withTenant(inst, (tx) =>
-        tx.update(receiptCounters).set({ next: 1 }).where(eq(receiptCounters.institutionId, inst)),
+        tx.update(receiptSeries).set({ next: 1 }).where(eq(receiptSeries.institutionId, inst)),
       ),
     saysDb(/cannot move backwards/),
   )
@@ -407,17 +424,21 @@ test('a reconciled payment cannot be deleted at all', async () => {
   )
 })
 
-test('an unreconciled payment can be deleted, but only with a reason', async () => {
+test('a payment is never deleted, reason or not (ACC-23)', async () => {
   await tuition()
   const p = await pay()
   await assert.rejects(
     () => withTenant(inst, (tx) => tx.delete(feePayments).where(eq(feePayments.id, p.id))),
-    saysDb(/requires an audited reason/),
+    saysDb(/a payment is never deleted/),
   )
-  await withTenant(inst, async (tx) => {
-    await tx.execute(sql`select set_config('app.audit_reason', 'entered twice by mistake', true)`)
-    await tx.delete(feePayments).where(eq(feePayments.id, p.id))
-  })
+  await assert.rejects(
+    () =>
+      withTenant(inst, async (tx) => {
+        await tx.execute(sql`select set_config('app.audit_reason', 'entered twice by mistake', true)`)
+        await tx.delete(feePayments).where(eq(feePayments.id, p.id))
+      }),
+    saysDb(/a payment is never deleted/),
+  )
 })
 
 test('a receipt renders as a PDF', async () => {
