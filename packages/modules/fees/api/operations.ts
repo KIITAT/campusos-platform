@@ -450,6 +450,8 @@ export async function recordPayment(actor: Actor, input: unknown) {
       feeIdempotencyKeys,
       { institutionId: tenant, actorId: actor.id, operation: 'payment', key: actor.idempotencyKey, request: fingerprint(data) },
       async () => {
+        // With a void, an issue run and an award: nothing is paid or credited while one reads.
+        await lockTermIssue(tx, data.termId)
         if (!data.allowAdvance) await assertWithinDue(tx, data.studentId, data.termId, data.amount)
         return recordPaymentWithin(tx, tenant, actor, {
           studentId: data.studentId,

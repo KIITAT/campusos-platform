@@ -147,7 +147,7 @@ GET /api/v1/modules/ceremonies/certificate                               SIH....
 GET /api/v1/modules/ceremonies/certificate.pdf                           SIH....s.. gate
 GET /api/v1/modules/ceremonies/verify                                    SIHF...... gate
 
-## crm 0.5.0
+## crm 0.6.0
 GET /api/v1/modules/crm/settings                                         SIHFALO... op
 GET /api/v1/modules/crm/pipeline                                         SIHFALO... op
 GET /api/v1/modules/crm/leads/detail                                     SIHFALO... op
@@ -756,7 +756,7 @@ GET /api/v1/modules/placement/imports                                    SIHF...
 GET /api/v1/modules/placement/imports/template                           SIHF...... gate
 POST /api/v1/modules/placement/imports/run                               SIHF...... gate
 
-## projects 0.3.0
+## projects 0.4.0
 GET /api/v1/modules/projects/projects                                    SIHFALO... op
 GET /api/v1/modules/projects/projects/detail                             SIHFALO... op
 POST /api/v1/modules/projects/projects                                   SI..A..... op

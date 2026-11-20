@@ -175,10 +175,12 @@ test('two requests racing with one UTR under different keys: exactly one receipt
   await locked
 
   // Both get past any look-up while neither has committed, and wait at the
-  // receipt counter; only the database can tell them apart after that.
+  // receipt counter; only the database can tell them apart after that. Two terms,
+  // because receipts for one term take turns on its lock (P1-03b re-review).
+  const second = await academic.createTerm(as(ids.adm, 'institution_admin', inst), { code: 't-race', name: 'Race', startsOn: '2027-01-05', endsOn: '2027-05-30' })
   const a = pay({ method: 'bank_transfer', reference: ref }, keyed(clerk(), randomUUID()))
   await waitingOn('%update "fee_receipt_series"%', 1)
-  const b = pay({ method: 'bank_transfer', reference: ref }, keyed(clerk(), randomUUID()))
+  const b = pay({ method: 'bank_transfer', reference: ref, termId: second.id }, keyed(clerk(), randomUUID()))
   try {
     await waitingOn('%update "fee_receipt_series"%', 2)
   } finally {

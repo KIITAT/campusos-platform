@@ -14,7 +14,7 @@ import {
   scholarshipAwards,
   scholarships,
 } from '../schema'
-import { FeeError, requireAdmin, type Actor } from './operations'
+import { FeeError, lockTermIssue, requireAdmin, type Actor } from './operations'
 import {
   assessAidSchema,
   awardScholarshipSchema,
@@ -265,6 +265,7 @@ export async function awardScholarship(actor: Actor, input: unknown) {
   // Assessed and awarded in one transaction (LOW-02): nothing can change
   // between the check and the write.
   return withTenant(tenant, async (tx) => {
+    await lockTermIssue(tx, data.termId)
     const assessment = await assessWithin(tx, { studentId: data.studentId, termId: data.termId }, registration, cgpa, true)
     const offer = assessment.offers.find((o) => o.scholarshipId === data.scholarshipId)
     if (!offer) throw new FeeError(404, 'no_such_scholarship', 'no such live scholarship')
@@ -501,6 +502,7 @@ export async function prorateDrops(actor: Actor, input: unknown) {
       .from(terms)
       .where(eq(terms.id, data.termId))
     if (!term) throw new FeeError(404, 'no_such_term', 'no such term')
+    await lockTermIssue(tx, data.termId)
 
     const brackets = await tx
       .select({ throughOn: refundRules.throughOn, refundBps: refundRules.refundBps })
