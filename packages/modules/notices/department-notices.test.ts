@@ -7,7 +7,6 @@ import {
   NoticeError,
   addAttachment,
   attachmentFile,
-  board,
   createNotice,
   inbox,
   markRead,
@@ -54,10 +53,8 @@ const act = (key: string, role: Actor['role'], email?: string, institutionId = i
 const adm = () => act('adm', 'institution_admin', 'adm@dept.test')
 const hodA = () => act('hodA', 'hod', 'hoda@dept.test')
 const ctA = () => act('ctA', 'faculty', 'cta@dept.test')
-const facA = () => act('facA', 'faculty', 'faca@dept.test')
 const facB = () => act('facB', 'faculty', 'facb@dept.test')
 const stu = (key: string) => act(key, 'student')
-const parent = (key: string) => act(key, 'parent')
 const code = (e: unknown) => (e as NoticeError).code
 const status = (e: unknown) => (e as NoticeError).status
 const notFound = (c: string) => (e: unknown) => status(e) === 404 && code(e) === c

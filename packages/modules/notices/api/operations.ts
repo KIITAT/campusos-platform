@@ -580,7 +580,7 @@ export async function publishNotice(actor: Actor, input: unknown) {
 }
 
 export async function publishWithin(tx: Tx, actor: Actor, noticeId: string) {
-    const tenant = requirePoster(actor)
+    requirePoster(actor)
     const [row] = await tx.select().from(notices).where(eq(notices.id, noticeId)).for('update')
     if (!row || !canManageNotice(actor, row)) throw new NoticeError(404, 'no_such_notice', 'no such notice')
     if (row.publishedAt) throw new NoticeError(409, 'already_published', 'already published')
