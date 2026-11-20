@@ -230,3 +230,18 @@ test('a fine cannot be settled before the book is back, or when nothing is due (
   await returnCopy(d.desk, { copyId: copy2!.id })
   await assert.rejects(settleFine(d.desk, { loanId: fresh.id, method: 'cash' }), (e) => code(e) === 'already_settled' || code(e) === 'nothing_due')
 })
+
+test('a fully waived fine is settled by the waiver, so settling it again is refused (review BLOCKER 2 guard)', async () => {
+  const d = await library('finance')
+  const { loanId } = await overdueLoan(d)
+  await waiveFine(d.admin, { loanId, amount: '10', reason: 'forgiven in full by the librarian' })
+  const row = (await withTenant(d.id, (tx) => tx.execute(sql`select fine_paid_at, fine_settled_by from library_loans where id = ${loanId}`))).rows[0] as { fine_paid_at: string | null; fine_settled_by: string | null }
+  assert.ok(row.fine_paid_at, 'a full waiver closes the fine')
+  await assert.rejects(settleFine(d.desk, { loanId, method: 'cash' }), (e) => code(e) === 'already_settled')
+  // A part waiver leaves a balance that can still be settled.
+  const part = await overdueLoan(d, d.facultyId, 'A-2')
+  await waiveFine(d.admin, { loanId: part.loanId, amount: '4', reason: 'part forgiven by the librarian' })
+  const settled = await settleFine(d.desk, { loanId: part.loanId, method: 'cash' })
+  assert.ok(settled.finePaidAt)
+  assert.equal(await balance(d, '1000'), 600)
+})
