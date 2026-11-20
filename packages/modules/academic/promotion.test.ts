@@ -79,10 +79,10 @@ const code = (e: unknown) => (e as { code?: string }).code
 const status = (e: unknown) => (e as { status?: number }).status
 
 /** A POST route of the plugin, by path. A route that is not there fails the test, not the import. */
-function call(actor: Actor, path: string, body: unknown): Promise<any> {
+function call(actor: Actor, path: string, body: unknown): Promise<Record<string, unknown> & { promoted: number; detained: number; sourceSectionId: string }> {
   const route = plugin.routes.find((r) => r.method === 'POST' && r.path === path)
   assert.ok(route, `POST ${path} is not a route of the academic plugin`)
-  return Promise.resolve(route.handler(actor as never, new Request(`http://x${path}`, { method: 'POST', body: JSON.stringify(body) })))
+  return Promise.resolve(route.handler(actor as never, new Request(`http://x${path}`, { method: 'POST', body: JSON.stringify(body) }))) as ReturnType<typeof call>
 }
 
 const token = (members: string[], participants: string[]) =>

@@ -1,7 +1,7 @@
 import { asc, eq, inArray } from 'drizzle-orm'
 import { users, withTenant } from '@campusos/db'
 import type { PluginPage, PluginSection } from '@campusos/module-framework'
-import { programs, sectionMembers, sections, studentProfiles, terms } from './schema'
+import { programs, sections, studentProfiles, terms } from './schema'
 import { readSchoolPromotionRoster, requireWriter, schoolRosterToken, todayIST, type Actor } from './api'
 
 /**
