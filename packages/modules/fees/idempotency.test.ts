@@ -2,7 +2,7 @@ import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { eq, inArray, sql } from 'drizzle-orm'
-import { authDb, institutions, users, verifyChains, withTenant } from '@campusos/db'
+import { authDb, institutions, requestHash, users, verifyChains, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
 import { setSingleOfficer } from '@campusos/module-finance/api'
 import { cancelStudentCharge, chargeStudent, recordPayment, refundPayment, type Actor } from './api'
@@ -338,4 +338,24 @@ test('a charge cancelled since is not replayed as live (NEW-15)', async () => {
   const first = await chargeStudent(actor, charge)
   await cancelStudentCharge(clerk(), { chargeId: first.id, reason: 'raised in error' })
   await assert.rejects(() => chargeStudent(actor, charge), (e: unknown) => code(e) === 'idempotent_result_gone')
+})
+
+test('a payment key made before allowAdvance existed still replays (review P1-03b HIGH 1)', async () => {
+  const key = randomUUID()
+  const first = await recordPayment(keyed(clerk(), key), body())
+  // The fingerprint the previous release stored: the request without allowAdvance.
+  await authDb.execute(sql`
+    update fee_idempotency_keys set request_hash = ${requestHash({ studentId: ids.s1, termId: ids.term, amount: 100000, method: 'cash' })}
+     where institution_id = ${inst} and key = ${key}`)
+  const before = await tally()
+  const again = await recordPayment(keyed(clerk(), key), body({ allowAdvance: undefined }))
+  assert.equal(again.id, first.id)
+  assert.equal((again as { replayed?: boolean }).replayed, true)
+  assert.equal((await tally()).payments, before.payments)
+})
+
+test('the same key with the advance ticked is a different request', async () => {
+  const key = randomUUID()
+  await recordPayment(keyed(clerk(), key), body())
+  await assert.rejects(() => recordPayment(keyed(clerk(), key), body({ allowAdvance: undefined })), (e) => code(e) === 'idempotency_key_reused')
 })
