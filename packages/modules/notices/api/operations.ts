@@ -68,6 +68,16 @@ const canPost = (r: Role) =>
   r === 'library_staff' ||
   r === 'hostel_staff'
 
+type Authority = Pick<typeof notices.$inferSelect, 'authorId' | 'departmentId'>
+
+/**
+ * Whoever may post can manage an institution-wide notice as before. A
+ * department's notice is managed by its author while that person may still
+ * post, and by either administrator (FUNC-06).
+ */
+const canManageNotice = (actor: Actor, row: Authority) =>
+  canPost(actor.role) && (row.departmentId === null || (ADMIN as readonly Role[]).includes(actor.role) || row.authorId === actor.id)
+
 const requirePoster = (actor: Actor) => {
   const tenant = tenantOf(actor)
   if (!canPost(actor.role)) throw new NoticeError(403, 'forbidden', 'not permitted')
@@ -295,6 +305,8 @@ export async function createNotice(actor: Actor, input: unknown) {
       'a lecturer may post to students; wider notices come from the office',
     )
   }
+  // No audience named is everybody, which a lecturer may not address (NEW-160).
+  const audienceRoles = actor.role === 'faculty' && d.audienceRoles.length === 0 ? ['student' as const] : d.audienceRoles
 
   // Read before anything is written: a file that is not what it says it is
   // refuses the notice, rather than leaving one posted without its document.
@@ -302,6 +314,12 @@ export async function createNotice(actor: Actor, input: unknown) {
 
   return attached(async () =>
     withTenant(tenant, async (tx) => {
+      if (d.departmentId) {
+        // The foreign key names the department by id alone; RLS makes another
+        // institution's department invisible here.
+        const [dept] = await tx.select({ id: departments.id }).from(departments).where(eq(departments.id, d.departmentId))
+        if (!dept) throw new NoticeError(404, 'no_such_department', 'no such department')
+      }
       const now = new Date()
       // Written as a draft, given its document, then published: a document
       // goes on a notice only while nobody has been sent it.
@@ -312,7 +330,7 @@ export async function createNotice(actor: Actor, input: unknown) {
           title: d.title,
           body: d.body,
           kind: d.kind,
-          audienceRoles: d.audienceRoles,
+          audienceRoles,
           departmentId: d.departmentId ?? null,
           pinned: d.pinned ? now : null,
           publishedAt: null,
@@ -320,11 +338,21 @@ export async function createNotice(actor: Actor, input: unknown) {
           authorId: actor.id,
         })
         .returning()
+      await audit(tx, {
+        institutionId: tenant,
+        actorId: actor.id,
+        actorEmail: actor.email ?? null,
+        moduleId: MODULE,
+        action: 'notice.created',
+        entity: 'notices',
+        entityId: row!.id,
+        reason: 'Created notice',
+        detail: { departmentId: row!.departmentId, kind: row!.kind, audienceRoles: row!.audienceRoles, pinned: row!.pinned !== null },
+      })
 
       if (file) await attach(tx, tenant, actor, row!.id, file)
       if (!d.publish) return row!
-      await tx.update(notices).set({ publishedAt: now }).where(eq(notices.id, row!.id))
-      await fanOut(tx, tenant, row!.id)
+      await publishRowWithin(tx, actor, row!, now)
       return { ...row!, publishedAt: now }
     }),
   )
@@ -367,6 +395,17 @@ async function attach(tx: Tx, tenant: string, actor: Actor, noticeId: string, fi
       addedBy: actor.id,
     })
     .returning({ id: noticeAttachments.id })
+  await audit(tx, {
+    institutionId: tenant,
+    actorId: actor.id,
+    actorEmail: actor.email ?? null,
+    moduleId: MODULE,
+    action: 'notice.attachment_added',
+    entity: 'notice_attachments',
+    entityId: row!.id,
+    reason: 'Attached notice document',
+    detail: { noticeId, type: file.type, size: file.size },
+  })
   return row!.id
 }
 
@@ -378,7 +417,7 @@ export async function addAttachment(actor: Actor, input: unknown) {
   return attached(() =>
     withTenant(tenant, async (tx) => {
       const [n] = await tx.select().from(notices).where(eq(notices.id, d.noticeId))
-      if (!n) throw new NoticeError(404, 'no_such_notice', 'no such notice')
+      if (!n || !canManageNotice(actor, n)) throw new NoticeError(404, 'no_such_notice', 'no such notice')
       if (actor.role === 'faculty' && n.authorId !== actor.id) {
         throw new NoticeError(403, 'not_yours', 'that notice is not yours')
       }
@@ -404,15 +443,36 @@ export async function removeAttachment(actor: Actor, input: unknown) {
   return attached(() =>
     withTenant(tenant, async (tx) => {
       const [a] = await tx
-        .select({ id: noticeAttachments.id, name: noticeAttachments.name, authorId: notices.authorId })
+        .select({
+          id: noticeAttachments.id,
+          name: noticeAttachments.name,
+          type: noticeAttachments.type,
+          size: noticeAttachments.size,
+          noticeId: noticeAttachments.noticeId,
+          authorId: notices.authorId,
+          departmentId: notices.departmentId,
+        })
         .from(noticeAttachments)
         .innerJoin(notices, eq(notices.id, noticeAttachments.noticeId))
         .where(eq(noticeAttachments.id, d.attachmentId))
-      if (!a) throw new NoticeError(404, 'no_such_document', 'no such document')
+      if (!a || !canManageNotice(actor, a)) throw new NoticeError(404, 'no_such_document', 'no such document')
       if (actor.role === 'faculty' && a.authorId !== actor.id) {
         throw new NoticeError(403, 'not_yours', 'that notice is not yours')
       }
-      await tx.delete(noticeAttachments).where(eq(noticeAttachments.id, a.id))
+      const [gone] = await tx.delete(noticeAttachments).where(eq(noticeAttachments.id, a.id)).returning({ id: noticeAttachments.id })
+      if (gone) {
+        await audit(tx, {
+          institutionId: tenant,
+          actorId: actor.id,
+          actorEmail: actor.email ?? null,
+          moduleId: MODULE,
+          action: 'notice.attachment_removed',
+          entity: 'notice_attachments',
+          entityId: gone.id,
+          reason: 'Removed notice document',
+          detail: { noticeId: a.noticeId, type: a.type, size: a.size },
+        })
+      }
       return { notice: `${a.name} is taken off.` }
     }),
   )
@@ -498,6 +558,7 @@ export async function publishNotice(actor: Actor, input: unknown) {
   return withTenant(tenant, async (tx) => {
     if (d.queued) {
       const [notice] = await tx.select().from(notices).where(eq(notices.id, d.noticeId)).for('update')
+      if (notice && !canManageNotice(actor, notice)) throw new NoticeError(404, 'no_such_notice', 'no such notice')
       if (!notice || notice.publishedAt) throw new NoticeError(409, 'not_a_draft', 'select an unpublished draft')
       const job = await enqueueJob(tx, { institutionId: tenant, actorId: actor.id, kind: 'notices.publish', dedupeKey: `notice:${d.noticeId}`, payload: { noticeId: d.noticeId } })
       return { id: d.noticeId, queued: true, jobId: job.id, reach: 0 }
@@ -509,18 +570,36 @@ export async function publishNotice(actor: Actor, input: unknown) {
 export async function publishWithin(tx: Tx, actor: Actor, noticeId: string) {
     const tenant = requirePoster(actor)
     const [row] = await tx.select().from(notices).where(eq(notices.id, noticeId)).for('update')
-    if (!row) throw new NoticeError(404, 'no_such_notice', 'no such notice')
+    if (!row || !canManageNotice(actor, row)) throw new NoticeError(404, 'no_such_notice', 'no such notice')
     if (row.publishedAt) throw new NoticeError(409, 'already_published', 'already published')
     if (row.expiresAt && row.expiresAt <= new Date()) throw new NoticeError(409, 'notice_expired', 'the notice has expired')
     if (actor.role === 'faculty' && row.audienceRoles.some((role) => role !== 'student')) throw new NoticeError(403, 'audience_too_wide', 'a lecturer may post to students')
 
-    await tx
-      .update(notices)
-      .set({ publishedAt: new Date() })
-      .where(eq(notices.id, noticeId))
-    const reach = await fanOut(tx, tenant, noticeId)
-    await audit(tx, { institutionId: tenant, actorId: actor.id, moduleId: MODULE, action: 'publish', entity: 'notice', entityId: noticeId, reason: 'Publish notice', detail: { reach } })
+    const reach = await publishRowWithin(tx, actor, row, new Date())
     return { id: noticeId, reach }
+}
+
+/**
+ * The one publication path, for an immediate post, an explicit publish and the
+ * worker: write the publication and the effective audience together, deliver,
+ * and record the actual reach. A failure anywhere rolls all of it back.
+ */
+async function publishRowWithin(tx: Tx, actor: Actor, row: typeof notices.$inferSelect, publishedAt: Date): Promise<number> {
+  const audienceRoles = actor.role === 'faculty' && row.audienceRoles.length === 0 ? ['student' as const] : row.audienceRoles
+  await tx.update(notices).set({ publishedAt, audienceRoles }).where(eq(notices.id, row.id))
+  const reach = await fanOut(tx, row.institutionId, row.id)
+  await audit(tx, {
+    institutionId: row.institutionId,
+    actorId: actor.id,
+    actorEmail: actor.email ?? null,
+    moduleId: MODULE,
+    action: 'publish',
+    entity: 'notice',
+    entityId: row.id,
+    reason: 'Publish notice',
+    detail: { reach, departmentId: row.departmentId, audienceRoles },
+  })
+  return reach
 }
 
 /**
@@ -532,8 +611,8 @@ export async function withdrawNotice(actor: Actor, input: unknown) {
   const d = withdrawNoticeSchema.parse(input)
 
   return withTenant(tenant, async (tx) => {
-    const [row] = await tx.select().from(notices).where(eq(notices.id, d.noticeId))
-    if (!row) throw new NoticeError(404, 'no_such_notice', 'no such notice')
+    const [row] = await tx.select().from(notices).where(eq(notices.id, d.noticeId)).for('update')
+    if (!row || !canManageNotice(actor, row)) throw new NoticeError(404, 'no_such_notice', 'no such notice')
     if (actor.role === 'faculty' && row.authorId !== actor.id) {
       throw new NoticeError(403, 'not_yours', 'that notice is not yours to withdraw')
     }
