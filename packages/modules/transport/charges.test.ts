@@ -2,6 +2,7 @@ import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { like, sql } from 'drizzle-orm'
 import { authDb, institutionModules, institutions, users, withTenant } from '@campusos/db'
+import { chargeStayWithin } from '@campusos/module-fees/api'
 import { addRoute, addStop, addVehicle, assign, chargeTerm, release, setRouteFee, type Actor } from './api'
 
 /**
@@ -103,4 +104,45 @@ test('without fees nothing is charged, and the term run says why', async () => {
   await assign(c.admin, { routeId: c.routeId, stopId: c.stopId, studentId: c.studentId })
   assert.equal((await charges(c.id)).length, 0)
   await assert.rejects(chargeTerm(c.admin, { termId: c.termId }), (e) => code(e) === 'fees_not_enabled')
+})
+
+// --- review NOTEs: release lock, zero-day stays ----------------------------------
+
+test('a release waits for a term run on the same term, then shrinks the run\'s charge', async () => {
+  const c = await campus()
+  const a = await assign(c.admin, { routeId: c.routeId, stopId: c.stopId, studentId: c.studentId })
+  await setRouteFee(c.admin, { routeId: c.routeId, termFee: '10000', reason: 'bus fees for 2026' })
+  let open!: () => void
+  const gate = new Promise<void>((r) => (open = r))
+  let ready!: () => void
+  const locked = new Promise<void>((r) => (ready = r))
+  const run = withTenant(c.id, async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'transport.charge:' + c.termId}, 0))`)
+    const [d] = (await tx.execute(sql`select (created_at at time zone 'Asia/Kolkata')::date::text as d from transport_assignments`)).rows as { d: string }[]
+    await chargeStayWithin(tx, c.id, c.admin.id, {
+      sourceModule: 'transport', stayId: a.id, studentId: c.studentId, label: 'Transport Patia loop',
+      termFeePaise: 1_000_000, from: d!.d, until: null,
+    }, c.termId)
+    ready()
+    await gate
+  })
+  await locked
+  let done = false
+  const rel = release(c.admin, { assignmentId: a.id, reason: 'moved closer to campus' }).then((r) => ((done = true), r))
+  await new Promise((r) => setTimeout(r, 600))
+  assert.equal(done, false, 'release must wait for the term lock')
+  open()
+  await run
+  await rel
+  assert.equal((await live(c.id)).length, 0)
+})
+
+test('a rider released the day they began is not reported as already charged', async () => {
+  const c = await campus()
+  await setRouteFee(c.admin, { routeId: c.routeId, termFee: '10000', reason: 'bus fees for 2026' })
+  const a = await assign(c.admin, { routeId: c.routeId, stopId: c.stopId, studentId: c.studentId })
+  await release(c.admin, { assignmentId: a.id, reason: 'moved closer to campus' })
+  const r = await chargeTerm(c.admin, { termId: c.termId })
+  assert.equal(r.charged, 0)
+  assert.equal(r.alreadyCharged, 0)
 })

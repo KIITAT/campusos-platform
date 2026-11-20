@@ -2,6 +2,7 @@ import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { like, sql } from 'drizzle-orm'
 import { authDb, institutionModules, institutions, users, withTenant } from '@campusos/db'
+import { chargeStayWithin } from '@campusos/module-fees/api'
 import { addRooms, allocate, chargeTerm, createBlock, setRoomFee, vacate, type Actor } from './api'
 
 /**
@@ -125,4 +126,72 @@ test('without fees nothing is charged, and the term run says why', async () => {
   await allocate(c.warden, { roomId: c.roomA, studentId: c.s1, allocatedOn: '2026-03-01' })
   assert.equal((await charges(c.id)).length, 0)
   await assert.rejects(chargeTerm(c.admin, { termId: c.termId }), (e) => code(e) === 'fees_not_enabled')
+})
+
+// --- review NOTEs: vacate lock, each term at its own fee, zero-night stays ------
+
+/** Hold a term's charge lock, as a term run does, with the run's charge in place. */
+async function termRunHolding(c: Awaited<ReturnType<typeof campus>>, allocationId: string) {
+  let open!: () => void
+  const gate = new Promise<void>((r) => (open = r))
+  let ready!: () => void
+  const locked = new Promise<void>((r) => (ready = r))
+  const run = withTenant(c.id, async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'hostel.charge:' + c.termId}, 0))`)
+    // What the run read before the student left: an open stay with no charge.
+    await chargeStayWithin(tx, c.id, c.admin.id, {
+      sourceModule: 'hostel', stayId: allocationId, studentId: c.s1, label: 'Hostel a-101',
+      termFeePaise: 1_460_000, from: '2026-01-05', until: null,
+    }, c.termId)
+    ready()
+    await gate
+  })
+  await locked
+  return { run, open }
+}
+
+test('a vacate waits for a term run on the same term, then shrinks the run\'s charge', async () => {
+  const c = await campus()
+  const a = await allocate(c.warden, { roomId: c.roomA, studentId: c.s1, allocatedOn: '2026-01-05' })
+  await setRoomFee(c.admin, { blockId: c.blockId, termFee: '14600', reason: 'fees for 2026' })
+  const held = await termRunHolding(c, a.id)
+  let done = false
+  const v = vacate(c.warden, { allocationId: a.id, vacatedOn: '2026-02-04', reason: 'left the hostel' }).then((r) => ((done = true), r))
+  await new Promise((r) => setTimeout(r, 600))
+  assert.equal(done, false, 'vacate must wait for the term lock')
+  held.open()
+  await held.run
+  await v
+  const rows = await live(c.id)
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0]!.amount, 300_000)
+})
+
+test('vacating prices each earlier term at its own fee, even after the fee was cleared', async () => {
+  const c = await campus()
+  await withTenant(c.id, (tx) =>
+    tx.execute(sql`insert into academic_terms (institution_id, code, name, starts_on, ends_on)
+                   values (${c.id}, 'T0', 'Sem 0', '2025-07-01', '2025-12-31')`),
+  )
+  await setRoomFee(c.admin, { blockId: c.blockId, termFee: '14600', reason: 'fees for 2026' })
+  const a = await allocate(c.warden, { roomId: c.roomA, studentId: c.s1, allocatedOn: '2025-07-01' })
+  await chargeTerm(c.admin, { termId: c.termId })
+  assert.equal((await live(c.id)).length, 2)
+  // The price doubles, then is cleared; the stay ends in the second term.
+  await setRoomFee(c.admin, { blockId: c.blockId, termFee: '29200', reason: 'doubled for 2027' })
+  await setRoomFee(c.admin, { blockId: c.blockId, termFee: '', reason: 'cleared for review' })
+  await vacate(c.warden, { allocationId: a.id, vacatedOn: '2026-02-04', reason: 'left the hostel' })
+  const rows = await live(c.id)
+  assert.deepEqual(rows.map((r) => r.amount).sort((x, y) => x - y), [300_000, 1_460_000])
+})
+
+test('a stay that ended the day it began is not reported as already charged', async () => {
+  const c = await campus()
+  await setRoomFee(c.admin, { blockId: c.blockId, termFee: '14600', reason: 'fees for 2026' })
+  const a = await allocate(c.warden, { roomId: c.roomA, studentId: c.s1, allocatedOn: '2026-03-01' })
+  await vacate(c.warden, { allocationId: a.id, vacatedOn: '2026-03-01', reason: 'left the hostel' })
+  assert.equal((await live(c.id)).length, 0)
+  const r = await chargeTerm(c.admin, { termId: c.termId })
+  assert.equal(r.charged, 0)
+  assert.equal(r.alreadyCharged, 0)
 })
