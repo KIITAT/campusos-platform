@@ -845,3 +845,56 @@ test('pages: each reader sees only the actions that are theirs', async () => {
   const list = (broken.data.files as { id: string; check: string }[]).find(row => row.id === sent.documentId)
   assert.equal(list?.check, 'Integrity check failed')
 })
+
+// Review fixes (P2-19 FIX).
+test('fix: a malformed id is the same 404 as a missing document, never a database error', async () => {
+  const api = await workflow()
+  const { admin } = await college()
+  for (const bad of ['-'.repeat(36), 'z'.repeat(36), randomUUID().replace(/.$/, 'g')]) {
+    await assert.rejects(() => readable(admin, bad), status('document_missing', 404))
+    await assert.rejects(() => api.downloadDocument(admin, bad), status('document_missing', 404))
+    await assert.rejects(() => api.signingReceipt(admin, bad), status('document_missing', 404))
+  }
+})
+
+test('fix: a retention date Postgres would refuse is a 400, not a 500', async () => {
+  const api = await workflow()
+  const { admin, signer } = await college()
+  const { file } = await pdf()
+  const input = { title: 'Offer', kind: 'offer', scope: 'signer', subjectUserId: signer.id, file, retentionBasis: 'specified_purpose', authorityRef: 'Offer records policy' }
+  for (const retainUntil of ['1', '12', '2030', '2026-02-30', 'next year']) {
+    await assert.rejects(() => api.uploadDocument(admin, { ...input, retainUntil }), /valid retention end date/, retainUntil)
+  }
+})
+
+test('fix: the sealed audit row binds the mailbox that confirmed the code', async () => {
+  const api = await workflow()
+  const campus = await college()
+  const { authDb } = await import('@campusos/db')
+  const sent = await ready(api, campus)
+  const { code } = await api.issueAssentChallenge(campus.signer, { requestId: sent.requestId })
+  const { signatureId } = await api.recordAssent(campus.signer, { requestId: sent.requestId, code, consent: true })
+  const [row] = (await authDb.execute(sql`select detail->>'recipientDigest' as digest from audit_log where id = ${signatureId}`)).rows as { digest: string }[]
+  assert.equal(row!.digest, createHash('sha256').update(campus.signer.email!.trim().toLowerCase(), 'utf8').digest('hex'))
+})
+
+test('fix: a member demoted to pending cannot ask for a code, sign or decline', async () => {
+  const api = await workflow()
+  const campus = await college()
+  const { authDb } = await import('@campusos/db')
+  const sent = await ready(api, campus)
+  const { code } = await api.issueAssentChallenge(campus.signer, { requestId: sent.requestId })
+  await authDb.execute(sql`update users set role = 'pending' where id = ${campus.signer.id}`)
+  await assert.rejects(() => api.recordAssent(campus.signer, { requestId: sent.requestId, code, consent: true }), status('document_missing', 404))
+  await assert.rejects(() => api.issueAssentChallenge(campus.signer, { requestId: sent.requestId }), status('document_missing', 404))
+  await assert.rejects(() => api.closeAssent(campus.signer, { requestId: sent.requestId, decision: 'decline', reason: 'Declining while pending' }), status('document_missing', 404))
+})
+
+test('fix: an administrator cannot request assent from themselves', async () => {
+  const api = await workflow()
+  const { admin } = await college()
+  const { file } = await pdf()
+  const own = await api.uploadDocument(admin, { title: 'Own offer', kind: 'offer', scope: 'signer', subjectUserId: admin.id, file,
+    retainUntil: new Date(Date.now() + 30 * 86400_000).toISOString(), retentionBasis: 'specified_purpose', authorityRef: 'Offer records policy' })
+  await assert.rejects(() => api.requestAssent(admin, { documentId: own.documentId, reason: 'Sign my own offer please', approvedInternalUse: true }), status('self_signing', 400))
+})
