@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { after, test } from 'node:test'
+import { sql } from 'drizzle-orm'
 import type { PluginActor, Role } from '@campusos/module-framework'
 
 interface Workflow {
@@ -393,4 +394,124 @@ test('upload: only administrators file documents, and every file is checked and 
   assert.equal(audits[0]!.actor_id, admin.id)
   assert.equal(audits[0]!.actor_email, null)
   assert.ok(!audits[0]!.detail.includes('Policy'))
+})
+
+// Integrity and evidence reads (Step 4).
+async function tamper(statement: ReturnType<typeof import('drizzle-orm').sql>) {
+  const { authDb } = await import('@campusos/db')
+  const { sql } = await import('drizzle-orm')
+  await authDb.transaction(async tx => {
+    await tx.execute(sql`set local session_replication_role = replica`)
+    await tx.execute(statement)
+  })
+}
+
+async function auditCount(documentId: string, action: string) {
+  const { authDb } = await import('@campusos/db')
+  const { sql } = await import('drizzle-orm')
+  const [row] = (await authDb.execute(sql`select count(*)::int as n from audit_log where entity_id = ${documentId} and action = ${action}`)).rows as { n: number }[]
+  return row!.n
+}
+
+const everything = async (campus: Campus, who: PluginActor) => {
+  const core = await import('./api/index')
+  return core.listDocuments(who, { q: null, sort: 'newest', dir: 'desc', limit: 20, after: null })
+}
+
+test('reads: a list shows only what the reader may open, newest first, with each integrity state', async () => {
+  const campus = await college()
+  const other = await college()
+  const { admin, signer, faculty } = campus
+  const signed = await seedSigned(campus)
+  const unsignedFile = await seedFile(campus, { scope: 'signer' })
+  await pendingRequest(campus, unsignedFile.id, signer.id)
+  const hidden = await seedFile(campus, { scope: 'signer', subject: signer.id })
+  const office = await seedFile(campus, { subject: faculty.id })
+  const academic = await seedFile(campus, { scope: 'student_academic', subject: signer.id })
+  const asAdmin = await everything(campus, admin)
+  assert.equal(asAdmin.total, 5)
+  assert.deepEqual(asAdmin.rows.map(row => row.id), [academic.id, office.id, hidden.id, unsignedFile.id, signed.documentId])
+  const states = Object.fromEntries(asAdmin.rows.map(row => [row.id, row.integrity]))
+  assert.equal(states[signed.documentId], 'verified')
+  assert.equal(states[unsignedFile.id], 'unsigned')
+  const mine = await everything(campus, signer)
+  assert.deepEqual(mine.rows.map(row => row.id).sort(), [academic.id, unsignedFile.id, signed.documentId].sort())
+  assert.equal(mine.total, 3)
+  assert.equal((await everything(campus, faculty)).total, 0)
+  assert.equal((await everything(other, other.admin)).total, 0)
+  const core = await import('./api/index')
+  const first = await core.listDocuments(admin, { q: null, sort: 'newest', dir: 'desc', limit: 2, after: null })
+  assert.equal(first.rows.length, 2)
+  assert.ok(first.next)
+  const readPage = (cursor: string) => core.readDocumentPage(new Request(`http://localhost/files?after=${cursor}&n=2`))
+  const second = await core.listDocuments(admin, readPage(first.next!))
+  assert.equal(second.rows.length, 2)
+  assert.deepEqual(new Set([...first.rows, ...second.rows].map(row => row.id)).size, 4)
+  await assert.rejects(() => core.listDocuments(faculty, { q: null, sort: 'newest', dir: 'desc', limit: 20, after: null }, signer.id), status('document_missing', 404))
+  await teaches(faculty.id, signer.id)
+  const forStudent = await core.listDocuments(faculty, { q: null, sort: 'newest', dir: 'desc', limit: 20, after: null }, signer.id)
+  assert.deepEqual(forStudent.rows.map(row => row.id), [academic.id])
+})
+
+test('reads: the exact bytes come back once, audited, and a changed file is refused with no bytes', async () => {
+  const api = await workflow()
+  const campus = await college()
+  const { admin, signer, faculty } = campus
+  const signed = await seedSigned(campus)
+  const response = await api.downloadDocument(signer, signed.documentId)
+  assert.equal(response.headers.get('cache-control'), 'private, no-store')
+  assert.equal(response.headers.get('x-content-type-options'), 'nosniff')
+  assert.match(response.headers.get('content-disposition')!, /attachment; filename="document\.pdf"/)
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), signed.bytes)
+  assert.equal(await auditCount(signed.documentId, 'document.read'), 1)
+  await assert.rejects(() => api.downloadDocument(faculty, signed.documentId), status('document_missing', 404))
+  assert.equal(await auditCount(signed.documentId, 'document.read'), 1)
+  await tamper(sql`update documents_files set body = ${Buffer.from('%PDF-1.4 changed')} where id = ${signed.documentId}`)
+  await assert.rejects(() => api.downloadDocument(admin, signed.documentId), status('document_integrity', 409))
+  assert.equal(await auditCount(signed.documentId, 'document.integrity_failed'), 1)
+  assert.equal(await auditCount(signed.documentId, 'document.read'), 1)
+  assert.deepEqual(await api.verifyDocument(admin, { documentId: signed.documentId }), { integrity: 'mismatch', copyMatches: null })
+  await assert.rejects(() => api.signingReceipt(signer, signed.documentId), status('document_integrity', 409))
+})
+
+test('reads: verification names a different copy, and missing or altered evidence fails', async () => {
+  const api = await workflow()
+  const campus = await college()
+  const { signer } = campus
+  const signed = await seedSigned(campus)
+  const sha = createHash('sha256').update(signed.bytes).digest('hex')
+  assert.deepEqual(await api.verifyDocument(signer, { documentId: signed.documentId, sha256: sha }), { integrity: 'verified', copyMatches: true })
+  assert.deepEqual(await api.verifyDocument(signer, { documentId: signed.documentId, sha256: '1'.repeat(64) }), { integrity: 'verified', copyMatches: false })
+  assert.deepEqual(await api.verifyDocument(signer, { documentId: signed.documentId }), { integrity: 'verified', copyMatches: null })
+  await assert.rejects(() => api.verifyDocument(signer, { documentId: signed.documentId, sha256: 'ABC' }), /64 lowercase hex/)
+  assert.equal(await auditCount(signed.documentId, 'document.read'), 3)
+  await tamper(sql`update audit_log set reason = 'Altered after the fact' where id = ${signed.signatureId}`)
+  assert.equal((await api.verifyDocument(signer, { documentId: signed.documentId })).integrity, 'mismatch')
+  const second = await seedSigned(campus)
+  await tamper(sql`delete from audit_chain where audit_id = ${second.signatureId}`)
+  assert.equal((await api.verifyDocument(signer, { documentId: second.documentId })).integrity, 'mismatch')
+  const third = await seedSigned(campus)
+  await tamper(sql`update audit_log set detail = jsonb_set(detail, '{sha256}', to_jsonb(repeat('2', 64))) where id = ${third.signatureId}`)
+  assert.equal((await api.verifyDocument(signer, { documentId: third.documentId })).integrity, 'mismatch')
+  assert.equal(await auditCount(second.documentId, 'document.integrity_failed'), 1)
+})
+
+test('reads: the evidence PDF states the record and never carries the original', async () => {
+  const api = await workflow()
+  const { printedText } = await import('@campusos/module-framework/pdf')
+  const campus = await college()
+  const { signer, faculty } = campus
+  const signed = await seedSigned(campus)
+  const receipt = await api.signingReceipt(signer, signed.documentId)
+  assert.equal(receipt.headers.get('content-type'), 'application/pdf')
+  assert.match(receipt.headers.get('content-disposition')!, /document-assent\.pdf/)
+  const bytes = Buffer.from(await receipt.arrayBuffer())
+  assert.ok(!bytes.includes(signed.bytes))
+  const printed = (await printedText(bytes)).join('\n')
+  const sha = createHash('sha256').update(signed.bytes).digest('hex')
+  for (const expected of ['Electronic assent record', signed.documentId, signed.requestId, signer.id, 'account_mailbox_v1', 'documents-assent-v1', sha, 'not a certified or statutory digital signature']) assert.ok(printed.includes(expected), expected)
+  await assert.rejects(() => api.signingReceipt(faculty, signed.documentId), status('document_missing', 404))
+  const unsigned = await seedFile(campus, { scope: 'signer' })
+  await pendingRequest(campus, unsigned.id, signer.id)
+  await assert.rejects(() => api.signingReceipt(signer, unsigned.id), status('document_missing', 404))
 })
