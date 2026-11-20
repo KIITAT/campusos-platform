@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- exports under test are looked up by name, so a missing one fails as an assertion */
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { and, eq, isNull, like, sql } from 'drizzle-orm'
