@@ -1,5 +1,5 @@
 import { flag, param, type PluginPage, type PluginSection } from '@campusos/module-framework'
-import { board, draftChoices, inbox, noticePage, noticeView, preferences, type Actor } from './api'
+import { board, departmentChoices, draftChoices, inbox, noticePage, noticeView, preferences, withdrawChoices, type Actor } from './api'
 
 const POSTERS = [
   'super_admin',
@@ -37,7 +37,8 @@ export const pages: PluginPage[] = [
           filesText: n.files ? String(n.files) : '',
         })),
         drafts: canPost ? await draftChoices(a) : [],
-        all: notices.map((n) => ({ value: n.id, label: n.title })),
+        departments: canPost ? await departmentChoices(a) : [],
+        all: canPost ? await withdrawChoices(a, notices.map((n) => n.id)) : [],
       }
     },
     sections: (data) => [
@@ -92,6 +93,14 @@ export const pages: PluginPage[] = [
                     { value: 'faculty', label: 'lecturers' },
                     { value: 'parent', label: 'parents' },
                   ],
+                },
+                {
+                  name: 'departmentId',
+                  label: 'Department',
+                  kind: 'select' as const,
+                  optional: true,
+                  hint: 'Leave blank for the whole institution.',
+                  options: 'departments',
                 },
                 {
                   name: 'attachment',
