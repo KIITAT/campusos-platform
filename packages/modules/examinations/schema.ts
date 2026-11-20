@@ -169,6 +169,12 @@ export const exams = pgTable(
     publishedBy: text('published_by').references(() => users.id, {
       onDelete: 'set null',
     }),
+    /**
+     * Set the first time results are published and never cleared: hiding results
+     * is a visibility change, it does not reopen the marks (P1-07c, decision 875).
+     * Written by the database (exams_guard_unpublish), not by the application.
+     */
+    everPublished: boolean('ever_published').notNull().default(false),
     createdAt: createdAt(),
   },
   (t) => [
@@ -201,6 +207,8 @@ export const examMarks = pgTable(
     enteredAt: timestamp('entered_at', { withTimezone: true }).notNull().defaultNow(),
     /** Bumped by every audited revision, so a disputed mark shows its history depth. */
     revision: smallint().notNull().default(0),
+    /** An approved revision or a hidden exam: official outputs wait until the course is finalised again. */
+    needsRecompute: boolean('needs_recompute').notNull().default(false),
   },
   (t) => [
     uniqueIndex('exam_marks_once').on(t.examId, t.studentId),
@@ -387,3 +395,84 @@ export const examSettings = pgTable(
 )
 
 export type ExamWindow = typeof examWindows.$inferSelect
+
+// --- marks integrity (P1-07c, AUD-05) ----------------------------------------
+
+/** A mark as the history and the approval evidence record it. */
+export type MarkSnapshot = { obtained: number | null; absent: boolean; revision: number }
+
+/**
+ * A review of one mark: asked for by the student, or started by staff as a
+ * correction; proposed by one person and decided by a different administrator.
+ * The reasons live in the audit chain, not here. The database refuses any
+ * transition the workflow does not allow and binds an approval to the audit row
+ * and the mark change made in the same transaction.
+ */
+export const markRequests = pgTable(
+  'exam_mark_requests',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    markId: uuid('mark_id')
+      .notNull()
+      .references(() => examMarks.id, { onDelete: 'cascade' }),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    kind: text().$type<'correction' | 'recheck' | 're_evaluation'>().notNull(),
+    status: text().$type<'requested' | 'proposed' | 'approved' | 'rejected'>().notNull(),
+    makerId: text('maker_id'),
+    checkerId: text('checker_id'),
+    baseRevision: smallint('base_revision').notNull(),
+    proposedScore: marks('proposed_score'),
+    proposedAbsent: boolean('proposed_absent'),
+    createdAt: createdAt(),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    approvedXid: text('approved_xid'),
+  },
+  (t) => [
+    uniqueIndex('exam_mark_requests_live')
+      .on(t.markId)
+      .where(sql`status in ('requested', 'proposed')`),
+    index('exam_mark_requests_page').on(t.institutionId, t.id.desc()),
+    index('exam_mark_requests_student').on(t.studentId),
+    check('exam_mark_requests_kind_check', sql`kind in ('correction', 'recheck', 're_evaluation')`),
+    check('exam_mark_requests_status_check', sql`status in ('requested', 'proposed', 'approved', 'rejected')`),
+    check('exam_mark_requests_base_revision_check', sql`base_revision between 0 and 32766`),
+    check('exam_mark_requests_distinct_checker', sql`checker_id is null or checker_id is distinct from maker_id`),
+    check(
+      'exam_mark_requests_decided',
+      sql`(status in ('approved', 'rejected')) = (checker_id is not null and decided_at is not null)`,
+    ),
+    check('exam_mark_requests_approved_xid', sql`(status = 'approved') = (approved_xid is not null)`),
+    check(
+      'exam_mark_requests_proposal',
+      sql`status not in ('proposed', 'approved') or (maker_id is not null and proposed_absent is not null and ((proposed_absent and proposed_score is null) or (not proposed_absent and proposed_score is not null and proposed_score >= 0)))`,
+    ),
+    tenantPolicy('exam_mark_requests'),
+  ],
+)
+
+/** Every insert, score change and draft delete of a mark, append-only (trigger). */
+export const marksHistory = pgTable(
+  'exam_marks_history',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    /** Not a foreign key: a deleted draft mark's history outlives it. */
+    markId: uuid('mark_id').notNull(),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    event: text().$type<'insert' | 'update' | 'delete'>().notNull(),
+    beforeMark: jsonb('before_mark').$type<MarkSnapshot | null>(),
+    afterMark: jsonb('after_mark').$type<MarkSnapshot | null>(),
+    at: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('exam_marks_history_mark').on(t.institutionId, t.markId, t.at, t.id),
+    index('exam_marks_history_student').on(t.studentId),
+    check('exam_marks_history_event_check', sql`event in ('insert', 'update', 'delete')`),
+    tenantPolicy('exam_marks_history'),
+  ],
+)

@@ -143,7 +143,9 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   // examinations
   exam_backlog_bookings: 'export',
   exam_enrolments: 'export',
+  exam_mark_requests: 'export',
   exam_marks: 'export',
+  exam_marks_history: 'export',
   exam_question_papers: 'export',
   exam_windows: 'export',
   exams: 'export',

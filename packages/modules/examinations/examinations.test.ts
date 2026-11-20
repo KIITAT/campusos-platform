@@ -136,11 +136,10 @@ before(async () => {
 
 beforeEach(async () => {
   await withTenant(inst, async (tx) => {
-    // exam_marks first: the delete guard refuses published rows, so exams go last.
+    // Marks of a published exam cannot be deleted by hand, and hiding results no
+    // longer reopens them (P1-07c), so the exams go and their marks cascade.
     await tx.execute(sql`select set_config('app.audit_reason', 'test reset', true)`)
     await tx.execute(sql`delete from notifications`)
-    await tx.update(exams).set({ publishedAt: null, publishedBy: null })
-    await tx.delete(examMarks)
     await tx.delete(exams)
     since = new Date(Math.floor(Number((await tx.execute<{ ms: string }>(sql`select extract(epoch from clock_timestamp()) * 1000 as ms`)).rows[0]!.ms)))
     await tx.delete(schemes)

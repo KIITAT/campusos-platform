@@ -281,9 +281,9 @@ async function rawRevision(markId: string, studentId: string, ev: Evidence) {
         )
         return id
       })
-  const write = async (tx: Parameters<Parameters<typeof withTenant>[1]>[0], requestId: string | null) => {
+  const write = async (tx: Parameters<Parameters<typeof withTenant>[1]>[0], requestId: string | null, writeAudit = true) => {
     await tx.execute(sql`select set_config('app.audit_reason', 'hand-built evidence for the test', true)`)
-    if (requestId && ev.withAudit) {
+    if (requestId && ev.withAudit && writeAudit) {
       await tx.insert(auditLog).values({
         id: requestId,
         institutionId: inst,
@@ -332,7 +332,7 @@ async function rawRevision(markId: string, studentId: string, ev: Evidence) {
       })
       return id
     })
-    await withTenant(inst, (tx) => write(tx, requestId))
+    await withTenant(inst, (tx) => write(tx, requestId, false))
   }
 }
 
@@ -390,4 +390,57 @@ test('the database accepts complete evidence and flags the mark for re-finalisat
   assert.equal(Number(row!.obtained), 25)
   assert.equal(row!.revision, 1)
   assert.equal(row!.needs_recompute, true)
+})
+
+// --- history and request tables: tenancy and append-only -----------------------
+
+test('history is visible to its own institution only', async () => {
+  const e = await mkExam()
+  await enterMarks(fac(), { examId: e.id, marks: [{ studentId: ids.s1, obtained: 15 }] })
+  const id = (await markOf(e.id, ids.s1)).id
+  const count = (tenant: string) =>
+    withTenant(tenant, (tx) => tx.execute(sql`select count(*)::int as n from exam_marks_history where mark_id = ${id}`)).then(
+      (r) => (r.rows[0] as { n: number }).n,
+    )
+  assert.equal(await count(inst), 1)
+  assert.equal(await count(other), 0)
+})
+
+test('a review cannot be written against another institution’s mark', async () => {
+  const e = await mkExam()
+  await enterMarks(fac(), { examId: e.id, marks: [{ studentId: ids.s1, obtained: 15 }] })
+  const id = (await markOf(e.id, ids.s1)).id
+  await assert.rejects(
+    () =>
+      withTenant(other, (tx) =>
+        tx.execute(
+          sql`insert into exam_mark_requests (institution_id, mark_id, student_id, kind, status, base_revision)
+              values (${other}, ${id}, ${ids.s1}, 'recheck', 'requested', 0)`,
+        ),
+      ),
+    (err: unknown) => /ownership mismatch|violates/i.test(cause(err)),
+  )
+})
+
+test('history cannot be edited or deleted, even by the application role', async () => {
+  const e = await mkExam()
+  await enterMarks(fac(), { examId: e.id, marks: [{ studentId: ids.s1, obtained: 15 }] })
+  const id = (await markOf(e.id, ids.s1)).id
+  for (const stmt of [
+    sql`update exam_marks_history set event = 'update' where mark_id = ${id}`,
+    sql`delete from exam_marks_history where mark_id = ${id}`,
+    sql`insert into exam_marks_history (institution_id, mark_id, student_id, event) values (${inst}, ${id}, ${ids.s1}, 'insert')`,
+  ]) {
+    await assert.rejects(() => withTenant(inst, (tx) => tx.execute(stmt)), (err: unknown) => /append-only/i.test(cause(err)))
+  }
+})
+
+test('a draft mark deleted by hand is recorded with its value', async () => {
+  const e = await mkExam()
+  await enterMarks(fac(), { examId: e.id, marks: [{ studentId: ids.s1, obtained: 15 }] })
+  const id = (await markOf(e.id, ids.s1)).id
+  await withTenant(inst, (tx) => tx.delete(examMarks).where(eq(examMarks.id, id)))
+  const h = await historyOf(id)
+  assert.deepEqual(h.map((r) => r.event), ['insert', 'delete'])
+  assert.equal(h[1]!.before_mark?.obtained, 15)
 })
