@@ -13,7 +13,7 @@ import {
   transferClaims,
   type DemandLetterContent,
 } from '../schema'
-import { FeeError, recordPaymentWithin, studentLedger, type Actor } from './operations'
+import { FeeError, lockTermIssue, recordPaymentWithin, studentLedger, type Actor } from './operations'
 import { rupeesInWords } from './words'
 import { enrolledPrograms } from './enrolment'
 
@@ -53,6 +53,11 @@ const REFUSALS: Record<string, [400 | 403 | 409, string]> = {
   fee_bank_accounts_number_digits: [400, 'an account number is 6 to 20 digits'],
   fee_bank_account_used: [409, 'students have paid into that account; retire it and add the new one'],
   fee_transfer_claims_utr: [409, 'that UTR has already been claimed'],
+  fee_bank_accounts_vpa: [400, "a UPI ID is a name, an @ and the bank's handle, for example fees.kiit@sbi"],
+  fee_bank_accounts_merchant: [400, 'only an account with a UPI ID can be a merchant account'],
+  fee_transfer_claims_upi_shape: [400, 'a UPI reference is the 12-digit number your UPI app shows (UTR or RRN)'],
+  fee_transfer_claims_cheque_shape: [400, 'a cheque needs its 6-digit number, and the IFSC and account number printed on it'],
+  fee_transfer_claims_cheque: [409, 'that cheque has already been reported'],
   fee_transfer_claims_utr_shape: [400, 'a UTR is 6 to 30 letters and digits, as the bank gave it'],
   fee_transfer_claims_ifsc: [400, 'an IFSC is four letters, a zero and six letters or digits'],
   fee_transfer_claims_phone: [400, 'a phone number'],
@@ -99,10 +104,12 @@ export const claimTransferSchema = z
   .object({
     termId: z.uuid(),
     accountId: z.uuid(),
-    mode: z.enum(['rtgs', 'neft', 'imps']),
+    mode: z.enum(['rtgs', 'neft', 'imps', 'upi', 'cheque']),
     remitterBank: z.string().trim().min(2).max(120),
     remitterBranch: z.preprocess(blankToUndefined, z.string().trim().max(120).optional()),
     remitterIfsc: z.preprocess(blankToUndefined, ifsc.optional()),
+    /** A deposited cheque's account number, as printed on it. */
+    drawerAccount: z.preprocess(blankToUndefined, z.string().optional()),
     accountHolder: z.string().trim().min(2).max(120),
     contactPhone: z.string().trim().regex(/^[0-9+() -]{7,20}$/, 'a phone number'),
     transferredOn: z.iso.date(),
@@ -220,6 +227,7 @@ export async function claimTransfer(actor: Actor, input: unknown) {
           remitterBank: d.remitterBank,
           remitterBranch: d.remitterBranch ?? null,
           remitterIfsc: d.remitterIfsc ?? null,
+          drawerAccount: d.drawerAccount ? d.drawerAccount.replace(/\s+/g, '').toUpperCase() : null,
           accountHolder: d.accountHolder,
           contactPhone: d.contactPhone,
           transferredOn: d.transferredOn,
@@ -291,6 +299,9 @@ export async function claimQueue(actor: Actor, status?: string | null) {
   )
 }
 
+/** How each way of reporting a payment is receipted (D11). */
+const METHOD = { rtgs: 'bank_transfer', neft: 'bank_transfer', imps: 'bank_transfer', upi: 'upi', cheque: 'cheque' } as const
+
 /**
  * Found on the bank statement: the claim becomes a payment -- receipted, in the
  * books, and reconciled, because finding it on the statement is exactly what
@@ -301,6 +312,11 @@ export async function verifyClaim(actor: Actor, input: unknown) {
   const d = verifyClaimSchema.parse(input)
   return named(() =>
     withTenant(tenant, async (tx) => {
+      // Like every path that moves a term's money, under the term's lock (NEW-93); the
+      // claim's term never changes, so it is read first and the row locked after.
+      const [seen] = await tx.select({ termId: transferClaims.termId }).from(transferClaims).where(eq(transferClaims.id, d.claimId))
+      if (!seen) throw new FeeError(404, 'no_such_claim', 'no such claim')
+      await lockTermIssue(tx, seen.termId)
       const [c] = await tx.select().from(transferClaims).where(eq(transferClaims.id, d.claimId)).for('update')
       if (!c) throw new FeeError(404, 'no_such_claim', 'no such claim')
       if (c.status !== 'pending') throw new FeeError(409, 'fee_claim_decided', 'that claim has been decided')
@@ -308,10 +324,16 @@ export async function verifyClaim(actor: Actor, input: unknown) {
         studentId: c.studentId,
         termId: c.termId,
         amountPaise: c.amountPaise,
-        method: 'bank_transfer',
+        method: METHOD[c.mode],
         reference: c.utr,
         receivedAt: new Date(`${c.transferredOn}T00:00:00+05:30`),
-        notes: `${c.mode.toUpperCase()} from ${c.remitterBank}${c.remitterBranch ? `, ${c.remitterBranch}` : ''} (${c.accountHolder})`,
+        notes:
+          c.mode === 'upi'
+            ? `UPI from ${c.remitterBank} (${c.accountHolder})`
+            : c.mode === 'cheque'
+              ? `Cheque ${c.utr} on ${c.remitterIfsc} ${c.drawerAccount} (${c.accountHolder})`
+              : `${c.mode.toUpperCase()} from ${c.remitterBank}${c.remitterBranch ? `, ${c.remitterBranch}` : ''} (${c.accountHolder})`,
+        ...(c.mode === 'cheque' ? { drawerIfsc: c.remitterIfsc, drawerAccount: c.drawerAccount } : {}),
       })
       await audit(tx, {
         institutionId: tenant,

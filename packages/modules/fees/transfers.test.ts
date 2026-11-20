@@ -218,7 +218,7 @@ test('a deposited cheque is claimed with its drawer and verified as a cheque', a
   assert.equal(cl.remitterIfsc, 'SBIN0001234')
   await assert.rejects(claim(c, { mode: 'cheque', utr: '000124', remitterIfsc: 'SBIN0001234' }), (e) => code(e) === 'fee_transfer_claims_cheque_shape')
   await assert.rejects(
-    claim(c, { mode: 'cheque', utr: '12345', remitterIfsc: 'SBIN0001234', drawerAccount: '12345678901' }),
+    claim(c, { mode: 'cheque', utr: 'AB1234', remitterIfsc: 'SBIN0001234', drawerAccount: '12345678901' }),
     (e) => code(e) === 'fee_transfer_claims_cheque_shape',
   )
   const v = await verifyClaim(c.clerk, { claimId: cl.id })
