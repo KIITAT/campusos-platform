@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { and, desc, eq, inArray, lt, sql } from 'drizzle-orm'
 import { audit, auditLog, withTenant } from '@campusos/db'
+import { courses, offerings } from './joins'
 import { examMarks, exams, markRequests } from '../schema'
 import {
   ExamError,
@@ -346,6 +347,40 @@ export async function listMarkReviews(
             }),
       })),
       next: rows.length > 50 ? page[page.length - 1]!.r.id : null,
+    }
+  })
+}
+
+/**
+ * The visible marks a student may ask about, 50 at a time by id (the portal's
+ * "Request a mark review" form). Not a route: the page reads it in-process.
+ */
+export async function reviewableMarks(
+  actor: Actor,
+  after?: string,
+): Promise<{ rows: { markId: string; label: string }[]; next: string | null }> {
+  const tenant = tenantOf(actor)
+  if (actor.role !== 'student') return { rows: [], next: null }
+  return withTenant(tenant, async (tx) => {
+    const rows = await tx
+      .select({ id: examMarks.id, exam: exams.name, code: courses.code, title: courses.title })
+      .from(examMarks)
+      .innerJoin(exams, eq(exams.id, examMarks.examId))
+      .innerJoin(offerings, eq(offerings.id, exams.offeringId))
+      .innerJoin(courses, eq(courses.id, offerings.courseId))
+      .where(
+        and(
+          eq(examMarks.studentId, actor.id),
+          sql`${exams.publishedAt} is not null`,
+          after ? lt(examMarks.id, after) : undefined,
+        ),
+      )
+      .orderBy(desc(examMarks.id))
+      .limit(51)
+    const page = rows.slice(0, 50)
+    return {
+      rows: page.map((r) => ({ markId: r.id, label: `${r.code} ${r.title}: ${r.exam}` })),
+      next: rows.length > 50 ? page[page.length - 1]!.id : null,
     }
   })
 }

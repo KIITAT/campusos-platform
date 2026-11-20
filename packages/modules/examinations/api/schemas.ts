@@ -103,6 +103,40 @@ export const listMarkReviewsSchema = z
   .strictObject({ examId: uuid.optional(), after: uuid.optional() })
   .meta({ id: 'ExamListMarkReviews' })
 
+const reviewStatus = z.enum(['requested', 'proposed', 'approved', 'rejected'])
+
+/** What every review mutation answers with. */
+export const markReviewResultSchema = z
+  .object({ requestId: uuid, status: reviewStatus, notice: z.string() })
+  .meta({ id: 'ExamMarkReviewResult' })
+
+export const markReviewPageSchema = z
+  .object({
+    rows: z.array(
+      z.object({
+        requestId: uuid,
+        markId: uuid,
+        examId: uuid,
+        kind: z.enum(['correction', 'recheck', 're_evaluation']),
+        status: reviewStatus,
+        createdAt: z.string(),
+        decidedAt: z.string().nullable(),
+        /** Staff only; a student's page never carries it. */
+        staff: z
+          .object({
+            studentId: z.string(),
+            makerId: z.string().nullable(),
+            baseRevision: z.number().int(),
+            proposedScore: z.number().nullable(),
+            proposedAbsent: z.boolean().nullable(),
+          })
+          .optional(),
+      }),
+    ),
+    next: uuid.nullable(),
+  })
+  .meta({ id: 'ExamMarkReviewPage' })
+
 export const unpublishExamSchema = z
   .object({
     examId: uuid,

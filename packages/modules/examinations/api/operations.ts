@@ -547,6 +547,7 @@ export async function sheet(actor: Actor, examId: string) {
         obtained: examMarks.obtained,
         absent: examMarks.absent,
         revision: examMarks.revision,
+        needsRecompute: examMarks.needsRecompute,
       })
       .from(sectionMembers)
       .innerJoin(users, eq(users.id, sectionMembers.userId))
@@ -565,11 +566,14 @@ export async function sheet(actor: Actor, examId: string) {
         maxMarks: Number(exam.maxMarks),
         weightPercent: Number(exam.weightPercent),
         published: exam.publishedAt !== null,
+        /** Published at least once: the marks stay protected even while the results are hidden. */
+        everPublished: exam.everPublished,
       },
       entries: rows.map((r) => ({
         ...r,
         obtained: num(r.obtained),
         revision: r.revision ?? 0,
+        needsRecompute: r.needsRecompute ?? false,
       })),
     }
   })

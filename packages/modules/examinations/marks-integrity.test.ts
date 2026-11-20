@@ -19,6 +19,9 @@ import {
   type Actor,
 } from './api'
 import { examMarks } from './schema'
+import { pages } from './pages'
+import { routes } from './routes'
+import { routeRoles } from './route-roles'
 
 /**
  * AUD-05 and the re-evaluation workflow (P1-07c): a published mark moves only
@@ -785,4 +788,67 @@ test('an incomplete student keeps the flag and the last completion; a finalise r
   const row = await markOf(exam.id, ids.s1)
   assert.deepEqual([Number(row.obtained), row.needsRecompute], [90, true])
   await assert.rejects(() => officialTranscript(adm(), ids.s1), (err: unknown) => code(err) === 'marks_recompute_required')
+})
+
+// --- routes and portal ----------------------------------------------------------------
+
+test('the review routes are declared with the roles the decisions name', () => {
+  const declared = routes.map((r) => `${r.method} ${r.path}`)
+  for (const key of ['POST /marks/revise', 'POST /marks/recheck', 'POST /marks/decide', 'GET /marks/requests']) {
+    assert.ok(declared.includes(key), `${key} is not routed`)
+    assert.ok(key in routeRoles, `${key} has no role entry`)
+  }
+  assert.deepEqual(routeRoles['POST /marks/recheck'], ['student'])
+  assert.deepEqual([...routeRoles['POST /marks/decide']!].sort(), ['institution_admin', 'super_admin'])
+  assert.ok(routeRoles['GET /marks/requests']!.includes('student'))
+  assert.ok(!routeRoles['POST /marks/decide']!.includes('faculty'))
+})
+
+test('the review list is scoped: staff must pick an exam they may mark; a student sees only their own', async () => {
+  const e = await published([
+    { studentId: ids.s1, obtained: 15 },
+    { studentId: ids.s2, obtained: 20 },
+  ])
+  const m1 = await markOf(e.id, ids.s1)
+  await requestMarkReview(stu(ids.s1), { markId: m1.id, kind: 'recheck', reason: 'please look again at it' })
+  await assert.rejects(() => listMarkReviews(fac(), {}), (err: unknown) => code(err) === 'exam_required')
+  await assert.rejects(() => listMarkReviews(fac2(), { examId: e.id }), (err: unknown) => code(err) === 'not_your_offering')
+  assert.equal((await listMarkReviews(stu(ids.s2), {})).rows.filter((r) => r.markId === m1.id).length, 0)
+  assert.equal((await listMarkReviews(fac(), { examId: e.id })).rows.length, 1)
+  // another institution's administrator cannot see it
+  await assert.rejects(
+    () => listMarkReviews(A(ids.otherAdmin, 'institution_admin', 'oa@x.test', other), { examId: e.id }),
+    (err: unknown) => code(err) === 'no_such_exam',
+  )
+})
+
+test('the student page offers the visible marks and the form; the exam page shows the reviews and an admin-only decision form', async () => {
+  const e = await published([{ studentId: ids.s1, obtained: 15 }])
+  const m1 = await markOf(e.id, ids.s1)
+  const hidden = await published([{ studentId: ids.s1, obtained: 11 }])
+  await unpublishExam(adm(), { examId: hidden.id, reason: 'hidden while the cohort is checked' })
+  const hiddenMark = await markOf(hidden.id, ids.s1)
+  const asked = await requestMarkReview(stu(ids.s1), { markId: m1.id, kind: 'recheck', reason: 'please look again at it' })
+
+  const mine = pages.find((p) => p.path === '/me')!
+  const data = (await mine.load(stu(ids.s1) as never, new Request('http://x/m/examinations/me'))) as Record<string, unknown>
+  const options = data.markOptions as { value: string }[]
+  assert.ok(options.some((o) => o.value === m1.id), 'a visible mark is offered')
+  assert.ok(!options.some((o) => o.value === hiddenMark.id), 'a hidden mark is not')
+  const forms = (mine.sections(data) as { kind: string; path?: string }[]).filter((s) => s.kind === 'form')
+  assert.deepEqual(forms.map((f) => f.path), ['/marks/recheck'])
+  assert.ok((data.myReviews as { requestId: string; staff?: unknown }[]).every((r) => !('staff' in r) || r.staff === undefined))
+
+  const staffPage = pages.find((p) => p.path === '/')!
+  const sdata = (await staffPage.load(
+    fac() as never,
+    new Request(`http://x/m/examinations?offeringId=${ids.offering}&examId=${e.id}`),
+  )) as Record<string, unknown>
+  assert.ok((sdata.reviews as { requestId: string }[]).some((r) => r.requestId === asked.requestId))
+  const sections = staffPage.sections(sdata) as { kind: string; title?: string; path?: string; roles?: string[] }[]
+  const decide = sections.find((s) => s.path === '/marks/decide')!
+  assert.deepEqual([...decide.roles!].sort(), ['institution_admin', 'super_admin'])
+  const proposal = sections.find((s) => s.path === '/marks/revise')!
+  assert.equal(proposal.title, 'Propose revision')
+  assert.ok(sections.some((s) => s.title === 'Mark reviews'))
 })
