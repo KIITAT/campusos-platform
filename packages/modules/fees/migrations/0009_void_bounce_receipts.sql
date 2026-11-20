@@ -13,12 +13,16 @@
 -- indexes only gain a predicate, so they are narrower than the ones they
 -- replace; the cheque index needs drawer details, which no existing row has.
 --
--- Rollback (forward-only; decision 162): restore the pre-upgrade backup with
--- fees 0.22.0. Otherwise a later migration that drops fee_payments_cheque and
--- fee_receipt_series, re-creates fee_payments_reference and fee_invoices_once
--- without their predicates (only once no voided payment shares a UTR with a
--- live one and no student has a voided and a live invoice in one term), and
--- restores the 0001 guard functions. The new columns can stay.
+-- Rollback (forward-only; decision 162): the only safe way back is to restore
+-- the pre-upgrade backup with fees 0.22.0, and only while this branch has taken
+-- no payment and made no correction since the backup. Fees 0.22.0 sums every
+-- payment row and knows nothing of status, so once a receipt has been voided or
+-- a cheque returned it would count that money as paid while its journal entry
+-- stays reversed. There is no downgrade that keeps those records: after the
+-- first correction or the first receipt on the new series, the way out is a
+-- forward repair (a later migration and release) that preserves them, never a
+-- restore. Taking the old indexes and guards back by hand is not a rollback and
+-- is not offered.
 
 ALTER TABLE "fee_payments" ADD COLUMN "status" text NOT NULL DEFAULT 'live';--> statement-breakpoint
 ALTER TABLE "fee_payments" ADD COLUMN "voided_at" timestamp with time zone;--> statement-breakpoint
