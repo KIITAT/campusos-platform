@@ -187,6 +187,11 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   finance_staff: 'export',
   finance_stock_entries: 'export',
 
+  // documents (P2-19): bytes and titles are disclosed only through the document routes; requests carry digests of codes
+  documents_files: { only: ['id', 'kind', 'scope', 'media_type', 'created_at', 'retention_basis', 'retain_until'] },
+  documents_sign_requests: 'exclude',
+  documents_signatures: { only: ['id', 'document_id', 'signed_at', 'method', 'intent_version', 'sha256'] },
+
   // helpdesk
   helpdesk_cases: 'export',
   helpdesk_messages: 'export',
@@ -320,6 +325,9 @@ export function retentionBasis(table: string): string {
   }
   if (table.startsWith('hr_')) {
     return 'an employment and payroll record, kept for the period labour and tax law requires'
+  }
+  if (table.startsWith('documents_')) {
+    return 'signed file evidence retained to its documented purpose or legal-obligation deadline'
   }
   if (table.startsWith('reports_')) return 'a report definition the institution keeps; stored results are deleted after 90 days'
   if (table.startsWith('projects_')) {
