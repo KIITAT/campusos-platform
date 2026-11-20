@@ -721,6 +721,8 @@ test('a debit committed while waiting for the serial blocks the issue (FUNC-05)'
   assert.equal(await certCount(c), 0)
 })
 
+const FEES_TABLES = ['fee_invoices', 'fee_student_charges', 'fee_payments', 'fee_refunds', 'fee_waivers', 'fee_scholarship_awards', 'fee_drop_credits']
+
 test('a configured provider with no tables stops issue; an unconfigured one counts as zero (FUNC-05)', async () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const clearance = ((await import('./api')) as Record<string, any>).checkCertificateClearanceWithin
@@ -731,7 +733,7 @@ test('a configured provider with no tables stops issue; an unconfigured one coun
   const stop = new Error('roll back')
   try {
     await client.query('begin')
-    await client.query('alter table public.fee_invoices rename to fee_invoices_clearance_test')
+    for (const t of FEES_TABLES) await client.query(`alter table public.${t} rename to ${t}_clearance_test`)
     await client.query('alter table public.library_loans rename to library_loans_clearance_test')
     await client.query(`select set_config('app.institution_id', $1, true)`, [c.id])
     const run = async () => {
@@ -758,4 +760,60 @@ test('a configured provider with no tables stops issue; an unconfigured one coun
   }
   const [r] = (await authDb.execute(sql`select to_regclass('public.fee_invoices') as a, to_regclass('public.library_loans') as b`)).rows as { a: string; b: string }[]
   assert.ok(r!.a && r!.b)
+})
+
+test('a legacy invoiced marker is not proof of billing: a charge raised after the invoice stays a debt (FUNC-05, review HIGH)', async () => {
+  const c = await moneyCampus('fees')
+  await bill(c, '1000')
+  await cashPay(c, '1000')
+  await raise(c, 'hostel', 'hostel-legacy')
+  const e = await ceremonyFor(c)
+  await eligibility(c, e)
+  // What Fees did before NEW-91: a charge raised while the invoice was priced inherited the marker.
+  await withTenant(c.id, async (tx) => {
+    await tx.execute(sql`select set_config('app.audit_reason', 'test legacy marker', true)`)
+    await tx.execute(sql`update fee_student_charges set invoiced_at = now() where source_id = ${'hostel-legacy:' + c.id}`)
+  })
+  refusal(await tryIssue(c, e))
+  assert.equal(await certCount(c), 0)
+})
+
+test('an incomplete Fees schema fails closed, entitlement on or off (FUNC-05, review HIGH)', async () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const clearance = ((await import('./api')) as Record<string, any>).checkCertificateClearanceWithin
+  const c = await campus()
+  const { Client } = createRequire(new URL('../../db/package.json', import.meta.url))('pg') as { Client: new (o: { connectionString?: string }) => { connect(): Promise<void>; query(q: string, v?: unknown[]): Promise<unknown>; end(): Promise<void> } }
+  const client = new Client({ connectionString: process.env.MIGRATION_DATABASE_URL })
+  await client.connect()
+  const stop = new Error('roll back')
+  const unavailable = (x: unknown) => (x as { status?: number }).status === 503 && (x as { code?: string }).code === 'certificate_clearance_unavailable'
+  try {
+    await client.query('begin')
+    await client.query(`select set_config('app.institution_id', $1, true)`, [c.id])
+    const run = async (breakIt: string) => {
+      await client.query('savepoint s')
+      try {
+        await client.query(breakIt)
+        return await clearance(drizzle(client as never) as never, c.id, c.done.id)
+      } finally {
+        await client.query('rollback to savepoint s')
+      }
+    }
+    const breaks = [
+      'alter table public.fee_invoices rename column voided_at to voided_at_x',
+      'alter table public.fee_invoices rename to fee_invoices_x',
+      'alter table public.fee_student_charges rename column invoiced_at to invoiced_at_x',
+    ]
+    for (const on of [false, true]) {
+      await client.query(`insert into institution_modules (institution_id, module_id, enabled) values ($1, 'fees', $2)
+                          on conflict (institution_id, module_id) do update set enabled = $2`, [c.id, on])
+      for (const b of breaks) await assert.rejects(run(b), unavailable, b)
+    }
+    throw stop
+  } catch (x) {
+    if (x !== stop) throw x
+  } finally {
+    await client.query('rollback')
+    await client.end()
+  }
 })
