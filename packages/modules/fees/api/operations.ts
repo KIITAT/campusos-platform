@@ -22,6 +22,7 @@ import {
   feeRefunds,
   feeWaivers,
   receiptCounters,
+  receiptSeries,
   studentCharges,
 } from '../schema'
 import {
@@ -38,7 +39,7 @@ import {
 import { postedOf, postedSql, receivableReport } from './books'
 import { postInvoice, postPayment, postRefund, postWaiverChange } from './posting'
 import { enrolledPrograms, notEnrolled, priceListSql, termRoster } from './enrolment'
-import { checkOtherPerson } from '@campusos/module-finance/api'
+import { checkOtherPerson, fiscalShort, settingsWithin } from '@campusos/module-finance/api'
 import { notify } from '@campusos/module-notices/api'
 
 const MODULE = 'fees'
@@ -95,7 +96,7 @@ const isFinance = (r: Role) =>
 /** Waiving money and defining charges is a decision, not a clerk's task. */
 const canWaive = (r: Role) => r === 'institution_admin' || r === 'super_admin'
 
-const requireFinance = (actor: Actor) => {
+export const requireFinance = (actor: Actor) => {
   const tenant = tenantOf(actor)
   if (!isFinance(actor.role)) throw new FeeError(403, 'forbidden', 'not permitted')
   return tenant
@@ -113,12 +114,27 @@ export const requireAdmin = (actor: Actor) => {
 
 type Tx = Parameters<Parameters<typeof withTenant>[1]>[0]
 
+/** The calendar day of a moment, in the institution's own zone. */
+export async function localDayOf(tx: Tx, tenant: string, at: Date): Promise<string> {
+  const s = await settingsWithin(tx, tenant)
+  const res = await tx.execute(sql`select (${at.toISOString()}::timestamptz at time zone ${s.timeZone})::date::text as day`)
+  return String((res.rows[0] as { day: string }).day)
+}
+
+/**
+ * The term's issue lock: issuing, voiding an invoice, granting and revoking a
+ * waiver all take it before they read what they are about to change, so each
+ * sees the others' committed work (one lock, so no order to get wrong).
+ */
+export const lockTermIssue = (tx: Tx, termId: string) =>
+  tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'fees.issue:' + termId}, 0))`)
+
 /** Whether this student's charges for this term have been issued yet. */
 async function invoiceFor(tx: Tx, studentId: string, termId: string) {
   const [row] = await tx
     .select()
     .from(feeInvoices)
-    .where(and(eq(feeInvoices.studentId, studentId), eq(feeInvoices.termId, termId)))
+    .where(and(eq(feeInvoices.studentId, studentId), eq(feeInvoices.termId, termId), isNull(feeInvoices.voidedAt)))
   return row ?? null
 }
 
@@ -200,6 +216,7 @@ export async function grantWaiver(actor: Actor, input: unknown) {
       .from(feeItems)
       .where(eq(feeItems.id, data.feeItemId))
     if (!item) throw new FeeError(404, 'no_such_item', 'no such charge')
+    await lockTermIssue(tx, item.termId)
 
     // Only a charge the student actually has (ACC-22): an item of a programme
     // they are enrolled in for its term, by the rule that bills them. Anything
@@ -299,6 +316,14 @@ export async function revokeWaiver(actor: Actor, input: unknown) {
   const data = revokeWaiverSchema.parse(input)
 
   await withTenant(tenant, async (tx) => {
+    const [at] = await tx
+      .select({ termId: feeItems.termId })
+      .from(feeWaivers)
+      .innerJoin(feeItems, eq(feeItems.id, feeWaivers.feeItemId))
+      .where(eq(feeWaivers.id, data.waiverId))
+    if (!at) throw new FeeError(404, 'no_such_waiver', 'no such waiver')
+    await lockTermIssue(tx, at.termId)
+    // Read again under the lock: a void that held it has since changed posted_paise.
     const [row] = await tx
       .select()
       .from(feeWaivers)
@@ -346,24 +371,60 @@ export async function revokeWaiver(actor: Actor, input: unknown) {
 // --- payments -------------------------------------------------------------
 
 /**
- * Next receipt number for the institution. A counter row updated in the same
- * transaction, not a count of payments: two clerks taking money at once must
- * not be handed the same number, and the row lock makes that impossible.
+ * Next receipt number: one gap-free series per institution and fiscal year
+ * (ACC-30, D15), <prefix>/<fy>/<n>, such as R/2627/000001. The year is that of
+ * the money's date in the institution's zone, which is the year the journal
+ * posts it in. A series row updated in the same transaction, not a count of
+ * payments: two clerks taking money at once must not be handed the same
+ * number, and the row lock makes that impossible. The prefix is still the old
+ * counter's; its own count is no longer used. Receipts issued before keep
+ * their R-000001 numbers.
  */
-async function nextReceiptNo(tx: Tx, tenant: string): Promise<string> {
-  await tx
-    .insert(receiptCounters)
-    .values({ institutionId: tenant })
-    .onConflictDoNothing()
-
-  const [row] = await tx
-    .update(receiptCounters)
-    .set({ next: sql`${receiptCounters.next} + 1` })
+async function nextReceiptNo(tx: Tx, tenant: string, day: string): Promise<string> {
+  const [counter] = await tx
+    .select({ prefix: receiptCounters.prefix })
+    .from(receiptCounters)
     .where(eq(receiptCounters.institutionId, tenant))
-    .returning({ prefix: receiptCounters.prefix, next: receiptCounters.next })
+  const prefix = counter?.prefix ?? 'R'
+  const { short } = await fiscalShort(tx, tenant, day)
+
+  await tx.insert(receiptSeries).values({ institutionId: tenant, fiscalYear: short }).onConflictDoNothing()
+  const [row] = await tx
+    .update(receiptSeries)
+    .set({ next: sql`${receiptSeries.next} + 1` })
+    .where(and(eq(receiptSeries.institutionId, tenant), eq(receiptSeries.fiscalYear, short)))
+    .returning({ next: receiptSeries.next })
 
   // `next` comes back already incremented, so the number issued is one less.
-  return `${row!.prefix}-${String(row!.next - 1).padStart(6, '0')}`
+  return `${prefix}/${short}/${String(row!.next - 1).padStart(6, '0')}`
+}
+
+/** A browser's clock may run a little ahead; five minutes is allowed (D18). */
+const FUTURE_SKEW_MS = 300_000
+
+/**
+ * Taking more than is due for the term needs saying so (LOW-03, D19). Due is
+ * the balance plus what today's price list has not yet invoiced, so a school
+ * may take fees before issuing the term. A check, not a lock: two payments at
+ * once may together go past it.
+ */
+async function assertWithinDue(tx: Tx, studentId: string, termId: string, amountPaise: number) {
+  const [row] = (await tx.execute(sql`select * from (${postedSql({ termId, studentId })}) p`)).rows
+  const p = postedOf(row as Record<string, unknown> | undefined)
+  const [l] = (
+    await tx.execute(sql`
+      select coalesce(sum(charged), 0)::bigint as listed, coalesce(sum(unposted_waived), 0)::bigint as unposted
+        from (${priceListSql(termId, [studentId])}) l`)
+  ).rows as { listed: string | number; unposted: string | number }[]
+  const notYet = Math.max(0, Number(l?.listed ?? 0) - Number(l?.unposted ?? 0) - p.invoicedPaise)
+  const due = Math.max(0, p.balancePaise + notYet)
+  if (amountPaise > due) {
+    throw new FeeError(
+      409,
+      'exceeds_outstanding',
+      `${rupees(amountPaise)} is more than the ${rupees(due)} due for this term. Tick "Record the excess as an advance" to record it anyway.`,
+    )
+  }
 }
 
 /**
@@ -373,6 +434,13 @@ async function nextReceiptNo(tx: Tx, tenant: string): Promise<string> {
  * number above all -- so a form submitted twice waits for the first
  * submission and is answered with its receipt, and the series keeps no gap.
  */
+/**
+ * What a payment key is hashed on. allowAdvance joined the request after keys
+ * were being kept, so an unticked box stays out of the hash: a retry of a
+ * payment recorded before the upgrade must still match its stored fingerprint.
+ */
+const fingerprint = (d: ReturnType<typeof recordPaymentSchema.parse>) => (d.allowAdvance ? d : { ...d, allowAdvance: undefined })
+
 export async function recordPayment(actor: Actor, input: unknown) {
   const tenant = requireFinance(actor)
   const data = recordPaymentSchema.parse(input)
@@ -380,9 +448,12 @@ export async function recordPayment(actor: Actor, input: unknown) {
     const { value, replayed } = await withIdempotencyKey(
       tx,
       feeIdempotencyKeys,
-      { institutionId: tenant, actorId: actor.id, operation: 'payment', key: actor.idempotencyKey, request: data },
-      () =>
-        recordPaymentWithin(tx, tenant, actor, {
+      { institutionId: tenant, actorId: actor.id, operation: 'payment', key: actor.idempotencyKey, request: fingerprint(data) },
+      async () => {
+        // With a void, an issue run and an award: nothing is paid or credited while one reads.
+        await lockTermIssue(tx, data.termId)
+        if (!data.allowAdvance) await assertWithinDue(tx, data.studentId, data.termId, data.amount)
+        return recordPaymentWithin(tx, tenant, actor, {
           studentId: data.studentId,
           termId: data.termId,
           amountPaise: data.amount,
@@ -390,7 +461,10 @@ export async function recordPayment(actor: Actor, input: unknown) {
           reference: data.reference ?? null,
           receivedAt: data.receivedAt ? new Date(data.receivedAt) : new Date(),
           notes: data.notes ?? null,
-        }),
+          drawerIfsc: data.drawerIfsc ?? null,
+          drawerAccount: data.drawerAccount ?? null,
+        })
+      },
       async (id) => (await tx.select().from(feePayments).where(eq(feePayments.id, id)))[0],
     )
     return replayed
@@ -407,6 +481,9 @@ export interface PaymentInput {
   reference: string | null
   receivedAt: Date
   notes: string | null
+  /** A cheque's drawer, as printed on it (D16). */
+  drawerIfsc?: string | null
+  drawerAccount?: string | null
 }
 
 /**
@@ -425,9 +502,25 @@ export async function recordPaymentWithin(tx: Tx, tenant: string, actor: Actor, 
     throw new FeeError(400, 'not_a_student', 'fees are recorded against students')
   }
 
+  // No receipt for money that has not arrived yet (LOW-03, D18).
+  if (data.receivedAt.getTime() > Date.now() + FUTURE_SKEW_MS) {
+    throw new FeeError(400, 'future_receipt', 'a receipt cannot be dated in the future')
+  }
+
+  // A cheque's drawer, both or neither, and only on a cheque (D16).
+  const ifsc = data.drawerIfsc ?? null
+  const account = data.drawerAccount ?? null
+  if ((ifsc === null) !== (account === null)) {
+    throw new FeeError(400, 'drawer_incomplete', 'give both the IFSC and the account number, or neither')
+  }
+  if (ifsc !== null && data.method !== 'cheque') {
+    throw new FeeError(400, 'drawer_not_cheque', 'drawer details belong to a cheque')
+  }
+
   // A UTR already receipted -- typed twice, or typed once and now arriving as
   // the student's verified claim -- is refused before it takes a receipt
   // number. The unique index is what holds when two requests race past this.
+  // A voided receipt no longer holds its UTR (D17).
   const reference = data.reference?.trim() || null
   if (reference && onePerReference(data.method)) {
     const [prior] = await tx
@@ -435,6 +528,7 @@ export async function recordPaymentWithin(tx: Tx, tenant: string, actor: Actor, 
       .from(feePayments)
       .where(
         and(
+          eq(feePayments.status, 'live'),
           inArray(feePayments.method, [...ONE_RECEIPT_PER_REFERENCE]),
           sql`${feePayments.reference} is not null and btrim(${feePayments.reference}) <> ''`,
           sql`upper(btrim(${feePayments.reference})) = upper(${reference})`,
@@ -445,7 +539,39 @@ export async function recordPaymentWithin(tx: Tx, tenant: string, actor: Actor, 
     }
   }
 
-  const receiptNo = await nextReceiptNo(tx, tenant)
+  // A cheque is receipted once per drawer IFSC, account and number while it
+  // is live; a returned cheque presented again can be receipted again (D16).
+  if (reference && ifsc && account && data.method === 'cheque') {
+    const [prior] = await tx
+      .select({ receiptNo: feePayments.receiptNo })
+      .from(feePayments)
+      .where(
+        and(
+          eq(feePayments.status, 'live'),
+          eq(feePayments.method, 'cheque'),
+          eq(feePayments.drawerIfsc, ifsc),
+          eq(feePayments.drawerAccount, account),
+          sql`upper(btrim(${feePayments.reference})) = upper(${reference})`,
+        ),
+      )
+    if (prior) {
+      throw new FeeError(409, 'duplicate_cheque', `cheque ${reference} on ${ifsc} ${account} is already receipted as ${prior.receiptNo}`)
+    }
+  }
+
+  // The accounting day, worked out once: the receipt's year, the day it prints and
+  // the journal's posting day all come from it, whatever the zone does meanwhile.
+  const day = await localDayOf(tx, tenant, data.receivedAt)
+  const receiptNo = await nextReceiptNo(tx, tenant, day)
+
+  // The fee heads as they stand now, printed on the receipt and kept (ACC-30, D20).
+  const breakup = {
+    heads: (await chargesFor(tx, data.studentId, data.termId)).map((h) => ({
+      label: h.label,
+      chargedPaise: h.chargedPaise,
+      waivedPaise: h.waivedPaise ?? 0,
+    })),
+  }
 
   let row: typeof feePayments.$inferSelect | undefined
   try {
@@ -462,11 +588,17 @@ export async function recordPaymentWithin(tx: Tx, tenant: string, actor: Actor, 
         recordedBy: actor.id,
         receiptNo,
         notes: data.notes,
+        drawerIfsc: ifsc,
+        drawerAccount: account,
+        breakup,
       })
       .returning()
   } catch (e) {
     if (constraintOf(e) === 'fee_payments_reference') {
       throw new FeeError(409, 'duplicate_reference', `${reference} has just been receipted by another request`)
+    }
+    if (constraintOf(e) === 'fee_payments_cheque') {
+      throw new FeeError(409, 'duplicate_cheque', `cheque ${reference} has just been receipted by another request`)
     }
     throw e
   }
@@ -487,6 +619,8 @@ export async function recordPaymentWithin(tx: Tx, tenant: string, actor: Actor, 
       amountPaise: data.amountPaise,
       method: data.method,
       reference,
+      drawerIfsc: ifsc,
+      drawerAccount: account,
     },
   })
 
@@ -498,7 +632,7 @@ export async function recordPaymentWithin(tx: Tx, tenant: string, actor: Actor, 
   // and not an accounting event: the entry the student's receipt describes
   // happened when the money changed hands. A cheque that bounces is a
   // reversing entry, which is what the journal is for.
-  await postPayment(tx, tenant, actor.id, row!)
+  await postPayment(tx, tenant, actor.id, row!, day)
 
   return row!
 }
@@ -581,20 +715,17 @@ async function issueChunk(
   termCode: string,
   students: { studentId: string; studentName: string | null }[],
 ) {
-  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'fees.issue:' + termId}, 0))`)
+  await lockTermIssue(tx, termId)
 
   const ids = students.map((s) => s.studentId)
   const lines = (await tx.execute(priceListSql(termId, ids))).rows as Record<string, unknown>[]
-  const priced = new Map<string, { listed: number; unposted: number; freshWaivers: string[] }>()
-  // The student charges this run priced: only these are marked billed below, so
-  // a charge raised or replaced after pricing is left for the next run.
-  const pricedCharges: string[] = []
+  const priced = new Map<string, { listed: number; unposted: number; freshWaivers: string[]; chargeIds: string[] }>()
   for (const l of lines) {
-    const g = priced.get(String(l.student_id)) ?? { listed: 0, unposted: 0, freshWaivers: [] }
-    if (l.student_charge_id) pricedCharges.push(String(l.student_charge_id))
+    const g = priced.get(String(l.student_id)) ?? { listed: 0, unposted: 0, freshWaivers: [], chargeIds: [] }
     g.listed += Number(l.charged)
     g.unposted += Number(l.unposted_waived)
     if (l.waiver_id && Number(l.unposted_waived) > 0) g.freshWaivers.push(String(l.waiver_id))
+    if (l.student_charge_id != null) g.chargeIds.push(String(l.student_charge_id))
     priced.set(String(l.student_id), g)
   }
 
@@ -608,7 +739,7 @@ async function issueChunk(
           version: feeInvoices.version,
         })
         .from(feeInvoices)
-        .where(and(eq(feeInvoices.termId, termId), inArray(feeInvoices.studentId, ids)))
+        .where(and(eq(feeInvoices.termId, termId), inArray(feeInvoices.studentId, ids), isNull(feeInvoices.voidedAt)))
     ).map((i) => [i.studentId, i]),
   )
 
@@ -678,20 +809,22 @@ async function issueChunk(
 
   if (issued.length > 0) {
     const issuedIds = issued.map((i) => i.studentId)
-    // The student's own charges are in the books now: from here they are
-    // waived or refunded, not cancelled.
-    await tx
-      .update(studentCharges)
-      .set({ invoicedAt: new Date() })
-      .where(
-        and(
-          inArray(studentCharges.id, pricedCharges),
-          eq(studentCharges.termId, termId),
-          inArray(studentCharges.studentId, issuedIds),
-          isNull(studentCharges.cancelledAt),
-          isNull(studentCharges.invoicedAt),
-        ),
-      )
+    // The student's own charges this run priced are in the books now: from
+    // here they are waived or refunded, not cancelled. Only those (NEW-91): a
+    // charge raised while the chunk ran was not billed and stays cancellable.
+    const chargeIds = issuedIds.flatMap((s) => priced.get(s)?.chargeIds ?? [])
+    if (chargeIds.length > 0) {
+      await tx
+        .update(studentCharges)
+        .set({ invoicedAt: new Date() })
+        .where(
+          and(
+            inArray(studentCharges.id, chargeIds),
+            isNull(studentCharges.cancelledAt),
+            isNull(studentCharges.invoicedAt),
+          ),
+        )
+    }
     await notify(tx, tenant, {
       userIds: issuedIds,
       moduleId: 'fees',
@@ -722,13 +855,13 @@ export async function listInvoices(actor: Actor, termId: string, page = invoiceP
       })
       .from(feeInvoices)
       .innerJoin(users, eq(users.id, feeInvoices.studentId))
-      .where(and(eq(feeInvoices.termId, termId), keyset(keys, page)))
+      .where(and(eq(feeInvoices.termId, termId), isNull(feeInvoices.voidedAt), keyset(keys, page)))
       .orderBy(...orderKeys(keys, page.dir))
       .limit(page.limit + 1)
     const [count] = await tx
       .select({ n: sql<number>`count(*)::int` })
       .from(feeInvoices)
-      .where(eq(feeInvoices.termId, termId))
+      .where(and(eq(feeInvoices.termId, termId), isNull(feeInvoices.voidedAt)))
     return finishPage(rows, page, Number(count!.n))
   })
 }
@@ -763,11 +896,16 @@ export async function refundPayment(actor: Actor, input: unknown) {
 type RefundInput = ReturnType<typeof refundPaymentSchema.parse>
 
 async function refundWithin(tx: Tx, tenant: string, actor: Actor, data: RefundInput) {
+  // Locked: a refund and a void of one receipt take turns (D7).
   const [payment] = await tx
     .select()
     .from(feePayments)
     .where(eq(feePayments.id, data.paymentId))
+    .for('update')
   if (!payment) throw new FeeError(404, 'no_such_payment', 'no such payment')
+  if (payment.status !== 'live') {
+    throw new FeeError(409, 'payment_not_live', `receipt ${payment.receiptNo} is void or returned unpaid`)
+  }
   if ((await checkOtherPerson(tx, actor, tenant, { creatorId: payment.recordedBy, act: 'refund', moduleId: MODULE, entity: 'fee_payments', entityId: payment.id })) === 'refused') {
     throw new FeeError(403, 'separation_of_duties', 'you recorded this payment, so someone else must refund it')
   }
@@ -842,7 +980,11 @@ export async function reconcilePayment(actor: Actor, input: unknown) {
       .select()
       .from(feePayments)
       .where(eq(feePayments.id, data.paymentId))
+      .for('update')
     if (!row) throw new FeeError(404, 'no_such_payment', 'no such payment')
+    if (row.status !== 'live') {
+      throw new FeeError(409, 'payment_not_live', `receipt ${row.receiptNo} is void or returned unpaid`)
+    }
     if (row.reconciledAt) {
       throw new FeeError(409, 'already_reconciled', 'that payment is already reconciled')
     }
@@ -899,7 +1041,7 @@ export async function paymentTrail(actor: Actor, paymentId: string) {
  * Charges applying to one student in one term: the fee items of the
  * programmes they are enrolled in for it (ACC-19), and their own charges.
  */
-async function chargesFor(tx: Tx, studentId: string, termId: string) {
+export async function chargesFor(tx: Tx, studentId: string, termId: string) {
   const progs = await enrolledPrograms(tx, studentId, termId)
 
   // Charges on this student alone -- a backlog paper -- whatever programme
@@ -1013,6 +1155,7 @@ export async function studentLedger(
         reference: p.reference,
         receivedAt: p.receivedAt.toISOString(),
         reconciledAt: p.reconciledAt?.toISOString() ?? null,
+        status: p.status,
       })),
       chargedPaise: p.invoicedPaise,
       waivedPaise: p.waivedPaise,
@@ -1143,9 +1286,16 @@ export async function paymentForReceipt(actor: Actor, paymentId: string) {
         reference: feePayments.reference,
         receivedAt: feePayments.receivedAt,
         reconciledAt: feePayments.reconciledAt,
+        status: feePayments.status,
+        voidedAt: feePayments.voidedAt,
+        bouncedOn: feePayments.bouncedOn,
+        voidReason: feePayments.voidReason,
+        breakup: feePayments.breakup,
         studentId: feePayments.studentId,
         studentName: users.name,
         studentEmail: users.email,
+        receivedOn: sql<string | null>`(select e.posting_date::text from finance_journal_entries e where e.source_module = 'fees' and e.source_ref = 'payment:' || fee_payments.id)`,
+        voidedOn: sql<string | null>`(select r.posting_date::text from finance_journal_entries r join finance_journal_entries e on e.id = r.reversal_of where e.source_module = 'fees' and e.source_ref = 'payment:' || fee_payments.id)`,
         termCode: terms.code,
         termName: terms.name,
       })
@@ -1164,7 +1314,9 @@ export async function paymentForReceipt(actor: Actor, paymentId: string) {
         throw new FeeError(403, 'forbidden', 'not permitted')
       }
     }
-    return row
+    // The institution's identity for the receipt's head (ACC-30, D21).
+    const s = await settingsWithin(tx, tenant)
+    return { ...row, legalName: s.legalName, address: s.address, pan: s.pan }
   })
 }
 

@@ -317,19 +317,27 @@ export const pages: PluginPage[] = [
         payments: l.payments.map((p) => ({
           ...p,
           receiptHref: `/api/v1/modules/fees/receipt.pdf?paymentId=${p.id}`,
-          status: p.reconciledAt ? 'confirmed' : 'pending',
-          pending: !p.reconciledAt,
+          status: p.status === 'voided' ? 'void' : p.status === 'bounced' ? 'returned unpaid' : p.reconciledAt ? 'confirmed' : 'pending',
+          pending: p.status === 'live' && !p.reconciledAt,
         })),
         pending: l.payments
-          .filter((p) => !p.reconciledAt)
+          .filter((p) => p.status === 'live' && !p.reconciledAt)
           .map((p) => ({
             value: p.id,
             label: `${p.receiptNo} - ${formatPaise(p.amountPaise)}`,
           })),
-        receipts: l.payments.map((p) => ({
-          value: p.id,
-          label: `${p.receiptNo} - ${formatPaise(p.amountPaise)}`,
-        })),
+        receipts: l.payments
+          .filter((p) => p.status === 'live')
+          .map((p) => ({
+            value: p.id,
+            label: `${p.receiptNo} - ${formatPaise(p.amountPaise)}`,
+          })),
+        cheques: l.payments
+          .filter((p) => p.status === 'live' && p.method === 'cheque')
+          .map((p) => ({
+            value: p.id,
+            label: `${p.receiptNo} - ${formatPaise(p.amountPaise)}${p.reference ? ' - ' + p.reference : ''}`,
+          })),
       }
     },
     sections: (data) => [
@@ -447,7 +455,10 @@ export const pages: PluginPage[] = [
             optional: true,
             hint: 'Cheque number, UPI reference, whatever identifies it on the statement',
           },
+          { name: 'drawerIfsc', label: "Drawer's IFSC", optional: true, hint: 'Cheques: printed on the cheque' },
+          { name: 'drawerAccount', label: "Drawer's account number", optional: true },
           { name: 'notes', label: 'Notes', optional: true },
+          { name: 'allowAdvance', label: 'Record the excess as an advance', kind: 'checkbox', optional: true },
         ],
       },
       {
@@ -494,6 +505,64 @@ export const pages: PluginPage[] = [
       },
       {
         kind: 'form',
+        title: 'Void a receipt',
+        note:
+          'For a receipt recorded by mistake: the wrong student, the wrong amount, entered twice. ' +
+          'The receipt stays on record marked void, its entry in the books is reversed today, and ' +
+          'the student and their guardians are told.',
+        submit: 'Void receipt',
+        path: '/payments/void',
+        roles: [...ADMIN],
+        fields: [
+          { name: 'paymentId', label: 'Receipt', kind: 'select', options: 'receipts' },
+          { name: 'reason', label: 'Reason', hint: 'At least five characters' },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Cheque returned unpaid',
+        note:
+          "The bank's return memo gives the date and the reason. The receipt is reversed on that date " +
+          'and the amount is due again. A charge, if any, is billed when the term is next issued.',
+        submit: 'Record return',
+        path: '/payments/bounce',
+        roles: [...OFFICE],
+        fields: [
+          { name: 'paymentId', label: 'Cheque', kind: 'select', options: 'cheques' },
+          { name: 'bouncedOn', label: 'Returned on', kind: 'date' },
+          {
+            name: 'drawerIfsc',
+            label: "Drawer's IFSC",
+            optional: true,
+            hint: 'Printed on the cheque; needed if not recorded with the receipt',
+          },
+          { name: 'drawerAccount', label: "Drawer's account number", optional: true },
+          { name: 'charge', label: 'Bounce charge', kind: 'money', optional: true, hint: 'Rupees, at most 10,000' },
+          { name: 'reason', label: "Bank's reason" },
+        ],
+      },
+      ...(data.invoiced
+        ? [
+            {
+              kind: 'form' as const,
+              title: "Void this term's invoice",
+              note:
+                'For an invoice issued in error, such as to a student who was not enrolled. Nothing may be ' +
+                'paid or credited against the term. The student is no longer billed; issuing the term again ' +
+                'bills them afresh if they are enrolled.',
+              submit: 'Void invoice',
+              path: '/invoices/void',
+              roles: [...ADMIN],
+              fields: [
+                { name: 'studentId', kind: 'hidden' as const, label: '', value: String(data.studentId ?? '') },
+                { name: 'termId', kind: 'hidden' as const, label: '', value: String(data.termId ?? '') },
+                { name: 'reason', label: 'Reason', hint: 'At least five characters' },
+              ],
+            },
+          ]
+        : []),
+      {
+        kind: 'form',
         title: 'Waive a charge',
         note:
           'A waiver cannot exceed the charge it applies to. Granting one against ' +
@@ -538,8 +607,8 @@ export const pages: PluginPage[] = [
         payments: l.payments.map((p) => ({
           ...p,
           receiptHref: `/api/v1/modules/fees/receipt.pdf?paymentId=${p.id}`,
-          status: p.reconciledAt ? 'confirmed' : 'pending',
-          pending: !p.reconciledAt,
+          status: p.status === 'voided' ? 'void' : p.status === 'bounced' ? 'returned unpaid' : p.reconciledAt ? 'confirmed' : 'pending',
+          pending: p.status === 'live' && !p.reconciledAt,
         })),
         terms: structure.terms.map((t) => ({
           label: t.code,

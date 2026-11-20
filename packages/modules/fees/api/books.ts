@@ -9,7 +9,9 @@ type Tx = Parameters<Parameters<typeof withTenant>[1]>[0]
  * mirrors posting.ts line for line: an invoice debits the receivable by its
  * charged amount less the waivers that rode in it, and every waiver's
  * posted_paise is exactly what the books have been told it forgives, so
- * charged - waived - credited - paid + refunded is the receivable.
+ * charged - waived - credited - paid + refunded is the receivable. A voided
+ * invoice and a voided or bounced payment are not counted: their entries are
+ * reversed (P1-03b).
  */
 export function postedSql(filter: { termId?: string | null; studentId?: string | null } = {}): SQL {
   const t = (col: SQL) => (filter.termId ? sql` and ${col} = ${filter.termId}::uuid` : sql``)
@@ -26,7 +28,7 @@ export function postedSql(filter: { termId?: string | null; studentId?: string |
       from (
         select i.student_id, i.term_id, i.charged_paise::bigint as invoiced, 0::bigint as waived, 0::bigint as credited,
                0::bigint as paid, 0::bigint as refunded, 0::bigint as unreconciled
-          from fee_invoices i where true${t(sql`i.term_id`)}${s(sql`i.student_id`)}
+          from fee_invoices i where i.voided_at is null${t(sql`i.term_id`)}${s(sql`i.student_id`)}
         union all
         select w.student_id, f.term_id, 0, w.posted_paise, 0, 0, 0, 0
           from fee_waivers w join fee_items f on f.id = w.fee_item_id
@@ -40,7 +42,7 @@ export function postedSql(filter: { termId?: string | null; studentId?: string |
         union all
         select p.student_id, p.term_id, 0, 0, 0, p.amount_paise, 0,
                case when p.reconciled_at is null then p.amount_paise else 0 end
-          from fee_payments p where true${t(sql`p.term_id`)}${s(sql`p.student_id`)}
+          from fee_payments p where p.status = 'live'${t(sql`p.term_id`)}${s(sql`p.student_id`)}
         union all
         select p.student_id, p.term_id, 0, 0, 0, 0, r.amount_paise, 0
           from fee_refunds r join fee_payments p on p.id = r.payment_id
@@ -79,6 +81,10 @@ export const postedOf = (r: Record<string, unknown> | undefined): Posted =>
  * its student is then read from the `fee.waiver_revoked` audit row written in
  * the same transaction, because a waiver that rode in the invoice leaves its
  * reversal as the only `waiver:` posting (review P1-03a HIGH).
+ *
+ * A reversal (`reversal:<entryId>`: a voided or bounced payment) is attributed
+ * through the entry it reverses, and an `invoice-void:` entry through its
+ * invoice (P1-03b; decision 527).
  */
 const BOOKS_BY_STUDENT = sql`
   select coalesce(i.student_id, p.student_id, rp.student_id, w.student_id, wr.student_id, aw.student_id, dc.student_id) as student_id,
@@ -86,18 +92,21 @@ const BOOKS_BY_STUDENT = sql`
     from finance_journal_lines l
     join finance_accounts a on a.id = l.account_id and a.purpose = 'fees_receivable'
     join finance_journal_entries e on e.id = l.entry_id
-    left join fee_invoices i on e.source_module = 'fees' and split_part(e.source_ref, ':', 1) = 'invoice' and i.id::text = split_part(e.source_ref, ':', 2)
-    left join fee_payments p on e.source_module = 'fees' and split_part(e.source_ref, ':', 1) = 'payment' and p.id::text = split_part(e.source_ref, ':', 2)
-    left join fee_refunds r on e.source_module = 'fees' and split_part(e.source_ref, ':', 1) = 'refund' and r.id::text = split_part(e.source_ref, ':', 2)
-    left join fee_payments rp on rp.id = r.payment_id
-    left join fee_waivers w on e.source_module = 'fees' and split_part(e.source_ref, ':', 1) = 'waiver' and w.id::text = split_part(e.source_ref, ':', 2)
+    left join finance_journal_entries o on o.id = e.reversal_of
+    cross join lateral (
+      select case when coalesce(o.source_module, e.source_module) = 'fees' then coalesce(o.source_ref, e.source_ref) end as ref) r
+    left join fee_invoices i on split_part(r.ref, ':', 1) in ('invoice', 'invoice-void') and i.id::text = split_part(r.ref, ':', 2)
+    left join fee_payments p on split_part(r.ref, ':', 1) = 'payment' and p.id::text = split_part(r.ref, ':', 2)
+    left join fee_refunds rf on split_part(r.ref, ':', 1) = 'refund' and rf.id::text = split_part(r.ref, ':', 2)
+    left join fee_payments rp on rp.id = rf.payment_id
+    left join fee_waivers w on split_part(r.ref, ':', 1) = 'waiver' and w.id::text = split_part(r.ref, ':', 2)
     left join lateral (
       select al.detail->>'studentId' as student_id from audit_log al
-       where w.id is null and e.source_module = 'fees' and split_part(e.source_ref, ':', 1) = 'waiver'
-         and al.entity = 'fee_waivers' and al.entity_id = split_part(e.source_ref, ':', 2) and al.action = 'fee.waiver_revoked'
+       where w.id is null and split_part(r.ref, ':', 1) = 'waiver'
+         and al.entity = 'fee_waivers' and al.entity_id = split_part(r.ref, ':', 2) and al.action = 'fee.waiver_revoked'
        limit 1) wr on true
-    left join fee_scholarship_awards aw on e.source_module = 'fees' and split_part(e.source_ref, ':', 1) in ('award', 'award-revoked') and aw.id::text = split_part(e.source_ref, ':', 2)
-    left join fee_drop_credits dc on e.source_module = 'fees' and split_part(e.source_ref, ':', 1) = 'drop' and dc.id::text = split_part(e.source_ref, ':', 2)
+    left join fee_scholarship_awards aw on split_part(r.ref, ':', 1) in ('award', 'award-revoked') and aw.id::text = split_part(r.ref, ':', 2)
+    left join fee_drop_credits dc on split_part(r.ref, ':', 1) = 'drop' and dc.id::text = split_part(r.ref, ':', 2)
    group by 1`
 
 export interface ReceivableReport {

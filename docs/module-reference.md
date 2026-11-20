@@ -7,31 +7,31 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 
 | Module | Version | Pages | API routes | Dependencies |
 |---|---|---:|---:|---|
-| [Academic Core](#academic) | 0.11.0 | 7 | 42 | None |
-| [Admissions](#admissions) | 0.7.0 | 3 | 9 | academic |
+| [Academic Core](#academic) | 0.12.0 | 7 | 42 | None |
+| [Admissions](#admissions) | 0.8.0 | 3 | 9 | academic |
 | [Alumni and events](#alumni) | 0.5.0 | 4 | 12 | None |
-| [Attendance & QR](#attendance) | 0.14.0 | 7 | 28 | academic, notices |
-| [Student Care](#care) | 0.10.0 | 7 | 24 | academic, notices |
-| [Ceremonies](#ceremonies) | 0.6.0 | 5 | 18 | academic |
-| [Sales CRM](#crm) | 0.4.0 | 4 | 32 | finance, notices |
-| [Enrollment](#enrollment) | 0.6.0 | 3 | 8 | academic |
-| [Examinations & Grading](#examinations) | 0.16.0 | 9 | 36 | academic, notices |
-| [Feedback](#feedback) | 0.7.0 | 8 | 19 | academic |
-| [Fees & Finance](#fees) | 0.20.0 | 10 | 39 | academic, finance, notices |
-| [Finance & Books](#finance) | 0.19.0 | 92 | 204 | None |
+| [Attendance & QR](#attendance) | 0.16.0 | 8 | 30 | academic, notices |
+| [Student Care](#care) | 0.11.0 | 7 | 24 | academic, notices |
+| [Ceremonies](#ceremonies) | 0.7.0 | 5 | 18 | academic |
+| [Sales CRM](#crm) | 0.8.0 | 4 | 32 | finance, notices |
+| [Enrollment](#enrollment) | 0.8.0 | 3 | 9 | academic |
+| [Examinations & Grading](#examinations) | 0.22.0 | 9 | 36 | academic, notices |
+| [Feedback](#feedback) | 0.8.0 | 8 | 19 | academic |
+| [Fees & Finance](#fees) | 0.26.0 | 11 | 43 | academic, finance, notices |
+| [Finance & Books](#finance) | 0.22.0 | 92 | 208 | None |
 | [Helpdesk and grievance](#helpdesk) | 0.5.0 | 2 | 7 | None |
-| [Hostel](#hostel) | 0.9.0 | 5 | 18 | academic |
-| [HR & Payroll](#hr) | 0.21.0 | 18 | 134 | finance, notices |
-| [Library](#library) | 0.12.0 | 5 | 18 | academic |
-| [Mentoring](#mentoring) | 0.16.0 | 6 | 19 | academic, notices |
-| [Communication & Notices](#notices) | 0.13.0 | 4 | 13 | academic |
-| [Parent Portal](#parents) | 0.16.0 | 4 | 11 | academic |
-| [Placement](#placement) | 0.10.0 | 8 | 15 | academic, notices |
-| [Projects and timesheets](#projects) | 0.2.0 | 6 | 27 | finance |
-| [Quizzes](#quizzes) | 0.7.0 | 7 | 22 | academic |
-| [Reports](#reports) | 0.1.0 | 5 | 10 | notices |
+| [Hostel](#hostel) | 0.11.0 | 5 | 18 | academic |
+| [HR & Payroll](#hr) | 0.25.0 | 18 | 134 | finance, notices |
+| [Library](#library) | 0.15.0 | 5 | 18 | academic |
+| [Mentoring](#mentoring) | 0.22.0 | 6 | 19 | academic, notices |
+| [Communication & Notices](#notices) | 0.14.0 | 4 | 13 | academic |
+| [Parent Portal](#parents) | 0.22.0 | 4 | 11 | academic |
+| [Placement](#placement) | 0.11.0 | 8 | 15 | academic, notices |
+| [Projects and timesheets](#projects) | 0.5.0 | 6 | 27 | finance |
+| [Quizzes](#quizzes) | 0.8.0 | 7 | 22 | academic |
+| [Reports](#reports) | 0.2.0 | 5 | 10 | notices |
 | [Skills](#skills) | 0.5.0 | 5 | 12 | None |
-| [Timetable](#timetable) | 0.8.0 | 12 | 42 | academic |
+| [Timetable](#timetable) | 0.9.0 | 12 | 42 | academic |
 | [Transport](#transport) | 0.4.0 | 4 | 12 | None |
 
 <a id="academic"></a>
@@ -84,7 +84,7 @@ Source: `campusos-platform/packages/modules/academic/`.
 | `POST /api/v1/modules/academic/eligibility` | Whether a student may take a course, and what is missing if not | `studentId`, `courseId` |
 | `POST /api/v1/modules/academic/completions/correct` | Correct a completed course, with a reason that goes on the record | `completionId`, `credits`, `gradePoints`, `gradeLabel`, `passed`, `reason` |
 | `POST /api/v1/modules/academic/degree-audit` | What a student's degree still needs, and what the average is | `studentId`, `studentProgramId` |
-| `POST /api/v1/modules/academic/profile` | Set a student's roll and registration numbers, phone and address (the office) | `studentId`, `rollNo`, `registrationNo`, `phone`, `addressLine`, `city`, `state`, `postalCode`, `emergencyContact`, `dateOfBirth`, `apaarId` |
+| `POST /api/v1/modules/academic/profile` | Set a student's roll and registration numbers, phone and address (the office) | `studentId`, `rollNo`, `registrationNo`, `phone`, `addressLine`, `city`, `state`, `postalCode`, `emergencyContact`, `house`, `dateOfBirth`, `apaarId` |
 | `POST /api/v1/modules/academic/consents` | Record a choice for a student: a guardian for a minor, the student once adult, or the office from a form | `studentId`, `purpose`, `decision`, `note` |
 | `POST /api/v1/modules/academic/classes/change` | Cancel, move or hand to a substitute one meeting of a class | `slotId`, `onDate`, `kind`, `movedOn`, `movedStarts`, `movedEnds`, `movedRoomId`, `substituteId`, `reason` |
 | `POST /api/v1/modules/academic/classes/change/withdraw` | Withdraw a change: the class meets as usual | `changeId`, `reason` |
@@ -183,6 +183,7 @@ Source: `campusos-platform/packages/modules/attendance/`.
 | `/m/attendance/device` | My attendance device | student |
 | `/m/attendance/me` | My attendance | student |
 | `/m/attendance/absentees` | Absentees | institution_admin, super_admin, hod, faculty |
+| `/m/attendance/daily` | Daily register | institution_admin, super_admin, hod, faculty |
 | `/m/attendance/excuses` | Excused absence | institution_admin, super_admin, hod, faculty |
 
 ### Operations
@@ -203,6 +204,8 @@ Source: `campusos-platform/packages/modules/attendance/`.
 | `GET /api/v1/modules/attendance/excuses` | Excused absences: a student’s own, a teacher’s classes’, or all for the office | See runtime OpenAPI schema |
 | `POST /api/v1/modules/attendance/excuses` | Excuse absence over days, for one class or all of a student’s classes | `studentId`, `offeringId`, `fromOn`, `toOn`, `kind`, `reason` |
 | `POST /api/v1/modules/attendance/excuses/revoke` | Revoke an excuse, with a reason | `excuseId`, `reason` |
+| `GET /api/v1/modules/attendance/daily` | A section’s daily register for a day: its students and who is marked absent | `sectionId` (query), `onDate` (query) |
+| `POST /api/v1/modules/attendance/daily` | Mark a section’s attendance for a day; everyone not listed absent is present | `sectionId`, `onDate`, `absent` |
 | `GET /api/v1/modules/attendance/absentees` | Everybody in a class with their attendance, those short of the minimum first, and who missed the last session | `offeringId` (query) |
 | `GET /api/v1/modules/attendance/summary` | A student’s attendance class by class: held, present, excused, absent, percentage, and classes needed to reach the minimum | `studentId` (query), `termId` (query) |
 | `GET /api/v1/modules/attendance/sessions` | Open sessions the caller may act on | See runtime OpenAPI schema |
@@ -393,6 +396,7 @@ Source: `campusos-platform/packages/modules/enrollment/`.
 | `POST /api/v1/modules/enrollment/register` | Register a student for an offering, or place them on its waiting list | `studentId`, `offeringId`, `effectiveOn`, `reason` |
 | `POST /api/v1/modules/enrollment/drop` | Drop or withdraw from an offering, whichever the term calendar allows | `studentId`, `offeringId`, `effectiveOn`, `reason` |
 | `POST /api/v1/modules/enrollment/seats` | Set how many may sit in an offering, and how many may queue | `offeringId`, `capacity`, `waitlistCapacity` |
+| `POST /api/v1/modules/enrollment/sections/feed` | Whether a section's membership follows registration; marking it brings in the students already registered | `sectionId`, `fed` |
 | `GET /api/v1/modules/enrollment/seats` | Every capped offering, with seats taken and queued | See runtime OpenAPI schema |
 | `GET /api/v1/modules/enrollment/roster` | Who is on an offering, with waiting-list places in order | See runtime OpenAPI schema |
 | `GET /api/v1/modules/enrollment/registrations` | A student's registrations; the caller's own without a studentId | See runtime OpenAPI schema |
@@ -521,10 +525,11 @@ Source: `campusos-platform/packages/modules/fees/`.
 |---|---|---|
 | `/m/fees` | Fees | institution_admin, super_admin, accounts_staff |
 | `/m/fees/student-charges` | Charges on one student | institution_admin, super_admin, accounts_staff |
-| `/m/fees/dues` | Dues | institution_admin, super_admin, accounts_staff, hod |
+| `/m/fees/dues` | Dues | institution_admin, super_admin, accounts_staff |
 | `/m/fees/student` | Student ledger | institution_admin, super_admin, accounts_staff, hod |
 | `/m/fees/me` | My fees | student |
 | `/m/fees/aid` | Aid and refunds | institution_admin, super_admin |
+| `/m/fees/reconciliation` | Fee ledger against the books | institution_admin, super_admin, accounts_staff |
 | `/m/fees/transfer` | Pay by bank transfer | student |
 | `/m/fees/letter` | Demand letter | student |
 | `/m/fees/transfers` | Reported transfers | institution_admin, super_admin, accounts_staff |
@@ -565,14 +570,22 @@ Source: `campusos-platform/packages/modules/fees/`.
 | `POST /api/v1/modules/fees/items` | Define a charge for a programme and term | `programId`, `termId`, `label`, `amount`, `proratable`, `dueOn` |
 | `POST /api/v1/modules/fees/waivers` | Grant or revise a scholarship or waiver. Reason mandatory and audited. | `studentId`, `feeItemId`, `amount`, `reason` |
 | `POST /api/v1/modules/fees/waivers/revoke` | Withdraw a waiver. Reason mandatory and audited. | `waiverId`, `reason` |
-| `POST /api/v1/modules/fees/payments` | Record a payment and issue a receipt number | `studentId`, `termId`, `amount`, `method`, `reference`, `receivedAt`, `notes`, `Idempotency-Key` (header) |
+| `POST /api/v1/modules/fees/payments` | Record a payment and issue a receipt number | `studentId`, `termId`, `amount`, `method`, `reference`, `receivedAt`, `notes`, `drawerIfsc`, `drawerAccount`, `allowAdvance`, `Idempotency-Key` (header) |
 | `POST /api/v1/modules/fees/payments/reconcile` | Confirm a payment against the bank. Reason mandatory and audited. | `paymentId`, `reason` |
-| `GET /api/v1/modules/fees/invoices` | What has been issued for a term, and for how much | See runtime OpenAPI schema |
+| `GET /api/v1/modules/fees/invoices` | What has been issued for a term, and for how much, a page at a time | See runtime OpenAPI schema |
 | `POST /api/v1/modules/fees/invoices` | Issue a term's charges and post them to the books | `termId`, `studentId` |
 | `POST /api/v1/modules/fees/refunds` | Return money against the payment it came in on | `paymentId`, `amount`, `reason`, `method`, `reference`, `Idempotency-Key` (header) |
+| `POST /api/v1/modules/fees/payments/void` | Void a receipt recorded by mistake | `paymentId`, `reason` |
+| `POST /api/v1/modules/fees/payments/bounce` | Record a cheque returned unpaid by the bank | `paymentId`, `bouncedOn`, `reason`, `drawerIfsc`, `drawerAccount`, `charge` |
+| `POST /api/v1/modules/fees/invoices/void` | Void a student's invoice for a term, issued in error | `studentId`, `termId`, `reason` |
 | `GET /api/v1/modules/fees/ledger` | One student’s charges, waivers and payments for a term | See runtime OpenAPI schema |
-| `GET /api/v1/modules/fees/dues` | Outstanding balances for a term, worst first | See runtime OpenAPI schema |
+| `GET /api/v1/modules/fees/reconciliation` | The student ledgers against the fees receivable account | See runtime OpenAPI schema |
+| `GET /api/v1/modules/fees/dues` | Balances for a term from the books, worst first, a page at a time | See runtime OpenAPI schema |
 | `GET /api/v1/modules/fees/receipt.pdf` | A payment receipt as a PDF (binary response) | See runtime OpenAPI schema |
+
+### Background jobs
+
+- `fees.check-receivable`: daily scheduled; roles institution_admin, accounts_staff, super_admin.
 
 <a id="finance"></a>
 ## Finance & Books
@@ -729,10 +742,11 @@ Source: `campusos-platform/packages/modules/finance/`.
 | `POST /api/v1/modules/finance/taxes` | Add a tax template | `name`, `kind`, `treatment`, `components` |
 | `POST /api/v1/modules/finance/taxes/archive` | Retire a tax template | See runtime OpenAPI schema |
 | `POST /api/v1/modules/finance/tds-sections` | Add a TDS section | `code`, `name`, `ratePercent`, `rateNoPanPercent`, `thresholdSingle`, `thresholdAnnual`, `payableAccountCode` |
+| `POST /api/v1/modules/finance/tds-sections/return-codes` | Set a TDS section's codes in the Form 140 and 144 statements | `sectionId`, `returnCode`, `nrReturnCode`, `nrRemittance` |
 | `POST /api/v1/modules/finance/taxes/india-preset` | Load the India starter set: GST accounts and slabs, TDS sections (to be checked) | See runtime OpenAPI schema |
 | `GET /api/v1/modules/finance/parties` | Customers and suppliers, with what each owes or is owed | See runtime OpenAPI schema |
-| `POST /api/v1/modules/finance/parties` | Add a customer or supplier | `code`, `name`, `isCustomer`, `isSupplier`, `gstin`, `pan`, `stateCode`, `gstCategory`, `address`, `email`, `phone`, `currency`, `paymentTermsDays`, `creditLimit`, `tdsSectionId`, `msme`, `msmeNumber`, `bankName`, `bankAccount`, `ifsc` |
-| `POST /api/v1/modules/finance/parties/update` | Change a party | `code`, `name`, `isCustomer`, `isSupplier`, `gstin`, `pan`, `stateCode`, `gstCategory`, `address`, `email`, `phone`, `currency`, `paymentTermsDays`, `creditLimit`, `tdsSectionId`, `msme`, `msmeNumber`, `bankName`, `bankAccount`, `ifsc`, `partyId` |
+| `POST /api/v1/modules/finance/parties` | Add a customer or supplier | `code`, `name`, `isCustomer`, `isSupplier`, `gstin`, `pan`, `stateCode`, `gstCategory`, `address`, `email`, `phone`, `currency`, `paymentTermsDays`, `creditLimit`, `tdsSectionId`, `msme`, `msmeNumber`, `bankName`, `bankAccount`, `ifsc`, `tdsStatus`, `countryCode`, `foreignTaxId`, `foreignAddress` |
+| `POST /api/v1/modules/finance/parties/update` | Change a party | `code`, `name`, `isCustomer`, `isSupplier`, `gstin`, `pan`, `stateCode`, `gstCategory`, `address`, `email`, `phone`, `currency`, `paymentTermsDays`, `creditLimit`, `tdsSectionId`, `msme`, `msmeNumber`, `bankName`, `bankAccount`, `ifsc`, `tdsStatus`, `countryCode`, `foreignTaxId`, `foreignAddress`, `partyId` |
 | `POST /api/v1/modules/finance/parties/archive` | Archive or restore a party | See runtime OpenAPI schema |
 | `GET /api/v1/modules/finance/parties/statement` | A party's statement of account | See runtime OpenAPI schema |
 | `POST /api/v1/modules/finance/parties/apply-advances` | Set a party's advances and credit notes against their open invoices | See runtime OpenAPI schema |
@@ -869,9 +883,12 @@ Source: `campusos-platform/packages/modules/finance/`.
 | `GET /api/v1/modules/finance/reports/cost-centers` | Income and expenditure by cost centre | See runtime OpenAPI schema |
 | `GET /api/v1/modules/finance/reports/gstr1` | GSTR-1 tables for a period | See runtime OpenAPI schema |
 | `POST /api/v1/modules/finance/tds/challans` | Record a TDS challan against a month of deductions | `form`, `month`, `depositedOn`, `bsrCode`, `challanSerial`, `interest`, `fee`, `accountId` |
+| `POST /api/v1/modules/finance/tds/deductor` | Save the deductor's details for TDS statements | `deductorType`, `address1`, `address2`, `address3`, `address4`, `address5`, `country`, `stateCode`, `pincode`, `email`, `phoneCountry`, `phone`, `responsibleName`, `responsibleDesignation`, `responsiblePan`, `responsibleAddress1`, `responsibleAddress2`, `responsibleAddress3`, `responsibleAddress4`, `responsibleAddress5`, `responsibleCountry`, `responsibleStateCode`, `responsiblePincode`, `responsibleEmail`, `responsiblePhoneCountry`, `responsiblePhone` |
+| `GET /api/v1/modules/finance/tds/deductor` | The deductor's details for TDS statements | See runtime OpenAPI schema |
 | `POST /api/v1/modules/finance/tds/challans/void` | Void a TDS challan | `challanId`, `reason` |
 | `GET /api/v1/modules/finance/tds/challans` | TDS challans recorded | See runtime OpenAPI schema |
 | `GET /api/v1/modules/finance/tds/quarter` | The TDS working statement for a quarter as CSV (fy, quarter, form) (binary response) | See runtime OpenAPI schema |
+| `GET /api/v1/modules/finance/tds/statement` | The quarterly TDS statement file for the FVU (fy, quarter, form, earlierFiled, previousToken) (binary response) | See runtime OpenAPI schema |
 | `GET /api/v1/modules/finance/tds/certificate.pdf` | The TDS statement for one payee and quarter, printed (binary response) | See runtime OpenAPI schema |
 | `GET /api/v1/modules/finance/tds/deductions` | The deductions of a quarter (fy, quarter, form) | See runtime OpenAPI schema |
 | `GET /api/v1/modules/finance/tds/interest` | Interest on TDS deposited late | See runtime OpenAPI schema |

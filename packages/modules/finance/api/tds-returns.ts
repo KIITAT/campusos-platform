@@ -1,5 +1,6 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { audit, withTenant } from '@campusos/db'
+import { csvCell } from '@campusos/module-framework'
 import * as z from 'zod'
 import { invoices, payments, tdsChallanLinks, tdsChallans, tdsSections } from '../schema'
 import { FinanceError, named, requireConfigure, requireRead, type Actor, type Tx } from './core'
@@ -314,10 +315,7 @@ export function quarterOf(input: unknown) {
 }
 
 const rupeeText = (paise: number) => (paise / 100).toFixed(2)
-const csvCell = (v: unknown) => {
-  const s = v === null || v === undefined ? '' : String(v)
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
-}
+const cell = (v: unknown) => csvCell(v === null || v === undefined ? '' : String(v))
 
 /**
  * The quarter's deductions and challans as one CSV, the working an accountant
@@ -347,7 +345,7 @@ export async function tdsQuarterFile(actor: Actor, input: unknown) {
       lines.push(['TOTAL', label, '', '', '', '', '', rupeeText(value), '', '', ''])
     }
     return {
-      bytes: lines.map((l) => l.map(csvCell).join(',')).join('\n'),
+      bytes: lines.map((l) => l.map(cell).join(',')).join('\n'),
       fileName: `tds-${q.form}-${q.fy}-Q${q.quarter}.csv`,
       type: 'text/csv; charset=utf-8',
     }

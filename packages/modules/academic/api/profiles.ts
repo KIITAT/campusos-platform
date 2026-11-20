@@ -28,6 +28,7 @@ export const studentProfileSchema = z
     state: opt(80),
     postalCode: opt(12),
     emergencyContact: opt(120),
+    house: opt(40),
     dateOfBirth: z.preprocess(blankToNull, z.iso.date().nullable().optional()),
     apaarId: z.preprocess(blankToNull, z.string().trim().regex(/^[0-9]{12}$/, 'twelve digits').nullable().optional()),
   })
@@ -45,6 +46,8 @@ export interface StudentProfile {
   state: string | null
   postalCode: string | null
   emergencyContact: string | null
+  /** A school's house, as the office set it. */
+  house: string | null
   /** YYYY-MM-DD, set by the office. */
   dateOfBirth: string | null
   /** As given, not verified with APAAR. Null for everyone but the student, a guardian and the office (D16). */
@@ -85,6 +88,7 @@ export async function studentProfile(actor: Actor, studentId: string, purpose: S
       state: p?.state ?? null,
       postalCode: p?.postalCode ?? null,
       emergencyContact: p?.emergencyContact ?? null,
+      house: p?.house ?? null,
       dateOfBirth: u.dateOfBirth,
       // The ID is not for staff who read the profile for their own purpose (Supreme Court direction, D16).
       apaarId: actor.id === studentId || viewsOnBehalf(actor, studentId) || actor.role === 'institution_admin' || actor.role === 'super_admin' ? (p?.apaarId ?? null) : null,
@@ -103,7 +107,7 @@ export async function setStudentProfile(actor: Actor, input: unknown) {
     const [before] = await tx.select().from(studentProfiles).where(eq(studentProfiles.studentId, d.studentId))
     // A field left out is kept; an explicit null clears it. An API caller
     // correcting a phone number must not wipe the roll number by omission.
-    const fields = ['rollNo', 'registrationNo', 'phone', 'addressLine', 'city', 'state', 'postalCode', 'emergencyContact'] as const
+    const fields = ['rollNo', 'registrationNo', 'phone', 'addressLine', 'city', 'state', 'postalCode', 'emergencyContact', 'house'] as const
     const values: Partial<Record<(typeof fields)[number] | 'apaarId', string | null>> & { updatedBy: string } = { updatedBy: actor.id }
     for (const f of fields) if (d[f] !== undefined) values[f] = d[f] ?? null
     if (d.apaarId !== undefined) {
@@ -123,6 +127,7 @@ export async function setStudentProfile(actor: Actor, input: unknown) {
       if (c === 'academic_student_profiles_roll') throw new AcademicError(409, c, 'that roll number is already somebody else’s')
       if (c === 'academic_student_profiles_registration') throw new AcademicError(409, c, 'that registration number is already somebody else’s')
       if (c === 'academic_student_profiles_apaar_unique') throw new AcademicError(409, c, 'that APAAR ID is already somebody else’s')
+      if (c === 'academic_student_profiles_house') throw new AcademicError(400, c, 'a house name is 1 to 40 characters')
       if (c === 'academic_apaar_needs_consent') throw new AcademicError(409, 'apaar_needs_consent', 'record the parent’s or student’s consent to APAAR before saving the ID')
       throw e
     }

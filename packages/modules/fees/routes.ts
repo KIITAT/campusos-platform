@@ -8,6 +8,9 @@ import { eq } from 'drizzle-orm'
 import { db, institutions } from '@campusos/db'
 import {
   addBankAccount,
+  bouncePayment,
+  voidInvoice,
+  voidPayment,
   claimQueue,
   claimTransfer,
   demandLetter,
@@ -213,6 +216,21 @@ export const routes: PluginRoute[] = [
     path: '/refunds',
     handler: async (actor, req) => refundPayment(actor as Actor, await jsonBody(req)),
   },
+  {
+    method: 'POST',
+    path: '/payments/void',
+    handler: async (actor, req) => voidPayment(actor as Actor, await jsonBody(req)),
+  },
+  {
+    method: 'POST',
+    path: '/payments/bounce',
+    handler: async (actor, req) => bouncePayment(actor as Actor, await jsonBody(req)),
+  },
+  {
+    method: 'POST',
+    path: '/invoices/void',
+    handler: async (actor, req) => voidInvoice(actor as Actor, await jsonBody(req)),
+  },
 
   {
     method: 'GET',
@@ -254,13 +272,13 @@ export const routes: PluginRoute[] = [
 
       const bytes = await receiptPdf({
         ...payment,
-        institutionName: inst?.name ?? 'Institution',
+        institutionName: payment.legalName ?? inst?.name ?? 'Institution',
       })
 
       return new Response(bytes as unknown as BodyInit, {
         headers: {
           'content-type': 'application/pdf',
-          'content-disposition': `inline; filename="receipt-${payment.receiptNo}.pdf"`,
+          'content-disposition': `inline; filename="receipt-${payment.receiptNo.replaceAll('/', '-')}.pdf"`,
           // A receipt gains a reconciliation stamp later, so never cache it.
           'cache-control': 'no-store',
         },

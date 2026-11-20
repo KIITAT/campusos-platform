@@ -14,7 +14,7 @@ import {
 import { terms } from '@campusos/module-academic/schema'
 import { parseRupeesToPaise } from '@campusos/money'
 import { feeIdempotencyKeys, studentCharges } from '../schema'
-import { FeeError, type Actor } from './operations'
+import { FeeError, lockTermIssue, type Actor } from './operations'
 
 /**
  * Charges on one student. The office raises them by hand; another module
@@ -198,7 +198,7 @@ export async function endStayWithin(tx: Tx, tenant: string, actorId: string, sta
     .where(gte(terms.endsOn, stay.from))
     .orderBy(asc(terms.id))
   for (const t of spanning) {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'fees.issue:' + t.id}, 0))`)
+    await lockTermIssue(tx, t.id)
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${stay.sourceModule + '.charge:' + t.id}, 0))`)
   }
   const rows = await tx

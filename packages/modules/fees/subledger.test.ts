@@ -160,9 +160,10 @@ async function ordinaryWork(c: Campus) {
     amount: '20000',
     method: 'upi',
     reference: `UTR${Date.now()}`,
+    allowAdvance: true,
   })
   await refundPayment(c.admin, { paymentId: pay.id, amount: '2000', reason: 'paid twice at the counter' })
-  await recordPayment(c.clerk, { studentId: c.s2, termId: c.termId, amount: '50000', method: 'cash' })
+  await recordPayment(c.clerk, { studentId: c.s2, termId: c.termId, amount: '50000', method: 'cash', allowAdvance: true })
   return { waiver }
 }
 

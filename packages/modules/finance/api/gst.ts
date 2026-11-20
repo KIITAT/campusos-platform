@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import { withTenant } from '@campusos/db'
+import { csvCell } from '@campusos/module-framework'
 import { FinanceError, requireRead, type Actor, type Tx } from './core'
 import { periodKind } from './gst-filings'
 import { bpOf } from './numbers'
@@ -430,7 +431,7 @@ export function toCsv(rows: Record<string, unknown>[], minorUnits = 2): string {
   const cell = (k: string, v: unknown) => {
     if (v === null || v === undefined) return ''
     const s = k.endsWith('Paise') && typeof v === 'number' ? (v / 10 ** minorUnits).toFixed(minorUnits) : String(v)
-    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+    return csvCell(s)
   }
   const head = keys.map((k) => k.replace(/Paise$/, '').replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase()))
   return [head.join(','), ...rows.map((r) => keys.map((k) => cell(k, r[k])).join(','))].join('\n')

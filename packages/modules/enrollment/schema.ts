@@ -10,7 +10,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core'
 import { institutions, tenantPolicy, users } from '@campusos/db'
-import { offerings, terms } from '@campusos/module-academic/schema'
+import { offerings, sections, terms } from '@campusos/module-academic/schema'
 
 /**
  * Registration, as a record of events rather than as a flag.
@@ -162,4 +162,24 @@ export const registrationEvents = pgTable(
     index('enrollment_events_registration').on(t.registrationId, t.createdAt),
     tenantPolicy('enrollment_registration_events'),
   ],
+)
+
+// --- sections that follow registration -------------------------------------
+
+/**
+ * Sections whose membership follows registration (P1-07a, decision 701): a
+ * section kept for an elective. Registering for one of its offerings makes the
+ * student a member; dropping the last one ends it. Every other section is kept
+ * by hand, as before.
+ */
+export const fedSections = pgTable(
+  'enrollment_fed_sections',
+  {
+    institutionId: tenantId(),
+    sectionId: uuid('section_id')
+      .primaryKey()
+      .references(() => sections.id, { onDelete: 'cascade' }),
+    createdAt: createdAt(),
+  },
+  () => [tenantPolicy('enrollment_fed_sections')],
 )

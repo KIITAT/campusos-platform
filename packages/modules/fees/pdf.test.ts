@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { printedText } from '@campusos/module-framework/pdf'
+import { plainPaise } from '@campusos/money'
 import { receiptPdf, type ReceiptData } from './api/receipt-pdf'
 import { demandLetterPdf } from './api/demand-letter-pdf'
 import type { DemandLetterView } from './api/transfers'
@@ -50,4 +51,50 @@ test('a demand letter refuses a name it cannot print (UX-01)', async () => {
     payableWords: 'One thousand rupees only',
   }
   await assert.rejects(() => demandLetterPdf(view), (e: unknown) => (e as { code?: string }).code === 'missing_glyph')
+})
+
+test('a receipt says the amount in words, the PAN, the address and the fee heads (ACC-30)', async () => {
+  const bytes = await receiptPdf(
+    receipt({
+      amountPaise: 120000,
+      address: 'Plot 1, Campus Road\nBhubaneswar 751024',
+      pan: 'AAATK1234F',
+      breakup: {
+        heads: [
+          { label: 'Tuition', chargedPaise: 4_500_000, waivedPaise: 500_000 },
+          { label: 'Library', chargedPaise: 200_000, waivedPaise: 0 },
+        ],
+      },
+    }),
+  )
+  const printed = await printedText(bytes)
+  for (const s of [
+    'Rupees One Thousand Two Hundred Only',
+    'PAN AAATK1234F',
+    'Plot 1, Campus Road',
+    'Bhubaneswar 751024',
+    'Tuition',
+    `INR ${plainPaise(4_000_000)}`,
+    'Term total',
+    `INR ${plainPaise(4_200_000)}`,
+  ]) {
+    assert.ok(printed.includes(s), `${s} | ${printed.join('|')}`)
+  }
+})
+
+test('a void receipt says so and claims no clearance', async () => {
+  const printed = await printedText(
+    await receiptPdf(
+      receipt({ status: 'voided', voidedAt: new Date('2026-10-05T06:00:00Z'), voidReason: 'entered against the wrong student' }),
+    ),
+  )
+  assert.ok(printed.includes('VOID: cancelled on 2026-10-05. entered against the wrong student'), printed.join('|'))
+  assert.ok(!printed.includes('Pending reconciliation — subject to clearance of funds'), printed.join('|'))
+})
+
+test("a returned cheque's receipt says so", async () => {
+  const printed = await printedText(
+    await receiptPdf(receipt({ method: 'cheque', status: 'bounced', bouncedOn: '2026-10-07', voidReason: 'funds insufficient' })),
+  )
+  assert.ok(printed.includes('CHEQUE RETURNED UNPAID on 2026-10-07. funds insufficient'), printed.join('|'))
 })

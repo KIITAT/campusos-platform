@@ -77,7 +77,7 @@ after(async () => {
 /** One fee invoice: receivable up, income up. The shape fees will post. */
 const invoice = (ref: string, paise: number, occurredAt?: Date) => ({
   memo: 'Tuition, term 1',
-  sourceModule: 'fees',
+  sourceModule: 'billing',
   sourceRef: ref,
   ...(occurredAt ? { occurredAt } : {}),
   lines: [
@@ -300,7 +300,7 @@ test('the same source reference posts once, however many times it is sent', asyn
   )
 
   assert.equal((await listEntries(b.admin)).length, 1)
-  const seen = await withTenant(b.id, (tx) => isPosted(tx, 'fees', 'invoice:7'))
+  const seen = await withTenant(b.id, (tx) => isPosted(tx, 'billing', 'invoice:7'))
   assert.equal(seen, first.id)
 })
 
