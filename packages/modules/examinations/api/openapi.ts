@@ -5,6 +5,7 @@ import {
   cancelBacklogSchema,
   cancelEnrolmentSchema,
   enrolSchema,
+  setEligibilityWaiverSchema,
   setSettingsSchema,
   setWindowSchema,
   uploadPaperSchema,
@@ -206,10 +207,34 @@ function cycle() {
       "The signed-in student's term: feedback, enrolment, admit card, backlogs and grade reports",
       ['termId?'],
     ),
-    [`${base}/enrol`]: post('Enrol for the term’s examinations, confirming one’s details', enrolSchema),
+    [`${base}/enrol`]: post(
+      'Enrol for the term’s examinations, confirming one’s details',
+      enrolSchema,
+      'Refused with 409 exam_attendance_short, exam_attendance_unavailable or exam_dues_outstanding while the term’s attendance or posted fees block it and no waiver stands.',
+    ),
     [`${base}/enrolments`]: get('Who is enrolled for a term, and who has classes but is not', ['termId']),
     [`${base}/enrolments/cancel`]: post('Cancel an enrolment, with a reason', cancelEnrolmentSchema),
-    [`${base}/admit-card.pdf`]: pdf('The admit card for an enrolment', ['termId', 'studentId?']),
+    [`${base}/admit-card.pdf`]: pdf(
+      'The admit card for an enrolment',
+      ['termId', 'studentId?'],
+      'Checked on every request: refused with 409 exam_attendance_short, exam_attendance_unavailable or exam_dues_outstanding while the term’s attendance or posted fees block it and no waiver stands.',
+    ),
+    [`${base}/eligibility/waiver`]: {
+      post: {
+        summary: 'Grant or revoke a per-term eligibility waiver (attendance or posted fees), with an audited reason',
+        description: 'Administrators only. A repeat changes nothing and writes no audit event. The reason is an administrative one; leave out medical and payment details.',
+        tags: ['examinations'],
+        requestBody: { content: json(setEligibilityWaiverSchema) },
+        responses: {
+          '200': {
+            description: 'OK',
+            content: json(z.object({ termId: z.string(), studentId: z.string(), check: z.enum(['attendance', 'dues']), waived: z.boolean(), changed: z.boolean(), notice: z.string() })),
+          },
+          ...gated,
+          '404': { description: 'No such examination candidate', content: json(err) },
+        },
+      },
+    },
     [`${base}/backlogs`]: {
       ...get('Backlog papers booked for a term', ['termId']),
       ...post('Book a failed paper to sit again', bookBacklogSchema, 'The fee is the window’s, worked out by the database, and charged through fees where it is on.'),

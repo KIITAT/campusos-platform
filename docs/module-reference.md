@@ -7,32 +7,32 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 
 | Module | Version | Pages | API routes | Dependencies |
 |---|---|---:|---:|---|
-| [Academic Core](#academic) | 0.14.0 | 7 | 42 | None |
-| [Admissions](#admissions) | 0.10.0 | 3 | 9 | academic |
+| [Academic Core](#academic) | 0.13.0 | 7 | 42 | None |
+| [Admissions](#admissions) | 0.9.0 | 3 | 9 | academic |
 | [Alumni and events](#alumni) | 0.5.0 | 4 | 12 | None |
 | [Attendance & QR](#attendance) | 0.18.0 | 8 | 30 | academic, notices |
-| [Student Care](#care) | 0.13.0 | 7 | 24 | academic, notices |
+| [Student Care](#care) | 0.12.0 | 7 | 24 | academic, notices |
 | [Ceremonies](#ceremonies) | 0.8.0 | 5 | 18 | academic |
-| [Sales CRM](#crm) | 0.10.0 | 4 | 32 | finance, notices |
+| [Sales CRM](#crm) | 0.9.0 | 4 | 32 | finance, notices |
 | [Enrollment](#enrollment) | 0.9.0 | 3 | 9 | academic |
-| [Examinations & Grading](#examinations) | 0.25.0 | 9 | 36 | academic, notices |
+| [Examinations & Grading](#examinations) | 0.25.0 | 9 | 37 | academic, notices |
 | [Feedback](#feedback) | 0.9.0 | 8 | 19 | academic |
-| [Fees & Finance](#fees) | 0.29.0 | 11 | 43 | academic, finance, notices |
+| [Fees & Finance](#fees) | 0.28.0 | 11 | 43 | academic, finance, notices |
 | [Finance & Books](#finance) | 0.22.0 | 92 | 208 | None |
 | [Helpdesk and grievance](#helpdesk) | 0.5.0 | 2 | 7 | None |
 | [Hostel](#hostel) | 0.14.0 | 5 | 20 | academic |
-| [HR & Payroll](#hr) | 0.27.0 | 18 | 134 | finance, notices |
-| [Library](#library) | 0.17.0 | 5 | 18 | academic |
+| [HR & Payroll](#hr) | 0.26.0 | 18 | 134 | finance, notices |
+| [Library](#library) | 0.16.0 | 5 | 18 | academic |
 | [Mentoring](#mentoring) | 0.25.0 | 6 | 19 | academic, notices |
-| [Communication & Notices](#notices) | 0.16.0 | 4 | 13 | academic |
+| [Communication & Notices](#notices) | 0.15.0 | 4 | 13 | academic |
 | [Parent Portal](#parents) | 0.25.0 | 4 | 11 | academic |
-| [Placement](#placement) | 0.13.0 | 8 | 15 | academic, notices |
+| [Placement](#placement) | 0.12.0 | 8 | 15 | academic, notices |
 | [Projects and timesheets](#projects) | 0.5.0 | 6 | 27 | finance |
 | [Quizzes](#quizzes) | 0.9.0 | 7 | 22 | academic |
-| [Reports](#reports) | 0.4.0 | 5 | 10 | notices |
+| [Reports](#reports) | 0.3.0 | 5 | 10 | notices |
 | [Skills](#skills) | 0.5.0 | 5 | 12 | None |
-| [Timetable](#timetable) | 0.11.0 | 12 | 42 | academic |
-| [Transport](#transport) | 0.6.0 | 4 | 14 | None |
+| [Timetable](#timetable) | 0.10.0 | 12 | 42 | academic |
+| [Transport](#transport) | 0.5.0 | 4 | 14 | None |
 
 <a id="academic"></a>
 ## Academic Core
@@ -452,6 +452,7 @@ Source: `campusos-platform/packages/modules/examinations/`.
 | `POST /api/v1/modules/examinations/enrol` | Enrol for the term’s examinations, confirming one’s details | `termId`, `confirm` |
 | `GET /api/v1/modules/examinations/enrolments` | Who is enrolled for a term, and who has classes but is not | `termId` (query) |
 | `POST /api/v1/modules/examinations/enrolments/cancel` | Cancel an enrolment, with a reason | `enrolmentId`, `reason` |
+| `POST /api/v1/modules/examinations/eligibility/waiver` | Grant or revoke a per-term eligibility waiver (attendance or posted fees), with an audited reason | `termId`, `studentId`, `check`, `action`, `reason` |
 | `GET /api/v1/modules/examinations/admit-card.pdf` | The admit card for an enrolment (binary response) | `termId` (query), `studentId` (query) |
 | `POST /api/v1/modules/examinations/backlogs` | Book a failed paper to sit again | `termId`, `courseId`, `bookingType` |
 | `POST /api/v1/modules/examinations/backlogs/cancel` | Cancel a backlog booking and its fee | `bookingId`, `reason` |

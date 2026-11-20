@@ -1,6 +1,6 @@
 {
   "name": "@campusos/module-examinations",
-  "version": "0.25.0",
+  "version": "0.26.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -22,6 +22,7 @@
   "dependencies": {
     "@campusos/db": "workspace:*",
     "@campusos/module-academic": "workspace:*",
+    "@campusos/module-attendance": "workspace:*",
     "@campusos/module-feedback": "workspace:*",
     "@campusos/module-fees": "workspace:*",
     "@campusos/module-framework": "workspace:*",
