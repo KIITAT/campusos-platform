@@ -721,7 +721,7 @@ test('a debit committed while waiting for the serial blocks the issue (FUNC-05)'
   assert.equal(await certCount(c), 0)
 })
 
-const FEES_TABLES = ['fee_invoices', 'fee_student_charges', 'fee_payments', 'fee_refunds', 'fee_waivers', 'fee_scholarship_awards', 'fee_drop_credits']
+const FEES_TABLES = ['fee_invoices', 'fee_student_charges', 'fee_payments', 'fee_refunds', 'fee_waivers', 'fee_scholarship_awards', 'fee_drop_credits', 'fee_items']
 
 test('a configured provider with no tables stops issue; an unconfigured one counts as zero (FUNC-05)', async () => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
