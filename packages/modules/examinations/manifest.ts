@@ -26,6 +26,8 @@ export const manifest: ModuleManifest = {
     { label: 'Exam booking', href: '/m/examinations/booking', roles: ['student'] },
     { label: 'My results', href: '/m/examinations/me', roles: ['student'] },
     { label: 'My performance', href: '/m/examinations/performance', roles: ['student'] },
+    { label: 'School report cards', href: '/m/examinations/report-cards', roles: ['institution_admin', 'hod', 'faculty'] },
+    { label: 'School report cards', href: '/m/examinations/my-report-cards', roles: ['student', 'parent'] },
     { label: 'Grade scales', href: '/m/examinations/scales', roles: ['institution_admin'] },
   ],
 

@@ -259,3 +259,26 @@ export async function setReportCardPublication(actor: Actor, input: unknown): Pr
     return { changed: true, notice }
   })
 }
+
+/**
+ * What the staff screen needs about one pupil's report: the template in force
+ * and its revision (0 for the built-in default), the saved ratings and whether
+ * it is published. For the office and the section's class teacher only.
+ */
+export async function reportCardWorkspace(actor: Actor, termId: string, sectionId: string, studentId: string) {
+  const tenant = tenantOf(actor)
+  writerRole(actor)
+  return withTenant(tenant, async (tx) => {
+    const snap = await snapshot(tx, termId, sectionId, studentId)
+    if (!snap.cand) return null
+    assertMayWrite(actor, snap.cand.class_teacher_id)
+    return {
+      programId: snap.cand.program_id,
+      template: templateOf(snap),
+      revision: snap.template?.revision ?? 0,
+      published: Boolean(snap.entry?.published_at),
+      grades: snap.entry?.grades ?? {},
+      remarkKey: snap.entry?.remark_key ?? null,
+    }
+  })
+}
