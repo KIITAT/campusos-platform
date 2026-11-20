@@ -1,5 +1,5 @@
 import * as z from 'zod'
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, ne, sql } from 'drizzle-orm'
 import { addressStatus, audit, INVITATION_MAX_DAYS, issueInvitation, normaliseEmail, users, withTenant } from '@campusos/db'
 import { moduleEnabled } from '@campusos/module-framework'
 import { programs, sectionMembers, sections, studentPrograms, studentProfiles, terms, STUDENT_CATEGORIES } from '@campusos/module-academic/schema'
@@ -71,6 +71,12 @@ function userConstraint(e: unknown): never {
   throw e
 }
 
+/** A roll number typed by hand after the free check: the unique index is the authority. */
+function rollConstraint(e: unknown): never {
+  if ((e as { cause?: { constraint?: string } }).cause?.constraint === 'academic_student_profiles_roll') throw new DomainError(409, 'roll_just_taken', 'Another request has just used this roll number. Try again.')
+  throw e
+}
+
 const exhausted = () => new DomainError(409, 'roll_numbers_exhausted', 'No free roll number for this programme and year. Set the roll number by hand on the student profile.')
 
 /**
@@ -116,7 +122,7 @@ export async function acceptApplication(actor: Actor, input: unknown) {
     const [enquiry] = await transaction.select({ name: enquiries.name, email: enquiries.email }).from(enquiries).where(eq(enquiries.id, row.enquiryId))
     const [term] = await transaction.select({ code: terms.code, startsOn: terms.startsOn }).from(terms).where(eq(terms.id, row.termId))
     const [program] = await transaction.select({ code: programs.code }).from(programs).where(eq(programs.id, row.programId))
-    const [section] = await transaction.select({ programId: sections.programId, label: sections.label }).from(sections).where(eq(sections.id, data.sectionId))
+    const [section] = await transaction.select({ programId: sections.programId, label: sections.label, admissionYear: sections.admissionYear }).from(sections).where(eq(sections.id, data.sectionId))
     if (!section || section.programId !== row.programId) throw new DomainError(409, 'section_not_in_programme', "Choose a section of this application's programme.")
 
     let studentId: string
@@ -156,18 +162,21 @@ export async function acceptApplication(actor: Actor, input: unknown) {
       const [created] = await transaction.insert(studentPrograms).values({ institutionId, studentId, programId: row.programId, isPrimary: !existing.some(program => program.isPrimary) }).returning()
       enrollment = created!
     }
+    const seated = await transaction.select({ sectionId: sectionMembers.sectionId }).from(sectionMembers).innerJoin(sections, eq(sections.id, sectionMembers.sectionId))
+      .where(and(eq(sectionMembers.userId, studentId), eq(sections.programId, row.programId), eq(sections.admissionYear, section.admissionYear), ne(sectionMembers.sectionId, data.sectionId)))
+    if (seated.length) throw new DomainError(409, 'already_seated', 'This student already has a seat in another section of this programme and year. Move the student there first.')
     await transaction.insert(sectionMembers).values({ institutionId, sectionId: data.sectionId, userId: studentId }).onConflictDoNothing()
 
     const [profile] = await transaction.select({ rollNo: studentProfiles.rollNo, category: studentProfiles.category }).from(studentProfiles).where(eq(studentProfiles.studentId, studentId))
     const rollNo = profile?.rollNo ?? await nextRollNo(transaction, institutionId, row.programId, program!.code, Number(term!.startsOn.slice(0, 4)))
     if (!profile) {
-      await transaction.insert(studentProfiles).values({ institutionId, studentId, rollNo, category: row.category, updatedBy: actor.id })
+      await transaction.insert(studentProfiles).values({ institutionId, studentId, rollNo, category: row.category, updatedBy: actor.id }).catch(rollConstraint)
     } else {
       await transaction.update(studentProfiles).set({
         ...(profile.rollNo ? {} : { rollNo }),
         ...(!profile.category && row.category ? { category: row.category } : {}),
         updatedBy: actor.id, updatedAt: new Date(),
-      }).where(eq(studentProfiles.studentId, studentId))
+      }).where(eq(studentProfiles.studentId, studentId)).catch(rollConstraint)
     }
 
     const [accepted] = await transaction.update(applications).set({ status: 'accepted', studentId, studentProgramId: enrollment.id, updatedAt: new Date() }).where(eq(applications.id, row.id)).returning()
