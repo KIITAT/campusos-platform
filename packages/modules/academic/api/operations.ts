@@ -283,7 +283,7 @@ export async function addSectionMember(actor: Actor, input: unknown) {
     await tx
       .insert(sectionMembers)
       .values({ institutionId: tenant, sectionId: data.sectionId, userId: data.userId })
-      .onConflictDoNothing()
+      .onConflictDoNothing({ target: [sectionMembers.sectionId, sectionMembers.userId] })
   })
 }
 

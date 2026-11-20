@@ -275,3 +275,20 @@ test('a successor must be a different school class, without a cycle', async () =
   await assert.rejects(call(c.faculty, '/programs/next', { programId: c.c6.id, nextProgramId: c.c7.id }), (e) => status(e) === 403)
 })
 
+
+test('the database holds a school class and section still, and refuses another tenant’s section', async () => {
+  const c = await campus()
+  const other = await campus()
+  const s = await c.sec(c.c6.id, 'A', 2025)
+  const owner = (stmt: ReturnType<typeof sql>) => authDb.execute(stmt).then(() => null, (e: unknown) => e)
+  assert.match(named(await owner(sql`update academic_programs set level = 'undergraduate' where id = ${c.c6.id}`)), /school programme identity is fixed/)
+  assert.match(named(await owner(sql`update academic_sections set admission_year = 2024 where id = ${s}`)), /school section identity is fixed/)
+  assert.match(named(await owner(sql`update academic_sections set program_id = ${c.c7.id} where id = ${s}`)), /school section identity is fixed/)
+  // A section of another tenant cannot take a member here, with or without RLS to hide it.
+  const foreign = await other.sec(other.c6.id, 'A', 2025)
+  const refused = await withTenant(c.id, (tx) => tx.insert(sectionMembers).values({ institutionId: c.id, sectionId: foreign, userId: c.asha })).then(() => null, (e: unknown) => e)
+  assert.ok(refused)
+  const refusedAsOwner = await owner(sql`insert into academic_section_members (institution_id, section_id, user_id) values (${c.id}, ${foreign}, ${c.asha})`)
+  assert.ok(refusedAsOwner)
+  assert.match(named(refusedAsOwner), /missing from membership tenant|foreign key/)
+})
