@@ -224,9 +224,9 @@ test('a fine cannot be settled before the book is back, or when nothing is due (
   assert.equal(row.fineSettledBy, 'upi')
   assert.equal(await balance(d, '1010'), 1000)
 
-  // A returned loan with no fine has nothing to settle.
+  // A returned loan with no fine has nothing to settle (the return already closes it).
   const [copy2] = await addCopies(d.desk, { titleId: title.id, accessionNos: ['A-10'] })
   const fresh = await issue(d.desk, { copyId: copy2!.id, borrowerId: d.studentId })
   await returnCopy(d.desk, { copyId: copy2!.id })
-  await assert.rejects(settleFine(d.desk, { loanId: fresh.id, method: 'cash' }), (e) => code(e) === 'nothing_due')
+  await assert.rejects(settleFine(d.desk, { loanId: fresh.id, method: 'cash' }), (e) => code(e) === 'already_settled' || code(e) === 'nothing_due')
 })

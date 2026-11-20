@@ -626,7 +626,11 @@ export async function settleFine(actor: Actor, input: unknown) {
     const [loan] = await tx.select().from(loans).where(eq(loans.id, d.loanId)).for('update')
     if (!loan) throw new LibraryError(404, 'no_such_loan', 'no such loan')
     if (loan.finePaidAt) throw new LibraryError(409, 'already_settled', 'that fine is settled')
+    // The stored fine is written when the book comes back: before that it is
+    // zero, and "settling" it would record a method and post nothing.
+    if (!loan.returnedAt) throw new LibraryError(409, 'not_returned', 'the book is not back yet; take the fine when it is returned')
     const takenPaise = loan.finePaise - loan.fineWaivedPaise
+    if (takenPaise <= 0) throw new LibraryError(409, 'nothing_due', 'there is no fine to settle on that loan')
     const [about] = await tx
       .select({ borrowerName: users.name, borrowerRole: users.role, title: titles.title, accessionNo: copies.accessionNo })
       .from(loans)

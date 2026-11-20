@@ -55,13 +55,6 @@ function offsetMs(at: Date, timeZone: string): number {
   return wall - (at.getTime() - at.getUTCMilliseconds())
 }
 
-/** The last millisecond of the local day `at` falls on, in `timeZone`. */
-function endOfLocalDay(at: Date, timeZone: string): Date {
-  const local = new Date(at.getTime() + offsetMs(at, timeZone))
-  local.setUTCHours(23, 59, 59, 999)
-  return new Date(local.getTime() - offsetMs(at, timeZone))
-}
-
 /**
  * Due dates land at the end of the day, not at the hour the book was handed
  * over. A book issued at 16:05 is not overdue at 16:06 a fortnight later, and
@@ -69,7 +62,14 @@ function endOfLocalDay(at: Date, timeZone: string): Date {
  * The day is the institution's, not the server's (LOW-09).
  */
 export function dueDate(issuedAt: Date, loanDays: number, timeZone = DEFAULT_ZONE): Date {
-  return endOfLocalDay(new Date(issuedAt.getTime() + loanDays * DAY_MS), timeZone)
+  // Add days to the local calendar date, then resolve the end of that date with
+  // the offset in force on it: a clock change in between must not move the day.
+  const wall = new Date(issuedAt.getTime() + offsetMs(issuedAt, timeZone))
+  wall.setUTCDate(wall.getUTCDate() + loanDays)
+  wall.setUTCHours(23, 59, 59, 999)
+  let at = new Date(wall.getTime() - offsetMs(wall, timeZone))
+  at = new Date(wall.getTime() - offsetMs(at, timeZone))
+  return at
 }
 
 /** Whole days late, counting from the end of the due day. Never negative. */
