@@ -4,7 +4,7 @@ import { checkOtherPerson, localToday } from '@campusos/module-finance/api'
 import { notify } from '@campusos/module-notices/api'
 import { terms } from '@campusos/module-academic/schema'
 import { feeInvoices, feePayments } from '../schema'
-import { FeeError, localDayOf, requireAdmin, requireFinance, type Actor } from './operations'
+import { FeeError, localDayOf, lockTermIssue, requireAdmin, requireFinance, type Actor } from './operations'
 import { chargeStudentWithin } from './charges'
 import { postedOf, postedSql } from './books'
 import { postInvoiceVoid, reversePayment } from './posting'
@@ -204,7 +204,7 @@ export async function voidInvoice(actor: Actor, input: unknown) {
   const data = voidInvoiceSchema.parse(input)
 
   return withTenant(tenant, async (tx) => {
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'fees.issue:' + data.termId}, 0))`)
+    await lockTermIssue(tx, data.termId)
     const [invoice] = await tx
       .select()
       .from(feeInvoices)

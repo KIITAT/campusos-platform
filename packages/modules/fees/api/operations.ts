@@ -121,6 +121,14 @@ export async function localDayOf(tx: Tx, tenant: string, at: Date): Promise<stri
   return String((res.rows[0] as { day: string }).day)
 }
 
+/**
+ * The term's issue lock: issuing, voiding an invoice, granting and revoking a
+ * waiver all take it before they read what they are about to change, so each
+ * sees the others' committed work (one lock, so no order to get wrong).
+ */
+export const lockTermIssue = (tx: Tx, termId: string) =>
+  tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'fees.issue:' + termId}, 0))`)
+
 /** Whether this student's charges for this term have been issued yet. */
 async function invoiceFor(tx: Tx, studentId: string, termId: string) {
   const [row] = await tx
@@ -208,6 +216,7 @@ export async function grantWaiver(actor: Actor, input: unknown) {
       .from(feeItems)
       .where(eq(feeItems.id, data.feeItemId))
     if (!item) throw new FeeError(404, 'no_such_item', 'no such charge')
+    await lockTermIssue(tx, item.termId)
 
     // Only a charge the student actually has (ACC-22): an item of a programme
     // they are enrolled in for its term, by the rule that bills them. Anything
@@ -307,6 +316,14 @@ export async function revokeWaiver(actor: Actor, input: unknown) {
   const data = revokeWaiverSchema.parse(input)
 
   await withTenant(tenant, async (tx) => {
+    const [at] = await tx
+      .select({ termId: feeItems.termId })
+      .from(feeWaivers)
+      .innerJoin(feeItems, eq(feeItems.id, feeWaivers.feeItemId))
+      .where(eq(feeWaivers.id, data.waiverId))
+    if (!at) throw new FeeError(404, 'no_such_waiver', 'no such waiver')
+    await lockTermIssue(tx, at.termId)
+    // Read again under the lock: a void that held it has since changed posted_paise.
     const [row] = await tx
       .select()
       .from(feeWaivers)
@@ -693,7 +710,7 @@ async function issueChunk(
   termCode: string,
   students: { studentId: string; studentName: string | null }[],
 ) {
-  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'fees.issue:' + termId}, 0))`)
+  await lockTermIssue(tx, termId)
 
   const ids = students.map((s) => s.studentId)
   const lines = (await tx.execute(priceListSql(termId, ids))).rows as Record<string, unknown>[]
