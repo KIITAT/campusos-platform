@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm'
 import { audit, withTenant } from '@campusos/db'
-import { moduleEnabled } from '@campusos/module-framework'
+import { getManifest } from '@campusos/module-framework'
 import { attendanceSummaryWithin, type AttendanceLine, type AttendanceRules } from '@campusos/module-attendance/api'
 import { manifest as attendanceManifest } from '@campusos/module-attendance/manifest'
 import { postedSql } from '@campusos/module-fees/api'
@@ -35,7 +35,9 @@ const SKIPPED: Eligibility['attendance'] = { state: 'not_applicable', held: 0, c
 
 /** One decision per student, term and institution at a time: waivers, enrolment and card checks queue here. */
 export async function lockEligibility(tx: Tx, tenant: string, studentId: string, termId: string): Promise<void> {
-  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`examinations.eligibility:${tenant}:${termId}:${studentId}`}, 0))`)
+  // UUID spellings differ in case; Postgres treats them as one value, so the key must too.
+  const key = `examinations.eligibility:${tenant}:${termId}:${studentId}`.toLowerCase()
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`)
 }
 
 /**
@@ -74,10 +76,17 @@ async function scopeOf(tx: Tx, studentId: string, termId: string): Promise<Atten
   return { kind: 'ambiguous' }
 }
 
+/** Entitlement read on the caller's own connection: a second pool checkout under withTenant can deadlock a full pool. */
+async function enabledWithin(tx: Tx, moduleId: string, tenant: string): Promise<boolean> {
+  if (getManifest(KNOWN, moduleId)?.alwaysEnabled) return true
+  const rows = (await tx.execute(sql`select enabled from institution_modules where institution_id = ${tenant} and module_id = ${moduleId}`)).rows as { enabled: boolean }[]
+  return rows[0]?.enabled === true
+}
+
 /** Where a student stands for a term, inside the caller's tenant transaction. Reads only; the caller locks when it must. */
 export async function eligibilityWithin(tx: Tx, tenant: string, studentId: string, termId: string): Promise<Eligibility> {
-  const attendanceOn = await moduleEnabled(KNOWN, 'attendance', tenant)
-  const feesOn = await moduleEnabled(KNOWN, 'fees', tenant)
+  const attendanceOn = await enabledWithin(tx, 'attendance', tenant)
+  const feesOn = await enabledWithin(tx, 'fees', tenant)
   let attendance = SKIPPED
   if (attendanceOn) {
     const scope = await scopeOf(tx, studentId, termId)
@@ -130,7 +139,8 @@ export async function setEligibilityWaiver(actor: Actor, input: unknown) {
   if (!actor.institutionId) throw new ExamError(400, 'no_institution', 'no institution for this session')
   const tenant = actor.institutionId
   if (actor.role !== 'institution_admin' && actor.role !== 'super_admin') throw new ExamError(403, 'forbidden', 'the examination cell does this')
-  const d = setEligibilityWaiverSchema.parse(input)
+  const parsed = setEligibilityWaiverSchema.parse(input)
+  const d = { ...parsed, termId: parsed.termId.toLowerCase(), studentId: parsed.studentId.toLowerCase() }
   const none = () => new ExamError(404, 'no_such_exam_candidate', 'No such examination candidate.')
   return withTenant(tenant, async (tx) => {
     await lockEligibility(tx, tenant, d.studentId, d.termId)
