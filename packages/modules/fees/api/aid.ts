@@ -49,7 +49,16 @@ type Tx = Parameters<Parameters<typeof withTenant>[1]>[0]
  * caller's transaction: the same sum as enrollment's creditLoad, without a
  * second connection while this one is held (LOW-02).
  */
-async function creditsWithin(tx: Tx, studentId: string, termId: string): Promise<number> {
+async function creditsWithin(tx: Tx, studentId: string, termId: string, hold = false): Promise<number> {
+  // An award holds the rows it counted, so a drop of one of those courses waits
+  // for the award to commit instead of changing the load under it.
+  if (hold) {
+    await tx
+      .select({ id: registrations.id })
+      .from(registrations)
+      .where(and(eq(registrations.studentId, studentId), eq(registrations.termId, termId), eq(registrations.status, 'registered')))
+      .for('share')
+  }
   const [row] = await tx
     .select({ credits: sql<number>`coalesce(sum(${registrations.credits}), 0)::int` })
     .from(registrations)
@@ -172,8 +181,9 @@ async function assessWithin(
   data: { studentId: string; termId: string },
   registration: boolean,
   cgpa: number | null,
+  hold = false,
 ): Promise<AidAssessment> {
-  const credits = registration ? await creditsWithin(tx, data.studentId, data.termId) : null
+  const credits = registration ? await creditsWithin(tx, data.studentId, data.termId, hold) : null
   const [student] = await tx
     .select({ name: users.name })
     .from(users)
@@ -255,7 +265,7 @@ export async function awardScholarship(actor: Actor, input: unknown) {
   // Assessed and awarded in one transaction (LOW-02): nothing can change
   // between the check and the write.
   return withTenant(tenant, async (tx) => {
-    const assessment = await assessWithin(tx, { studentId: data.studentId, termId: data.termId }, registration, cgpa)
+    const assessment = await assessWithin(tx, { studentId: data.studentId, termId: data.termId }, registration, cgpa, true)
     const offer = assessment.offers.find((o) => o.scholarshipId === data.scholarshipId)
     if (!offer) throw new FeeError(404, 'no_such_scholarship', 'no such live scholarship')
     if (!offer.eligible) {
