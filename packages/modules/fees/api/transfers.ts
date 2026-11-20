@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm'
 import * as z from 'zod'
 import { audit, users, withTenant } from '@campusos/db'
+import { notify } from '@campusos/module-notices/api'
 import {
   assertCanAccessStudent,
   cursorColumn,
@@ -446,6 +447,93 @@ export async function pendingClaimOptions(actor: Actor) {
 /** How each way of reporting a payment is receipted (D11). */
 const METHOD = { rtgs: 'bank_transfer', neft: 'bank_transfer', imps: 'bank_transfer', upi: 'upi', cheque: 'cheque' } as const
 
+/** Tell the student, and their guardians, that money arrived (D21). */
+export async function paymentReceived(
+  tx: Tx,
+  tenant: string,
+  p: { studentId: string; amountPaise: number; reference: string | null; receiptNo: string | null },
+) {
+  await notify(tx, tenant, {
+    userIds: [p.studentId],
+    moduleId: MODULE,
+    title: 'Payment received',
+    body: `${formatPaise(p.amountPaise)} received, reference ${p.reference ?? 'none'}. Receipt ${p.receiptNo ?? 'pending'}.`,
+    link: '/m/fees/me',
+    alsoGuardians: { link: '/m/parents' },
+  })
+}
+
+/**
+ * Reconciled in the same act that recorded it: finding a payment on the bank
+ * statement is exactly what reconciling means (LOW-05). The audit row goes
+ * first, because the payment's guard lets a reconciliation through only after it.
+ */
+export async function reconcileFound(
+  tx: Tx,
+  tenant: string,
+  actor: Actor,
+  paymentId: string,
+  reason: string,
+  detail: Record<string, unknown> = {},
+) {
+  await audit(tx, {
+    institutionId: tenant,
+    actorId: actor.id,
+    actorEmail: actor.email ?? null,
+    moduleId: MODULE,
+    action: 'fee.payment_reconciled',
+    entity: 'fee_payments',
+    entityId: paymentId,
+    reason,
+    // Recording and reconciling are one act here, by design (LOW-05).
+    detail: { recordedBy: actor.id, selfReconciled: true, ...detail },
+  })
+  await tx.update(feePayments).set({ reconciledAt: new Date(), reconciledBy: actor.id }).where(eq(feePayments.id, paymentId))
+}
+
+/**
+ * Turn a pending claim into its payment, in the caller's transaction. Takes the
+ * term's issue lock first, as every path that moves a term's money does (NEW-93),
+ * then the claim's row; the claim's term never changes, so the caller reads it
+ * without a lock and passes it in. A claim decided meanwhile is a 409.
+ */
+export async function verifyWithin(
+  tx: Tx,
+  tenant: string,
+  actor: Actor,
+  claimId: string,
+  termId: string,
+  note: string | null,
+  detail: Record<string, unknown> = {},
+) {
+  await lockTermIssue(tx, termId)
+  const [c] = await tx.select().from(transferClaims).where(eq(transferClaims.id, claimId)).for('update')
+  if (!c) throw new FeeError(404, 'no_such_claim', 'no such claim')
+  if (c.status !== 'pending') throw new FeeError(409, 'fee_claim_decided', 'that claim has been decided')
+  const payment = await recordPaymentWithin(tx, tenant, actor, {
+    studentId: c.studentId,
+    termId: c.termId,
+    amountPaise: c.amountPaise,
+    method: METHOD[c.mode],
+    reference: c.utr,
+    receivedAt: new Date(`${c.transferredOn}T00:00:00+05:30`),
+    notes:
+      c.mode === 'upi'
+        ? `UPI from ${c.remitterBank} (${c.accountHolder})`
+        : c.mode === 'cheque'
+          ? `Cheque ${c.utr} on ${c.remitterIfsc} ${c.drawerAccount} (${c.accountHolder})`
+          : `${c.mode.toUpperCase()} from ${c.remitterBank}${c.remitterBranch ? `, ${c.remitterBranch}` : ''} (${c.accountHolder})`,
+    ...(c.mode === 'cheque' ? { drawerIfsc: c.remitterIfsc, drawerAccount: c.drawerAccount } : {}),
+  })
+  await reconcileFound(tx, tenant, actor, payment.id, note ?? `transfer ${c.utr} found on the bank statement`, detail)
+  await tx
+    .update(transferClaims)
+    .set({ status: 'verified', decidedBy: actor.id, paymentId: payment.id, decisionNote: note })
+    .where(eq(transferClaims.id, c.id))
+  await paymentReceived(tx, tenant, payment)
+  return { claim: c, payment }
+}
+
 /**
  * Found on the bank statement: the claim becomes a payment -- receipted, in the
  * books, and reconciled, because finding it on the statement is exactly what
@@ -456,47 +544,10 @@ export async function verifyClaim(actor: Actor, input: unknown) {
   const d = verifyClaimSchema.parse(input)
   return named(() =>
     withTenant(tenant, async (tx) => {
-      // Like every path that moves a term's money, under the term's lock (NEW-93); the
-      // claim's term never changes, so it is read first and the row locked after.
       const [seen] = await tx.select({ termId: transferClaims.termId }).from(transferClaims).where(eq(transferClaims.id, d.claimId))
       if (!seen) throw new FeeError(404, 'no_such_claim', 'no such claim')
-      await lockTermIssue(tx, seen.termId)
-      const [c] = await tx.select().from(transferClaims).where(eq(transferClaims.id, d.claimId)).for('update')
-      if (!c) throw new FeeError(404, 'no_such_claim', 'no such claim')
-      if (c.status !== 'pending') throw new FeeError(409, 'fee_claim_decided', 'that claim has been decided')
-      const payment = await recordPaymentWithin(tx, tenant, actor, {
-        studentId: c.studentId,
-        termId: c.termId,
-        amountPaise: c.amountPaise,
-        method: METHOD[c.mode],
-        reference: c.utr,
-        receivedAt: new Date(`${c.transferredOn}T00:00:00+05:30`),
-        notes:
-          c.mode === 'upi'
-            ? `UPI from ${c.remitterBank} (${c.accountHolder})`
-            : c.mode === 'cheque'
-              ? `Cheque ${c.utr} on ${c.remitterIfsc} ${c.drawerAccount} (${c.accountHolder})`
-              : `${c.mode.toUpperCase()} from ${c.remitterBank}${c.remitterBranch ? `, ${c.remitterBranch}` : ''} (${c.accountHolder})`,
-        ...(c.mode === 'cheque' ? { drawerIfsc: c.remitterIfsc, drawerAccount: c.drawerAccount } : {}),
-      })
-      await audit(tx, {
-        institutionId: tenant,
-        actorId: actor.id,
-        actorEmail: actor.email ?? null,
-        moduleId: MODULE,
-        action: 'fee.payment_reconciled',
-        entity: 'fee_payments',
-        entityId: payment.id,
-        reason: d.note ?? `transfer ${c.utr} found on the bank statement`,
-        // Recording and reconciling are one act here, by design (LOW-05).
-        detail: { recordedBy: actor.id, selfReconciled: true },
-      })
-      await tx.update(feePayments).set({ reconciledAt: new Date(), reconciledBy: actor.id }).where(eq(feePayments.id, payment.id))
-      await tx
-        .update(transferClaims)
-        .set({ status: 'verified', decidedBy: actor.id, paymentId: payment.id, decisionNote: d.note ?? null })
-        .where(eq(transferClaims.id, c.id))
-      return { id: c.id, receiptNo: payment.receiptNo, notice: `Verified: receipt ${payment.receiptNo}, reconciled.` }
+      const { claim, payment } = await verifyWithin(tx, tenant, actor, d.claimId, seen.termId, d.note ?? null)
+      return { id: claim.id, receiptNo: payment.receiptNo, notice: `Verified: receipt ${payment.receiptNo}, reconciled.` }
     }),
   )
 }
