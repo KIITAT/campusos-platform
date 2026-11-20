@@ -820,50 +820,68 @@ export async function attendanceSummary(actor: Actor, studentId: string, termId?
   const tenant = tenantOf(actor)
   return withTenant(tenant, async (tx) => {
     await assertCanAccessStudent(tx, actor, studentId, 'attendance')
-    const rules = await rulesOf(tx, tenant)
-    const rows = await tx.execute(sql`
-      select o.id as offering_id, c.code, c.title, coalesce(f.name, f.email) as teacher, t.code as term,
-             (select count(*)::int from attendance_sessions s where s.offering_id = o.id) as held,
-             (select count(*)::int from attendance_records r
-                join attendance_sessions s on s.id = r.session_id
-               where s.offering_id = o.id and r.student_id = ${studentId}) as present,
-             (select count(*)::int from attendance_sessions s
-               where s.offering_id = o.id
-                 and not exists (select 1 from attendance_records r where r.session_id = s.id and r.student_id = ${studentId})
-                 and exists (select 1 from attendance_excuses e
-                              where e.student_id = ${studentId} and e.revoked_at is null
-                                and (e.offering_id is null or e.offering_id = o.id)
-                                and (s.opened_at at time zone ${rules.timeZone})::date between e.from_on and e.to_on)) as excused
-        from academic_offerings o
-        join academic_section_members m on m.section_id = o.section_id and m.user_id = ${studentId}
-        join academic_courses c on c.id = o.course_id
-        join academic_terms t on t.id = o.term_id
-        left join users f on f.id = o.faculty_user_id
-       where (${termId ?? null}::uuid is null or o.term_id = ${termId ?? null}::uuid)
-       order by t.starts_on desc, c.code`)
-    // The section's daily register (P1-13a): a day held is a day marked; excused is an absent day under a whole-day excuse.
-    const daily = await tx.execute(sql`
-      select s.id as offering_id, 'Daily' as code, p.code || '-' || s.label as title,
-             coalesce(ct.name, ct.email) as teacher,
-             coalesce((select code from academic_terms where id = ${termId ?? null}::uuid), '') as term,
-             count(*)::int as held,
-             (count(*) filter (where d.present))::int as present,
-             (count(*) filter (where not d.present and exists (
-                select 1 from attendance_excuses e
-                 where e.student_id = d.student_id and e.revoked_at is null and e.offering_id is null
-                   and d.on_date between e.from_on and e.to_on)))::int as excused
-        from attendance_daily_marks d
-        join academic_sections s on s.id = d.section_id
-        join academic_programs p on p.id = s.program_id
-        left join users ct on ct.id = s.class_teacher_id
-       where d.student_id = ${studentId}
-         and (${termId ?? null}::uuid is null or exists (
-               select 1 from academic_terms t where t.id = ${termId ?? null}::uuid and d.on_date between t.starts_on and t.ends_on))
-       group by s.id, p.code, s.label, ct.name, ct.email, s.admission_year
-       order by s.admission_year desc, p.code, s.label`)
-    type Row = { offering_id: string; code: string; title: string; teacher: string | null; term: string; held: number; present: number; excused: number }
-    return [...(rows.rows as Row[]).map((r) => line(r, rules)), ...(daily.rows as Row[]).map((r) => line(r, rules, 'daily'))]
+    return (await attendanceSummaryWithin(tx, tenant, studentId, termId)).lines
   })
+}
+
+/**
+ * The institution's rules and a student's lines, read inside the caller's
+ * tenant transaction. The caller authorizes its own purpose (the examination
+ * gate does, through the admit-card access check); `attendanceSummary` is the
+ * public, access-checked reader.
+ */
+export async function attendanceSummaryWithin(
+  tx: Tx,
+  tenant: string,
+  studentId: string,
+  termId?: string | null,
+): Promise<{ rules: AttendanceRules; lines: AttendanceLine[] }> {
+  const rules = await rulesOf(tx, tenant)
+  const rows = await tx.execute(sql`
+    select o.id as offering_id, c.code, c.title, coalesce(f.name, f.email) as teacher, t.code as term,
+           (select count(*)::int from attendance_sessions s where s.offering_id = o.id) as held,
+           (select count(*)::int from attendance_records r
+              join attendance_sessions s on s.id = r.session_id
+             where s.offering_id = o.id and r.student_id = ${studentId}) as present,
+           (select count(*)::int from attendance_sessions s
+             where s.offering_id = o.id
+               and not exists (select 1 from attendance_records r where r.session_id = s.id and r.student_id = ${studentId})
+               and exists (select 1 from attendance_excuses e
+                            where e.student_id = ${studentId} and e.revoked_at is null
+                              and (e.offering_id is null or e.offering_id = o.id)
+                              and (s.opened_at at time zone ${rules.timeZone})::date between e.from_on and e.to_on)) as excused
+      from academic_offerings o
+      join academic_section_members m on m.section_id = o.section_id and m.user_id = ${studentId}
+      join academic_courses c on c.id = o.course_id
+      join academic_terms t on t.id = o.term_id
+      left join users f on f.id = o.faculty_user_id
+     where (${termId ?? null}::uuid is null or o.term_id = ${termId ?? null}::uuid)
+     order by t.starts_on desc, c.code`)
+  // The section's daily register (P1-13a): a day held is a day marked; excused is an absent day under a whole-day excuse.
+  const daily = await tx.execute(sql`
+    select s.id as offering_id, 'Daily' as code, p.code || '-' || s.label as title,
+           coalesce(ct.name, ct.email) as teacher,
+           coalesce((select code from academic_terms where id = ${termId ?? null}::uuid), '') as term,
+           count(*)::int as held,
+           (count(*) filter (where d.present))::int as present,
+           (count(*) filter (where not d.present and exists (
+              select 1 from attendance_excuses e
+               where e.student_id = d.student_id and e.revoked_at is null and e.offering_id is null
+                 and d.on_date between e.from_on and e.to_on)))::int as excused
+      from attendance_daily_marks d
+      join academic_sections s on s.id = d.section_id
+      join academic_programs p on p.id = s.program_id
+      left join users ct on ct.id = s.class_teacher_id
+     where d.student_id = ${studentId}
+       and (${termId ?? null}::uuid is null or exists (
+             select 1 from academic_terms t where t.id = ${termId ?? null}::uuid and d.on_date between t.starts_on and t.ends_on))
+     group by s.id, p.code, s.label, ct.name, ct.email, s.admission_year
+     order by s.admission_year desc, p.code, s.label`)
+  type Row = { offering_id: string; code: string; title: string; teacher: string | null; term: string; held: number; present: number; excused: number }
+  return {
+    rules,
+    lines: [...(rows.rows as Row[]).map((r) => line(r, rules)), ...(daily.rows as Row[]).map((r) => line(r, rules, 'daily'))],
+  }
 }
 
 /**

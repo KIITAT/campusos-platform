@@ -387,3 +387,30 @@ export const examSettings = pgTable(
 )
 
 export type ExamWindow = typeof examWindows.$inferSelect
+
+/**
+ * A waiver of one eligibility check for one student and term (P1-07b). Live
+ * while the row exists; granting and revoking are audit events, which carry
+ * the actor and the reason. Mirrors migration 0005.
+ */
+export const eligibilityWaivers = pgTable(
+  'exam_eligibility_waivers',
+  {
+    institutionId: uuid('institution_id')
+      .notNull()
+      .references(() => institutions.id, { onDelete: 'cascade' }),
+    termId: uuid('term_id')
+      .notNull()
+      .references(() => terms.id, { onDelete: 'cascade' }),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    checkKind: text('check_kind').notNull(),
+  },
+  (t) => [
+    primaryKey({ name: 'exam_eligibility_waivers_pk', columns: [t.institutionId, t.termId, t.studentId, t.checkKind] }),
+    check('exam_eligibility_waivers_kind', sql`check_kind in ('attendance', 'dues')`),
+    index('exam_eligibility_waivers_student').on(t.studentId),
+    tenantPolicy('exam_eligibility_waivers'),
+  ],
+)
