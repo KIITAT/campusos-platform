@@ -14,10 +14,10 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | [Student Care](#care) | 0.11.0 | 7 | 24 | academic, notices |
 | [Ceremonies](#ceremonies) | 0.7.0 | 5 | 18 | academic |
 | [Sales CRM](#crm) | 0.6.0 | 4 | 32 | finance, notices |
-| [Enrollment](#enrollment) | 0.7.0 | 3 | 8 | academic |
-| [Examinations & Grading](#examinations) | 0.19.0 | 9 | 36 | academic, notices |
+| [Enrollment](#enrollment) | 0.8.0 | 3 | 9 | academic |
+| [Examinations & Grading](#examinations) | 0.20.0 | 9 | 36 | academic, notices |
 | [Feedback](#feedback) | 0.8.0 | 8 | 19 | academic |
-| [Fees & Finance](#fees) | 0.23.0 | 11 | 40 | academic, finance, notices |
+| [Fees & Finance](#fees) | 0.24.0 | 11 | 40 | academic, finance, notices |
 | [Finance & Books](#finance) | 0.20.0 | 92 | 208 | None |
 | [Helpdesk and grievance](#helpdesk) | 0.5.0 | 2 | 7 | None |
 | [Hostel](#hostel) | 0.11.0 | 5 | 18 | academic |
@@ -396,6 +396,7 @@ Source: `campusos-platform/packages/modules/enrollment/`.
 | `POST /api/v1/modules/enrollment/register` | Register a student for an offering, or place them on its waiting list | `studentId`, `offeringId`, `effectiveOn`, `reason` |
 | `POST /api/v1/modules/enrollment/drop` | Drop or withdraw from an offering, whichever the term calendar allows | `studentId`, `offeringId`, `effectiveOn`, `reason` |
 | `POST /api/v1/modules/enrollment/seats` | Set how many may sit in an offering, and how many may queue | `offeringId`, `capacity`, `waitlistCapacity` |
+| `POST /api/v1/modules/enrollment/sections/feed` | Whether a section's membership follows registration; marking it brings in the students already registered | `sectionId`, `fed` |
 | `GET /api/v1/modules/enrollment/seats` | Every capped offering, with seats taken and queued | See runtime OpenAPI schema |
 | `GET /api/v1/modules/enrollment/roster` | Who is on an offering, with waiting-list places in order | See runtime OpenAPI schema |
 | `GET /api/v1/modules/enrollment/registrations` | A student's registrations; the caller's own without a studentId | See runtime OpenAPI schema |
