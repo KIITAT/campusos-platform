@@ -183,6 +183,16 @@ POST /api/v1/modules/crm/activities/done                                 SIHFALO
 POST /api/v1/modules/crm/leads/convert                                   SIHFALO... op
 POST /api/v1/modules/crm/leads/erase                                     SI........ op
 
+## documents 0.1.0
+GET /api/v1/modules/documents/files                                      SIHFALOsp. op
+GET /api/v1/modules/documents/file                                       SIHFALOsp. op
+GET /api/v1/modules/documents/receipt.pdf                                SIHFALOsp. op
+POST /api/v1/modules/documents/verify                                    SIHFALOsp. op
+POST /api/v1/modules/documents/upload                                    SI........ op
+POST /api/v1/modules/documents/request                                   SI........ op
+POST /api/v1/modules/documents/sign                                      SIHFALOsp. op
+POST /api/v1/modules/documents/close                                     SIHFALOsp. op
+
 ## enrollment 0.9.0
 POST /api/v1/modules/enrollment/register                                 SIH....s.. gate
 POST /api/v1/modules/enrollment/drop                                     SIH....s.. gate

@@ -120,3 +120,8 @@ export const eraseUserSchema = z
 export const consentStateSchema = z
   .object({ current: z.boolean() })
   .meta({ id: 'ConsentState' })
+
+/** The host's mail route for Documents confirmation codes (P2-19). */
+export const documentChallengeSchema = z
+  .strictObject({ requestId: z.uuid(), documentId: z.uuid().optional() })
+  .meta({ id: 'DocumentChallenge' })

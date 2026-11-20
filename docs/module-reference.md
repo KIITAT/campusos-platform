@@ -14,6 +14,7 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | [Student Care](#care) | 0.12.0 | 7 | 24 | academic, notices |
 | [Ceremonies](#ceremonies) | 0.8.0 | 5 | 18 | academic |
 | [Sales CRM](#crm) | 0.9.0 | 4 | 32 | finance, notices |
+| [Documents](#documents) | 0.1.0 | 1 | 8 | None |
 | [Enrollment](#enrollment) | 0.9.0 | 3 | 9 | academic |
 | [Examinations & Grading](#examinations) | 0.24.0 | 9 | 36 | academic, notices |
 | [Feedback](#feedback) | 0.9.0 | 8 | 19 | academic |
@@ -372,6 +373,33 @@ Source: `campusos-platform/packages/modules/crm/`.
 ### Background jobs
 
 - `crm.activity-reminders`: explicitly queued; roles institution_admin, accounts_staff, super_admin.
+
+<a id="documents"></a>
+## Documents
+
+Store institutional files and record electronic assent.
+
+Module roles: `institution_admin`, `super_admin`, `hod`, `faculty`, `accounts_staff`, `library_staff`, `hostel_staff`, `student`, `parent`.
+Source: `campusos-platform/packages/modules/documents/`.
+
+### Screens
+
+| Path | Page | Roles |
+|---|---|---|
+| `/m/documents` | Documents | institution_admin, super_admin, hod, faculty, accounts_staff, library_staff, hostel_staff, student, parent |
+
+### Operations
+
+| Method and path | Operation | Body fields / query parameters |
+|---|---|---|
+| `GET /api/v1/modules/documents/files` | List documents the caller may open | `studentId` (query) |
+| `GET /api/v1/modules/documents/file` | Download the exact stored file (binary response) | `id` (query) |
+| `GET /api/v1/modules/documents/receipt.pdf` | Download the assent record as a separate PDF (binary response) | `id` (query) |
+| `POST /api/v1/modules/documents/verify` | Verify a stored file, its evidence and optionally a copy by digest | `documentId`, `sha256` |
+| `POST /api/v1/modules/documents/upload` | File a document | `title`, `kind`, `scope`, `subjectUserId`, `retainUntil`, `retentionBasis`, `authorityRef`, `file` |
+| `POST /api/v1/modules/documents/request` | Ask the named member to record assent | `documentId`, `reason`, `approvedInternalUse` |
+| `POST /api/v1/modules/documents/sign` | Record assent with the mailbox code | `requestId`, `code`, `consent` |
+| `POST /api/v1/modules/documents/close` | Decline (the signer) or cancel (an administrator) a request | `requestId`, `decision`, `reason` |
 
 <a id="enrollment"></a>
 ## Enrollment
