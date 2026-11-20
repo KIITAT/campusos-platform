@@ -7,32 +7,32 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 
 | Module | Version | Pages | API routes | Dependencies |
 |---|---|---:|---:|---|
-| [Academic Core](#academic) | 0.12.0 | 7 | 42 | None |
-| [Admissions](#admissions) | 0.8.0 | 3 | 9 | academic |
-| [Alumni and events](#alumni) | 0.6.0 | 4 | 12 | None |
-| [Attendance & QR](#attendance) | 0.15.0 | 7 | 28 | academic, notices |
-| [Student Care](#care) | 0.11.0 | 7 | 24 | academic, notices |
-| [Ceremonies](#ceremonies) | 0.7.0 | 5 | 18 | academic |
-| [Sales CRM](#crm) | 0.6.0 | 4 | 32 | finance, notices |
-| [Enrollment](#enrollment) | 0.7.0 | 3 | 8 | academic |
-| [Examinations & Grading](#examinations) | 0.19.0 | 9 | 36 | academic, notices |
-| [Feedback](#feedback) | 0.8.0 | 8 | 19 | academic |
-| [Fees & Finance](#fees) | 0.23.0 | 11 | 40 | academic, finance, notices |
+| [Academic Core](#academic) | 0.11.0 | 7 | 42 | None |
+| [Admissions](#admissions) | 0.7.0 | 3 | 9 | academic |
+| [Alumni and events](#alumni) | 0.5.0 | 4 | 12 | None |
+| [Attendance & QR](#attendance) | 0.14.0 | 7 | 28 | academic, notices |
+| [Student Care](#care) | 0.10.0 | 7 | 24 | academic, notices |
+| [Ceremonies](#ceremonies) | 0.6.0 | 5 | 18 | academic |
+| [Sales CRM](#crm) | 0.5.0 | 4 | 32 | finance, notices |
+| [Enrollment](#enrollment) | 0.6.0 | 3 | 8 | academic |
+| [Examinations & Grading](#examinations) | 0.18.0 | 9 | 36 | academic, notices |
+| [Feedback](#feedback) | 0.7.0 | 8 | 19 | academic |
+| [Fees & Finance](#fees) | 0.22.0 | 11 | 40 | academic, finance, notices |
 | [Finance & Books](#finance) | 0.21.0 | 92 | 208 | None |
-| [Helpdesk and grievance](#helpdesk) | 0.6.0 | 2 | 7 | None |
-| [Hostel](#hostel) | 0.10.0 | 5 | 18 | academic |
-| [HR & Payroll](#hr) | 0.23.0 | 18 | 134 | finance, notices |
-| [Library](#library) | 0.14.0 | 5 | 18 | academic |
-| [Mentoring](#mentoring) | 0.19.0 | 6 | 19 | academic, notices |
-| [Communication & Notices](#notices) | 0.14.0 | 4 | 13 | academic |
-| [Parent Portal](#parents) | 0.19.0 | 4 | 11 | academic |
-| [Placement](#placement) | 0.11.0 | 8 | 15 | academic, notices |
-| [Projects and timesheets](#projects) | 0.4.0 | 6 | 27 | finance |
-| [Quizzes](#quizzes) | 0.8.0 | 7 | 22 | academic |
-| [Reports](#reports) | 0.2.0 | 5 | 10 | notices |
-| [Skills](#skills) | 0.6.0 | 5 | 12 | None |
+| [Helpdesk and grievance](#helpdesk) | 0.5.0 | 2 | 7 | None |
+| [Hostel](#hostel) | 0.9.0 | 5 | 18 | academic |
+| [HR & Payroll](#hr) | 0.22.0 | 18 | 134 | finance, notices |
+| [Library](#library) | 0.13.0 | 5 | 18 | academic |
+| [Mentoring](#mentoring) | 0.18.0 | 6 | 19 | academic, notices |
+| [Communication & Notices](#notices) | 0.13.0 | 4 | 13 | academic |
+| [Parent Portal](#parents) | 0.18.0 | 4 | 11 | academic |
+| [Placement](#placement) | 0.10.0 | 8 | 15 | academic, notices |
+| [Projects and timesheets](#projects) | 0.3.0 | 6 | 27 | finance |
+| [Quizzes](#quizzes) | 0.7.0 | 7 | 22 | academic |
+| [Reports](#reports) | 0.1.0 | 5 | 10 | notices |
+| [Skills](#skills) | 0.5.0 | 5 | 12 | None |
 | [Timetable](#timetable) | 0.8.0 | 12 | 42 | academic |
-| [Transport](#transport) | 0.5.0 | 4 | 12 | None |
+| [Transport](#transport) | 0.4.0 | 4 | 12 | None |
 
 <a id="academic"></a>
 ## Academic Core
