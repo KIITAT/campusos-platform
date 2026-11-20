@@ -15,7 +15,7 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | [Ceremonies](#ceremonies) | 0.8.0 | 5 | 18 | academic |
 | [Sales CRM](#crm) | 0.9.0 | 4 | 32 | finance, notices |
 | [Enrollment](#enrollment) | 0.9.0 | 3 | 9 | academic |
-| [Examinations & Grading](#examinations) | 0.25.0 | 9 | 37 | academic, notices |
+| [Examinations & Grading](#examinations) | 0.26.0 | 11 | 41 | academic, notices |
 | [Feedback](#feedback) | 0.9.0 | 8 | 19 | academic |
 | [Fees & Finance](#fees) | 0.28.0 | 11 | 43 | academic, finance, notices |
 | [Finance & Books](#finance) | 0.22.0 | 92 | 208 | None |
@@ -23,9 +23,9 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | [Hostel](#hostel) | 0.14.0 | 5 | 20 | academic |
 | [HR & Payroll](#hr) | 0.26.0 | 18 | 134 | finance, notices |
 | [Library](#library) | 0.16.0 | 5 | 18 | academic |
-| [Mentoring](#mentoring) | 0.25.0 | 6 | 19 | academic, notices |
+| [Mentoring](#mentoring) | 0.26.0 | 6 | 19 | academic, notices |
 | [Communication & Notices](#notices) | 0.15.0 | 4 | 13 | academic |
-| [Parent Portal](#parents) | 0.25.0 | 4 | 11 | academic |
+| [Parent Portal](#parents) | 0.26.0 | 4 | 11 | academic |
 | [Placement](#placement) | 0.12.0 | 8 | 15 | academic, notices |
 | [Projects and timesheets](#projects) | 0.5.0 | 6 | 27 | finance |
 | [Quizzes](#quizzes) | 0.9.0 | 7 | 22 | academic |
@@ -408,7 +408,7 @@ Source: `campusos-platform/packages/modules/enrollment/`.
 
 Exam scheduling, marks entry with publish-locking, configurable grade scales and transcripts; the examination cycle -- enrolment, admit cards, backlog booking, semester grade reports, sealed question papers -- and statistics.
 
-Module roles: `super_admin`, `institution_admin`, `hod`, `faculty`, `student`.
+Module roles: `super_admin`, `institution_admin`, `hod`, `faculty`, `student`, `parent`.
 Source: `campusos-platform/packages/modules/examinations/`.
 
 ### Screens
@@ -423,6 +423,8 @@ Source: `campusos-platform/packages/modules/examinations/`.
 | `/m/examinations/paper` | Question paper | institution_admin, super_admin, hod, faculty |
 | `/m/examinations/stats` | Exam statistics | institution_admin, super_admin, hod, faculty |
 | `/m/examinations/performance` | Performance | institution_admin, super_admin, hod, faculty, student |
+| `/m/examinations/report-cards` | School report cards | institution_admin, super_admin, hod, faculty |
+| `/m/examinations/my-report-cards` | School report cards | student, parent |
 | `/m/examinations/import` | Import from CSV | faculty, hod, institution_admin, super_admin |
 
 ### Operations
@@ -458,6 +460,10 @@ Source: `campusos-platform/packages/modules/examinations/`.
 | `POST /api/v1/modules/examinations/backlogs/cancel` | Cancel a backlog booking and its fee | `bookingId`, `reason` |
 | `GET /api/v1/modules/examinations/backlogs` | Backlog papers booked for a term | `termId` (query) |
 | `GET /api/v1/modules/examinations/grade-report.pdf` | A term’s grade report from the official record, with SGPA and CGPA (binary response) | `termId` (query), `studentId` (query) |
+| `POST /api/v1/modules/examinations/report-card/template` | Save a class’s school report template for a term (administrators) | `termId`, `programId`, `expectedRevision`, `template` |
+| `POST /api/v1/modules/examinations/report-card/entry` | Set one area’s grade, or the remark, on a pupil’s school report (the class teacher or an administrator) | `termId`, `sectionId`, `studentId`, `area`, `value` |
+| `POST /api/v1/modules/examinations/report-card/publication` | Publish or withdraw a pupil’s school report, with a reason (the class teacher or an administrator) | `termId`, `sectionId`, `studentId`, `published`, `reason` |
+| `GET /api/v1/modules/examinations/report-card.pdf` | A published school term report as a PDF, read live from the published marks (binary response) | `termId` (query), `sectionId` (query), `studentId` (query) |
 | `POST /api/v1/modules/examinations/papers` | Upload a question paper (PDF), sealed until shortly before the exam | `examId`, `paper` |
 | `GET /api/v1/modules/examinations/papers` | The sealed question papers for an exam, without their contents | `examId` (query) |
 | `GET /api/v1/modules/examinations/paper.pdf` | A question paper, for the examination cell, from its release time (binary response) | `paperId` (query) |
