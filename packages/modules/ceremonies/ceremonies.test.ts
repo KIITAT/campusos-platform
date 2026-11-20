@@ -474,6 +474,8 @@ async function moneyCampus(...modules: string[]): Promise<Money> {
       .values({ institutionId: c.id, moduleId, enabled: true })
       .onConflictDoUpdate({ target: [institutionModules.institutionId, institutionModules.moduleId], set: { enabled: true } })
   }
+  // Fees bills a programme declared before the term began.
+  await withTenant(c.id, (tx) => tx.update(studentPrograms).set({ declaredOn: '2025-07-01' }).where(eq(studentPrograms.studentId, c.done.id)))
   // A term running today, in India: where a library fine moved to Fees lands.
   await withTenant(c.id, (tx) =>
     tx.execute(sql`insert into academic_terms (institution_id, code, name, starts_on, ends_on)
@@ -510,9 +512,8 @@ const issuedAudits = (c: Campus) =>
   )
 const refusal = (out: { issued: number; skipped: { name: string; reason: string }[] }, name = 'Asha Graduate') => {
   assert.equal(out.issued, 0)
-  assert.equal(out.skipped.length, 1)
-  assert.equal(out.skipped[0]!.name, name)
-  assert.equal(out.skipped[0]!.reason, DUES)
+  // Bilal is short of credits and always skipped; only the named student's reason matters here.
+  assert.deepEqual(out.skipped.filter((s) => s.name === name).map((s) => s.reason), [DUES])
 }
 
 test('a positive balance from another term blocks issuance even with credit elsewhere (FUNC-05)', async () => {
@@ -736,7 +737,7 @@ test('a configured provider with no tables stops issue; an unconfigured one coun
     const run = async () => {
       await client.query('savepoint s')
       try {
-        return await clearance(drizzle(client) as never, c.id, c.done.id)
+        return await clearance(drizzle(client as never) as never, c.id, c.done.id)
       } finally {
         await client.query('rollback to savepoint s')
       }
