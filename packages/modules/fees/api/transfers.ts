@@ -98,6 +98,14 @@ export const addBankAccountSchema = z
   })
   .meta({ id: 'FeeBankAccountAdd' })
 
+export const setAccountUpiSchema = z
+  .object({
+    accountId: z.uuid(),
+    vpa: z.preprocess(blankToUndefined, z.string().trim().toLowerCase().optional()),
+    merchant: z.preprocess((v) => v === true || v === 'on' || v === 'true', z.boolean()),
+  })
+  .meta({ id: 'FeeBankAccountUpi' })
+
 export const retireBankAccountSchema = z.object({ accountId: z.uuid() }).meta({ id: 'FeeBankAccountRetire' })
 
 export const claimTransferSchema = z
@@ -203,6 +211,43 @@ export async function retireBankAccount(actor: Actor, input: unknown) {
         reason: 'retired',
       })
       return { notice: 'Retired. Claims already made into it stand.' }
+    }),
+  )
+}
+
+/**
+ * The account's UPI ID, shown to payers as a QR. Editable at any time: the
+ * statement match keys on the reference, never on the VPA, so changing it
+ * rewrites no money record. A blank ID clears it and the merchant flag.
+ */
+export async function setAccountUpi(actor: Actor, input: unknown) {
+  const tenant = requireAdmin(actor)
+  const d = setAccountUpiSchema.parse(input)
+  return named(() =>
+    withTenant(tenant, async (tx) => {
+      const [old] = await tx
+        .select({ vpa: bankAccounts.upiVpa })
+        .from(bankAccounts)
+        .where(and(eq(bankAccounts.id, d.accountId), isNull(bankAccounts.retiredAt)))
+        .for('update')
+      if (!old) throw new FeeError(404, 'no_such_account', 'no such live account')
+      // A blank ID with the merchant box ticked is refused by the table's check, not silently cleared.
+      const merchant = d.merchant
+      await tx
+        .update(bankAccounts)
+        .set({ upiVpa: d.vpa ?? null, upiMerchant: merchant })
+        .where(eq(bankAccounts.id, d.accountId))
+      await audit(tx, {
+        institutionId: tenant,
+        actorId: actor.id,
+        actorEmail: actor.email ?? null,
+        moduleId: MODULE,
+        action: 'fee.bank_account_upi',
+        entity: 'fee_bank_accounts',
+        entityId: d.accountId,
+        reason: `${old.vpa ?? 'none'} -> ${d.vpa ?? 'none'}${merchant ? ' (merchant)' : ''}`,
+      })
+      return { notice: d.vpa ? `UPI ID ${d.vpa} saved. Payers see its QR on their fee page.` : 'UPI ID removed.' }
     }),
   )
 }
@@ -485,7 +530,7 @@ export async function issueDemandLetter(actor: Actor, input: unknown) {
         },
         term: { code: t!.code, name: t!.name, startsOn: String(t!.startsOn), endsOn: String(t!.endsOn) },
         account: account
-          ? { accountName: account.accountName, bankName: account.bankName, branch: account.branch, accountNumber: account.accountNumber, ifsc: account.ifsc }
+          ? { accountName: account.accountName, bankName: account.bankName, branch: account.branch, accountNumber: account.accountNumber, ifsc: account.ifsc, upiVpa: account.upiVpa ?? null }
           : null,
       }
       if (content.lines.length === 0) throw new FeeError(409, 'nothing_charged', 'there are no fees for that term to state')
