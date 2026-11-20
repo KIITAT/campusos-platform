@@ -6,6 +6,7 @@ import { needs, pins } from '../schema'
 import { termClasses, termWithin } from './classes'
 import { TimetableError, named, requireOffice, requireReader, type Actor } from './core'
 import { periodsFor, roomsWithin, teachersWithin } from './setup'
+import { auditTimetable } from './structural-audit'
 
 /**
  * What each class needs a week, what the office has pinned, and whether a
@@ -68,6 +69,15 @@ export const needSchema = z
   })
   .meta({ id: 'TimetableNeed' })
 
+const needDetail = (row: typeof needs.$inferSelect) => ({
+  offeringId: row.offeringId,
+  kind: row.kind,
+  periodsPerWeek: row.periodsPerWeek,
+  blockLength: row.blockLength,
+  roomKind: row.roomKind,
+  roomId: row.roomId,
+})
+
 /** Set a class's need of one kind -- four lecture periods, one two-period lab. */
 export async function setNeed(actor: Actor, input: unknown) {
   const tenant = requireOffice(actor)
@@ -90,6 +100,7 @@ export async function setNeed(actor: Actor, input: unknown) {
         .values({ institutionId: tenant, offeringId: data.offeringId, kind: data.kind, ...values })
         .onConflictDoUpdate({ target: [needs.offeringId, needs.kind], set: values })
         .returning()
+      await auditTimetable(tx, actor, tenant, 'need.set', 'timetable_needs', row!.id, 'Set timetable need', needDetail(row!))
       return { ...row!, notice: `Needs ${summary(row!)} a week.` }
     }),
   )
@@ -99,7 +110,8 @@ export async function deleteNeed(actor: Actor, input: unknown) {
   const tenant = requireOffice(actor)
   const { needId } = z.object({ needId: uuid }).parse(input)
   return withTenant(tenant, async (tx) => {
-    await tx.delete(needs).where(eq(needs.id, needId))
+    const [row] = await tx.delete(needs).where(eq(needs.id, needId)).returning()
+    if (row) await auditTimetable(tx, actor, tenant, 'need.deleted', 'timetable_needs', row.id, 'Deleted timetable need', needDetail(row))
     return { notice: 'Removed.' }
   })
 }
@@ -139,7 +151,16 @@ export async function defaultNeeds(actor: Actor, input: unknown) {
           blockLength: 1,
           roomKind: data.roomKind === 'classroom' ? null : data.roomKind,
         }))
-      if (rows.length) await tx.insert(needs).values(rows)
+      if (rows.length) {
+        await tx.insert(needs).values(rows)
+        await auditTimetable(tx, actor, tenant, 'needs.defaulted', 'timetable_needs', data.termId, 'Defaulted timetable needs', {
+          termId: data.termId,
+          kind: data.kind,
+          periodsPerCredit: data.periodsPerCredit,
+          roomKind: data.roomKind,
+          added: rows.length,
+        })
+      }
       return { added: rows.length, notice: rows.length ? `${rows.length} class(es) given a need from their credits.` : 'Every class already has a need.' }
     }),
   )
@@ -189,6 +210,15 @@ export const pinSchema = z
   })
   .meta({ id: 'TimetablePin' })
 
+const pinDetail = (row: typeof pins.$inferSelect) => ({
+  offeringId: row.offeringId,
+  needKind: row.needKind,
+  facultyUserId: row.facultyUserId,
+  dayOfWeek: row.dayOfWeek,
+  period: row.period,
+  roomId: row.roomId,
+})
+
 /**
  * Keep something the solver must not change: a class's teacher, a block's
  * time, its room -- the time and room for one block of the named kind.
@@ -196,8 +226,10 @@ export const pinSchema = z
 export async function addPin(actor: Actor, input: unknown) {
   const tenant = requireOffice(actor)
   const data = pinSchema.parse(input)
+  let replaced = 0
   return withTenant(tenant, (tx) =>
     named(async () => {
+      replaced = 0
       const classNeeds = await tx.select().from(needs).where(eq(needs.offeringId, data.offeringId))
       if (data.dayOfWeek !== undefined) {
         if (classNeeds.length === 0) throw new TimetableError(409, 'no_need', 'give the class its weekly need before pinning a time')
@@ -209,11 +241,16 @@ export async function addPin(actor: Actor, input: unknown) {
         const [u] = await tx.select({ role: users.role }).from(users).where(eq(users.id, data.facultyUserId))
         if (!u || ['student', 'parent', 'pending'].includes(u.role)) throw new TimetableError(409, 'not_staff', 'only staff teach')
         // One teacher per class: a new teacher pin replaces any other.
-        await tx
+        const cleared = await tx
           .update(pins)
           .set({ facultyUserId: null })
           .where(and(eq(pins.offeringId, data.offeringId), sql`${pins.facultyUserId} is not null`, sql`${pins.dayOfWeek} is not null`))
-        await tx.delete(pins).where(and(eq(pins.offeringId, data.offeringId), sql`${pins.facultyUserId} is not null`, sql`${pins.dayOfWeek} is null`))
+          .returning({ id: pins.id })
+        const dropped = await tx
+          .delete(pins)
+          .where(and(eq(pins.offeringId, data.offeringId), sql`${pins.facultyUserId} is not null`, sql`${pins.dayOfWeek} is null`))
+          .returning({ id: pins.id })
+        replaced = cleared.length + dropped.length
       }
       const [row] = await tx
         .insert(pins)
@@ -229,6 +266,7 @@ export async function addPin(actor: Actor, input: unknown) {
           createdBy: actor.id,
         })
         .returning()
+      await auditTimetable(tx, actor, tenant, 'pin.added', 'timetable_pins', row!.id, 'Added timetable pin', { ...pinDetail(row!), replacedTeacherPins: replaced })
       return { ...row!, notice: 'Pinned.' }
     }),
   )
@@ -238,7 +276,8 @@ export async function deletePin(actor: Actor, input: unknown) {
   const tenant = requireOffice(actor)
   const { pinId } = z.object({ pinId: uuid }).parse(input)
   return withTenant(tenant, async (tx) => {
-    await tx.delete(pins).where(eq(pins.id, pinId))
+    const [row] = await tx.delete(pins).where(eq(pins.id, pinId)).returning()
+    if (row) await auditTimetable(tx, actor, tenant, 'pin.deleted', 'timetable_pins', row.id, 'Deleted timetable pin', pinDetail(row))
     return { notice: 'Unpinned.' }
   })
 }

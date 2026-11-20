@@ -7,6 +7,7 @@ import { pins, runEntries, runs, unavailable } from '../schema'
 import { sectionConflicts, termClasses, termWithin, type TermClass } from './classes'
 import { OFFICE, TimetableError, hm, named, requireOffice, requireReader, toMinutes, type Actor, type Tx } from './core'
 import { periodsFor, roomsWithin, settingsWithin, teachersWithin } from './setup'
+import { auditTimetable } from './structural-audit'
 import { SolveFailed, solveInThread, type SolveHandle } from './solve-thread'
 import type { SolverBusy, SolverFixed, SolverInput, SolverIssue, SolverResult } from './solver'
 import { runWithin } from './views'
@@ -592,7 +593,16 @@ export async function discardRun(actor: Actor, input: unknown) {
   return withTenant(tenant, async (tx) => {
     const run = await runWithin(tx, runId)
     if (run.status !== 'draft') throw new TimetableError(409, 'not_a_draft', `this timetable is ${run.status}`)
-    await tx.update(runs).set({ status: 'discarded', closedAt: new Date() }).where(eq(runs.id, runId))
+    const [done] = await tx
+      .update(runs)
+      .set({ status: 'discarded', closedAt: new Date() })
+      .where(and(eq(runs.id, runId), eq(runs.status, 'draft')))
+      .returning({ id: runs.id })
+    if (!done) {
+      const now = await runWithin(tx, runId)
+      throw new TimetableError(409, 'not_a_draft', `this timetable is ${now.status}`)
+    }
+    await auditTimetable(tx, actor, tenant, 'run.discarded', 'timetable_runs', runId, 'Discarded timetable draft', { termId: run.termId })
     return { notice: 'Draft discarded.', next: `/m/timetable/runs?termId=${run.termId}` }
   })
 }
@@ -615,10 +625,15 @@ export async function pinEntry(actor: Actor, input: unknown) {
       if (!e) throw new TimetableError(404, 'no_such_entry', 'no such meeting')
       const time = data.keep !== 'teacher'
       const teacher = data.keep !== 'time' && e.facultyUserId
+      let replaced = 0
       if (teacher) {
-        await tx.delete(pins).where(and(eq(pins.offeringId, e.offeringId), sql`${pins.facultyUserId} is not null`, sql`${pins.dayOfWeek} is null`))
+        const dropped = await tx
+          .delete(pins)
+          .where(and(eq(pins.offeringId, e.offeringId), sql`${pins.facultyUserId} is not null`, sql`${pins.dayOfWeek} is null`))
+          .returning({ id: pins.id })
+        replaced = dropped.length
       }
-      await tx.insert(pins).values({
+      const [pin] = await tx.insert(pins).values({
         institutionId: tenant,
         offeringId: e.offeringId,
         needKind: time ? e.needKind : null,
@@ -628,6 +643,16 @@ export async function pinEntry(actor: Actor, input: unknown) {
         roomId: time ? e.roomId : null,
         createdBy: actor.id,
         note: 'kept from a draft',
+      }).returning()
+      await auditTimetable(tx, actor, tenant, 'pin.kept_from_draft', 'timetable_pins', pin!.id, 'Kept pin from timetable draft', {
+        offeringId: pin!.offeringId,
+        needKind: pin!.needKind,
+        facultyUserId: pin!.facultyUserId,
+        dayOfWeek: pin!.dayOfWeek,
+        period: pin!.period,
+        roomId: pin!.roomId,
+        replacedTeacherPins: replaced,
+        entryId: data.entryId,
       })
       return { notice: 'Pinned for the next run.' }
     }),
