@@ -18,11 +18,11 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | [Examinations & Grading](#examinations) | 0.19.0 | 9 | 36 | academic, notices |
 | [Feedback](#feedback) | 0.7.0 | 8 | 19 | academic |
 | [Fees & Finance](#fees) | 0.23.0 | 11 | 43 | academic, finance, notices |
-| [Finance & Books](#finance) | 0.20.0 | 92 | 208 | None |
+| [Finance & Books](#finance) | 0.21.0 | 92 | 208 | None |
 | [Helpdesk and grievance](#helpdesk) | 0.5.0 | 2 | 7 | None |
 | [Hostel](#hostel) | 0.9.0 | 5 | 18 | academic |
-| [HR & Payroll](#hr) | 0.22.0 | 18 | 134 | finance, notices |
-| [Library](#library) | 0.13.0 | 5 | 18 | academic |
+| [HR & Payroll](#hr) | 0.23.0 | 18 | 134 | finance, notices |
+| [Library](#library) | 0.14.0 | 5 | 18 | academic |
 | [Mentoring](#mentoring) | 0.19.0 | 6 | 19 | academic, notices |
 | [Communication & Notices](#notices) | 0.13.0 | 4 | 13 | academic |
 | [Parent Portal](#parents) | 0.19.0 | 4 | 11 | academic |
