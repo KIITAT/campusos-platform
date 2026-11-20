@@ -1294,8 +1294,8 @@ export async function paymentForReceipt(actor: Actor, paymentId: string) {
         studentId: feePayments.studentId,
         studentName: users.name,
         studentEmail: users.email,
-        receivedOn: sql<string | null>`(select e.posting_date::text from finance_journal_entries e where e.source_module = 'fees' and e.source_ref = 'payment:' || ${feePayments.id})`,
-        voidedOn: sql<string | null>`(select r.posting_date::text from finance_journal_entries r join finance_journal_entries e on e.id = r.reversal_of where e.source_module = 'fees' and e.source_ref = 'payment:' || ${feePayments.id})`,
+        receivedOn: sql<string | null>`(select e.posting_date::text from finance_journal_entries e where e.source_module = 'fees' and e.source_ref = 'payment:' || fee_payments.id)`,
+        voidedOn: sql<string | null>`(select r.posting_date::text from finance_journal_entries r join finance_journal_entries e on e.id = r.reversal_of where e.source_module = 'fees' and e.source_ref = 'payment:' || fee_payments.id)`,
         termCode: terms.code,
         termName: terms.name,
       })
