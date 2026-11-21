@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import * as z from 'zod'
-import { and, asc, desc, eq, gt, inArray, lt, ne, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, isNotNull, lt, ne, sql } from 'drizzle-orm'
 import { audit, users, withTenant } from '@campusos/db'
 import { programs, sectionMembers, sections, studentPrograms, terms } from '../schema'
 import { AcademicError, requireWriter, type Actor } from './operations'
@@ -132,7 +132,8 @@ export interface PromotionRoster {
  * The roster of a school section for promotion. Members in user order, at most
  * 501 read so that an oversize roster is seen without reading further. A member
  * with no live school declaration whose latest declaration of this class was
- * withdrawn or transferred out on or before today has departed: still on the
+ * withdrawn or transferred out on or before today has departed, and so has an
+ * erased account: still on the
  * historical roster, no longer part of the promotion. Anyone else is a
  * participant, including a member with a missing or wrong declaration, so that
  * the problem is raised instead of silently skipped.
@@ -161,7 +162,10 @@ export async function readSchoolPromotionRoster(tx: Tx, sectionId: string, progr
     if (d.status === 'active') live.set(d.studentId, [...(live.get(d.studentId) ?? []), d])
     else if (d.programId === programId && !latestOfClass.has(d.studentId)) latestOfClass.set(d.studentId, d)
   }
+  // An erased account (P1-08a) has departed too, whatever its declarations say.
+  const erased = new Set(memberIds.length ? (await tx.select({ id: users.id }).from(users).where(and(inArray(users.id, memberIds), isNotNull(users.erasedAt)))).map((r) => r.id) : [])
   const participantIds = memberIds.filter((id) => {
+    if (erased.has(id)) return false
     if (live.has(id)) return true
     const last = latestOfClass.get(id)
     const gone = last && (last.status === 'withdrawn' || last.status === 'transferred_out') && last.endedOn !== null && last.endedOn <= today
