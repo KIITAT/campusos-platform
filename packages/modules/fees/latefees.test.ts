@@ -295,3 +295,20 @@ test('late fees belong to their institution', async () => {
   assert.equal((seen.rows[0] as { n: number }).n, 0)
   await assert.rejects(api.removeLateFee(b.admin, { lateFeeId: rule.id, reason: 'not mine at all' }), (e) => code(e) === 'no_such_late_fee')
 })
+
+test('an unpaid late fee is not itself a reason for another', async () => {
+  const c = await campus()
+  await item(c, 'Tuition I', '50000', await ago(c, 40))
+  const a = await api.createLateFee(c.admin, { termId: c.termId, afterDays: 10, amount: '500' })
+  const b = await api.createLateFee(c.admin, { termId: c.termId, afterDays: 25, amount: '1000' })
+  await backdate(c, a.id, 400)
+  await backdate(c, b.id, 400)
+  await issue(c)
+  // Paid after the first cutoff (30 days ago) and before the second (15 days ago).
+  await cash(c, c.s1, '50000', `${await ago(c, 20)}T06:00:00.000Z`)
+  await run(c)
+  assert.deepEqual((await lateCharges(c, c.s1)).map((r) => r.amountPaise), [50_000])
+  await issue(c)
+  await run(c)
+  assert.deepEqual((await lateCharges(c, c.s1)).map((r) => r.amountPaise), [50_000])
+})
