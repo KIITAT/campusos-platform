@@ -1,4 +1,4 @@
-import { jsonBody, requiredParam, type PluginRoute } from '@campusos/module-framework'
+import { jsonBody, param, requiredParam, type PluginRoute } from '@campusos/module-framework'
 import {
   certificateDocument,
   certificateView,
@@ -18,6 +18,10 @@ import {
   runEligibility,
   setCeremonyStatus,
   verifyCertificate,
+  issueTransferCertificate,
+  listTransferCertificates,
+  reissueTransferCertificate,
+  revokeTransferCertificate,
   type Actor,
 } from './api'
 
@@ -70,6 +74,14 @@ export const routes: PluginRoute[] = [
       })
     },
   },
+  {
+    method: 'GET',
+    path: '/transfer-certificates',
+    handler: (a, req) => listTransferCertificates(a as Actor, { serial: param(req, 'serial'), studentId: param(req, 'studentId') }),
+  },
+  post('/transfer-certificates/issue', issueTransferCertificate),
+  post('/transfer-certificates/revoke', revokeTransferCertificate),
+  post('/transfer-certificates/reissue', reissueTransferCertificate),
   {
     method: 'GET',
     path: '/verify',

@@ -1,7 +1,7 @@
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { eq, like, sql } from 'drizzle-orm'
-import { authDb, institutionModules, institutions, users, withTenant } from '@campusos/db'
+import { authDb, corePool, institutionModules, institutions, users, withTenant } from '@campusos/db'
 import {
   createDepartment,
   createProgram,
@@ -262,4 +262,66 @@ test('the header and payload are tenant-isolated, locked once issued, and the pa
   await assert.rejects(withTenant(a.id, (tx) => tx.execute(sql`update ceremony_transfer_payloads set snapshot = '{"format":"cbse_annexure_i_v1","x":1}'::jsonb where certificate_id = ${hdr}`)), (e) => constraintOf(e) === 'transfer_payload_locked')
   await assert.rejects(withTenant(a.id, (tx) => tx.execute(sql`delete from ceremony_transfer_payloads where certificate_id = ${hdr}`)), (e) => constraintOf(e) === 'transfer_payload_locked')
   assert.deepEqual(await counts(a), { h: 1, p: 1, a: 0 })
+})
+
+// --- issue, revoke, replace (step 3) -----------------------------------------
+
+test('a debit committed while the issue waits for the series lock blocks it, and no number is taken (MG-05, FUNC-05)', async () => {
+  const c = await school({ bill: true })
+  await payUp(c)
+  const holder = await corePool.connect()
+  let run: Promise<unknown> | undefined
+  try {
+    await holder.query('begin')
+    await holder.query(`select pg_advisory_xact_lock(hashtextextended($1, 0))`, [`ceremonies.tc:${c.id}`])
+    run = post(c.admin, '/transfer-certificates/issue', tcBody(c.declarationId))
+    run.catch(() => undefined)
+    const until = Date.now() + 5_000
+    for (;;) {
+      const r = await authDb.execute(sql`select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and wait_event = 'advisory' and pid <> pg_backend_pid()`)
+      if ((r.rows[0] as { n: number }).n >= 1) break
+      if (Date.now() > until) throw new Error('the issue never reached the series lock')
+      await new Promise((ok) => setTimeout(ok, 50))
+    }
+    await withTenant(c.id, (tx) =>
+      fees.chargeStudentWithin(tx, c.id, c.admin.id, { studentId: c.pupil.id, termId: c.termId, label: 'hostel dues', amountPaise: 100, sourceModule: 'hostel', sourceId: `late:${c.id}` }),
+    )
+  } finally {
+    await holder.query('commit')
+    holder.release()
+  }
+  await assert.rejects(run!, failsWith(409, 'certificate_dues_outstanding', DUES))
+  assert.deepEqual(await counts(c), { h: 0, p: 0, a: 0 })
+})
+
+test('the office checks what it types: dates, promotion, subjects, glyphs; a replacement needs a revocation (MG-05)', async () => {
+  const c = await school()
+  const issue = (over: Record<string, unknown>) => post(c.admin, '/transfer-certificates/issue', tcBody(c.declarationId, over))
+  const zodRefused = (e: unknown) => (e as { name?: string }).name === 'ZodError'
+  await assert.rejects(issue({ presentDays: 300 }), zodRefused)
+  await assert.rejects(issue({ promotionEligible: 'no' }), zodRefused)
+  await assert.rejects(issue({ subjects: 'English,,Maths' }), zodRefused)
+  await assert.rejects(issue({ repeatCount: 3 }), zodRefused)
+  await assert.rejects(issue({ conduct: 'Good\nVery' }), zodRefused)
+  await assert.rejects(issue({ firstAdmittedOn: '2009-01-01' }), failsWith(400, 'invalid_transfer_fields'))
+  await assert.rejects(issue({ appliedOn: '2027-01-01' }), failsWith(400, 'invalid_transfer_fields'))
+  await assert.rejects(issue({ paidThroughMonth: '2099-01' }), failsWith(400, 'invalid_transfer_fields'))
+  await assert.rejects(issue({ conduct: 'Good \u{1F600}' }), failsWith(409, 'missing_glyph'))
+  assert.deepEqual(await counts(c), { h: 0, p: 0, a: 0 })
+  const ok = (await issue({ schoolAddress: '12 Station Road\nPune 411001' })) as { id: string; serial: string }
+  await assert.rejects(issue({}), failsWith(409, 'transfer_certificate_exists'))
+  await assert.rejects(post(c.admin, '/transfer-certificates/reissue', tcBody(c.declarationId, { certificateId: ok.id, studentProgramId: undefined })), failsWith(409, 'transfer_not_revoked', 'Revoke the certificate before replacing it.'))
+  await assert.rejects(post(c.admin, '/transfer-certificates/revoke', { certificateId: ok.id, reason: 'no' }), zodRefused)
+  await post(c.admin, '/transfer-certificates/revoke', { certificateId: ok.id, reason: 'printed on the wrong stock' })
+  await assert.rejects(post(c.admin, '/transfer-certificates/revoke', { certificateId: ok.id, reason: 'printed on the wrong stock' }), failsWith(409, 'not_submitted'))
+  const one = (await post(c.admin, '/transfer-certificates/reissue', tcBody(c.declarationId, { certificateId: ok.id, studentProgramId: undefined }))) as { id: string }
+  await assert.rejects(post(c.admin, '/transfer-certificates/reissue', tcBody(c.declarationId, { certificateId: ok.id, studentProgramId: undefined })), failsWith(409, 'already_amended'))
+  const list = (await get(c.admin, '/transfer-certificates', { studentId: c.pupil.id })) as { id: string; serial: string; docstatus: string; printable: boolean; amendedFrom: string | null }[]
+  assert.deepEqual(list.map((r) => [r.serial.slice(-6), r.docstatus, r.printable, r.amendedFrom === null]), [['000002', 'submitted', true, false], ['000001', 'cancelled', false, true]])
+  assert.equal(list[0]!.id, one.id)
+  const bySerial = (await get(c.admin, '/transfer-certificates', { serial: list[1]!.serial })) as unknown[]
+  assert.equal(bySerial.length, 1)
+  // The address was typed over two lines and is stored as one.
+  const [p] = await withTenant(c.id, async (tx) => (await tx.execute(sql`select snapshot->>'schoolAddress' as a from ceremony_transfer_payloads p join ceremony_transfer_certificates h on h.id = p.certificate_id where h.serial_no = 1`)).rows as { a: string }[])
+  assert.equal(p!.a, '12 Station Road Pune 411001')
 })
