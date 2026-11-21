@@ -159,7 +159,7 @@ test('the whole product still answers the same number of endpoints', () => {
   // P1-07b: +1 (examinations: grant or revoke an eligibility waiver)
   // P1-07c: +3 (examinations: a student asks for a mark review, an administrator decides it, reviews read; revise now proposes)
   // P1-03c: +5 (fees: account UPI, statement page, match, receipt a line; parents: report a child's payment)
-  assert.equal(total, 855, `expected 855 endpoints across all modules, found ${total}`)
+  assert.equal(total, 860, `expected 860 endpoints across all modules, found ${total}`)
 })
 
 test('a longer path is never swallowed by a shorter one', () => {
@@ -186,6 +186,7 @@ test('only the document routes return bytes instead of JSON', () => {
     'admissions/imports/template',
     'alumni/imports/template',
     'ceremonies/certificate.pdf',
+    'ceremonies/transfer-certificate.pdf',
     'examinations/admit-card.pdf',
     'examinations/grade-report.pdf',
     'examinations/imports/template',
