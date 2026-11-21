@@ -335,7 +335,7 @@ export async function addSectionMember(actor: Actor, input: unknown) {
       .onConflictDoNothing()
       .returning({ userId: sectionMembers.userId })
     if (added) {
-      await auditAcademic(tx, actor, tenant, 'section.member_added', 'academic_section_members', data.sectionId, 'Added student to section', {
+      await auditAcademic(tx, actor, tenant, 'section.member_added', 'academic_sections', data.sectionId, 'Added student to section', {
         studentId: added.userId,
       })
     }

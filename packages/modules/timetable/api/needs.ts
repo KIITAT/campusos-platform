@@ -153,7 +153,7 @@ export async function defaultNeeds(actor: Actor, input: unknown) {
         }))
       if (rows.length) {
         await tx.insert(needs).values(rows)
-        await auditTimetable(tx, actor, tenant, 'needs.defaulted', 'timetable_needs', data.termId, 'Defaulted timetable needs', {
+        await auditTimetable(tx, actor, tenant, 'needs.defaulted', 'academic_terms', data.termId, 'Defaulted timetable needs', {
           termId: data.termId,
           kind: data.kind,
           periodsPerCredit: data.periodsPerCredit,
