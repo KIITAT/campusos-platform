@@ -25,6 +25,7 @@ import timetable from '@campusos/module-timetable/plugin'
 import admissions from '@campusos/module-admissions/plugin'
 import alumni from '@campusos/module-alumni/plugin'
 import crm from '@campusos/module-crm/plugin'
+import documents from '@campusos/module-documents/plugin'
 import helpdesk from '@campusos/module-helpdesk/plugin'
 import placement from '@campusos/module-placement/plugin'
 import projects from '@campusos/module-projects/plugin'
@@ -60,6 +61,7 @@ const PLUGINS: Plugin[] = [
   admissions,
   alumni,
   crm,
+  documents,
   helpdesk,
   placement,
   projects,
@@ -156,8 +158,13 @@ test('the whole product still answers the same number of endpoints', () => {
   // P1-07a: +1 (enrollment: a section's membership follows registration); P1-13a: +2 (attendance: the daily register, read and mark)
   // P1-03b: +3 (fees: void a receipt, a cheque returned unpaid, void an invoice)
   // P1-03e: +4 (hostel: room fee and term charges; transport: route fee and term charges)
+  // P1-07b: +1 (examinations: grant or revoke an eligibility waiver)
+  // P1-07c: +3 (examinations: a student asks for a mark review, an administrator decides it, reviews read; revise now proposes)
+  // P1-03c: +5 (fees: account UPI, statement page, match, receipt a line; parents: report a child's payment)
+  // P2-19: +8 (documents: list, file, assent record, verify, upload, request, sign, close)
+  // P1-13b: +4 (examinations: school report card template, entry, publication, and the PDF)
   // P1-13c: +2 (academic: a school class's next class, promote and detain a section)
-  assert.equal(total, 848, `expected 848 endpoints across all modules, found ${total}`)
+  assert.equal(total, 869, `expected 869 endpoints across all modules, found ${total}`)
 })
 
 test('a longer path is never swallowed by a shorter one', () => {
@@ -184,10 +191,13 @@ test('only the document routes return bytes instead of JSON', () => {
     'admissions/imports/template',
     'alumni/imports/template',
     'ceremonies/certificate.pdf',
+    'documents/file',
+    'documents/receipt.pdf',
     'examinations/admit-card.pdf',
     'examinations/grade-report.pdf',
     'examinations/imports/template',
     'examinations/paper.pdf',
+    'examinations/report-card.pdf',
     'examinations/transcript.pdf',
     'fees/demand-letter.pdf',
     'fees/receipt.pdf',

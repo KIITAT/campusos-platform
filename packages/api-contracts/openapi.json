@@ -386,6 +386,66 @@
         }
       }
     },
+    "/api/v1/document-assent/challenge": {
+      "post": {
+        "summary": "Mail the signed-in signer a one-time code for a Documents signing request",
+        "description": "A host route: the Documents module issues the code and keeps only a digest; this mails it to the current address of the signer. Same-origin browser requests with a session only. Answers with a fixed notice, never the code.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentChallenge"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Confirmation code sent"
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Request closed, expired, not yet downloaded, or too soon",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many attempts; see Retry-After",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Confirmation email is unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/modules/toggle": {
       "post": {
         "summary": "Enable or disable a module for an institution (super_admin only)",
@@ -522,6 +582,25 @@
           "userId",
           "reason"
         ]
+      },
+      "DocumentChallenge": {
+        "type": "object",
+        "properties": {
+          "requestId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "documentId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": [
+          "requestId"
+        ],
+        "additionalProperties": false
       },
       "ToggleModule": {
         "type": "object",

@@ -5,10 +5,10 @@ export const manifest: ModuleManifest = {
   name: 'Examinations & Grading',
   description:
     'Exam scheduling, marks entry with publish-locking, configurable grade scales and transcripts; the examination cycle -- enrolment, admit cards, backlog booking, semester grade reports, sealed question papers -- and statistics.',
-  version: '0.25.0',
+  version: '0.29.0',
   alwaysEnabled: false,
   dependsOn: ['academic', 'notices'],
-  softDependsOn: ['feedback', 'fees'],
+  softDependsOn: ['attendance', 'feedback', 'fees'],
   pricing: { model: 'not_priced_yet', priceINR: null },
 
   rolesWithAccess: [
@@ -17,6 +17,7 @@ export const manifest: ModuleManifest = {
     'hod',
     'faculty',
     'student',
+    'parent',
   ],
 
   navEntries: [
@@ -25,6 +26,8 @@ export const manifest: ModuleManifest = {
     { label: 'Exam booking', href: '/m/examinations/booking', roles: ['student'] },
     { label: 'My results', href: '/m/examinations/me', roles: ['student'] },
     { label: 'My performance', href: '/m/examinations/performance', roles: ['student'] },
+    { label: 'School report cards', href: '/m/examinations/report-cards', roles: ['institution_admin', 'hod', 'faculty'] },
+    { label: 'School report cards', href: '/m/examinations/my-report-cards', roles: ['student', 'parent'] },
     { label: 'Grade scales', href: '/m/examinations/scales', roles: ['institution_admin'] },
   ],
 

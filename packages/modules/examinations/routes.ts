@@ -18,9 +18,15 @@ import {
   examStats,
   gradeReport,
   gradeReportPdf,
+  reportCard,
+  reportCardPdf,
+  setReportCardEntry,
+  setReportCardPublication,
+  setReportCardTemplate,
   listWindows,
   myExamCycle,
   papersFor,
+  setEligibilityWaiver,
   setExamCycleSettings,
   setWindow,
   studentPerformance,
@@ -35,6 +41,9 @@ import {
   officialTranscript,
   publishExam,
   setProgramScheme,
+  decideMarkReview,
+  listMarkReviews,
+  requestMarkReview,
   reviseMark,
   sheet,
   transcript,
@@ -84,9 +93,18 @@ export const routes: PluginRoute[] = [
   {
     method: 'POST',
     path: '/marks/revise',
-    handler: async (actor, req) => {
-      await reviseMark(actor as Actor, await jsonBody(req))
-    },
+    handler: async (actor, req) => reviseMark(actor as Actor, await jsonBody(req)),
+  },
+  post('/marks/recheck', requestMarkReview),
+  post('/marks/decide', decideMarkReview),
+  {
+    method: 'GET',
+    path: '/marks/requests',
+    handler: (actor, req) =>
+      listMarkReviews(actor as Actor, {
+        examId: param(req, 'examId') || undefined,
+        after: param(req, 'after') || undefined,
+      }),
   },
 
   {
@@ -164,6 +182,7 @@ export const routes: PluginRoute[] = [
   post('/enrol', enrol),
   { method: 'GET', path: '/enrolments', handler: (actor, req) => enrolmentList(actor as Actor, requiredParam(req, 'termId')) },
   post('/enrolments/cancel', cancelEnrolment),
+  post('/eligibility/waiver', setEligibilityWaiver),
   pdf('/admit-card.pdf', async (actor, req) => {
     const termId = requiredParam(req, 'termId')
     const studentId = param(req, 'studentId') || actor.id
@@ -178,6 +197,14 @@ export const routes: PluginRoute[] = [
     const studentId = param(req, 'studentId') || actor.id
     const g = await gradeReport(actor, studentId, termId)
     return { bytes: await gradeReportPdf(g), name: `grade-report-${g.term.code}-${g.student.rollNo ?? g.student.name}` }
+  }),
+  post('/report-card/template', setReportCardTemplate),
+  post('/report-card/entry', setReportCardEntry),
+  post('/report-card/publication', setReportCardPublication),
+  pdf('/report-card.pdf', async (actor, req) => {
+    // A guardian names the child; everyone else defaults to themselves.
+    const r = await reportCard(actor, param(req, 'studentId') || actor.id, requiredParam(req, 'termId'), requiredParam(req, 'sectionId'))
+    return { bytes: await reportCardPdf(r), name: `report-card-${r.term.code}-${r.rollNo ?? 'pupil'}` }
   }),
   post('/papers', uploadPaper),
   { method: 'GET', path: '/papers', handler: (actor, req) => papersFor(actor as Actor, requiredParam(req, 'examId')) },

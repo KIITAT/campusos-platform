@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- exports under test are looked up by name, so a missing one fails as an assertion */
 import { after, before, beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { eq, gte, sql } from 'drizzle-orm'
@@ -364,4 +365,45 @@ test('a parent of another institution cannot reach a child here', async () => {
 test('a session with no tenant set reads nothing rather than erroring', async () => {
   await claimLink(admin(), { parentId: ids.p1, studentId: ids.s1, relation: 'father' })
   assert.equal((await db.select().from(links)).length, 0)
+})
+
+// --- paying by UPI, and reporting a payment (P1-03c) -------------------------
+
+test('a guardian sees how to pay by UPI and reports a payment for their child, and only their child', async () => {
+  const api = (await import('./api')) as Record<string, any>
+  const feesApi = fees as Record<string, any>
+  await claimLink(admin(), { parentId: ids.p1, studentId: ids.s1, relation: 'father' })
+  await setModule('fees', true)
+  const programId = (await academic.listStructure(admin())).programs[0]!.id
+  await fees.createFeeItem(admin(), { programId, termId, label: 'UPI test fee', amount: '1000' })
+  await fees.issueInvoices(admin(), { termId })
+  const account = await fees.addBankAccount(admin(), {
+    label: 'Fees', accountName: 'Parent College Fees', bankName: 'Indian Bank', branch: 'Patia', accountNumber: '70245763642', ifsc: 'IDIB000K717',
+  })
+  await feesApi.setAccountUpi(admin(), { accountId: account.id, vpa: 'fees@sbi' })
+
+  const view = await childOverview(parent(ids.p1), ids.s1)
+  assert.equal((view.fees as { upi: { vpa: string } }).upi.vpa, 'fees@sbi')
+  assert.ok((view.fees as { termId: string }).termId)
+
+  const fields = {
+    studentId: ids.s1,
+    termId,
+    accountId: account.id,
+    mode: 'upi',
+    utr: '812345678901',
+    amount: '100',
+    transferredOn: new Date().toISOString().slice(0, 10),
+    remitterBank: 'SBI',
+    accountHolder: 'Parent',
+    contactPhone: '9876543210',
+  }
+  const made = await api.claimChildPayment(parent(ids.p1), fields)
+  assert.equal(made.status, 'pending')
+  assert.equal(made.studentId, ids.s1)
+  await assert.rejects(() => api.claimChildPayment(parent(ids.p1), { ...fields, studentId: ids.s2, utr: '812345678902' }), (e: unknown) => code(e) === 'not_your_child')
+  await assert.rejects(() => api.claimChildPayment(student(ids.s1), { ...fields, utr: '812345678903' }), (e: unknown) => code(e) === 'forbidden')
+  const desk = await api.childFeeDesk(parent(ids.p1), ids.s1)
+  assert.equal(desk.claims.length, 1)
+  assert.ok(desk.accounts.length >= 1)
 })

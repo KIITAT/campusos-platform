@@ -5,11 +5,16 @@ import {
   cancelBacklogSchema,
   cancelEnrolmentSchema,
   enrolSchema,
+  setEligibilityWaiverSchema,
   setSettingsSchema,
   setWindowSchema,
   uploadPaperSchema,
 } from './cycle-schemas'
 import {
+  decideMarkReviewSchema,
+  markReviewPageSchema,
+  markReviewResultSchema,
+  requestMarkReviewSchema,
   createExamSchema,
   createSchemeSchema,
   enterMarksSchema,
@@ -20,10 +25,27 @@ import {
   transcriptSchema,
   unpublishExamSchema,
 } from './schemas'
+import { schoolTemplateSchema } from './school-policy'
 
 const base = manifest.apiBasePath
 const err = z.object({ error: z.string(), message: z.string() })
 const json = (schema: z.ZodType) => ({ 'application/json': { schema } })
+const identity = { termId: z.uuid(), sectionId: z.uuid(), studentId: z.string() }
+const reportCardTemplateBody = z
+  .object({ termId: z.uuid(), programId: z.uuid(), expectedRevision: z.number().int().min(0), template: z.union([schoolTemplateSchema, z.string()]) })
+  .meta({ id: 'ExamReportCardTemplate' })
+const reportCardEntryBody = z.object({ ...identity, area: z.string(), value: z.string() }).meta({ id: 'ExamReportCardEntry' })
+const reportCardPublicationBody = z
+  .object({ ...identity, published: z.boolean(), reason: z.string().min(10).max(240) })
+  .meta({ id: 'ExamReportCardPublication' })
+const reportCardErrors = {
+  '400': { description: 'invalid_report_card_template or unknown_report_card_value', content: json(err) },
+  '404': { description: 'no_such_school_pupil', content: json(err) },
+  '409': {
+    description: 'report_card_stale, report_card_template_locked, report_card_published, report_card_incomplete, report_card_unpublished or no_report_card_template',
+    content: json(err),
+  },
+}
 const gated = {
   '403': { description: 'Forbidden, or the module is not enabled', content: json(err) },
 }
@@ -68,14 +90,71 @@ export const paths = {
   },
   [`${base}/marks/revise`]: {
     post: {
-      summary: 'Change a published mark. The reason is mandatory and audited.',
+      summary: 'Propose a different score or an absence for a published mark',
       description:
-        'The only path that can alter a mark once results are published. A database trigger ' +
-        'refuses any other write to a published exam, so this cannot be bypassed by a future ' +
-        'code path or by a direct SQL session.',
+        'A proposal, not a change: the mark moves only when a different administrator approves it ' +
+        '(POST /marks/decide). A database trigger refuses any other write to a published mark, ' +
+        'so this cannot be bypassed by a future code path or by a direct SQL session. Naming ' +
+        'requestId answers a student’s open review; otherwise a correction is started.',
       tags: ['examinations'],
       requestBody: { content: json(reviseMarkSchema) },
-      responses: { '204': { description: 'Revised' }, ...gated },
+      responses: {
+        '200': { description: 'Proposed', content: json(markReviewResultSchema) },
+        '400': { description: 'Invalid proposal, or above the exam’s maximum', content: json(err) },
+        ...gated,
+        '404': { description: 'No such mark', content: json(err) },
+        '409': {
+          description: 'A review is already open, the proposal is stale or unchanged, or results are not published',
+          content: json(err),
+        },
+      },
+    },
+  },
+  [`${base}/marks/recheck`]: {
+    post: {
+      summary: 'A student asks for a recheck or re-evaluation of their own published mark',
+      description: 'No charge and no files. One open request per mark.',
+      tags: ['examinations'],
+      requestBody: { content: json(requestMarkReviewSchema) },
+      responses: {
+        '200': { description: 'Requested', content: json(markReviewResultSchema) },
+        '400': { description: 'Invalid request', content: json(err) },
+        ...gated,
+        '404': { description: 'No such mark', content: json(err) },
+        '409': { description: 'A review is already open for this mark', content: json(err) },
+      },
+    },
+  },
+  [`${base}/marks/decide`]: {
+    post: {
+      summary: 'Approve a proposed revision, or close a review. Administrator only, never the proposer.',
+      description:
+        'Approval writes the audit row, the decision and the new mark in one transaction; the ' +
+        'course must then be finalised again before official output.',
+      tags: ['examinations'],
+      requestBody: { content: json(decideMarkReviewSchema) },
+      responses: {
+        '200': { description: 'Decided', content: json(markReviewResultSchema) },
+        '400': { description: 'Invalid decision', content: json(err) },
+        '403': { description: 'Forbidden, or the proposer tried to decide', content: json(err) },
+        '404': { description: 'No such mark request', content: json(err) },
+        '409': { description: 'The review is closed or no longer matches the mark', content: json(err) },
+      },
+    },
+  },
+  [`${base}/marks/requests`]: {
+    get: {
+      summary: 'Reviews of marks, newest first, 50 at a time',
+      description:
+        'A student sees their own reviews without the staff detail; staff pass examId for an exam ' +
+        'they may mark. Pass the previous page’s next as after.',
+      tags: ['examinations'],
+      responses: {
+        '200': { description: 'A page', content: json(markReviewPageSchema) },
+        '400': { description: 'Staff must choose an exam', content: json(err) },
+        ...gated,
+        '404': { description: 'No such exam', content: json(err) },
+      },
     },
   },
   [`${base}/exams/publish`]: {
@@ -206,10 +285,34 @@ function cycle() {
       "The signed-in student's term: feedback, enrolment, admit card, backlogs and grade reports",
       ['termId?'],
     ),
-    [`${base}/enrol`]: post('Enrol for the term’s examinations, confirming one’s details', enrolSchema),
+    [`${base}/enrol`]: post(
+      'Enrol for the term’s examinations, confirming one’s details',
+      enrolSchema,
+      'Refused with 409 exam_attendance_short, exam_attendance_unavailable or exam_dues_outstanding while the term’s attendance or posted fees block it and no waiver stands.',
+    ),
     [`${base}/enrolments`]: get('Who is enrolled for a term, and who has classes but is not', ['termId']),
     [`${base}/enrolments/cancel`]: post('Cancel an enrolment, with a reason', cancelEnrolmentSchema),
-    [`${base}/admit-card.pdf`]: pdf('The admit card for an enrolment', ['termId', 'studentId?']),
+    [`${base}/admit-card.pdf`]: pdf(
+      'The admit card for an enrolment',
+      ['termId', 'studentId?'],
+      'Checked on every request: refused with 409 exam_attendance_short, exam_attendance_unavailable or exam_dues_outstanding while the term’s attendance or posted fees block it and no waiver stands.',
+    ),
+    [`${base}/eligibility/waiver`]: {
+      post: {
+        summary: 'Grant or revoke a per-term eligibility waiver (attendance or posted fees), with an audited reason',
+        description: 'Administrators only. A repeat changes nothing and writes no audit event. The reason is an administrative one; leave out medical and payment details.',
+        tags: ['examinations'],
+        requestBody: { content: json(setEligibilityWaiverSchema) },
+        responses: {
+          '200': {
+            description: 'OK',
+            content: json(z.object({ termId: z.string(), studentId: z.string(), check: z.enum(['attendance', 'dues']), waived: z.boolean(), changed: z.boolean(), notice: z.string() })),
+          },
+          ...gated,
+          '404': { description: 'No such examination candidate', content: json(err) },
+        },
+      },
+    },
     [`${base}/backlogs`]: {
       ...get('Backlog papers booked for a term', ['termId']),
       ...post('Book a failed paper to sit again', bookBacklogSchema, 'The fee is the window’s, worked out by the database, and charged through fees where it is on.'),
@@ -220,6 +323,42 @@ function cycle() {
       ['termId', 'studentId?'],
       'Held for a student whose required feedback is outstanding, where the institution says so.',
     ),
+    [`${base}/report-card/template`]: {
+      post: {
+        summary: 'Save a class’s school report template for a term (administrators)',
+        description: 'Compare-and-swap on expectedRevision (0 when no template has been saved). Refused once any pupil entry exists for the class and term. A repeat of the stored template changes nothing.',
+        tags: ['examinations'],
+        requestBody: { content: json(reportCardTemplateBody) },
+        responses: { '200': { description: 'OK', content: json(z.object({ revision: z.number(), notice: z.string() })) }, ...gated, ...reportCardErrors },
+      },
+    },
+    [`${base}/report-card/entry`]: {
+      post: {
+        summary: 'Set one area’s grade, or the remark, on a pupil’s school report (the class teacher or an administrator)',
+        description: 'value is a key from the template; __clear removes it. area remark sets the class teacher’s remark.',
+        tags: ['examinations'],
+        requestBody: { content: json(reportCardEntryBody) },
+        responses: { '200': { description: 'OK', content: json(z.object({ changed: z.boolean(), notice: z.string() })) }, ...gated, ...reportCardErrors },
+      },
+    },
+    [`${base}/report-card/publication`]: {
+      post: {
+        summary: 'Publish or withdraw a pupil’s school report, with a reason (the class teacher or an administrator)',
+        description: 'Publishing needs every subject’s result, or every scholastic area’s rating, to be complete.',
+        tags: ['examinations'],
+        requestBody: { content: json(reportCardPublicationBody) },
+        responses: { '200': { description: 'OK', content: json(z.object({ changed: z.boolean(), notice: z.string() })) }, ...gated, ...reportCardErrors },
+      },
+    },
+    [`${base}/report-card.pdf`]: {
+      get: {
+        summary: 'A published school term report as a PDF, read live from the published marks',
+        description: 'The pupil, a verified guardian (who names studentId) and staff related to the pupil. The pupil’s name, class, section, term and roll number only.',
+        tags: ['examinations'],
+        parameters: ['termId', 'sectionId', 'studentId?'].map((name) => ({ name: name.replace('?', ''), in: 'query', required: !name.endsWith('?'), schema: { type: 'string' } })),
+        responses: { '200': { description: 'OK', content: { 'application/pdf': {} } }, ...gated, ...reportCardErrors },
+      },
+    },
     [`${base}/papers`]: {
       ...get('The sealed question papers for an exam, without their contents', ['examId']),
       ...post('Upload a question paper (PDF), sealed until shortly before the exam', uploadPaperSchema),

@@ -87,10 +87,23 @@ export const childOverviewSchema = z
     fees: z
       .object({
         termCode: z.string(),
+        /** The term these figures are for: a payment is reported against it. */
+        termId: z.string(),
         payablePaise: z.number().int(),
         paidPaise: z.number().int(),
         outstandingPaise: z.number().int(),
         unreconciledPaise: z.number().int(),
+        /** How to pay by UPI, when the institution takes it. */
+        upi: z
+          .object({
+            vpa: z.string(),
+            payee: z.string(),
+            link: z.string(),
+            amountPaise: z.number().int().nullable(),
+            reference: z.string().nullable(),
+            dynamic: z.boolean(),
+          })
+          .nullable(),
       })
       .nullable(),
     library: z
