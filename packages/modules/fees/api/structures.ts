@@ -122,7 +122,12 @@ export async function chargeLateFees(actor: Actor, tx: Tx) {
              and d.due_on + r.after_days::int >= (r.created_at at time zone ${tz})::date),
         sched as (
           select s.rule_id, s.amount_paise, s.due_on, s.cutoff, l.student_id, sum(l.charged - l.waived)::bigint as scheduled
-            from slabs s join lines l on l.due_on is null or l.due_on <= s.due_on
+            from slabs s join lines l on l.due_on <= s.due_on
+               or (l.due_on is null
+                   and (l.student_charge_id is null
+                        or exists (select 1 from fee_student_charges c
+                                    where c.id = l.student_charge_id
+                                      and (c.created_at at time zone ${tz})::date <= s.cutoff)))
            group by s.rule_id, s.amount_paise, s.due_on, s.cutoff, l.student_id),
         paid as (
           select s.rule_id, s.due_on, p.student_id, sum(p.amount_paise)::bigint as paid

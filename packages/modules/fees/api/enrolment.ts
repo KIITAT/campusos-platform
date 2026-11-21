@@ -95,7 +95,7 @@ export async function termRoster(tx: Tx, termId: string, studentId?: string | nu
  * One line per programme and label: the most specific item for the student's
  * batch and category, category before batch (ACC-21, P1-03d). The batch is the
  * latest admission year among the student's sections of the programme, else the
- * year they declared it; the category is the one on their profile (P1-12a).
+ * year they declared it; the category is the one on their profile (P1-12a), `general` when none is set.
  * `waived` is the line's waiver amount and `due_on` its instalment date, null
  * for a student's own charges.
  */
@@ -121,7 +121,7 @@ export function priceListSql(termId: string, studentIds: string[] | null): SQL {
           from fee_items fi
          where fi.program_id = e.program_id and fi.term_id = ${termId}::uuid
            and (fi.admission_year is null or fi.admission_year = e.batch)
-           and (fi.category is null or fi.category = sp2.category)
+           and (fi.category is null or fi.category = coalesce(sp2.category, 'general'))
          order by fi.label, (fi.category is not null) desc, (fi.admission_year is not null) desc) f on true
       left join fee_waivers w on w.fee_item_id = f.id and w.student_id = e.student_id
     union all
