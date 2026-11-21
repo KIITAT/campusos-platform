@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import * as z from 'zod'
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, lt, ne, sql } from 'drizzle-orm'
 import { audit, users, withTenant } from '@campusos/db'
 import { programs, sectionMembers, sections, studentPrograms, terms } from '../schema'
 import { AcademicError, requireWriter, type Actor } from './operations'
@@ -235,6 +235,14 @@ export async function promoteSection(actor: Actor, input: unknown): Promise<{ so
       ) {
         throw promotionError('invalid_promotion')
       }
+
+      // The two terms must be neighbours: a regular term between them would go unbilled once every declaration ends at the old term's end.
+      const between = await tx
+        .select({ id: terms.id })
+        .from(terms)
+        .where(and(eq(terms.kind, 'regular'), gt(terms.startsOn, oldTerm.startsOn), lt(terms.startsOn, newTerm.startsOn), ne(terms.id, oldTerm.id), ne(terms.id, newTerm.id)))
+        .limit(1)
+      if (between.length) throw promotionError('invalid_promotion')
 
       const roster = await readSchoolPromotionRoster(tx, source.id, source.programId, today, true)
       if (roster.memberIds.length < 1 || roster.memberIds.length > MAX_ROSTER || roster.participantIds.length < 1) throw promotionError('promotion_roster_size')
