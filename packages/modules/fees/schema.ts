@@ -200,6 +200,8 @@ export const feePayments = pgTable(
     uniqueIndex('fee_payments_cheque')
       .on(t.institutionId, t.drawerIfsc, t.drawerAccount, sql`upper(btrim(${t.reference}))`)
       .where(sql`method = 'cheque' AND drawer_ifsc IS NOT NULL AND reference IS NOT NULL AND btrim(reference) <> '' AND status = 'live'`),
+    // Record search (P1-09c, 0013): any part of a receipt number, ignoring case.
+    index('fee_payments_receipt_lookup').using('gin', sql`lower(receipt_no) public.gin_trgm_ops`),
     index('fee_payments_student').on(t.studentId),
     index('fee_payments_term').on(t.termId),
     check('fee_payments_amount', sql`amount_paise > 0`),
