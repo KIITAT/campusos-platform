@@ -84,6 +84,7 @@ const NEW_FILES = new Set([
   'fees/0008_reporting.sql',
   'fees/0009_void_bounce_receipts.sql',
   'fees/0010_upi_cheques_statement.sql',
+  'fees/0011_structures_and_late_fees.sql',
   'hr/0019_reporting.sql',
   'academic/0011_school_classes_and_houses.sql',
   'attendance/0005_daily_register.sql',

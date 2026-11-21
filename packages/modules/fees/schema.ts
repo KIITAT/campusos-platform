@@ -81,14 +81,53 @@ export const feeItems = pgTable(
      * an audit finding.
      */
     proratable: boolean().notNull().default(false),
+    /** An instalment is a line with a due date (P1-03d). */
     dueOn: timestamp('due_on', { withTimezone: true }),
+    /** For one batch only (the admission year); null is every batch. */
+    admissionYear: smallint('admission_year'),
+    /** For one reservation category only (STUDENT_CATEGORIES); null is every category. */
+    category: text(),
     createdAt: createdAt(),
   },
   (t) => [
-    uniqueIndex('fee_items_identity').on(t.programId, t.termId, t.label),
+    uniqueIndex('fee_items_identity').on(
+      t.programId,
+      t.termId,
+      t.label,
+      sql`coalesce(${t.admissionYear}, 0)`,
+      sql`coalesce(${t.category}, '')`,
+    ),
     index('fee_items_term').on(t.termId),
     check('fee_items_amount', sql`amount_paise > 0`),
+    check('fee_items_admission_year', sql`admission_year is null or admission_year between 1900 and 2200`),
+    check('fee_items_category', sql`category is null or category in ('general','ews','obc','sc','st')`),
     tenantPolicy('fee_items'),
+  ],
+)
+
+/**
+ * A late-fee rule for a term: a student still owing on an instalment `afterDays`
+ * after its due date is charged `amountPaise` once (P1-03d). Several rules on
+ * a term are slabs.
+ */
+export const lateFees = pgTable(
+  'fee_late_fees',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    termId: uuid('term_id')
+      .notNull()
+      .references(() => terms.id, { onDelete: 'cascade' }),
+    afterDays: smallint('after_days').notNull(),
+    amountPaise: paise('amount_paise').notNull(),
+    createdBy: text('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('fee_late_fees_slab').on(t.termId, t.afterDays),
+    check('fee_late_fees_days', sql`after_days between 0 and 365`),
+    check('fee_late_fees_amount', sql`amount_paise between 1 and 10000000`),
+    tenantPolicy('fee_late_fees'),
   ],
 )
 
