@@ -235,11 +235,16 @@ test('PDF a draft refuses, a published one downloads, and a revised mark reprint
   assert.ok(!res.headers.get('content-disposition')!.includes(NAME))
   const first = await printed(new Uint8Array(await res.arrayBuffer()))
   assert.ok(first.includes('87.00') && first.includes(NAME))
-  await api.reviseMark(c.teacher, { examId: c.exams.term, studentId: c.pupil.id, obtained: 80, absent: false, reason: 'Re-evaluated answer script' })
+  // P1-07c: a revision is a proposal; the card moves only when an administrator approves it.
+  const p1 = await api.reviseMark(c.teacher, { examId: c.exams.term, studentId: c.pupil.id, obtained: 80, expectedRevision: 0, reason: 'Re-evaluated answer script' })
+  assert.ok((await printed(new Uint8Array(await (await download(c, c.pupil)).arrayBuffer()))).includes('87.00'), 'a proposal changes nothing')
+  await api.decideMarkReview(c.admin, { requestId: p1.requestId, decision: 'approve', reason: 'checked against the script' })
   const again = await printed(new Uint8Array(await (await download(c, c.pupil)).arrayBuffer()))
   assert.ok(again.includes('97.00') && again.includes('A1'), 'the reprint shows the revised value')
-  await api.reviseMark(c.teacher, { examId: c.exams.term, studentId: c.pupil.id, obtained: null, absent: false, reason: 'Pending re-evaluation of paper' })
-  await assert.rejects(download(c, c.pupil), (e) => code(e) === 'report_card_incomplete' && status(e) === 409)
+  const p2 = await api.reviseMark(c.teacher, { examId: c.exams.term, studentId: c.pupil.id, obtained: null, absent: true, expectedRevision: 1, reason: 'Absent at the re-evaluation sitting' })
+  await api.decideMarkReview(c.admin, { requestId: p2.requestId, decision: 'approve', reason: 'checked against the script' })
+  const absent = await printed(new Uint8Array(await (await download(c, c.pupil)).arrayBuffer()))
+  assert.ok(!absent.includes('97.00'), 'an approved absence reprints the card without the old total')
 })
 
 test('PDF the pupil, a verified guardian and authorised staff may read it; no one else, and no bytes for them', async () => {
