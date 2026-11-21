@@ -1,6 +1,7 @@
 import { jsonBody, param, requiredParam, type PluginRoute } from '@campusos/module-framework'
 import {
   addCopies,
+  searchLibraryBooks,
   borrowerStatus,
   catalogue,
   copiesOf,
@@ -28,6 +29,8 @@ import {
  * of them. The only thing that changed is who writes the file.
  */
 export const routes: PluginRoute[] = [
+  // The portal's search for a book (P1-09c): bibliographic fields only.
+  { method: 'GET', path: '/record-search', lookup: 'global', handler: (actor, req) => searchLibraryBooks(actor as Actor, req) },
   {
     method: 'GET',
     path: '/titles',
