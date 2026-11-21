@@ -67,6 +67,9 @@ export const titles = pgTable(
       .on(t.institutionId, t.isbn)
       .where(sql`isbn is not null`),
     index('library_titles_search').on(t.institutionId, t.title),
+    // Record search (P1-09c, 0004): any part of a title or author, ignoring case.
+    index('library_titles_title_trgm').using('gin', sql`lower(title) public.gin_trgm_ops`),
+    index('library_titles_author_trgm').using('gin', sql`lower(author) public.gin_trgm_ops`),
     check('library_titles_title', sql`length(trim(title)) > 0`),
     check(
       'library_titles_year',
