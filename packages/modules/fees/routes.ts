@@ -8,6 +8,8 @@ import { eq } from 'drizzle-orm'
 import { db, institutions } from '@campusos/db'
 import {
   addBankAccount,
+  searchFeeReceipts,
+  searchFeeStudents,
   bouncePayment,
   voidInvoice,
   voidPayment,
@@ -252,6 +254,10 @@ export const routes: PluginRoute[] = [
     path: '/dues',
     handler: (actor, req) => duesReport(actor as Actor, requiredParam(req, 'termId'), duesPage(req, '')),
   },
+
+  // Record lookups for the office (P1-09c): a receipt by number, a student for a form.
+  { method: 'GET', path: '/record-search', lookup: 'global', handler: (actor, req) => searchFeeReceipts(actor as Actor, req) },
+  { method: 'GET', path: '/student-choices', lookup: 'picker', handler: (actor, req) => searchFeeStudents(actor as Actor, req) },
 
   {
     method: 'GET',
