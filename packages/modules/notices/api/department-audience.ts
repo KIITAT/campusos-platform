@@ -128,3 +128,27 @@ export async function memberDepartments(tx: Tx, tenant: string, userId: string):
        and exists (select 1 from notices n where n.department_id = dep.id)`)).rows as { id: string }[]
   return rows.map((r) => r.id)
 }
+
+/**
+ * The departments a lecturer may address (NEW-163): the ones they head, whose
+ * sections they teach as class teacher, or whose courses they teach in a term
+ * that is running or still to come (so a lecturer between terms, once their
+ * next offerings exist, is not locked out). No notice need exist yet. A
+ * lecturer with none of these has none; the free-text department on an HR staff
+ * record names no academic department, so it is not consulted.
+ */
+export async function ownDepartments(tx: Tx, tenant: string, userId: string): Promise<string[]> {
+  const today = sql`(now() at time zone 'Asia/Kolkata')::date`
+  const rows = (await tx.execute(sql`
+    select d.id from academic_departments d where d.institution_id = ${tenant} and d.hod_user_id = ${userId}
+    union
+    select p.department_id from academic_sections s
+      join academic_programs p on p.id = s.program_id and p.institution_id = ${tenant}
+     where s.institution_id = ${tenant} and s.class_teacher_id = ${userId}
+    union
+    select c.department_id from academic_offerings o
+      join academic_courses c on c.id = o.course_id and c.institution_id = ${tenant}
+      join academic_terms te on te.id = o.term_id and te.institution_id = ${tenant} and te.ends_on >= ${today}
+     where o.institution_id = ${tenant} and o.faculty_user_id = ${userId}`)).rows as { id: string }[]
+  return rows.map((r) => r.id).sort()
+}

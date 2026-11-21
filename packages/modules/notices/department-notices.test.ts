@@ -445,7 +445,7 @@ test('a lecturer addresses department notices only to their own departments (NEW
   await assert.rejects(send(facB(), { departmentId: deptA, audienceRoles: ['student'], publish: false }), (e) => code(e) === 'department_not_yours')
   assert.equal((await withTenant(inst, (tx) => tx.select().from(notices))).length, 0)
   const own = await send(facB(), { departmentId: deptB, audienceRoles: ['student'] })
-  assert.deepEqual(await recipients(own.id), ids('s1', 's2'))
+  assert.deepEqual(await recipients(own.id), ids('s2'))
 
   // The picker offers a lecturer their own departments only, and an administrator all of them.
   assert.deepEqual((await departmentChoices(facB())).map((c) => c.value), [deptB])

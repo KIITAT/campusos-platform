@@ -29,7 +29,7 @@ import {
   type Inbox,
   type NoticeRow,
 } from './schemas'
-import { departmentRecipientsSql, guardiansAvailable, memberDepartments } from './department-audience'
+import { departmentRecipientsSql, guardiansAvailable, memberDepartments, ownDepartments } from './department-audience'
 
 const MODULE = 'notices'
 
@@ -320,6 +320,9 @@ export async function createNotice(actor: Actor, input: unknown) {
         // institution's department invisible here.
         const [dept] = await tx.select({ id: departments.id }).from(departments).where(eq(departments.id, d.departmentId))
         if (!dept) throw new NoticeError(404, 'no_such_department', 'no such department')
+        // A lecturer addresses their own departments; administration addresses any (NEW-163).
+        if (actor.role === 'faculty' && !(await ownDepartments(tx, tenant, actor.id)).includes(dept.id))
+          throw new NoticeError(403, 'department_not_yours', 'a lecturer may address only their own departments')
       }
       const now = new Date()
       // Written as a draft, given its document, then published: a document
@@ -764,9 +767,11 @@ export async function draftChoices(actor: Actor): Promise<{ value: string; label
 /** The departments a poster may address, by code then id. */
 export async function departmentChoices(actor: Actor): Promise<{ value: string; label: string }[]> {
   const tenant = requirePoster(actor)
-  const rows = await withTenant(tenant, (tx) =>
-    tx.select({ id: departments.id, code: departments.code, name: departments.name }).from(departments).orderBy(asc(departments.code), asc(departments.id)),
-  )
+  const rows = await withTenant(tenant, async (tx) => {
+    const own = actor.role === 'faculty' ? await ownDepartments(tx, tenant, actor.id) : null
+    const all = await tx.select({ id: departments.id, code: departments.code, name: departments.name }).from(departments).orderBy(asc(departments.code), asc(departments.id))
+    return own ? all.filter((d) => own.includes(d.id)) : all
+  })
   return rows.map((r) => ({ value: r.id, label: `${r.code} — ${r.name}` }))
 }
 
