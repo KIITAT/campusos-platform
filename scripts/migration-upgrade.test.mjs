@@ -88,6 +88,7 @@ const NEW_FILES = new Set([
   'attendance/0005_daily_register.sql',
   'academic/0012_student_category.sql',
   'admissions/0003_applicant_and_roll_numbers.sql',
+  'ceremonies/0001_transfer_certificates.sql',
 ])
 const NEW_CORE_FROM = 5
 

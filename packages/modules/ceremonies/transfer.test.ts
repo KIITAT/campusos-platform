@@ -229,3 +229,37 @@ test('same declaration, different clerks: one original; different pupils get dis
   assert.equal(second.serial, `TC-${istToday().slice(0, 4)}-000002`)
   assert.deepEqual(await counts(c), { h: 2, p: 2, a: 2 })
 })
+
+// --- storage and lifecycle (step 2) ------------------------------------------
+
+const constraintOf = (e: unknown) => String((e as { cause?: { constraint?: string } }).cause?.constraint ?? (e as { constraint?: string }).constraint)
+
+test('the header and payload are tenant-isolated, locked once issued, and the payload deletes only with an erased pupil (MG-05)', async () => {
+  const a = await school()
+  const b = await school()
+  const year = Number(istToday().slice(0, 4))
+  const hdr = await withTenant(a.id, async (tx) => {
+    const r = await tx.execute(sql`insert into ceremony_transfer_certificates (institution_id, student_id, student_program_id, issue_year, serial_no, issued_on, docstatus, submitted_at, submitted_by)
+      values (${a.id}, ${a.pupil.id}, ${a.declarationId}, ${year}, 1, ${istToday()}, 'submitted', now(), ${a.admin.id}) returning id`)
+    const id = (r.rows[0] as { id: string }).id
+    await tx.execute(sql`insert into ceremony_transfer_payloads (certificate_id, institution_id, snapshot) values (${id}, ${a.id}, ${JSON.stringify({ format: 'cbse_annexure_i_v1' })}::jsonb)`)
+    return id
+  })
+  // Tenant B sees nothing, and cannot write a row stamped for A.
+  assert.equal((await counts(b)).h, 0)
+  assert.equal((await counts(b)).p, 0)
+  await assert.rejects(
+    withTenant(b.id, (tx) => tx.execute(sql`insert into ceremony_transfer_certificates (institution_id, student_id, student_program_id, issue_year, serial_no, issued_on) values (${a.id}, ${a.pupil.id}, ${a.declarationId}, ${year}, 2, ${istToday()})`)),
+    (e) => /row-level security|does not match/.test(String((e as { cause?: Error }).cause?.message)), // the subject guard fires first and cannot see A's rows from B
+  )
+  // A school declaration for another pupil's id is refused by the subject guard.
+  await assert.rejects(
+    withTenant(a.id, (tx) => tx.execute(sql`insert into ceremony_transfer_certificates (institution_id, student_id, student_program_id, issue_year, serial_no, issued_on) values (${a.id}, ${a.pupil2.id}, ${a.declarationId}, ${year}, 3, ${istToday()})`)),
+    (e) => constraintOf(e) === 'transfer_subject_mismatch',
+  )
+  // Locked.
+  await assert.rejects(withTenant(a.id, (tx) => tx.execute(sql`update ceremony_transfer_certificates set serial_no = 9 where id = ${hdr}`)), (e) => constraintOf(e) === 'docstatus_locked')
+  await assert.rejects(withTenant(a.id, (tx) => tx.execute(sql`update ceremony_transfer_payloads set snapshot = '{"format":"cbse_annexure_i_v1","x":1}'::jsonb where certificate_id = ${hdr}`)), (e) => constraintOf(e) === 'transfer_payload_locked')
+  await assert.rejects(withTenant(a.id, (tx) => tx.execute(sql`delete from ceremony_transfer_payloads where certificate_id = ${hdr}`)), (e) => constraintOf(e) === 'transfer_payload_locked')
+  assert.deepEqual(await counts(a), { h: 1, p: 1, a: 0 })
+})

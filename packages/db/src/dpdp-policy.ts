@@ -126,6 +126,9 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   ceremony_certificates: 'export',
   ceremony_events: 'export',
   ceremony_holds: 'export',
+  // School transfer certificates (P1-13d): the header is about the pupil; the printable snapshot is erased with them.
+  ceremony_transfer_certificates: 'export',
+  ceremony_transfer_payloads: 'export',
 
   // crm (P2-16): a contact is not a user. A staff member's export shows that they owned or
   // worked a lead, never the contact's data (decision 405).
