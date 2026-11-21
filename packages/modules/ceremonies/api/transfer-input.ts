@@ -9,21 +9,23 @@ import * as z from 'zod'
 
 const uuid = z.uuid()
 const day = z.iso.date()
+// eslint-disable-next-line no-control-regex -- refusing control characters is the point
+const NO_CONTROL = /^[^\u0000-\u001f\u007f]*$/
 const blank = (v: unknown) => (v === '' || v === undefined ? null : v)
 
 /** One line: spaces collapsed, no control characters, 1 to `max` characters. */
 const line = (max: number) =>
-  z.preprocess((v) => (typeof v === 'string' ? v.trim().replace(/ {2,}/g, ' ') : v), z.string().min(1).max(max).regex(/^[^\u0000-\u001f\u007f]*$/, 'no control characters'))
+  z.preprocess((v) => (typeof v === 'string' ? v.trim().replace(/ {2,}/g, ' ') : v), z.string().min(1).max(max).regex(NO_CONTROL, 'no control characters'))
 const optionalLine = (max: number) => z.preprocess(blank, line(max).nullable()).default(null)
 /** The school address may be typed over several lines; they print as one. */
 const address = z.preprocess(
   (v) => (typeof v === 'string' ? v.replace(/[\r\n]+/g, ' ').trim().replace(/ {2,}/g, ' ') : v),
-  z.string().min(1).max(240).regex(/^[^\u0000-\u001f\u007f]*$/, 'no control characters'),
+  z.string().min(1).max(240).regex(NO_CONTROL, 'no control characters'),
 )
 
 const subjects = z.preprocess(
   (v) => (typeof v === 'string' ? v.split(',').map((s) => s.trim().replace(/ {2,}/g, ' ')) : v),
-  z.array(z.string().min(1).max(80).regex(/^[^\u0000-\u001f\u007f]*$/)).min(1).max(16),
+  z.array(z.string().min(1).max(80).regex(NO_CONTROL)).min(1).max(16),
 )
 
 const count = z.coerce.number().int().min(0).max(366)
