@@ -576,6 +576,7 @@ test('timetable control operations leave an exact trail', async () => {
   assert.equal((await one('eligibility.deleted')).entityId, extra.id)
   assert.ok(!JSON.stringify(t).includes('private fixture note'))
   assert.equal((await one('needs.defaulted')).entityId, term.id)
+  assert.equal((await one('needs.defaulted')).entity, 'academic_terms')
   assert.deepEqual((await one('needs.defaulted')).detail, { termId: term.id, kind: 'lecture', periodsPerCredit: 1, roomKind: 'classroom', added: filled.added })
   assert.equal((await one('need.deleted')).entityId, lab.id)
   const pins = await some('pin.added')

@@ -495,6 +495,7 @@ test('academic structure and cohort mutations are audited', async () => {
   assert.deepEqual(teachers, [ids.faculty, null])
   const member = only(t, 'section.member_added')
   assert.equal(member.entityId, section.id)
+  assert.equal(member.entity, 'academic_sections')
   assert.deepEqual(member.detail, { studentId: ids.student })
   assert.deepEqual(only(t, 'offering.created').detail, { termId: term.id, courseId: course.id, sectionId: section.id, facultyUserId: ids.faculty })
   assert.deepEqual(only(t, 'slot.created').detail, { offeringId: offering.id, roomId: room.id, dayOfWeek: 2, startsAt: '10:00:00', endsAt: '11:00:00' })
