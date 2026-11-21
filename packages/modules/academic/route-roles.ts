@@ -38,6 +38,7 @@ export const routeRoles: Record<string, readonly Role[]> = {
   'POST /classes/change': TEACHING,
   'POST /classes/change/withdraw': TEACHING,
   'GET /consents': [...ADMIN, 'student'],
+  'GET /record-search': ADMIN,
   'GET /week': [...TEACHING, 'student'],
   'GET /profile': [...TEACHING, 'student'],
   'GET /curricula': [...ADMIN, 'hod'],

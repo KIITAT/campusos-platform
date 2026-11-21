@@ -5,6 +5,7 @@ import {
   withdrawChange,
   setGpaPolicy,
   recordStudentConsent,
+  searchAcademicRecords,
   setStudentProfile,
   studentConsents,
   studentProfile,
@@ -89,6 +90,9 @@ export const routes: PluginRoute[] = [
     path: '/profile',
     handler: (actor, req) => studentProfile(actor as Actor, param(req, 'studentId') || (actor as Actor).id),
   },
+
+  // The portal's search for a student (P1-09c): roll, registration or name.
+  { method: 'GET', path: '/record-search', lookup: 'global', handler: (actor, req) => searchAcademicRecords(actor as Actor, req) },
 
   {
     method: 'GET',
