@@ -9,6 +9,7 @@ import {
   createFeeItem,
   createScholarship,
   awardScholarship,
+  chargeStudent,
   duesReport,
   grantWaiver,
   issueInvoices,
@@ -312,4 +313,19 @@ test('an unpaid late fee is not itself a reason for another', async () => {
   await issue(c)
   await run(c)
   assert.deepEqual((await lateCharges(c, c.s1)).map((r) => r.amountPaise), [50_000])
+})
+
+test('a charge raised after the cutoff is not a reason for a late fee on an instalment paid in time (review HIGH 1)', async () => {
+  const c = await campus()
+  await item(c, 'Tuition I', '50000', await ago(c, 40))
+  const r = await api.createLateFee(c.admin, { termId: c.termId, afterDays: 5, amount: '500' })
+  await backdate(c, r.id, 400)
+  await issue(c)
+  await cash(c, c.s1, '50000', `${await ago(c, 39)}T06:00:00.000Z`)
+  await cash(c, c.s2, '50000', `${await ago(c, 39)}T06:00:00.000Z`)
+  assert.equal((await run(c)).charged, 0)
+  await chargeStudent(c.clerk, { studentId: c.s1, termId: c.termId, label: 'Library fine', amount: '200' })
+  await issue(c)
+  assert.equal((await run(c)).charged, 0)
+  assert.equal((await lateCharges(c, c.s1)).length, 0)
 })

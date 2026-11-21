@@ -172,3 +172,15 @@ test('a category change re-prices the next issue upward only', async () => {
   await issueInvoices(c.admin, { termId: c.termId })
   assert.equal((await ledger(c, c.s1)).chargedPaise, 300_000)
 })
+
+test('a student with no category is billed the general line (review HIGH 2)', async () => {
+  const c = await campus()
+  await item(c, { label: 'Tuition', amount: '1000', category: 'general' })
+  await item(c, { label: 'Tuition', amount: '3000', category: 'sc' })
+  await issueInvoices(c.admin, { termId: c.termId })
+  assert.equal((await ledger(c, c.s1)).chargedPaise, 100_000)
+  await category(c, c.s2, 'sc')
+  await issueInvoices(c.admin, { termId: c.termId })
+  assert.equal((await ledger(c, c.s2)).chargedPaise, 300_000)
+  await reconciled(c)
+})
