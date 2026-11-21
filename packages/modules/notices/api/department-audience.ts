@@ -69,7 +69,7 @@ export function departmentRecipientsSql(tenant: string, department: SQL, withGua
 
 /** Is any notice of this institution department-scoped? Asked through the institution's own departments. */
 export const scopedNoticeGuard = (tenant: string): SQL =>
-  sql`select 1 from notices where institution_id = ${tenant} and department_id is not null limit 1`
+  sql`select 1 from academic_departments d where d.institution_id = ${tenant} and exists (select 1 from notices n where n.department_id = d.id) limit 1`
 
 /**
  * The departments, among those with a notice, whose audience includes this
