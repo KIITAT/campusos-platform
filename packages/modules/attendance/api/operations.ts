@@ -317,11 +317,20 @@ export async function approveDevice(actor: Actor, input: unknown) {
   const { deviceId } = approveDeviceSchema.parse(input)
 
   await withTenant(tenant, async (tx) => {
-    const [target] = await tx
-      .select({ userId: devices.userId })
+    const [owner] = await tx.select({ userId: devices.userId }).from(devices).where(eq(devices.id, deviceId))
+    if (!owner) throw new AttendanceError(404, 'no_such_device', 'no such device')
+    // Lock every device row of the student, in id order, so two approvals for one
+    // student run one after the other (neither can leave two devices active).
+    const mine = await tx
+      .select({ id: devices.id, status: devices.status })
       .from(devices)
-      .where(eq(devices.id, deviceId))
-    if (!target) throw new AttendanceError(404, 'no_such_device', 'no such device')
+      .where(eq(devices.userId, owner.userId))
+      .orderBy(devices.id)
+      .for('update')
+    const target = { userId: owner.userId, status: mine.find((r) => r.id === deviceId)?.status }
+    if (!target.status) throw new AttendanceError(404, 'no_such_device', 'no such device')
+    // A revoked device was retired by the office: it pairs again as a new device.
+    if (target.status === 'revoked') throw new AttendanceError(409, 'device_revoked', 'a revoked device must be paired again')
 
     const revoked = await tx
       .update(devices)
