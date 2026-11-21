@@ -1,5 +1,6 @@
 import * as z from 'zod'
 import { ticked } from '@campusos/module-framework'
+import { STUDENT_CATEGORIES } from '@campusos/module-academic/schema'
 import { awardBasisEnum, paymentMethodEnum, scholarshipKindEnum } from '../schema'
 import { parseRupeesToPaise } from '@campusos/money'
 
@@ -53,7 +54,12 @@ export const createFeeItemSchema = z
      * registration or examination fee does not.
      */
     proratable: z.preprocess(ticked, z.boolean()).default(false),
+    /** An instalment: the date this line is due. */
     dueOn: z.iso.date().nullish(),
+    /** For one batch (admission year) only; empty is every batch. */
+    admissionYear: z.preprocess(blank, z.coerce.number().int().min(1900).max(2200).optional()),
+    /** For one reservation category only (the profile's); empty is every category. */
+    category: z.preprocess(blank, z.enum(STUDENT_CATEGORIES).optional()),
   })
   .meta({ id: 'FeeItemCreate' })
 

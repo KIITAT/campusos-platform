@@ -1,6 +1,7 @@
 import { formatPaise } from '@campusos/money'
 import { param, type PluginPage } from '@campusos/module-framework'
 import { listStructure } from '@campusos/module-academic/api'
+import { CATEGORY_LABELS, STUDENT_CATEGORIES } from '@campusos/module-academic/schema'
 import {
   duesPage,
   duesReport,
@@ -63,7 +64,9 @@ export const pages: PluginPage[] = [
         items: items.map((i) => ({
           ...i,
           dueOn: i.dueOn ? i.dueOn.toISOString() : null,
+          category: i.category ? CATEGORY_LABELS[i.category as keyof typeof CATEGORY_LABELS] : null,
         })),
+        categoryOptions: STUDENT_CATEGORIES.map((v) => ({ value: v, label: CATEGORY_LABELS[v] })),
         programs: structure.programs.map((p) => ({
           value: p.id,
           label: `${p.code} - ${p.name}`,
@@ -79,8 +82,11 @@ export const pages: PluginPage[] = [
         kind: 'note',
         text:
           'A charge belongs to a programme and a term, so every student enrolled ' +
-          'in that programme is charged it. Waivers and payments are per student, ' +
-          'from the dues list.',
+          'in that programme is charged it. A charge may be for one batch (admission ' +
+          'year) or one category; a student is charged the most specific line of each ' +
+          'name, so "Tuition" for the 2026 batch replaces the programme\'s "Tuition". ' +
+          'Give a charge a due date to make it an instalment. Waivers and payments are ' +
+          'per student, from the dues list.',
       },
       {
         kind: 'table',
@@ -91,6 +97,8 @@ export const pages: PluginPage[] = [
           { key: 'programCode', label: 'Programme', kind: 'code' },
           { key: 'termCode', label: 'Term', kind: 'code' },
           { key: 'label', label: 'Item' },
+          { key: 'admissionYear', label: 'Batch' },
+          { key: 'category', label: 'Category' },
           { key: 'amountPaise', label: 'Amount', kind: 'money' },
           { key: 'dueOn', label: 'Due', kind: 'date' },
         ],
@@ -111,7 +119,9 @@ export const pages: PluginPage[] = [
             kind: 'money',
             hint: 'Rupees. 45000 or 1,234.56 both work; it is stored in paise.',
           },
-          { name: 'dueOn', label: 'Due on', kind: 'date', optional: true },
+          { name: 'dueOn', label: 'Due on', kind: 'date', optional: true, hint: 'For an instalment: the date it is due.' },
+          { name: 'admissionYear', label: 'Batch', kind: 'number', optional: true, hint: 'Admission year, for one batch only. Leave empty for every batch.' },
+          { name: 'category', label: 'Category', kind: 'select', options: 'categoryOptions', optional: true, hint: 'The category on the student profile. Leave empty for every category.' },
         ],
       },
     ],

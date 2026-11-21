@@ -162,6 +162,8 @@ export async function createFeeItem(actor: Actor, input: unknown) {
         amountPaise: data.amount,
         proratable: data.proratable,
         dueOn: data.dueOn ? new Date(data.dueOn) : null,
+        admissionYear: data.admissionYear ?? null,
+        category: data.category ?? null,
       })
       .onConflictDoNothing()
       .returning()
@@ -181,6 +183,8 @@ export async function listFeeItems(actor: Actor, termId?: string) {
         label: feeItems.label,
         amountPaise: feeItems.amountPaise,
         dueOn: feeItems.dueOn,
+        admissionYear: feeItems.admissionYear,
+        category: feeItems.category,
         programCode: programs.code,
         programId: feeItems.programId,
         termCode: terms.code,
@@ -190,7 +194,13 @@ export async function listFeeItems(actor: Actor, termId?: string) {
       .innerJoin(programs, eq(programs.id, feeItems.programId))
       .innerJoin(terms, eq(terms.id, feeItems.termId))
       .where(termId ? eq(feeItems.termId, termId) : undefined)
-      .orderBy(asc(programs.code), asc(terms.code), asc(feeItems.label)),
+      .orderBy(
+        asc(programs.code),
+        asc(terms.code),
+        asc(feeItems.label),
+        sql`${feeItems.admissionYear} nulls first`,
+        sql`${feeItems.category} nulls first`,
+      ),
   )
 }
 
