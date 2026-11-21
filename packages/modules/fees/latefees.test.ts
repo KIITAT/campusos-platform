@@ -13,6 +13,10 @@ import {
   duesReport,
   grantWaiver,
   issueInvoices,
+  rejectClaim,
+  verifyClaim,
+  addBankAccount,
+  claimTransfer,
   listStudentCharges,
   receivableReport,
   recordPayment,
@@ -94,6 +98,23 @@ const code = (e: unknown) => (e as { code?: string }).code
 const item = (c: Campus, label: string, amount: string, dueOn?: string) =>
   createFeeItem(c.admin, { programId: c.programId, termId: c.termId, label, amount, dueOn })
 const issue = (c: Campus) => issueInvoices(c.admin, { termId: c.termId })
+/**
+ * Moves the term's fee lines and invoices (every issue of them) k days into
+ * the past, as if the office had issued them then; with a student, only that
+ * student's invoice moves. Payments and due dates stay where they are.
+ */
+async function shiftIssues(c: Campus, k: number, studentId?: string) {
+  if (!studentId) await authDb.execute(sql`update fee_items set created_at = created_at - make_interval(days => ${k}) where term_id = ${c.termId}::uuid`)
+  const only = studentId ? sql` and student_id = ${studentId}` : sql``
+  await authDb.execute(sql`update fee_invoices set issued_at = issued_at - make_interval(days => ${k}) where term_id = ${c.termId}::uuid${only}`)
+  await authDb.execute(sql`update fee_invoices
+     set versions_issued_at = (select array_agg(t - make_interval(days => ${k}) order by o) from unnest(versions_issued_at) with ordinality u(t, o))
+   where term_id = ${c.termId}::uuid${only}`).catch(() => {}) // RED: the column arrives with the fix
+}
+const issueAgo = async (c: Campus, k: number) => {
+  await issue(c)
+  await shiftIssues(c, k)
+}
 type L = { lines: { label: string; dueOn: string | null }[]; overduePaise: number; outstandingPaise: number; notYetInvoicedPaise: number; chargedPaise: number }
 const ledger = async (c: Campus, s: string) => (await studentLedger(c.admin, s, c.termId)) as unknown as L
 const cash = (c: Campus, studentId: string, amount: string, receivedAt?: string) =>
@@ -160,7 +181,7 @@ test('a late fee is raised once for an instalment unpaid after the grace days', 
   await item(c, 'Tuition I', '50000', await ago(c, 40))
   const r = await api.createLateFee(c.admin, { termId: c.termId, afterDays: 10, amount: '500' })
   await backdate(c, r.id, 400)
-  await issue(c)
+  await issueAgo(c, 45)
   const first = await run(c)
   assert.equal(first.charged, 2)
   assert.equal(first.totalPaise, 100_000)
@@ -171,7 +192,7 @@ test('a late fee is raised once for an instalment unpaid after the grace days', 
   assert.equal(rows[0]!.amountPaise, 50_000)
   assert.equal((await run(c)).charged, 0)
   assert.equal((await ledger(c, c.s1)).notYetInvoicedPaise, 50_000)
-  await issue(c)
+  await issueAgo(c, 45)
   assert.equal((await ledger(c, c.s1)).chargedPaise, 5_050_000)
   await reconciled(c)
 })
@@ -181,7 +202,7 @@ test('paid by the cutoff escapes; paid after it does not', async () => {
   await item(c, 'Tuition I', '50000', await ago(c, 40))
   const r = await api.createLateFee(c.admin, { termId: c.termId, afterDays: 10, amount: '500' })
   await backdate(c, r.id, 400)
-  await issue(c)
+  await issueAgo(c, 45)
   await cash(c, c.s1, '50000', `${await ago(c, 35)}T06:00:00.000Z`)
   await cash(c, c.s2, '50000', `${await ago(c, 20)}T06:00:00.000Z`)
   const out = await run(c)
@@ -195,7 +216,7 @@ test('a cheque returned after the cutoff was never paid', async () => {
   await item(c, 'Tuition I', '50000', await ago(c, 40))
   const r = await api.createLateFee(c.admin, { termId: c.termId, afterDays: 10, amount: '500' })
   await backdate(c, r.id, 400)
-  await issue(c)
+  await issueAgo(c, 45)
   const p = await recordPayment(c.clerk, {
     studentId: c.s1,
     termId: c.termId,
@@ -216,7 +237,7 @@ test('a rule never reaches back before it was made', async () => {
   const c = await campus()
   await item(c, 'Tuition I', '50000', await ago(c, 40))
   const r = await api.createLateFee(c.admin, { termId: c.termId, afterDays: 10, amount: '500' })
-  await issue(c)
+  await issueAgo(c, 45)
   assert.equal((await run(c)).charged, 0)
   await backdate(c, r.id, 25)
   assert.equal((await run(c)).charged, 0)
@@ -229,7 +250,7 @@ test('a cancelled late fee is not raised again', async () => {
   await item(c, 'Tuition I', '50000', await ago(c, 40))
   const r = await api.createLateFee(c.admin, { termId: c.termId, afterDays: 10, amount: '500' })
   await backdate(c, r.id, 400)
-  await issue(c)
+  await issueAgo(c, 45)
   await run(c)
   const [fee] = await lateCharges(c, c.s1)
   await cancelStudentCharge(c.admin, { chargeId: fee!.id, reason: 'waived by the principal' })
@@ -244,7 +265,7 @@ test('slabs: each rule once', async () => {
   const b = await api.createLateFee(c.admin, { termId: c.termId, afterDays: 25, amount: '1000' })
   await backdate(c, a.id, 400)
   await backdate(c, b.id, 400)
-  await issue(c)
+  await issueAgo(c, 45)
   await run(c)
   const amounts = (await lateCharges(c, c.s1)).map((r) => r.amountPaise).sort((x, y) => x - y)
   assert.deepEqual(amounts, [50_000, 100_000])
@@ -263,7 +284,7 @@ test('the student is told', async () => {
   await item(c, 'Tuition I', '50000', await ago(c, 40))
   const r = await api.createLateFee(c.admin, { termId: c.termId, afterDays: 10, amount: '500' })
   await backdate(c, r.id, 400)
-  await issue(c)
+  await issueAgo(c, 45)
   await run(c)
   const titles = (
     await withTenant(c.id, (tx) => tx.execute(sql`select title from notifications where user_id = ${c.s1}`))
@@ -305,7 +326,7 @@ test('an unpaid late fee is not itself a reason for another', async () => {
   const b = await api.createLateFee(c.admin, { termId: c.termId, afterDays: 25, amount: '1000' })
   await backdate(c, a.id, 400)
   await backdate(c, b.id, 400)
-  await issue(c)
+  await issueAgo(c, 45)
   // Paid after the first cutoff (30 days ago) and before the second (15 days ago).
   await cash(c, c.s1, '50000', `${await ago(c, 20)}T06:00:00.000Z`)
   await run(c)
@@ -320,7 +341,7 @@ test('a charge raised after the cutoff is not a reason for a late fee on an inst
   await item(c, 'Tuition I', '50000', await ago(c, 40))
   const r = await api.createLateFee(c.admin, { termId: c.termId, afterDays: 5, amount: '500' })
   await backdate(c, r.id, 400)
-  await issue(c)
+  await issueAgo(c, 45)
   await cash(c, c.s1, '50000', `${await ago(c, 39)}T06:00:00.000Z`)
   await cash(c, c.s2, '50000', `${await ago(c, 39)}T06:00:00.000Z`)
   assert.equal((await run(c)).charged, 0)
@@ -328,4 +349,154 @@ test('a charge raised after the cutoff is not a reason for a late fee on an inst
   await issue(c)
   assert.equal((await run(c)).charged, 0)
   assert.equal((await lateCharges(c, c.s1)).length, 0)
+})
+
+// Second review (Opus) HIGHs: what was owed at a cutoff is what had been invoiced to that student by then.
+
+test('a student invoiced after an instalment fell due is not late for it (review 2 HIGH 1, late joiner)', async () => {
+  const c = await campus()
+  await item(c, 'Tuition I', '50000', await ago(c, 40))
+  const r = await api.createLateFee(c.admin, { termId: c.termId, afterDays: 5, amount: '500' })
+  await backdate(c, r.id, 400)
+  await issueAgo(c, 45)
+  // s2 joins late: invoiced today, for an instalment that fell due 40 days ago.
+  await shiftIssues(c, -45, c.s2)
+  await cash(c, c.s2, '50000')
+  assert.equal((await run(c)).charged, 1)
+  assert.equal((await lateCharges(c, c.s1)).length, 1)
+  assert.equal((await lateCharges(c, c.s2)).length, 0)
+})
+
+test('an undated line added later is not owed at an earlier cutoff (review 2 HIGH 1)', async () => {
+  const c = await campus()
+  await item(c, 'Tuition I', '50000', await ago(c, 40))
+  const r = await api.createLateFee(c.admin, { termId: c.termId, afterDays: 5, amount: '500' })
+  await backdate(c, r.id, 400)
+  await issueAgo(c, 45)
+  await cash(c, c.s1, '50000', `${await ago(c, 39)}T06:00:00.000Z`)
+  await cash(c, c.s2, '50000', `${await ago(c, 39)}T06:00:00.000Z`)
+  assert.equal((await run(c)).charged, 0)
+  await item(c, 'Exam fee', '2000')
+  await issue(c)
+  assert.equal((await run(c)).charged, 0)
+})
+
+test('a line invoiced after its due date falls due on the day it is invoiced (review 2 HIGH 1)', async () => {
+  const c = await campus()
+  await item(c, 'Tuition I', '50000', await ago(c, 40))
+  const r = await api.createLateFee(c.admin, { termId: c.termId, afterDays: 5, amount: '500' })
+  await backdate(c, r.id, 400)
+  await issueAgo(c, 45)
+  await cash(c, c.s1, '50000', `${await ago(c, 39)}T06:00:00.000Z`)
+  await cash(c, c.s2, '50000', `${await ago(c, 39)}T06:00:00.000Z`)
+  await item(c, 'Lab fee', '3000', await ago(c, 20))
+  await issue(c)
+  assert.equal((await run(c)).charged, 0, 'invoiced today: not late for a due date already past')
+  // Ten days on, still unpaid: late, counted from the day it was invoiced.
+  await shiftIssues(c, 10)
+  assert.equal((await run(c)).charged, 2)
+  const [fee] = await lateCharges(c, c.s1)
+  assert.equal(fee!.label, `Late fee: instalment due ${dmy(await ago(c, 10))}, unpaid after ${dmy(await ago(c, 5))}`)
+})
+
+test('a late fee follows the student’s own instalments, not another batch’s (review 2 HIGH 2)', async () => {
+  const c = await campus()
+  const section = await academic.createSection(c.admin, { programId: c.programId, label: 'old', admissionYear: 2025 })
+  await academic.addSectionMember(c.admin, { sectionId: section.id, userId: c.s2 })
+  const s1Batch = Number(iso(await today(c), -230).slice(0, 4))
+  assert.notEqual(s1Batch, 2025, 'fixture: s1 falls back to the year it was declared')
+  await createFeeItem(c.admin, { programId: c.programId, termId: c.termId, label: 'Tuition', amount: '50000', dueOn: await ago(c, 40), admissionYear: s1Batch })
+  await createFeeItem(c.admin, { programId: c.programId, termId: c.termId, label: 'Tuition', amount: '45000', dueOn: await ago(c, 30), admissionYear: 2025 })
+  const r = await api.createLateFee(c.admin, { termId: c.termId, afterDays: 5, amount: '500' })
+  await backdate(c, r.id, 400)
+  await issueAgo(c, 45)
+  assert.equal((await run(c)).charged, 2)
+  assert.deepEqual((await lateCharges(c, c.s1)).map((x) => x.label), [`Late fee: instalment due ${dmy(await ago(c, 40))}, unpaid after ${dmy(await ago(c, 35))}`])
+  assert.deepEqual((await lateCharges(c, c.s2)).map((x) => x.label), [`Late fee: instalment due ${dmy(await ago(c, 30))}, unpaid after ${dmy(await ago(c, 25))}`])
+})
+
+async function account(c: Campus) {
+  const a = await addBankAccount(c.admin, {
+    label: 'Fees account',
+    accountName: 'Late Fees College',
+    bankName: 'Indian Bank',
+    branch: 'Patia',
+    accountNumber: '50245763642',
+    ifsc: 'idib000k717',
+  })
+  return a.id
+}
+const claimFor = async (c: Campus, accountId: string, studentId: string, transferredOn: string, utr: string) =>
+  claimTransfer({ id: studentId, role: 'student', institutionId: c.id } as Actor, {
+    termId: c.termId,
+    accountId,
+    mode: 'neft',
+    remitterBank: 'State Bank of India',
+    remitterIfsc: 'sbin0000078',
+    accountHolder: 'A Parent',
+    contactPhone: '+91 98765 43210',
+    transferredOn,
+    amount: '50000',
+    utr,
+  })
+
+test('a claim dated by the cutoff counts while pending, and its verification keeps the student clear (review 2 HIGH 3)', async () => {
+  const c = await campus()
+  await item(c, 'Tuition I', '50000', await ago(c, 40))
+  const r = await api.createLateFee(c.admin, { termId: c.termId, afterDays: 5, amount: '500' })
+  await backdate(c, r.id, 400)
+  await issueAgo(c, 45)
+  const cl = await claimFor(c, await account(c), c.s1, await ago(c, 38), 'NEFTLATE00001')
+  assert.equal((await run(c)).charged, 1)
+  assert.equal((await lateCharges(c, c.s1)).length, 0)
+  await verifyClaim(c.clerk, { claimId: cl.id, note: 'on the statement' })
+  assert.equal((await run(c)).charged, 0)
+  assert.equal((await lateCharges(c, c.s1)).length, 0)
+  assert.equal((await lateCharges(c, c.s2)).length, 1)
+})
+
+test('a payment recorded later with its true date removes a late fee not yet invoiced (review 2 HIGH 3)', async () => {
+  const c = await campus()
+  await item(c, 'Tuition I', '50000', await ago(c, 40))
+  const r = await api.createLateFee(c.admin, { termId: c.termId, afterDays: 5, amount: '500' })
+  await backdate(c, r.id, 400)
+  await issueAgo(c, 45)
+  assert.equal((await run(c)).charged, 2)
+  await cash(c, c.s1, '50000', `${await ago(c, 38)}T06:00:00.000Z`)
+  await run(c)
+  assert.equal((await lateCharges(c, c.s1)).length, 0)
+  assert.equal((await lateCharges(c, c.s2)).length, 1)
+  const actions = (
+    await authDb.execute(sql`select action from audit_log where institution_id = ${c.id}::uuid and action = 'fee.late_fees_removed'`)
+  ).rows
+  assert.equal(actions.length, 1)
+  await reconciled(c)
+})
+
+test('a rejected claim puts the late fee back (review 2 HIGH 3)', async () => {
+  const c = await campus()
+  await item(c, 'Tuition I', '50000', await ago(c, 40))
+  const r = await api.createLateFee(c.admin, { termId: c.termId, afterDays: 5, amount: '500' })
+  await backdate(c, r.id, 400)
+  await issueAgo(c, 45)
+  assert.equal((await run(c)).charged, 2)
+  const cl = await claimFor(c, await account(c), c.s1, await ago(c, 38), 'NEFTLATE00002')
+  await run(c)
+  assert.equal((await lateCharges(c, c.s1)).length, 0, 'pending and dated in time: not late while it is checked')
+  await rejectClaim(c.clerk, { claimId: cl.id, reason: 'no such transfer on the statement' })
+  assert.equal((await run(c)).charged, 1)
+  assert.equal((await lateCharges(c, c.s1)).length, 1)
+})
+
+test('an invoiced late fee stays when the payment turns up later', async () => {
+  const c = await campus()
+  await item(c, 'Tuition I', '50000', await ago(c, 40))
+  const r = await api.createLateFee(c.admin, { termId: c.termId, afterDays: 5, amount: '500' })
+  await backdate(c, r.id, 400)
+  await issueAgo(c, 45)
+  await run(c)
+  await issue(c)
+  await cash(c, c.s1, '50000', `${await ago(c, 38)}T06:00:00.000Z`)
+  await run(c)
+  assert.equal((await lateCharges(c, c.s1)).length, 1)
 })
