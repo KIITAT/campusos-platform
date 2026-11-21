@@ -706,3 +706,22 @@ test('online attendance controls are audited without device material', async () 
   const text = JSON.stringify(t.map((r) => r.detail))
   for (const secret of [HASH_C, HASH_D, '20.2961', '85.8245']) assert.ok(!text.includes(secret), secret)
 })
+
+test('a revoked device needs a new pairing, and two parallel approvals leave one active (NEW-163)', async () => {
+  const first = await registerDevice(student(ids.s1), { deviceHash: HASH_A })
+  await approveDevice(admin(), { deviceId: first.id })
+  const second = await registerDevice(student(ids.s1), { deviceHash: HASH_B })
+  await approveDevice(admin(), { deviceId: second.id })
+  // The first device is now revoked: approving it again would silently re-bind a handset the office retired.
+  await assert.rejects(approveDevice(admin(), { deviceId: first.id }), (e: unknown) => (e as AttendanceError).status === 409 && code(e) === 'device_revoked')
+  const states = async () => (await withTenant(inst, (tx) => tx.select({ id: devices.id, status: devices.status }).from(devices).where(eq(devices.userId, ids.s1)))).map((r) => `${r.id}:${r.status}`).sort()
+  assert.deepEqual(await states(), [`${first.id}:revoked`, `${second.id}:active`].sort())
+
+  // Two pending devices approved at once: one wins, the other replaces it; never two active.
+  const x = await registerDevice(student(ids.s2), { deviceHash: 'x'.repeat(40) })
+  const y = await registerDevice(student(ids.s2), { deviceHash: 'y'.repeat(40) })
+  const done = await Promise.allSettled([approveDevice(admin(), { deviceId: x.id }), approveDevice(admin(), { deviceId: y.id })])
+  assert.deepEqual(done.map((d) => d.status), ['fulfilled', 'fulfilled'])
+  const rows = await withTenant(inst, (tx) => tx.select({ status: devices.status }).from(devices).where(eq(devices.userId, ids.s2)))
+  assert.equal(rows.filter((r) => r.status === 'active').length, 1)
+})
