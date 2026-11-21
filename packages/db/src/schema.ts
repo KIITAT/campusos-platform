@@ -111,7 +111,13 @@ export const users = pgTable(
     dateOfBirth: date('date_of_birth', { mode: 'string' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
-  () => [tenantPolicy('users')],
+  () => [
+    tenantPolicy('users'),
+    // Record search (P1-09c, core 0018): contains-lookups of a pupil's name.
+    index('campusos_users_student_name_trgm')
+      .using('gin', sql`lower(coalesce(name,'')) public.gin_trgm_ops`)
+      .where(sql`role='student' and erased_at is null`),
+  ],
 )
 
 /**
