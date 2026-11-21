@@ -92,7 +92,7 @@ export const promotionPage: PluginPage = {
       {
         kind: 'note',
         text:
-          'At the end of a session, the old class declaration of every student in a section ends and a new one starts on the first day of the new session: the next class for promoted students, the same class again for detained ones. Previous section membership stays, with its attendance and marks. Promote before the new session is invoiced.',
+          'At the end of a session, the old class declaration of every student in a section ends and a new one starts on the first day of the new session: the next class for promoted students, the same class again for detained ones. Previous section membership stays, with its attendance and marks. Promotion runs on or after the first day of the new term, so invoice the new term after promoting; an invoice raised earlier stays at the old class.',
       },
       {
         kind: 'table',
