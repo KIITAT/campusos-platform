@@ -186,7 +186,8 @@ test('a 30,000-person board fan-out queues the eligible audience in one bulk ope
     await tx.execute(sql`set local role campusos_app`)
     await tx.execute(sql`select set_config('app.institution_id', ${institutionId}, true)`)
     const handler = plugin.jobs!.find((job) => job.kind === 'notices.publish')!
-    const outcome = await handler.run(actor, tx, { noticeId: draft!.id })
+    // The owner handle erases the type of the core schema it gets at runtime.
+    const outcome = await handler.run(actor, tx as Parameters<typeof handler.run>[1], { noticeId: draft!.id })
     assert.equal((outcome as { reach: number }).reach, 30000)
     const { rows: [queued] } = await tx.execute<{ count: number }>(sql`
       select count(*)::int as count from background_jobs where kind = 'notices.email'`)
