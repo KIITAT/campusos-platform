@@ -394,3 +394,12 @@ test('an erased student is no part of the promotion (P1-13c Opus review)', async
   assert.deepEqual(await sectionsOf(c, c.asha), [y.next7, y.s6].sort())
   assert.equal((await programsOf(c, c.bala)).length, 1)
 })
+
+test('the page does not advise promoting before the new session is invoiced, which the rule forbids (P1-13c Opus review)', async () => {
+  const c = await campus()
+  const y = await year(c)
+  const page = await pageOf(c.admin, y.s6)
+  const text = page.sections.filter((s) => s.kind === 'note').map((s) => (s as { text: string }).text).join(' ')
+  assert.ok(!/promote before/i.test(text), 'promotion cannot run before the new term starts')
+  assert.match(text, /on or after the first day of the new term/i)
+})
