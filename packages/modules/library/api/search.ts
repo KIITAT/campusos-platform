@@ -10,7 +10,7 @@ import { LibraryError, type Actor } from './operations'
  * never a copy or a borrower, for exactly the roles that see the catalogue.
  */
 
-const READERS: readonly Role[] = ['institution_admin', 'super_admin', 'library_staff', 'faculty', 'student']
+const READERS: readonly Role[] = ['institution_admin', 'super_admin', 'library_staff', 'faculty', 'hod', 'student']
 
 type Tx = Parameters<Parameters<typeof withTenant>[1]>[0]
 type Row = { id: string; title: string; author: string }
@@ -20,18 +20,25 @@ export async function findBooksWithin(tx: Tx, tenant: string, { q, like }: Looku
   // An ISBN is ten or thirteen characters once spaces and hyphens are taken out.
   const squeezed = q.replace(/[\s-]/g, '')
   const isbn = /^([0-9]{9}[0-9Xx]|[0-9]{13})$/.test(squeezed) ? squeezed : null
-  const conditions = [sql`lower(title) = lower(${q})`, sql`lower(author) = lower(${q})`]
-  if (isbn) conditions.push(sql`isbn in (${isbn}, ${isbn.toUpperCase()}, ${isbn.toLowerCase()})`)
-  if (like) conditions.push(sql`lower(title) like lower(${like}) escape '!'`, sql`lower(author) like lower(${like}) escape '!'`)
+  // Equality on a stored lower-cased column is an index condition under row-level security; lower()
+  // and LIKE are not leakproof (NEW-175), so the contains-tests filter one tenant's rows only.
+  const key = sql`lower(${q})`
+  const branches = [
+    sql`select id, 1 as rank from library_titles where institution_id = ${tenant} and title_key = ${key}`,
+    sql`select id, 1 as rank from library_titles where institution_id = ${tenant} and author_key = ${key}`,
+  ]
+  if (isbn) branches.push(sql`select id, 0 as rank from library_titles where institution_id = ${tenant} and isbn in (${isbn}, ${isbn.toUpperCase()}, ${isbn.toLowerCase()})`)
+  if (like)
+    branches.push(
+      sql`select id, 2 as rank from library_titles where institution_id = ${tenant} and title_key like lower(${like}) escape '!'`,
+      sql`select id, 3 as rank from library_titles where institution_id = ${tenant} and author_key like lower(${like}) escape '!'`,
+    )
   const { rows } = await tx.execute<Row>(sql`
-    select id, title, author from library_titles
-     where institution_id = ${tenant} and (${sql.join(conditions, sql` or `)})
-     order by case
-                when ${isbn ? sql`isbn in (${isbn}, ${isbn.toUpperCase()}, ${isbn.toLowerCase()})` : sql`false`} then 0
-                when lower(title) = lower(${q}) or lower(author) = lower(${q}) then 1
-                when ${like ? sql`lower(title) like lower(${like}) escape '!'` : sql`false`} then 2
-                else 3
-              end, lower(title), id
+    with cand as (${sql.join(branches, sql` union all `)})
+    select t.id, t.title, t.author
+      from (select id, min(rank) as rank from cand group by id) c
+      join library_titles t on t.id = c.id and t.institution_id = ${tenant}
+     order by c.rank, t.title_key, t.id
      limit 12`)
   return rows
 }

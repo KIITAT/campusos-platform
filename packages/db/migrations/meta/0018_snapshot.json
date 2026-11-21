@@ -571,23 +571,39 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "name_key": {
+          "name": "name_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "lower(coalesce(name, ''))",
+            "type": "stored"
+          }
         }
       },
       "indexes": {
-        "campusos_users_student_name_trgm": {
-          "name": "campusos_users_student_name_trgm",
+        "campusos_users_student_name_key": {
+          "name": "campusos_users_student_name_key",
           "columns": [
             {
-              "expression": "lower(coalesce(name,'')) public.gin_trgm_ops",
+              "expression": "institution_id",
+              "isExpression": false,
               "asc": true,
-              "isExpression": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "name_key",
+              "isExpression": false,
+              "asc": true,
               "nulls": "last"
             }
           ],
           "isUnique": false,
-          "where": "role='student' and erased_at is null",
+          "where": "role = 'student' and erased_at is null",
           "concurrently": false,
-          "method": "gin",
+          "method": "btree",
           "with": {}
         }
       },

@@ -67,8 +67,8 @@ after(async () => {
 test('the route is the global lookup for exactly the catalogue readers', () => {
   const r = route()
   assert.equal(r.lookup, 'global')
-  assert.deepEqual([...(r.roles ?? [])].sort(), ['faculty', 'institution_admin', 'library_staff', 'student', 'super_admin'])
-  for (const role of ['accounts_staff', 'hod', 'hostel_staff', 'parent', 'pending'] as const) assert.equal(authorizeRoute(plugin.manifest, r, role), 'deny', role)
+  assert.deepEqual([...(r.roles ?? [])].sort(), ['faculty', 'hod', 'institution_admin', 'library_staff', 'student', 'super_admin'])
+  for (const role of ['accounts_staff', 'hostel_staff', 'parent', 'pending'] as const) assert.equal(authorizeRoute(plugin.manifest, r, role), 'deny', role)
 })
 
 test('book match returns title data and no borrowers', async () => {
@@ -94,7 +94,7 @@ test('book match returns title data and no borrowers', async () => {
 
 test('other roles, malformed queries and a second q are refused', async () => {
   const c = await campus()
-  for (const role of ['accounts_staff', 'hod', 'hostel_staff', 'parent']) assert.equal(await code(search(c.as(role), 'dune')), 'forbidden', role)
+  for (const role of ['accounts_staff', 'hostel_staff', 'parent']) assert.equal(await code(search(c.as(role), 'dune')), 'forbidden', role)
   const ok = c.as('student')
   for (const q of ['', ' ', 'x'.repeat(101), 'a\u0007b']) assert.equal(await code(search(ok, q)), 'invalid_search', JSON.stringify(q))
   assert.equal(await code(search(ok, null)), 'invalid_search')

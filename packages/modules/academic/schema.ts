@@ -678,6 +678,8 @@ export const studentProfiles = pgTable(
     institutionId: tenantId(),
     rollNo: text('roll_no'),
     registrationNo: text('registration_no'),
+    rollKey: text('roll_key').generatedAlwaysAs(sql`lower(roll_no)`),
+    registrationKey: text('registration_key').generatedAlwaysAs(sql`lower(registration_no)`),
     phone: text(),
     addressLine: text('address_line'),
     city: text(),
@@ -698,9 +700,9 @@ export const studentProfiles = pgTable(
     uniqueIndex('academic_student_profiles_roll').on(t.institutionId, t.rollNo),
     uniqueIndex('academic_student_profiles_registration').on(t.institutionId, t.registrationNo),
     check('academic_student_profiles_phone', sql`phone is null or phone ~ '^[0-9+() -]{7,20}$'`),
-    // Record search (P1-09c, 0014): exact lookups that ignore case.
-    index('academic_student_profiles_roll_lookup').on(t.institutionId, sql`lower(${t.rollNo})`),
-    index('academic_student_profiles_registration_lookup').on(t.institutionId, sql`lower(${t.registrationNo})`),
+    // Record search (P1-09c, 0014): exact lookups that ignore case, on the stored lower-cased copies.
+    index('academic_student_profiles_roll_key').on(t.institutionId, t.rollKey),
+    index('academic_student_profiles_registration_key').on(t.institutionId, t.registrationKey),
     uniqueIndex('academic_student_profiles_apaar_unique').on(t.institutionId, t.apaarId),
     check('academic_student_profiles_apaar', sql`apaar_id is null or apaar_id ~ '^[0-9]{12}$'`),
     check('academic_student_profiles_house', sql`house is null or length(trim(house)) between 1 and 40`),

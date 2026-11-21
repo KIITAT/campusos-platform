@@ -50,16 +50,19 @@ type Row = { id: string; name: string | null; email: string | null; roll_no: str
  */
 export async function findStudentChoicesWithin(tx: Tx, tenant: string, query: LookupQuery, picker: boolean): Promise<LookupHit[]> {
   const { q, like } = query
-  const lowerName = sql`lower(coalesce(name, ''))`
+  // Row-level security runs before any predicate that is not leakproof, and lower() and LIKE are not
+  // (NEW-175). So every exact test is a plain equality on a stored lower-cased column, with the
+  // tenant first in its index; the one contains-test filters only the tenant's own rows.
+  const key = sql`lower(${q})`
   const branches = [
-    sql`select student_id as id, 0 as rank from academic_student_profiles
-        where institution_id = ${tenant} and (lower(roll_no) = lower(${q}) or lower(registration_no) = lower(${q}))`,
+    sql`select student_id as id, 0 as rank from academic_student_profiles where institution_id = ${tenant} and roll_key = ${key}`,
+    sql`select student_id as id, 0 as rank from academic_student_profiles where institution_id = ${tenant} and registration_key = ${key}`,
     sql`select id, 1 as rank from users
-        where institution_id = ${tenant} and role = 'student' and erased_at is null and ${lowerName} = lower(${q})`,
+        where institution_id = ${tenant} and role = 'student' and erased_at is null and name_key = ${key}`,
   ]
   if (like)
     branches.push(sql`select id, 2 as rank from users
-        where institution_id = ${tenant} and role = 'student' and erased_at is null and ${lowerName} like lower(${like}) escape '!'`)
+        where institution_id = ${tenant} and role = 'student' and erased_at is null and name_key like lower(${like}) escape '!'`)
   if (picker && q.includes('@'))
     branches.push(sql`select id, 0 as rank from users
         where institution_id = ${tenant} and role = 'student' and erased_at is null and (email = lower(${q}) or email = ${q})`)
@@ -69,7 +72,7 @@ export async function findStudentChoicesWithin(tx: Tx, tenant: string, query: Lo
       from (select id, min(rank) as rank from cand group by id) c
       join users u on u.id = c.id and u.institution_id = ${tenant} and u.role = 'student' and u.erased_at is null
       left join academic_student_profiles p on p.student_id = u.id and p.institution_id = ${tenant}
-     order by c.rank, lower(coalesce(u.name, '')), u.id
+     order by c.rank, u.name_key, u.id
      limit ${LIMIT}`)
   return rows.map((r) => ({
     id: r.id,
