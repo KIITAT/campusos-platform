@@ -680,7 +680,7 @@ GET /api/v1/modules/hr/imports/template                                  SI.....
 POST /api/v1/modules/hr/imports/run                                      SI........ gate
 
 ## library 0.17.0
-GET /api/v1/modules/library/record-search                                SI.F.L.s.. op
+GET /api/v1/modules/library/record-search                                SIHF.L.s.. op
 GET /api/v1/modules/library/titles                                       SIHF.L.s.. gate
 POST /api/v1/modules/library/titles                                      SI...L.... op
 GET /api/v1/modules/library/copies                                       SIHF.L.s.. gate

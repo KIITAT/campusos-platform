@@ -93,7 +93,7 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   academic_prerequisite_waivers: 'export',
   academic_section_members: 'export',
   academic_sections: 'export',
-  academic_student_profiles: 'export',
+  academic_student_profiles: { omit: ['roll_key', 'registration_key'] },
   academic_student_programs: 'export',
 
   admissions_applications: 'export',
@@ -156,7 +156,7 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   // nothing the person said or did that the receipt does not already record.
   fee_idempotency_keys: 'exclude',
   fee_invoices: 'export',
-  fee_payments: 'export',
+  fee_payments: { omit: ['receipt_no_key'] },
   fee_refunds: 'export',
   fee_scholarship_awards: 'export',
   fee_student_charges: 'export',
