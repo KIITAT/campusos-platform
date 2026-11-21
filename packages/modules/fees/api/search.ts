@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm'
 import { withTenant } from '@campusos/db'
 import type { LookupResult } from '@campusos/module-framework'
-import { findStudentChoicesWithin, lookupQuery, lookupTimeout } from '@campusos/module-academic/api'
+import { findStudentChoicesWithin, lookupQuery, lookupTimeout, type LookupQuery } from '@campusos/module-academic/api'
 import { requireFinance, type Actor } from './operations'
 
 /**
@@ -11,20 +11,29 @@ import { requireFinance, type Actor } from './operations'
  * student, and the print route keeps its own check.
  */
 
+type Tx = Parameters<Parameters<typeof withTenant>[1]>[0]
+
 const DETAIL = { live: 'Recorded', voided: 'Void', bounced: 'Cheque returned unpaid' } as const
+
+type ReceiptRow = { id: string; receipt_no: string; status: keyof typeof DETAIL }
+
+/** Receipts of one tenant matching the query, exact number first. */
+export async function findReceiptsWithin(tx: Tx, tenant: string, { q, like }: LookupQuery): Promise<ReceiptRow[]> {
+  const { rows } = await tx.execute<ReceiptRow>(sql`
+    select id, receipt_no, status from fee_payments
+     where institution_id = ${tenant}
+       and (lower(receipt_no) = lower(${q})${like ? sql` or lower(receipt_no) like lower(${like}) escape '!'` : sql``})
+     order by (lower(receipt_no) = lower(${q})) desc, lower(receipt_no), id
+     limit 12`)
+  return rows
+}
 
 export async function searchFeeReceipts(actor: Actor, req: Request): Promise<LookupResult> {
   const tenant = requireFinance(actor)
-  const { q, like } = lookupQuery(req)
+  const query = lookupQuery(req)
   const rows = await withTenant(tenant, async (tx) => {
     await lookupTimeout(tx)
-    const { rows } = await tx.execute<{ id: string; receipt_no: string; status: keyof typeof DETAIL }>(sql`
-      select id, receipt_no, status from fee_payments
-       where institution_id = ${tenant}
-         and (lower(receipt_no) = lower(${q})${like ? sql` or lower(receipt_no) like lower(${like}) escape '!'` : sql``})
-       order by (lower(receipt_no) = lower(${q})) desc, lower(receipt_no), id
-       limit 12`)
-    return rows
+    return findReceiptsWithin(tx, tenant, query)
   })
   return {
     hits: rows.map((r) => ({
