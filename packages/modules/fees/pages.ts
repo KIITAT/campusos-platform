@@ -15,7 +15,6 @@ import {
   cancellableCharges,
   chargePage,
   reconciliation,
-  studentChoices,
   studentLedger,
   type Actor,
 } from './api'
@@ -122,16 +121,14 @@ export const pages: PluginPage[] = [
     roles: [...OFFICE],
     async load(actor, req) {
       const a = actor as Actor
-      const [page, structure, students, cancellable] = await Promise.all([
+      const [page, structure, cancellable] = await Promise.all([
         listStudentCharges(a, undefined, chargePage(req, 'rows')),
         listStructure(a),
-        studentChoices(a),
         cancellableCharges(a),
       ])
       return {
         rows: page.rows,
         rowsPage: { total: page.total, next: page.next },
-        students,
         terms: structure.terms.map((t) => ({ value: t.id, label: `${t.code} - ${t.name}${t.isCurrent ? ' (current)' : ''}` })),
         cancellable,
       }
@@ -166,7 +163,7 @@ export const pages: PluginPage[] = [
         submit: 'Charge',
         path: '/charges',
         fields: [
-          { name: 'studentId', label: 'Student', kind: 'select', options: 'students' },
+          { name: 'studentId', label: 'Student', hint: 'Search by roll number, registration number or name.', lookup: { path: '/student-choices' } },
           { name: 'termId', label: 'Term', kind: 'select', options: 'terms' },
           { name: 'label', label: 'For', hint: 'e.g. Duplicate admit card' },
           { name: 'amount', label: 'Amount', kind: 'money', hint: 'Rupees.' },

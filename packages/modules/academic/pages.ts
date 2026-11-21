@@ -477,7 +477,7 @@ export const pages: PluginPage[] = [
         roles: [...REGISTRAR],
         fields: [
           { name: 'sectionId', label: 'Cohort', kind: 'select', options: 'sectionOptions' },
-          { name: 'userId', label: 'Student' },
+          { name: 'userId', label: 'Student', hint: 'Search by roll number, registration number or name.', lookup: { path: '/record-search' } },
         ],
       },
       {

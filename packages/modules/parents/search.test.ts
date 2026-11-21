@@ -85,3 +85,14 @@ test('a guardian, an empty query and a second q are refused', async () => {
   assert.equal(await code(pick(c.admin, null)), 'invalid_search')
   assert.equal(await code(pick(c.admin, null, 'http://x/student-choices?q=a&q=b')), 'invalid_search')
 })
+
+test('the guardian page no longer preloads students and its child field is a lookup', async () => {
+  const c = await campus()
+  const page = (await import('./pages')).pages.find((p) => p.path === '/guardians')!
+  const data = (await page.load!(c.admin as never, new Request('http://x/guardians'))) as Record<string, unknown>
+  assert.equal('studentOptions' in data, false)
+  const form = page.sections(data as never).find((s) => s.kind === 'form' && s.path === '/guardians/invite') as { fields: { name: string; kind?: string; lookup?: { path: string } }[] }
+  const child = form.fields.find((f) => f.name === 'studentId')!
+  assert.equal(child.kind ?? 'text', 'text')
+  assert.deepEqual(child.lookup, { path: '/student-choices' })
+})

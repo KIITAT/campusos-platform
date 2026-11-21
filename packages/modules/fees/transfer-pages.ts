@@ -7,7 +7,6 @@ import {
   listBankAccounts,
   listDemandLetters,
   myClaims,
-  studentChoices,
   type Actor,
 } from './api'
 
@@ -251,11 +250,10 @@ export const transferPages: PluginPage[] = [
     roles: [...OFFICE],
     async load(actor) {
       const a = actor as Actor
-      const [accounts, letters, settings, students, t] = await Promise.all([
+      const [accounts, letters, settings, t] = await Promise.all([
         listBankAccounts(a),
         listDemandLetters(a),
         letterSettingsOf(a),
-        studentChoices(a),
         termOptions(a),
       ])
       return {
@@ -263,7 +261,6 @@ export const transferPages: PluginPage[] = [
         liveOptions: accounts.filter((x) => x.state === 'active').map((x) => ({ value: x.id, label: `${x.label}: ${x.accountNumber}` })),
         letters: letters.map((l) => ({ ...l, issued: day(l.issuedAt), pdf: 'PDF' })),
         settings,
-        students,
         ...t,
       }
     },
@@ -333,7 +330,7 @@ export const transferPages: PluginPage[] = [
           submit: 'Issue',
           path: '/letters',
           fields: [
-            { name: 'studentId', label: 'Student', kind: 'select', options: 'students' },
+            { name: 'studentId', label: 'Student', hint: 'Search by roll number, registration number or name.', lookup: { path: '/student-choices' } },
             { name: 'termId', label: 'Term', kind: 'select', options: 'terms', value: String(data.current ?? '') },
             { name: 'addressee', label: 'Addressed to' },
             { name: 'purpose', label: 'For', kind: 'radio', options: PURPOSES, value: 'education_loan' },

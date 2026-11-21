@@ -139,3 +139,16 @@ test('learners, faculty and bad queries are refused', async () => {
     assert.equal(await code(call(path, c.admin, null, `http://x${path}?q=a&q=b`)), 'invalid_search')
   }
 })
+
+test('the charge and demand-letter pages no longer preload students', async () => {
+  const c = await campus()
+  const { pages } = await import('./pages')
+  const { transferPages } = await import('./transfer-pages')
+  for (const page of [...pages, ...transferPages].filter((p) => p.path === '/student-charges' || p.path === '/accounts-and-letters' || p.menu === 'Accounts and letters')) {
+    const data = (await page.load!(c.clerk as never, new Request(`http://x${page.path}`))) as Record<string, unknown>
+    assert.equal('students' in data, false, page.path)
+    const forms = page.sections(data as never).filter((s) => s.kind === 'form') as { fields: { name: string; kind?: string; lookup?: { path: string } }[] }[]
+    const field = forms.flatMap((f) => f.fields).find((f) => f.name === 'studentId')
+    if (field) assert.deepEqual(field.lookup, { path: '/student-choices' })
+  }
+})
