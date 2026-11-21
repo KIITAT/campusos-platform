@@ -9,6 +9,7 @@ import {
   listAwards,
   listDropCredits,
   listFeeItems,
+  listLateFees,
   listInvoices,
   listRefundRules,
   listScholarships,
@@ -59,7 +60,7 @@ export const pages: PluginPage[] = [
     roles: [...OFFICE],
     async load(actor) {
       const a = actor as Actor
-      const [items, structure] = await Promise.all([listFeeItems(a), listStructure(a)])
+      const [items, structure, lateFees] = await Promise.all([listFeeItems(a), listStructure(a), listLateFees(a)])
       return {
         items: items.map((i) => ({
           ...i,
@@ -67,6 +68,11 @@ export const pages: PluginPage[] = [
           category: i.category ? CATEGORY_LABELS[i.category as keyof typeof CATEGORY_LABELS] : null,
         })),
         categoryOptions: STUDENT_CATEGORIES.map((v) => ({ value: v, label: CATEGORY_LABELS[v] })),
+        lateFees,
+        lateFeeOptions: lateFees.map((r) => ({
+          value: r.id,
+          label: `${r.termCode}: ${formatPaise(r.amountPaise)} after ${r.afterDays} days`,
+        })),
         programs: structure.programs.map((p) => ({
           value: p.id,
           label: `${p.code} - ${p.name}`,
@@ -122,6 +128,47 @@ export const pages: PluginPage[] = [
           { name: 'dueOn', label: 'Due on', kind: 'date', optional: true, hint: 'For an instalment: the date it is due.' },
           { name: 'admissionYear', label: 'Batch', kind: 'number', optional: true, hint: 'Admission year, for one batch only. Leave empty for every batch.' },
           { name: 'category', label: 'Category', kind: 'select', options: 'categoryOptions', optional: true, hint: 'The category on the student profile. Leave empty for every category.' },
+        ],
+      },
+      {
+        kind: 'table',
+        title: 'Late fees',
+        rows: 'lateFees',
+        empty: 'No late fees.',
+        columns: [
+          { key: 'termCode', label: 'Term', kind: 'code' },
+          { key: 'afterDays', label: 'Days after the due date' },
+          { key: 'amountPaise', label: 'Amount', kind: 'money' },
+        ],
+      },
+      {
+        kind: 'note',
+        text:
+          'A late fee is charged once for each instalment still unpaid that many days after its due date, ' +
+          "and billed with the term's next issue. To waive one before it is invoiced, cancel it under Student charges.",
+      },
+      {
+        kind: 'form',
+        title: 'Add a late fee',
+        submit: 'Add late fee',
+        path: '/late-fees',
+        roles: [...ADMIN],
+        fields: [
+          { name: 'termId', label: 'Term', kind: 'select', options: 'terms' },
+          { name: 'afterDays', label: 'Days after the due date', kind: 'number' },
+          { name: 'amount', label: 'Amount', kind: 'money' },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Remove a late fee',
+        submit: 'Remove',
+        path: '/late-fees/remove',
+        roles: [...ADMIN],
+        tone: 'danger',
+        fields: [
+          { name: 'lateFeeId', label: 'Late fee', kind: 'select', options: 'lateFeeOptions' },
+          { name: 'reason', label: 'Reason', hint: 'At least five characters' },
         ],
       },
     ],
@@ -214,12 +261,13 @@ export const pages: PluginPage[] = [
         termId: term.id,
         issuedCount: invoices.total,
         total: report.totalOutstandingPaise,
+        overdueTotal: report.totalOverduePaise,
         defaulters: report.defaulterCount,
         notYetInvoiced: report.notYetInvoicedPaise,
         rows: report.rows.map((r) => ({
           ...r,
           who: r.studentName ?? r.studentEmail,
-          overdue: r.outstandingPaise > 0,
+          overdue: r.overduePaise > 0,
         })),
         rowsPage: { total: report.total, next: report.next },
         terms: structure.terms.map((t) => ({
@@ -240,6 +288,11 @@ export const pages: PluginPage[] = [
             label: 'Outstanding',
             value: formatPaise(Number(data.total)),
             tone: Number(data.total) > 0 ? 'due' : 'clear',
+          },
+          {
+            label: 'Overdue',
+            value: formatPaise(Number(data.overdueTotal ?? 0)),
+            tone: Number(data.overdueTotal ?? 0) > 0 ? 'due' : 'clear',
           },
           { label: 'Not yet invoiced', value: formatPaise(Number(data.notYetInvoiced ?? 0)) },
         ],
@@ -265,12 +318,8 @@ export const pages: PluginPage[] = [
           { key: 'programCode', label: 'Programme', kind: 'code' },
           { key: 'payablePaise', label: 'Payable', kind: 'money' },
           { key: 'paidPaise', label: 'Paid', kind: 'money' },
-          {
-            key: 'outstandingPaise',
-            label: 'Outstanding',
-            kind: 'money',
-            alertWhen: 'overdue',
-          },
+          { key: 'outstandingPaise', label: 'Outstanding', kind: 'money' },
+          { key: 'overduePaise', label: 'Overdue', kind: 'money', alertWhen: 'overdue' },
           { key: 'overpaidPaise', label: 'In credit', kind: 'money' },
           { key: 'notYetInvoicedPaise', label: 'Not yet invoiced', kind: 'money' },
         ],
@@ -310,6 +359,7 @@ export const pages: PluginPage[] = [
         credited: l.creditedPaise,
         paid: l.paidPaise,
         outstanding: l.outstandingPaise,
+        overdue: l.overduePaise,
         overpaid: l.overpaidPaise,
         notYetInvoiced: l.notYetInvoicedPaise,
         unreconciled: l.unreconciledPaise,
@@ -371,6 +421,7 @@ export const pages: PluginPage[] = [
             value: formatPaise(Number(data.outstanding ?? 0)),
             tone: Number(data.outstanding ?? 0) > 0 ? 'due' : 'clear',
           },
+          { label: 'Overdue', value: formatPaise(Number(data.overdue ?? 0)), tone: Number(data.overdue ?? 0) > 0 ? 'due' : 'clear' },
           ...(Number(data.notYetInvoiced ?? 0) > 0 ? [{ label: 'Not yet invoiced', value: formatPaise(Number(data.notYetInvoiced)) }] : []),
           ...(Number(data.overpaid ?? 0) > 0
             ? [
@@ -414,6 +465,7 @@ export const pages: PluginPage[] = [
         empty: 'No charges for this term.',
         columns: [
           { key: 'label', label: 'Item' },
+          { key: 'dueOn', label: 'Due', kind: 'date' },
           { key: 'chargedPaise', label: 'Charged', kind: 'money' },
           { key: 'waivedPaise', label: 'Waived', kind: 'money' },
           { key: 'payablePaise', label: 'Payable', kind: 'money' },
@@ -609,6 +661,7 @@ export const pages: PluginPage[] = [
         credited: l.creditedPaise,
         paid: l.paidPaise,
         outstanding: l.outstandingPaise,
+        overdue: l.overduePaise,
         overpaid: l.overpaidPaise,
         notYetInvoiced: l.notYetInvoicedPaise,
         unreconciled: l.unreconciledPaise,
@@ -650,6 +703,7 @@ export const pages: PluginPage[] = [
             value: formatPaise(Number(data.outstanding ?? 0)),
             tone: Number(data.outstanding ?? 0) > 0 ? 'due' : 'clear',
           },
+          { label: 'Overdue', value: formatPaise(Number(data.overdue ?? 0)), tone: Number(data.overdue ?? 0) > 0 ? 'due' : 'clear' },
           ...(Number(data.notYetInvoiced ?? 0) > 0 ? [{ label: 'Not yet invoiced', value: formatPaise(Number(data.notYetInvoiced)) }] : []),
           ...(Number(data.overpaid ?? 0) > 0
             ? [{ label: 'In credit', value: formatPaise(Number(data.overpaid)), tone: 'clear' as const }]
@@ -674,6 +728,7 @@ export const pages: PluginPage[] = [
         empty: 'Nothing charged yet.',
         columns: [
           { key: 'label', label: 'Item' },
+          { key: 'dueOn', label: 'Due', kind: 'date' },
           { key: 'chargedPaise', label: 'Charged', kind: 'money' },
           { key: 'waivedPaise', label: 'Waived', kind: 'money' },
           { key: 'payablePaise', label: 'Payable', kind: 'money' },

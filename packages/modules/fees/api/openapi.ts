@@ -19,6 +19,8 @@ import {
   voidInvoiceSchema,
   voidPaymentSchema,
   createFeeItemSchema,
+  createLateFeeSchema,
+  removeLateFeeSchema,
   createScholarshipSchema,
   prorateDropsSchema,
   revokeAwardSchema,
@@ -230,6 +232,37 @@ export const paths = {
         '200': { description: 'Created' },
         ...gated,
         '409': { description: 'That label already exists for the term', content: json(err) },
+      },
+    },
+  },
+
+  [`${base}/late-fees`]: {
+    get: {
+      summary: 'Late-fee rules, optionally for one term',
+      tags: ['fees'],
+      responses: { '200': { description: 'OK' }, ...gated },
+    },
+    post: {
+      summary: 'Charge a flat late fee for an instalment still unpaid this many days after its due date',
+      tags: ['fees'],
+      requestBody: { content: json(createLateFeeSchema) },
+      responses: {
+        '200': { description: 'Created' },
+        ...gated,
+        '404': { description: 'No such term', content: json(err) },
+        '409': { description: 'A rule for those days already exists on the term', content: json(err) },
+      },
+    },
+  },
+  [`${base}/late-fees/remove`]: {
+    post: {
+      summary: 'Remove a late-fee rule; late fees already raised stay',
+      tags: ['fees'],
+      requestBody: { content: json(removeLateFeeSchema) },
+      responses: {
+        '200': { description: 'Removed' },
+        ...gated,
+        '404': { description: 'No such late fee', content: json(err) },
       },
     },
   },

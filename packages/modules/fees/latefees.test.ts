@@ -26,6 +26,7 @@ import {
  */
 
 // The late-fee functions do not exist until the fix; calls then fail on assertions, not on load.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const api = (await import('./api')) as Record<string, any>
 
 let n = 0

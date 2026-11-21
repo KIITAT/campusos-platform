@@ -314,6 +314,9 @@ GET /api/v1/modules/fees/drops                                           SI.....
 POST /api/v1/modules/fees/drops/prorate                                  SI........ op
 GET /api/v1/modules/fees/items                                           SI..A..... op
 POST /api/v1/modules/fees/items                                          SI........ op
+GET /api/v1/modules/fees/late-fees                                       SI..A..... op
+POST /api/v1/modules/fees/late-fees                                      SI........ op
+POST /api/v1/modules/fees/late-fees/remove                               SI........ op
 POST /api/v1/modules/fees/waivers                                        SI........ op
 POST /api/v1/modules/fees/waivers/revoke                                 SI........ op
 POST /api/v1/modules/fees/payments                                       SI..A..... op

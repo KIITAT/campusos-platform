@@ -36,6 +36,9 @@ import {
   assessAid,
   awardScholarship,
   createFeeItem,
+  createLateFee,
+  listLateFees,
+  removeLateFee,
   createScholarship,
   duesPage,
   duesReport,
@@ -185,6 +188,22 @@ export const routes: PluginRoute[] = [
     method: 'POST',
     path: '/items',
     handler: async (actor, req) => createFeeItem(actor as Actor, await jsonBody(req)),
+  },
+
+  {
+    method: 'GET',
+    path: '/late-fees',
+    handler: (actor, req) => listLateFees(actor as Actor, param(req, 'termId')),
+  },
+  {
+    method: 'POST',
+    path: '/late-fees',
+    handler: async (actor, req) => createLateFee(actor as Actor, await jsonBody(req)),
+  },
+  {
+    method: 'POST',
+    path: '/late-fees/remove',
+    handler: async (actor, req) => removeLateFee(actor as Actor, await jsonBody(req)),
   },
 
   {
