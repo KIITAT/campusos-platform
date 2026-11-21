@@ -1,7 +1,7 @@
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { eq, like, sql } from 'drizzle-orm'
-import { authDb, corePool, institutionModules, institutions, users, withTenant } from '@campusos/db'
+import { authDb, corePool, eraseSubject, exportSubject, institutionModules, institutions, users, withTenant } from '@campusos/db'
 import {
   createDepartment,
   createProgram,
@@ -387,4 +387,72 @@ test('the longest permitted certificate overflows no line and breaks across page
   // A token wider than the column is cut between grapheme clusters and loses nothing.
   const cut = wrapLines((x) => t.width(x, PAGE.text), w(200), valueWidth)
   assert.ok(cut.length > 1 && cut.join('') === w(200))
+})
+
+// --- office register, export and erasure (step 5) ----------------------------
+
+const page = () => plugin.pages!.find((p) => p.path === '/transfer-certificates')!
+const loadPage = (a: Actor, q: Record<string, string> = {}) => page().load(a as never, new Request(`http://localhost/m/ceremonies/transfer-certificates?${new URLSearchParams(q)}`))
+
+test('the register page is office-only, links standing prints only, and carries no personal data (MG-05)', async () => {
+  const c = await school()
+  assert.ok(page().menu && !page().roles.includes('faculty' as never) && !page().roles.includes('hod' as never) && !page().roles.includes('student' as never))
+  const one = (await post(c.admin, '/transfer-certificates/issue', tcBody(c.declarationId))) as { id: string }
+  const two = (await post(c.admin, '/transfer-certificates/issue', tcBody(c.declarationId2))) as { id: string }
+  await post(c.admin, '/transfer-certificates/revoke', { certificateId: two.id, reason: 'printed on the wrong stock' })
+  await assert.rejects(loadPage(c.faculty), failsWith(403, 'forbidden'))
+  const data = await loadPage(c.admin, { studentId: c.pupil.id })
+  const sections = page().sections(data)
+  const rows = data.rows as { id: string; printAction: string }[]
+  assert.deepEqual(rows.map((r) => [r.id, r.printAction]), [[one.id, 'Print PDF']])
+  const table = sections.find((s) => s.kind === 'table') as { columns: { key: string; href?: string }[] }
+  assert.equal(table.columns.find((x) => x.key === 'printAction')!.href, '/api/v1/modules/ceremonies/transfer-certificate.pdf?certificateId={id}')
+  const titles = sections.filter((s) => s.kind === 'form').map((s) => (s as { title?: string }).title)
+  assert.deepEqual(titles, ['Find transfer records', 'Issue a transfer certificate', 'Revoke a certificate'])
+  // Without a pupil the issue form stays hidden; a revoked row has no print link and offers a replacement.
+  const all = await loadPage(c.admin)
+  const allTitles = page().sections(all).filter((s) => s.kind === 'form').map((s) => (s as { title?: string }).title)
+  assert.deepEqual(allTitles, ['Find transfer records', 'Revoke a certificate', 'Replace a revoked certificate'])
+  assert.deepEqual((all.rows as { id: string; printAction: string }[]).filter((r) => r.printAction === '').map((r) => r.id), [two.id])
+  const shown = JSON.stringify([data, sections, all])
+  for (const secret of ['Asha', 'Verma', 'Bilal', 'Khan', '2010-03-14', '2010-08-02', 'Sunita', 'Rakesh']) assert.ok(!shown.includes(secret), `${secret} is not on the register page`)
+})
+
+test('an export carries the pupil’s header and payload only, and erasure deletes the payload but keeps the record (MG-05)', async () => {
+  const c = await school()
+  const other = await school()
+  const one = (await post(c.admin, '/transfer-certificates/issue', tcBody(c.declarationId))) as { id: string; serial: string }
+  await post(c.admin, '/transfer-certificates/issue', tcBody(c.declarationId2))
+  await post(other.admin, '/transfer-certificates/issue', tcBody(other.declarationId))
+  const mine = async () => {
+    const bundle = await exportSubject(c.id, c.pupil.id)
+    const keyed = Object.entries(bundle.records).filter(([k]) => /ceremony_transfer/.test(k))
+    return { keyed, json: JSON.stringify(keyed) }
+  }
+  const before = await mine()
+  const count = (re: RegExp) => before.keyed.filter(([k]) => re.test(k)).reduce((n, [, v]) => n + (v as unknown[]).length, 0)
+  assert.equal(count(/ceremony_transfer_certificates/), 1)
+  assert.equal(count(/ceremony_transfer_payloads/), 1)
+  assert.ok(before.json.includes('Fourteenth March Two Thousand Ten'))
+  for (const not of ['Bilal', '2010-08-02']) assert.ok(!before.json.includes(not), 'no second pupil in the export')
+  const receipt = await eraseSubject(c.id, c.pupil.id, { actorId: c.admin.id, reason: 'registered erasure request' })
+  assert.ok(receipt)
+  const left = await withTenant(c.id, async (tx) => {
+    const r = await tx.execute(sql`select (select count(*)::int from ceremony_transfer_payloads where certificate_id = ${one.id}) as p,
+                                          (select count(*)::int from ceremony_transfer_certificates where id = ${one.id}) as h,
+                                          (select count(*)::int from audit_log where entity_id = ${one.id}) as a`)
+    return r.rows[0] as { p: number; h: number; a: number }
+  })
+  assert.equal(left.p, 0, 'the printable snapshot is gone')
+  assert.equal(left.h, 1, 'the header and its serial remain')
+  assert.ok(left.a >= 1, 'the audit remains')
+  assert.ok(!(await mine()).json.includes('Fourteenth March'), 'a second export carries no snapshot')
+  await assert.rejects(printRoute(c.admin, one.id), failsWith(409, 'transfer_pdf_unavailable'))
+  const listed = (await get(c.admin, '/transfer-certificates', { studentId: c.pupil.id })) as { printable: boolean }[]
+  assert.deepEqual(listed.map((r) => r.printable), [false])
+  // No replacement is ever made for an erased pupil.
+  await post(c.admin, '/transfer-certificates/revoke', { certificateId: one.id, reason: 'erased pupil, withdrawn' })
+  await assert.rejects(post(c.admin, '/transfer-certificates/reissue', tcBody(c.declarationId, { certificateId: one.id, studentProgramId: undefined })), failsWith(404, 'no_such_transfer_declaration'))
+  // The other institution's record is untouched.
+  assert.deepEqual(await counts(other), { h: 1, p: 1, a: 1 })
 })
