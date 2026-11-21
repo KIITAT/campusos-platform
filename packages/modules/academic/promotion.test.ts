@@ -365,3 +365,19 @@ test('a second section for the same class and year gets the office’s own answe
   const fresh = await authDb.insert(users).values({ email: `late@${SLUG}x.test`, institutionId: c.id, role: 'student', name: 'Late' }).returning({ id: users.id })
   await assert.rejects(addSectionMember(c.admin, { sectionId: y.s6, userId: fresh[0]!.id }), (e) => code(e) === 'school_section_finalised' && status(e) === 409)
 })
+
+test('the two terms must be adjacent regular terms across the cut', async () => {
+  const c = await campus()
+  const y = await year(c)
+  // The old session had an earlier term, and the new one gets a later term.
+  const early = await createTerm(c.admin, { code: 'T25a', name: 'Session 2025 first term', startsOn: '2025-04-01', endsOn: '2025-09-30' })
+  const late = await createTerm(c.admin, { code: 'T26b', name: 'Session 2026 second term', startsOn: '2026-10-01', endsOn: '2027-03-31' })
+  const refused = async (over: Record<string, unknown>) => {
+    await assert.rejects(call(c.admin, '/sections/promote', y.body(over)), (e) => code(e) === 'invalid_promotion')
+    const [s] = await withTenant(c.id, (tx) => tx.select().from(sections).where(eq(sections.id, y.s6)))
+    assert.equal(s!.schoolPromotedAt, null, 'a refused pick leaves the section open')
+  }
+  await refused({ sourceTermId: early.id }) // not the last term of the old session
+  await refused({ nextTermId: late.id }) // not the first term of the new session
+  await call(c.admin, '/sections/promote', y.body())
+})
