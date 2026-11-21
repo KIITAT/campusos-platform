@@ -53,6 +53,8 @@ export const SAFE_COLUMNS: readonly string[] = [
   // The public half of the student's device key. The private half never
   // leaves the phone.
   'attendance_devices.public_key',
+  // The key of a preset remark in the class's report template ("steady"), not a credential.
+  'exam_report_card_entries.remark_key',
 ]
 
 /**
