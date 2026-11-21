@@ -106,7 +106,7 @@ async function reconciled(c: Campus) {
   assert.equal(r.mismatchCount, 0)
 }
 const lateCharges = async (c: Campus, studentId: string) =>
-  (await listStudentCharges(c.admin, c.termId)).rows.filter((r) => r.studentId === studentId && r.label.startsWith('Late fee'))
+  (await listStudentCharges(c.admin, c.termId)).rows.filter((r) => r.studentId === studentId && r.state !== 'cancelled' && r.label.startsWith('Late fee'))
 
 test('lines carry their due dates and the ledger says what is overdue', async () => {
   const c = await campus()

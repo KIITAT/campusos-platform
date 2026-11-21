@@ -82,7 +82,7 @@ export class FeeError extends Error {
   }
 }
 
-const tenantOf = (actor: Actor): string => {
+export const tenantOf = (actor: Actor): string => {
   if (!actor.institutionId) {
     throw new FeeError(400, 'no_institution', 'no institution for this session')
   }

@@ -63,6 +63,19 @@ export const createFeeItemSchema = z
   })
   .meta({ id: 'FeeItemCreate' })
 
+/** A late-fee rule for a term: charged once for each instalment still unpaid this many days after its due date. */
+export const createLateFeeSchema = z
+  .object({
+    termId: uuid,
+    afterDays: z.coerce.number().int().min(0).max(365),
+    amount: positiveRupees.refine((p) => p <= 10_000_000, 'at most ₹1,00,000'),
+  })
+  .meta({ id: 'FeeLateFeeCreate' })
+
+export const removeLateFeeSchema = z
+  .object({ lateFeeId: uuid, reason: z.string().trim().min(5).max(500) })
+  .meta({ id: 'FeeLateFeeRemove' })
+
 /** The reason is required at every layer: schema, column, and audit row. */
 export const grantWaiverSchema = z
   .object({
