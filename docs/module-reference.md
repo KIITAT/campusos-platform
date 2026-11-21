@@ -8,31 +8,31 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | Module | Version | Pages | API routes | Dependencies |
 |---|---|---:|---:|---|
 | [Academic Core](#academic) | 0.13.0 | 7 | 42 | None |
-| [Admissions](#admissions) | 0.10.0 | 3 | 9 | academic |
+| [Admissions](#admissions) | 0.11.0 | 3 | 9 | academic |
 | [Alumni and events](#alumni) | 0.5.0 | 4 | 12 | None |
-| [Attendance & QR](#attendance) | 0.18.0 | 8 | 30 | academic, notices |
-| [Student Care](#care) | 0.12.0 | 7 | 24 | academic, notices |
-| [Ceremonies](#ceremonies) | 0.9.0 | 5 | 18 | academic |
-| [Sales CRM](#crm) | 0.9.0 | 4 | 32 | finance, notices |
+| [Attendance & QR](#attendance) | 0.19.0 | 8 | 30 | academic, notices |
+| [Student Care](#care) | 0.13.0 | 7 | 24 | academic, notices |
+| [Ceremonies](#ceremonies) | 0.10.0 | 5 | 18 | academic |
+| [Sales CRM](#crm) | 0.10.0 | 4 | 32 | finance, notices |
 | [Enrollment](#enrollment) | 0.9.0 | 3 | 9 | academic |
-| [Examinations & Grading](#examinations) | 0.27.0 | 9 | 40 | academic, notices |
+| [Examinations & Grading](#examinations) | 0.28.0 | 9 | 40 | academic, notices |
 | [Feedback](#feedback) | 0.9.0 | 8 | 19 | academic |
-| [Fees & Finance](#fees) | 0.29.0 | 12 | 47 | academic, finance, notices |
+| [Fees & Finance](#fees) | 0.30.0 | 12 | 47 | academic, finance, notices |
 | [Finance & Books](#finance) | 0.22.0 | 92 | 208 | None |
 | [Helpdesk and grievance](#helpdesk) | 0.5.0 | 2 | 7 | None |
-| [Hostel](#hostel) | 0.14.0 | 5 | 20 | academic |
-| [HR & Payroll](#hr) | 0.26.0 | 18 | 134 | finance, notices |
-| [Library](#library) | 0.16.0 | 5 | 18 | academic |
-| [Mentoring](#mentoring) | 0.27.0 | 6 | 19 | academic, notices |
-| [Communication & Notices](#notices) | 0.15.0 | 4 | 13 | academic |
-| [Parent Portal](#parents) | 0.27.0 | 4 | 12 | academic |
-| [Placement](#placement) | 0.12.0 | 8 | 15 | academic, notices |
+| [Hostel](#hostel) | 0.15.0 | 5 | 20 | academic |
+| [HR & Payroll](#hr) | 0.27.0 | 18 | 134 | finance, notices |
+| [Library](#library) | 0.17.0 | 5 | 18 | academic |
+| [Mentoring](#mentoring) | 0.28.0 | 6 | 19 | academic, notices |
+| [Communication & Notices](#notices) | 0.16.0 | 4 | 14 | academic |
+| [Parent Portal](#parents) | 0.28.0 | 4 | 12 | academic |
+| [Placement](#placement) | 0.13.0 | 8 | 15 | academic, notices |
 | [Projects and timesheets](#projects) | 0.5.0 | 6 | 27 | finance |
 | [Quizzes](#quizzes) | 0.9.0 | 7 | 22 | academic |
-| [Reports](#reports) | 0.3.0 | 5 | 10 | notices |
+| [Reports](#reports) | 0.4.0 | 5 | 10 | notices |
 | [Skills](#skills) | 0.5.0 | 5 | 12 | None |
 | [Timetable](#timetable) | 0.10.0 | 12 | 42 | academic |
-| [Transport](#transport) | 0.5.0 | 4 | 14 | None |
+| [Transport](#transport) | 0.6.0 | 4 | 14 | None |
 
 <a id="academic"></a>
 ## Academic Core
@@ -1274,8 +1274,9 @@ Source: `campusos-platform/packages/modules/notices/`.
 | `GET /api/v1/modules/notices/board/attachment` | A document on a notice, for whoever may read the notice (binary response) | `id` (query) |
 | `GET /api/v1/modules/notices/inbox` | This user’s notification centre | See runtime OpenAPI schema |
 | `POST /api/v1/modules/notices/inbox` | Mark one notification read, or the whole inbox | `notificationId` |
-| `GET /api/v1/modules/notices/preferences` | Your notification categories | See runtime OpenAPI schema |
+| `GET /api/v1/modules/notices/preferences` | Your notification preferences | See runtime OpenAPI schema |
 | `POST /api/v1/modules/notices/preferences` | Mute or unmute a category for yourself | `moduleId`, `muted` |
+| `POST /api/v1/modules/notices/preferences/email` | Turn notification email on or off for yourself | `optedOut` |
 | `POST /api/v1/modules/notices/preferences/mandatory` | Make a category mandatory, or optional again | `moduleId`, `mandatory`, `reason` |
 
 ### Background jobs
