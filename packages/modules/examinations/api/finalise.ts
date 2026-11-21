@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNotNull } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNotNull, isNull, sql, type SQL } from 'drizzle-orm'
 import { audit, withTenant } from '@campusos/db'
 import { assertCanAccessStudent } from '@campusos/module-framework'
 import { gpaPolicyVersions, postCompletionWithin } from '@campusos/module-academic/api'
@@ -15,7 +15,7 @@ import {
   users,
 } from './joins'
 import { examMarks, exams } from '../schema'
-import { ExamError, schemeInForce, type Actor } from './operations'
+import { ExamError, lockOfferingMarks, schemeInForce, type Actor } from './operations'
 import { finaliseCourseSchema, type Transcript } from './schemas'
 import { gradeCourse, gradingPolicyFor } from './grading'
 
@@ -39,6 +39,26 @@ const MODULE = 'examinations'
 
 const num = (v: string | null) => (v === null ? null : Number(v))
 
+/**
+ * True for a completion whose marks were revised or hidden after it was
+ * posted and have not been finalised again. Correlated with the completion row
+ * it is projected from: put it in the select list of a query over
+ * `course_completions`. Transfer credit has no term and never matches.
+ */
+export const recomputePending = (studentId: string): SQL<boolean> =>
+  sql<boolean>`exists (
+    select 1 from exam_marks m
+      join exams e on e.id = m.exam_id and e.institution_id = m.institution_id
+      join academic_offerings o on o.id = e.offering_id and o.institution_id = e.institution_id
+     where m.needs_recompute and m.student_id = ${studentId}
+       and m.institution_id = ${courseCompletions.institutionId}
+       and o.term_id = ${courseCompletions.termId} and o.course_id = ${courseCompletions.courseId}
+       and ${courseCompletions.source} = 'internal')`
+
+/** Official outputs wait while any of the student's completions has marks that changed after it was posted. */
+export const recomputeRequired = () =>
+  new ExamError(409, 'marks_recompute_required', 'A revised mark is awaiting re-finalisation.')
+
 export interface Finalised {
   offeringId: string
   courseCode: string
@@ -60,6 +80,11 @@ export async function finaliseCourse(actor: Actor, input: unknown): Promise<Fina
   const data = finaliseCourseSchema.parse(input)
 
   return withTenant(tenant, async (tx): Promise<Finalised> => {
+    // Before anything is read: an approval racing this run is either wholly
+    // before it (and finalised here) or wholly after it (and flagged again).
+    await lockOfferingMarks(tx, tenant, data.offeringId)
+    // Lets the database guard on exam_marks accept clearing needs_recompute below.
+    await tx.execute(sql`select set_config('app.finalising', 'on', true)`)
     const [offering] = await tx
       .select({
         id: offerings.id,
@@ -79,6 +104,14 @@ export async function finaliseCourse(actor: Actor, input: unknown): Promise<Fina
     // The scale the programme is graded on, which is not always the
     // institution's default.
     const scheme = await schemeInForce(tx, offering.programId)
+
+    // Results that were published and then hidden are not a settled record.
+    const [hidden] = await tx
+      .select({ id: exams.id })
+      .from(exams)
+      .where(and(eq(exams.offeringId, data.offeringId), eq(exams.everPublished, true), isNull(exams.publishedAt)))
+      .limit(1)
+    if (hidden) throw recomputeRequired()
 
     const published = await tx
       .select({
@@ -172,6 +205,17 @@ export async function finaliseCourse(actor: Actor, input: unknown): Promise<Fina
         data.reason ?? `results finalised for ${offering.courseCode}`,
       )
       out[outcome] += 1
+      // The record now reflects every published mark of this student here.
+      await tx
+        .update(examMarks)
+        .set({ needsRecompute: false })
+        .where(
+          and(
+            inArray(examMarks.examId, published.map((e) => e.id)),
+            eq(examMarks.studentId, studentId),
+            eq(examMarks.needsRecompute, true),
+          ),
+        )
     }
 
     await audit(tx, {
@@ -250,6 +294,7 @@ export async function officialTranscript(
         gradeLabel: courseCompletions.gradeLabel,
         passed: courseCompletions.passed,
         source: courseCompletions.source,
+        pending: recomputePending(studentId),
         termCode: terms.code,
         termName: terms.name,
         termStarts: terms.startsOn,
@@ -259,6 +304,10 @@ export async function officialTranscript(
       .leftJoin(terms, eq(terms.id, courseCompletions.termId))
       .where(eq(courseCompletions.studentId, studentId))
       .orderBy(asc(terms.startsOn), asc(courses.code))
+
+    // A mark revised after its course was finalised: no average is printed from
+    // the old grade while the new one is awaited.
+    if (rows.some((r) => r.pending)) throw recomputeRequired()
 
     const versions = await gpaPolicyVersions(tx)
     const policy = gradingPolicyFor(scheme.kind)

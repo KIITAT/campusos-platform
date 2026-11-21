@@ -21,13 +21,14 @@ const ok = {
   '403': { description: 'Forbidden, or the module is not enabled', content: json(err) },
   '409': { description: 'Refused', content: json(err) },
 }
-const post = (summary: string, schema: z.ZodType, description?: string) => ({
+const unavailable = { ...ok, '503': { description: 'Certificate clearance is unavailable (certificate_clearance_unavailable)', content: json(err) } }
+const post = (summary: string, schema: z.ZodType, description?: string, responses: typeof ok = ok) => ({
   post: {
     summary,
     ...(description ? { description } : {}),
     tags: ['ceremonies'],
     requestBody: { content: json(schema) },
-    responses: ok,
+    responses,
   },
 })
 const get = (summary: string, query: string[] = [], description?: string) => ({
@@ -64,13 +65,15 @@ export const paths = {
   [`${base}/certificates/issue`]: post(
     'Issue certificates to cleared candidates',
     issueSchema,
-    'Each candidate is audited again at the moment of issue and the certificate carries that audit. Anybody it does not clear, or who has a hold open, is skipped and named. The database refuses a certificate whose audit is not complete.',
+    'Each candidate is audited again at the moment of issue and the certificate carries that audit. Anybody it does not clear, or who has a hold open, is skipped and named. The database refuses a certificate whose audit is not complete. Candidates with outstanding dues are skipped. A configured clearance provider that is unavailable returns 503 (certificate_clearance_unavailable).',
+    unavailable,
   ),
   [`${base}/certificates/revoke`]: post('Revoke a certificate, with a reason', revokeSchema, 'Cancels it. The serial stays on record as revoked; it is never printed again.'),
   [`${base}/certificates/reissue`]: post(
     'Reissue a revoked certificate under a new serial',
     reissueSchema,
-    'The new certificate names the one it replaces, and the audit is taken again: a reissue is not a way round a student who no longer clears.',
+    'The new certificate names the one it replaces, and the audit is taken again: a reissue is not a way round a student who no longer clears. Outstanding dues return 409 (certificate_dues_outstanding). A configured clearance provider that is unavailable returns 503 (certificate_clearance_unavailable).',
+    unavailable,
   ),
   [`${base}/certificate`]: get('One certificate; a student sees only their own', ['certificateId']),
   [`${base}/certificate.pdf`]: {

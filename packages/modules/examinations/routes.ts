@@ -41,6 +41,9 @@ import {
   officialTranscript,
   publishExam,
   setProgramScheme,
+  decideMarkReview,
+  listMarkReviews,
+  requestMarkReview,
   reviseMark,
   sheet,
   transcript,
@@ -90,9 +93,18 @@ export const routes: PluginRoute[] = [
   {
     method: 'POST',
     path: '/marks/revise',
-    handler: async (actor, req) => {
-      await reviseMark(actor as Actor, await jsonBody(req))
-    },
+    handler: async (actor, req) => reviseMark(actor as Actor, await jsonBody(req)),
+  },
+  post('/marks/recheck', requestMarkReview),
+  post('/marks/decide', decideMarkReview),
+  {
+    method: 'GET',
+    path: '/marks/requests',
+    handler: (actor, req) =>
+      listMarkReviews(actor as Actor, {
+        examId: param(req, 'examId') || undefined,
+        after: param(req, 'after') || undefined,
+      }),
   },
 
   {

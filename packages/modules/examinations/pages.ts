@@ -7,7 +7,9 @@ import {
 import {
   DEFAULT_GPA_BANDS,
   listExams,
+  listMarkReviews,
   listProgramSchemes,
+  reviewableMarks,
   listSchemes,
   sheet,
   transcript,
@@ -34,6 +36,7 @@ export const pages: PluginPage[] = [
 
       const exams = offeringId ? await listExams(a, offeringId) : []
       const marks = examId ? await sheet(a, examId) : null
+      const reviews = examId ? await listMarkReviews(a, { examId, after: param(req, 'after') || undefined }) : null
 
       return {
         offerings: offerings.map((o) => ({
@@ -61,7 +64,26 @@ export const pages: PluginPage[] = [
         examId: examId ?? '',
         entries: marks?.entries ?? [],
         examName: marks?.exam.name ?? null,
-        locked: marks?.exam.published ?? false,
+        locked: marks ? marks.exam.published || marks.exam.everPublished : false,
+        reviews: (reviews?.rows ?? []).map((r) => ({
+          requestId: r.requestId,
+          kind: r.kind,
+          status: r.status,
+          markId: r.markId,
+          studentId: r.staff?.studentId ?? '',
+          baseRevision: r.staff?.baseRevision ?? '',
+          proposal: r.staff
+            ? r.staff.proposedAbsent
+              ? 'absent'
+              : r.staff.proposedScore === null
+                ? ''
+                : String(r.staff.proposedScore)
+            : '',
+          createdAt: r.createdAt.slice(0, 10),
+        })),
+        olderReviews: reviews?.next
+          ? [{ label: 'Older reviews', href: `/m/examinations?offeringId=${offeringId ?? ''}&examId=${examId}&after=${reviews.next}` }]
+          : [],
       }
     },
     sections: (data) => [
@@ -124,8 +146,29 @@ export const pages: PluginPage[] = [
                 { key: 'obtained', label: 'Marks' },
                 { key: 'absent', label: 'Absent', kind: 'bool' as const },
                 { key: 'revision', label: 'Revisions' },
+                { key: 'needsRecompute', label: 'Needs re-finalisation', kind: 'bool' as const },
               ],
             },
+            {
+              kind: 'table' as const,
+              title: 'Mark reviews',
+              note:
+                'A published mark moves only when one person proposes and a different administrator ' +
+                'approves. A student’s request waits here for a proposal.',
+              rows: 'reviews',
+              empty: 'No reviews for this exam.',
+              columns: [
+                { key: 'status', label: 'Status', kind: 'status' as const },
+                { key: 'kind', label: 'Kind' },
+                { key: 'studentId', label: 'Student' },
+                { key: 'markId', label: 'Mark', kind: 'code' as const },
+                { key: 'baseRevision', label: 'Revision seen' },
+                { key: 'proposal', label: 'Proposed' },
+                { key: 'requestId', label: 'Review', kind: 'code' as const },
+                { key: 'createdAt', label: 'Opened' },
+              ],
+            },
+            { kind: 'links' as const, links: data.olderReviews as never },
           ]
         : []),
       {
@@ -163,15 +206,41 @@ export const pages: PluginPage[] = [
       },
       {
         kind: 'form',
-        title: 'Revise a published mark',
-        note: 'The only way to change one. Reason mandatory, and the history survives.',
-        submit: 'Revise',
+        title: 'Propose revision',
+        note:
+          'Proposes a different score, or an absence, for a published mark. Nothing changes until a ' +
+          'different administrator approves it below. Give the review id to answer a student’s request.',
+        submit: 'Propose',
         path: '/marks/revise',
         fields: [
           { name: 'examId', label: 'Exam', kind: 'select', options: 'published' },
           { name: 'studentId', label: 'Student' },
-          { name: 'obtained', label: 'Marks', kind: 'number', optional: true },
-          { name: 'reason', label: 'Reason', hint: 'At least five characters' },
+          { name: 'obtained', label: 'Marks', kind: 'number', optional: true, step: 'any' },
+          { name: 'absent', label: 'Absent', kind: 'checkbox', optional: true },
+          { name: 'expectedRevision', label: 'Revision seen', kind: 'number', value: '0', hint: 'The revisions column of the sheet' },
+          { name: 'requestId', label: 'Review id', optional: true, hint: 'From the reviews table, when answering a student' },
+          { name: 'reason', label: 'Reason', hint: '10 to 500 characters' },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Decide revision',
+        note: 'Approve a proposal, or close a review. You cannot decide a proposal you made. After approving, finalise the course again.',
+        submit: 'Decide',
+        path: '/marks/decide',
+        roles: [...ADMIN],
+        fields: [
+          { name: 'requestId', label: 'Review id' },
+          {
+            name: 'decision',
+            label: 'Decision',
+            kind: 'select',
+            options: [
+              { value: 'approve', label: 'approve the proposal' },
+              { value: 'reject', label: 'reject and close' },
+            ],
+          },
+          { name: 'reason', label: 'Reason', hint: '10 to 500 characters' },
         ],
       },
     ],
@@ -285,11 +354,19 @@ export const pages: PluginPage[] = [
     title: 'My results',
     menu: 'My results',
     roles: ['student'],
-    async load(actor) {
+    async load(actor, req) {
       const a = actor as Actor
       const t = await transcript(a, a.id)
       const latest = t.terms.at(-1)
+      const [asked, reviews] = await Promise.all([
+        reviewableMarks(a, param(req, 'markAfter') || undefined),
+        listMarkReviews(a, { after: param(req, 'after') || undefined }),
+      ])
       return {
+        markOptions: asked.rows.map((m) => ({ value: m.markId, label: m.label })),
+        moreMarks: asked.next ? [{ label: 'More marks', href: `/m/examinations/me?markAfter=${asked.next}` }] : [],
+        myReviews: reviews.rows.map((r) => ({ ...r, opened: r.createdAt.slice(0, 10), decided: r.decidedAt?.slice(0, 10) ?? '' })),
+        olderReviews: reviews.next ? [{ label: 'Older requests', href: `/m/examinations/me?after=${reviews.next}` }] : [],
         provisional: t.provisional,
         cumulative: t.cumulativeGpa,
         scheme: t.schemeName,
@@ -339,6 +416,40 @@ export const pages: PluginPage[] = [
           { key: 'label', label: 'Grade', alertWhen: 'failed' },
         ],
       },
+      {
+        kind: 'form',
+        title: 'Request a mark review',
+        note: 'Ask for a recheck or a re-evaluation of a published mark. There is no charge. Staff look at it and an administrator decides.',
+        submit: 'Request review',
+        path: '/marks/recheck',
+        fields: [
+          { name: 'markId', label: 'Mark', kind: 'select', options: 'markOptions' },
+          {
+            name: 'kind',
+            label: 'Kind',
+            kind: 'select',
+            options: [
+              { value: 'recheck', label: 'recheck: the marks were added up wrongly' },
+              { value: 're_evaluation', label: 're-evaluation: the answers were marked wrongly' },
+            ],
+          },
+          { name: 'reason', label: 'Reason', kind: 'textarea', rows: 3, hint: '10 to 500 characters' },
+        ],
+      },
+      { kind: 'links', links: data.moreMarks as never },
+      {
+        kind: 'table',
+        title: 'Your mark reviews',
+        rows: 'myReviews',
+        empty: 'You have not asked for any review.',
+        columns: [
+          { key: 'status', label: 'Status', kind: 'status' },
+          { key: 'kind', label: 'Kind' },
+          { key: 'opened', label: 'Opened' },
+          { key: 'decided', label: 'Decided' },
+        ],
+      },
+      { kind: 'links', links: data.olderReviews as never },
     ],
   },
   ...cyclePages,
