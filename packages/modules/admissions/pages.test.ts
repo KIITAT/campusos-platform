@@ -38,6 +38,8 @@ test('admissions pages load real choices and every form is covered by a document
   const choices = data as Record<string, { value: string }[]>
   assert.equal(choices.enquiryOptions![0]!.value, enquiry.id)
   assert.equal(choices.studentOptions!.length, 2)
+  assert.ok(Array.isArray(data.sectionOptions))
+  assert.equal((data.categoryOptions as unknown[]).length, 5)
   const create = specs.find(route => route.path === '/applications' && route.method === 'POST')!
   const application = await create.handler(actors.admin, request('/applications', { enquiryId: enquiry.id, programId: choices.programOptions![0]!.value, termId: choices.termOptions![0]!.value })) as { id: string }
   const decision = specs.find(route => route.path === '/applications/decision')!

@@ -12,15 +12,20 @@ import {
   cancelBacklog,
   cancelEnrolment,
   createExam,
+  decideMarkReview,
   downloadPaper,
   enrol,
   enrolmentList,
   ExamError,
+  enterMarks,
   examStats,
+  finaliseCourse,
   gradeReport,
   gradeReportPdf,
   myExamCycle,
   papersFor,
+  publishExam,
+  reviseMark,
   setExamCycleSettings,
   setWindow,
   studentPerformance,
@@ -194,7 +199,7 @@ test('a backlog is a course the record shows failed, booked in its window at its
     bookBacklog(c.asha, { termId: c.termId, courseId: c.maId, bookingType: 'internal' }),
     (e) => code(e) === 'exam_backlog_bookings_once',
   )
-  const charges = await listStudentCharges(c.admin as unknown as FeeActor, c.termId)
+  const charges = (await listStudentCharges(c.admin as unknown as FeeActor, c.termId)).rows
   assert.equal(charges.length, 1)
   assert.equal(charges[0]!.amountPaise, 200_000)
   assert.equal(charges[0]!.sourceId, b.id)
@@ -202,7 +207,7 @@ test('a backlog is a course the record shows failed, booked in its window at its
   // Cancelling takes the fee with it.
   await assert.rejects(cancelBacklog(c.bilal, { bookingId: b.id, reason: 'not mine to cancel' }), (e) => code(e) === 'forbidden')
   await cancelBacklog(c.asha, { bookingId: b.id, reason: 'I will sit it next year' })
-  assert.equal((await listStudentCharges(c.admin as unknown as FeeActor, c.termId))[0]!.state, 'cancelled')
+  assert.equal((await listStudentCharges(c.admin as unknown as FeeActor, c.termId)).rows[0]!.state, 'cancelled')
   await assert.rejects(
     withTenant(c.id, (tx) => tx.update(backlogBookings).set({ bookingType: 'internal' }).where(eq(backlogBookings.id, b.id))),
     (x) => String((x as { cause?: { constraint?: string } }).cause?.constraint) === 'exam_backlog_fixed',
@@ -317,4 +322,27 @@ test('statistics: an exam’s spread and pass rate, and a student beside their c
   const mine = await studentPerformance(c.asha, c.asha.id)
   assert.deepEqual(mine.map((r) => [r.exam, r.percent, r.classMean, r.versus]), [['Quiz', 90, 60, 30]])
   await assert.rejects(studentPerformance(c.asha, c.bilal.id), (e) => code(e) === 'not_your_student')
+})
+
+test('a grade report waits for a revised mark’s course to be finalised again', async () => {
+  const c = await campus()
+  const mid = await createExam(c.admin, { offeringId: c.offDs, name: 'Mid semester', kind: 'midterm', maxMarks: 100, weightPercent: 50 })
+  for (const exam of [mid.id, c.finalDs]) {
+    await enterMarks(c.admin, { examId: exam, marks: [{ studentId: c.asha.id, obtained: 80 }, { studentId: c.bilal.id, obtained: 70 }] })
+    await publishExam(c.admin, { examId: exam })
+  }
+  await finaliseCourse(c.admin, { offeringId: c.offDs })
+  assert.equal((await gradeReport(c.asha, c.asha.id, c.termId)).courses.length, 1)
+
+  const p = await reviseMark(c.teacher, { examId: c.finalDs, studentId: c.asha.id, obtained: 95, expectedRevision: 0, reason: 'a page of the answer book was missed' })
+  // Proposed only: nothing has moved, so the report still prints.
+  assert.equal((await gradeReport(c.asha, c.asha.id, c.termId)).courses.length, 1)
+  await decideMarkReview(c.admin, { requestId: p.requestId, decision: 'approve', reason: 'checked against the script' })
+
+  await assert.rejects(gradeReport(c.asha, c.asha.id, c.termId), (e) => code(e) === 'marks_recompute_required')
+  // Bilal's mark was not revised, and the staff view of the office is held the same way for Asha only.
+  assert.equal((await gradeReport(c.bilal, c.bilal.id, c.termId)).courses.length, 1)
+
+  await finaliseCourse(c.admin, { offeringId: c.offDs, reason: 'corrected after the approved revision' })
+  assert.equal((await gradeReport(c.asha, c.asha.id, c.termId)).courses.length, 1)
 })

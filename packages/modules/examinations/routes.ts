@@ -21,6 +21,7 @@ import {
   listWindows,
   myExamCycle,
   papersFor,
+  setEligibilityWaiver,
   setExamCycleSettings,
   setWindow,
   studentPerformance,
@@ -35,6 +36,9 @@ import {
   officialTranscript,
   publishExam,
   setProgramScheme,
+  decideMarkReview,
+  listMarkReviews,
+  requestMarkReview,
   reviseMark,
   sheet,
   transcript,
@@ -84,9 +88,18 @@ export const routes: PluginRoute[] = [
   {
     method: 'POST',
     path: '/marks/revise',
-    handler: async (actor, req) => {
-      await reviseMark(actor as Actor, await jsonBody(req))
-    },
+    handler: async (actor, req) => reviseMark(actor as Actor, await jsonBody(req)),
+  },
+  post('/marks/recheck', requestMarkReview),
+  post('/marks/decide', decideMarkReview),
+  {
+    method: 'GET',
+    path: '/marks/requests',
+    handler: (actor, req) =>
+      listMarkReviews(actor as Actor, {
+        examId: param(req, 'examId') || undefined,
+        after: param(req, 'after') || undefined,
+      }),
   },
 
   {
@@ -164,6 +177,7 @@ export const routes: PluginRoute[] = [
   post('/enrol', enrol),
   { method: 'GET', path: '/enrolments', handler: (actor, req) => enrolmentList(actor as Actor, requiredParam(req, 'termId')) },
   post('/enrolments/cancel', cancelEnrolment),
+  post('/eligibility/waiver', setEligibilityWaiver),
   pdf('/admit-card.pdf', async (actor, req) => {
     const termId = requiredParam(req, 'termId')
     const studentId = param(req, 'studentId') || actor.id

@@ -61,3 +61,14 @@ export const uploadPaperSchema = z
     paper: upload,
   })
   .meta({ id: 'ExamPaperUpload' })
+
+/** An administrative reason: kept in the audit chain, never medical or payment detail. */
+export const setEligibilityWaiverSchema = z
+  .object({
+    termId: uuid,
+    studentId: z.string().trim().min(1),
+    check: z.enum(['attendance', 'dues']),
+    action: z.enum(['grant', 'revoke']),
+    reason: z.string().trim().min(10).max(240),
+  })
+  .meta({ id: 'ExamEligibilityWaiver' })
