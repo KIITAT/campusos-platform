@@ -5,11 +5,16 @@ import {
   cancelBacklogSchema,
   cancelEnrolmentSchema,
   enrolSchema,
+  setEligibilityWaiverSchema,
   setSettingsSchema,
   setWindowSchema,
   uploadPaperSchema,
 } from './cycle-schemas'
 import {
+  decideMarkReviewSchema,
+  markReviewPageSchema,
+  markReviewResultSchema,
+  requestMarkReviewSchema,
   createExamSchema,
   createSchemeSchema,
   enterMarksSchema,
@@ -68,14 +73,71 @@ export const paths = {
   },
   [`${base}/marks/revise`]: {
     post: {
-      summary: 'Change a published mark. The reason is mandatory and audited.',
+      summary: 'Propose a different score or an absence for a published mark',
       description:
-        'The only path that can alter a mark once results are published. A database trigger ' +
-        'refuses any other write to a published exam, so this cannot be bypassed by a future ' +
-        'code path or by a direct SQL session.',
+        'A proposal, not a change: the mark moves only when a different administrator approves it ' +
+        '(POST /marks/decide). A database trigger refuses any other write to a published mark, ' +
+        'so this cannot be bypassed by a future code path or by a direct SQL session. Naming ' +
+        'requestId answers a student’s open review; otherwise a correction is started.',
       tags: ['examinations'],
       requestBody: { content: json(reviseMarkSchema) },
-      responses: { '204': { description: 'Revised' }, ...gated },
+      responses: {
+        '200': { description: 'Proposed', content: json(markReviewResultSchema) },
+        '400': { description: 'Invalid proposal, or above the exam’s maximum', content: json(err) },
+        ...gated,
+        '404': { description: 'No such mark', content: json(err) },
+        '409': {
+          description: 'A review is already open, the proposal is stale or unchanged, or results are not published',
+          content: json(err),
+        },
+      },
+    },
+  },
+  [`${base}/marks/recheck`]: {
+    post: {
+      summary: 'A student asks for a recheck or re-evaluation of their own published mark',
+      description: 'No charge and no files. One open request per mark.',
+      tags: ['examinations'],
+      requestBody: { content: json(requestMarkReviewSchema) },
+      responses: {
+        '200': { description: 'Requested', content: json(markReviewResultSchema) },
+        '400': { description: 'Invalid request', content: json(err) },
+        ...gated,
+        '404': { description: 'No such mark', content: json(err) },
+        '409': { description: 'A review is already open for this mark', content: json(err) },
+      },
+    },
+  },
+  [`${base}/marks/decide`]: {
+    post: {
+      summary: 'Approve a proposed revision, or close a review. Administrator only, never the proposer.',
+      description:
+        'Approval writes the audit row, the decision and the new mark in one transaction; the ' +
+        'course must then be finalised again before official output.',
+      tags: ['examinations'],
+      requestBody: { content: json(decideMarkReviewSchema) },
+      responses: {
+        '200': { description: 'Decided', content: json(markReviewResultSchema) },
+        '400': { description: 'Invalid decision', content: json(err) },
+        '403': { description: 'Forbidden, or the proposer tried to decide', content: json(err) },
+        '404': { description: 'No such mark request', content: json(err) },
+        '409': { description: 'The review is closed or no longer matches the mark', content: json(err) },
+      },
+    },
+  },
+  [`${base}/marks/requests`]: {
+    get: {
+      summary: 'Reviews of marks, newest first, 50 at a time',
+      description:
+        'A student sees their own reviews without the staff detail; staff pass examId for an exam ' +
+        'they may mark. Pass the previous page’s next as after.',
+      tags: ['examinations'],
+      responses: {
+        '200': { description: 'A page', content: json(markReviewPageSchema) },
+        '400': { description: 'Staff must choose an exam', content: json(err) },
+        ...gated,
+        '404': { description: 'No such exam', content: json(err) },
+      },
     },
   },
   [`${base}/exams/publish`]: {
@@ -206,10 +268,34 @@ function cycle() {
       "The signed-in student's term: feedback, enrolment, admit card, backlogs and grade reports",
       ['termId?'],
     ),
-    [`${base}/enrol`]: post('Enrol for the term’s examinations, confirming one’s details', enrolSchema),
+    [`${base}/enrol`]: post(
+      'Enrol for the term’s examinations, confirming one’s details',
+      enrolSchema,
+      'Refused with 409 exam_attendance_short, exam_attendance_unavailable or exam_dues_outstanding while the term’s attendance or posted fees block it and no waiver stands.',
+    ),
     [`${base}/enrolments`]: get('Who is enrolled for a term, and who has classes but is not', ['termId']),
     [`${base}/enrolments/cancel`]: post('Cancel an enrolment, with a reason', cancelEnrolmentSchema),
-    [`${base}/admit-card.pdf`]: pdf('The admit card for an enrolment', ['termId', 'studentId?']),
+    [`${base}/admit-card.pdf`]: pdf(
+      'The admit card for an enrolment',
+      ['termId', 'studentId?'],
+      'Checked on every request: refused with 409 exam_attendance_short, exam_attendance_unavailable or exam_dues_outstanding while the term’s attendance or posted fees block it and no waiver stands.',
+    ),
+    [`${base}/eligibility/waiver`]: {
+      post: {
+        summary: 'Grant or revoke a per-term eligibility waiver (attendance or posted fees), with an audited reason',
+        description: 'Administrators only. A repeat changes nothing and writes no audit event. The reason is an administrative one; leave out medical and payment details.',
+        tags: ['examinations'],
+        requestBody: { content: json(setEligibilityWaiverSchema) },
+        responses: {
+          '200': {
+            description: 'OK',
+            content: json(z.object({ termId: z.string(), studentId: z.string(), check: z.enum(['attendance', 'dues']), waived: z.boolean(), changed: z.boolean(), notice: z.string() })),
+          },
+          ...gated,
+          '404': { description: 'No such examination candidate', content: json(err) },
+        },
+      },
+    },
     [`${base}/backlogs`]: {
       ...get('Backlog papers booked for a term', ['termId']),
       ...post('Book a failed paper to sit again', bookBacklogSchema, 'The fee is the window’s, worked out by the database, and charged through fees where it is on.'),

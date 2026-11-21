@@ -18,6 +18,9 @@ import {
   studentChoices,
   studentLedger,
   type Actor,
+  qrSection,
+  upiFor,
+  type UpiPay,
 } from './api'
 import { transferPages } from './transfer-pages'
 
@@ -410,6 +413,7 @@ export const pages: PluginPage[] = [
           { key: 'waiverReason', label: 'Reason' },
         ],
       },
+      ...(data.upi ? [qrSection(data.upi as UpiPay)] : []),
       {
         kind: 'table',
         title: 'Payments',
@@ -592,6 +596,7 @@ export const pages: PluginPage[] = [
 
       const l = await studentLedger(a, a.id, term.id)
       return {
+        upi: await upiFor(a, a.id, term.id),
         termCode: l.termCode,
         payable: l.payablePaise,
         credited: l.creditedPaise,

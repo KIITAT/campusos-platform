@@ -1,7 +1,9 @@
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { eq, like, sql } from 'drizzle-orm'
-import { authDb, institutions, users, withTenant } from '@campusos/db'
+import { createRequire } from 'node:module'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import { authDb, corePool, institutionModules, institutions, users, withTenant } from '@campusos/db'
 import { printedText } from '@campusos/module-framework/pdf'
 import {
   correctCompletion,
@@ -37,6 +39,9 @@ import {
   verifyCertificate,
   type Actor,
 } from './api'
+import * as fees from '../fees/api'
+import * as lib from '../library/api'
+import { setSingleOfficer } from '../finance/api'
 import { plugin } from './plugin'
 import { candidates, certificates } from './schema'
 
@@ -434,4 +439,381 @@ test('a name that cannot be printed is not issued a certificate (UX-01)', async 
   const skipped = out.skipped.find((x) => x.name === 'Asha 😀')!
   assert.match(skipped.reason, /^cannot be printed/)
   assert.equal((await withTenant(c.id, (tx) => tx.select().from(certificates))).length, 0)
+})
+
+// --- certificate clearance (P1-07d, FUNC-05) -----------------------------------
+
+const DUES = 'Outstanding dues must be cleared before issuing this certificate.'
+const asFees = (a: unknown) => a as fees.Actor
+const asLib = (a: unknown) => a as lib.Actor
+const cashPay = (c: Money, amount: string, termId = c.termId, over: Record<string, unknown> = {}) =>
+  fees.recordPayment(asFees(c.clerk), { studentId: c.done.id, termId, amount, method: 'cash', allowAdvance: true, ...over })
+
+interface Money extends Campus {
+  clerk: Actor
+  clerk2: Actor
+  desk: Actor
+}
+
+/** A campus with accounts staff and a library desk, for the cases that move money. */
+async function moneyCampus(...modules: string[]): Promise<Money> {
+  const c = await campus()
+  const tag = `${SLUG}${n}`
+  const people = await authDb
+    .insert(users)
+    .values([
+      { email: `clerk@${tag}.test`, institutionId: c.id, role: 'accounts_staff', name: 'Clerk' },
+      { email: `clerk2@${tag}.test`, institutionId: c.id, role: 'accounts_staff', name: 'Clerk Two' },
+      { email: `desk@${tag}.test`, institutionId: c.id, role: 'library_staff', name: 'Desk' },
+    ])
+    .returning({ id: users.id })
+  const as = (k: number, email: string, role: Actor['role']): Actor => ({ id: people[k]!.id, email, role, institutionId: c.id })
+  for (const moduleId of modules) {
+    await authDb
+      .insert(institutionModules)
+      .values({ institutionId: c.id, moduleId, enabled: true })
+      .onConflictDoUpdate({ target: [institutionModules.institutionId, institutionModules.moduleId], set: { enabled: true } })
+  }
+  // Fees bills a programme declared before the term began.
+  await withTenant(c.id, (tx) => tx.update(studentPrograms).set({ declaredOn: '2025-07-01' }).where(eq(studentPrograms.studentId, c.done.id)))
+  // A term running today, in India: where a library fine moved to Fees lands.
+  await withTenant(c.id, (tx) =>
+    tx.execute(sql`insert into academic_terms (institution_id, code, name, starts_on, ends_on)
+                   select ${c.id}, 'TODAY', 'Running', d - 30, d + 60 from (select (now() at time zone 'Asia/Kolkata')::date as d) x`),
+  )
+  await setSingleOfficer(c.admin as never, { enabled: true, reason: 'test fixture: one officer' })
+  return {
+    ...c,
+    clerk: as(0, `clerk@${tag}.test`, 'accounts_staff'),
+    clerk2: as(1, `clerk2@${tag}.test`, 'accounts_staff'),
+    desk: as(2, `desk@${tag}.test`, 'library_staff'),
+  }
+}
+
+/** A priced tuition item for Asha's programme, invoiced. */
+async function bill(c: Money, amount: string, termId = c.termId) {
+  await fees.createFeeItem(asFees(c.admin), { programId: c.programId, termId, label: 'Tuition', amount })
+  await fees.issueInvoices(asFees(c.admin), { termId })
+}
+
+const raise = (c: Money, sourceModule: string, sourceId: string, amountPaise = 10_000) =>
+  withTenant(c.id, (tx) =>
+    fees.chargeStudentWithin(tx, c.id, c.admin.id, { studentId: c.done.id, termId: c.termId, label: `${sourceModule} dues`, amountPaise, sourceModule, sourceId: `${sourceId}:${c.id}` }),
+  )
+
+/** Open the ceremony, take the audit, and try to issue; the campus is cleared academically. */
+async function tryIssue(c: Campus, e: { id: string }, candidateIds?: string[]) {
+  return issueCertificates(c.admin, { ceremonyId: e.id, ...(candidateIds ? { candidateIds } : {}) })
+}
+const certCount = (c: Campus) => withTenant(c.id, async (tx) => (await tx.select().from(certificates)).length)
+const issuedAudits = (c: Campus) =>
+  withTenant(c.id, async (tx) =>
+    Number(((await tx.execute(sql`select count(*)::int as n from audit_log where action = 'ceremonies.certificate_issued'`)).rows[0] as { n: number }).n),
+  )
+const refusal = (out: { issued: number; skipped: { name: string; reason: string }[] }, name = 'Asha Graduate') => {
+  assert.equal(out.issued, 0)
+  // Bilal is short of credits and always skipped; only the named student's reason matters here.
+  assert.deepEqual(out.skipped.filter((s) => s.name === name).map((s) => s.reason), [DUES])
+}
+
+test('a positive balance from another term blocks issuance even with credit elsewhere (FUNC-05)', async () => {
+  const c = await moneyCampus('fees')
+  const term2 = await createTerm(c.admin as AcademicActor, { code: 'T2', name: 'Autumn', startsOn: '2026-06-01', endsOn: '2026-10-30' })
+  await bill(c, '0.01')
+  await cashPay(c, '200', term2.id)
+  const e = await ceremonyFor(c)
+  await eligibility(c, e)
+  refusal(await tryIssue(c, e))
+  assert.equal(await certCount(c), 0)
+  assert.equal(await issuedAudits(c), 0)
+  await cashPay(c, '0.01')
+  const out = await tryIssue(c, e)
+  assert.equal(out.issued, 1)
+  const [cert] = await withTenant(c.id, (tx) => tx.select().from(certificates))
+  assert.equal(cert!.serial, 'CERT-2026-0001')
+})
+
+test('a bounce after issue blocks reissue until paid again (FUNC-05)', async () => {
+  const c = await moneyCampus('fees')
+  await bill(c, '100')
+  const p = await cashPay(c, '100', c.termId, { method: 'cheque', reference: '000123', drawerIfsc: 'SBIN0001234', drawerAccount: '12345678901' })
+  const e = await ceremonyFor(c)
+  await eligibility(c, e)
+  assert.equal((await tryIssue(c, e)).issued, 1)
+  const [first] = await withTenant(c.id, (tx) => tx.select().from(certificates))
+  await revokeCertificate(c.admin, { certificateId: first!.id, reason: 'name to be corrected' })
+  const on = await withTenant(c.id, (tx) => fees.localToday(tx, c.id))
+  await fees.bouncePayment(asFees(c.clerk2), { paymentId: p.id, bouncedOn: on, reason: 'funds insufficient' })
+  await assert.rejects(reissueCertificate(c.admin, { certificateId: first!.id }), (x) => {
+    const e = x as { status?: number; code?: string; message?: string }
+    return e.status === 409 && e.code === 'certificate_dues_outstanding' && e.message === DUES
+  })
+  const rows = await withTenant(c.id, (tx) => tx.select().from(certificates))
+  assert.deepEqual(rows.map((r) => r.docstatus), ['cancelled'])
+  await cashPay(c, '100')
+  await reissueCertificate(c.admin, { certificateId: first!.id })
+  const after = await withTenant(c.id, (tx) => tx.select().from(certificates))
+  assert.ok(after.some((r) => r.serial === 'CERT-2026-0002'))
+})
+
+test('a voided invoice with no dues left clears, and the unpriced price list does not count (FUNC-05)', async () => {
+  const c = await moneyCampus('fees')
+  await bill(c, '100')
+  const e = await ceremonyFor(c)
+  await eligibility(c, e)
+  refusal(await tryIssue(c, e))
+  await fees.voidInvoice(asFees(c.admin), { studentId: c.done.id, termId: c.termId, reason: 'issued with the wrong charges' })
+  const out = await tryIssue(c, e)
+  assert.equal(out.issued, 1)
+  const [cert] = await withTenant(c.id, (tx) => tx.select().from(certificates))
+  assert.equal(cert!.serial, 'CERT-2026-0001')
+})
+
+test('a voided or bounced payment re-opens the dues and blocks the first issue again (FUNC-05)', async () => {
+  const v = await moneyCampus('fees')
+  await bill(v, '100')
+  const pv = await cashPay(v, '100')
+  await fees.voidPayment(asFees(v.admin), { paymentId: pv.id, reason: 'entered against the wrong student' })
+  const ev = await ceremonyFor(v)
+  await eligibility(v, ev)
+  refusal(await tryIssue(v, ev))
+  assert.equal(await certCount(v), 0)
+  await cashPay(v, '100')
+  assert.equal((await tryIssue(v, ev)).issued, 1)
+
+  const b = await moneyCampus('fees')
+  await bill(b, '100')
+  const pb = await cashPay(b, '100', b.termId, { method: 'cheque', reference: '000456', drawerIfsc: 'SBIN0001234', drawerAccount: '12345678901' })
+  const on = await withTenant(b.id, (tx) => fees.localToday(tx, b.id))
+  await fees.bouncePayment(asFees(b.clerk2), { paymentId: pb.id, bouncedOn: on, reason: 'funds insufficient' })
+  const eb = await ceremonyFor(b)
+  await eligibility(b, eb)
+  refusal(await tryIssue(b, eb))
+  assert.equal(await certCount(b), 0)
+  await cashPay(b, '100')
+  assert.equal((await tryIssue(b, eb)).issued, 1)
+})
+
+for (const source of ['hostel', 'transport', 'library']) {
+  test(`a ${source} charge blocks issuance before and after it is billed (FUNC-05)`, async () => {
+    const c = await moneyCampus('fees')
+    await raise(c, source, `${source}-1`)
+    const e = await ceremonyFor(c)
+    await eligibility(c, e)
+    refusal(await tryIssue(c, e))
+    await fees.issueInvoices(asFees(c.admin), { termId: c.termId })
+    refusal(await tryIssue(c, e))
+    await fees.voidInvoice(asFees(c.admin), { studentId: c.done.id, termId: c.termId, reason: 'issued with the wrong charges' })
+    refusal(await tryIssue(c, e))
+    await fees.issueInvoices(asFees(c.admin), { termId: c.termId })
+    await cashPay(c, '100')
+    assert.equal((await tryIssue(c, e)).issued, 1)
+    assert.equal(await certCount(c), 1)
+  })
+}
+
+test('a cancelled charge and a price list nobody was billed from do not block (FUNC-05)', async () => {
+  const c = await moneyCampus('fees')
+  await fees.createFeeItem(asFees(c.admin), { programId: c.programId, termId: c.termId, label: 'Tuition', amount: '100' })
+  await raise(c, 'hostel', 'hostel-9')
+  await withTenant(c.id, (tx) => fees.cancelChargeForSourceWithin(tx, 'hostel', `hostel-9:${c.id}`, 'raised by mistake'))
+  const e = await ceremonyFor(c)
+  await eligibility(c, e)
+  assert.equal((await tryIssue(c, e)).issued, 1)
+})
+
+/** A book lent to Asha and returned five days late: a fine of ten rupees. */
+async function overdue(c: Money, returned: boolean) {
+  await lib.setSettings(asLib(c.desk), { loanDays: 14, maxConcurrentLoans: 3, maxRenewals: 1, finePerDay: '2', graceDays: 0, blockAtOutstanding: '0', reason: 'the rules for this test' })
+  const title = await lib.createTitle(asLib(c.desk), { title: 'Introduction to Algorithms', author: 'Cormen' })
+  const [copy] = await lib.addCopies(asLib(c.desk), { titleId: title.id, accessionNos: ['A-1'] })
+  const loan = await lib.issue(asLib(c.desk), { copyId: copy!.id, borrowerId: c.done.id })
+  await withTenant(c.id, async (tx) => {
+    await tx.execute(sql`select set_config('app.audit_reason', 'test backdate', true)`)
+    await tx.execute(sql`update library_loans
+                            set issued_at = now() - interval '19 days',
+                                due_on = date_trunc('day', now() - interval '5 days') + interval '23:59:59.999'
+                          where id = ${loan.id}`)
+  })
+  if (returned) await lib.returnCopy(asLib(c.desk), { copyId: copy!.id })
+  return loan.id
+}
+
+test('a desk fine, or a fine moved to Fees, stops issuance until settled or waived (FUNC-05)', async () => {
+  const a = await moneyCampus('fees', 'finance', 'library')
+  const loanA = await overdue(a, true)
+  const ea = await ceremonyFor(a)
+  await eligibility(a, ea)
+  refusal(await tryIssue(a, ea))
+  await lib.settleFine(asLib(a.desk), { loanId: loanA, method: 'fee_account' })
+  refusal(await tryIssue(a, ea))
+
+  const b = await moneyCampus('fees', 'finance', 'library')
+  const loanB = await overdue(b, true)
+  await lib.waiveFine(asLib(b.admin), { loanId: loanB, amount: '10', reason: 'waived by the librarian' })
+  const eb = await ceremonyFor(b)
+  await eligibility(b, eb)
+  assert.equal((await tryIssue(b, eb)).issued, 1)
+
+  const d = await moneyCampus('fees', 'finance', 'library')
+  await overdue(d, false)
+  const ed = await ceremonyFor(d)
+  await eligibility(d, ed)
+  assert.equal((await tryIssue(d, ed)).issued, 1, 'an estimate on an open loan is not a fine')
+})
+
+test('boundaries: disabled modules keep debt, tenants stay apart, and only the office issues (FUNC-05)', async () => {
+  const a = await moneyCampus('fees')
+  await raise(a, 'hostel', 'hostel-1')
+  const ea = await ceremonyFor(a)
+  await eligibility(a, ea)
+  await authDb.update(institutionModules).set({ enabled: false }).where(eq(institutionModules.institutionId, a.id))
+  refusal(await tryIssue(a, ea))
+
+  const b = await moneyCampus()
+  const eb = await ceremonyFor(b)
+  await eligibility(b, eb)
+  assert.equal((await tryIssue(b, eb)).issued, 1)
+  await assert.rejects(tryIssue(b, ea), (x) => code(x) === 'no_such_ceremony')
+  await assert.rejects(tryIssue({ ...a, admin: a.done } as Campus, ea), (x) => code(x) === 'forbidden')
+  await assert.rejects(tryIssue({ ...a, admin: a.faculty } as Campus, ea), (x) => code(x) === 'forbidden')
+  await assert.rejects(reissueCertificate(a.done, { certificateId: '00000000-0000-0000-0000-000000000000' }), (x) => code(x) === 'forbidden')
+  await assert.rejects(reissueCertificate(a.faculty, { certificateId: '00000000-0000-0000-0000-000000000000' }), (x) => code(x) === 'forbidden')
+
+  // A batch: the charge on Asha skips her; the other student's certificate stands.
+  const m = await moneyCampus('fees')
+  await withTenant(m.id, (tx) => fees.chargeStudentWithin(tx, m.id, m.admin.id, { studentId: m.done.id, termId: m.termId, label: 'dues', amountPaise: 100, sourceModule: 'hostel', sourceId: `h1:${m.id}` }))
+  await recordCompletion(m.admin as AcademicActor, { studentId: m.short.id, courseId: m.courses.b, termId: m.termId, gradePoints: 7 })
+  const em = await ceremonyFor(m)
+  await eligibility(m, em)
+  const out = await tryIssue(m, em)
+  assert.equal(out.issued, 1)
+  assert.deepEqual(out.skipped.map((s) => [s.name, s.reason]), [['Asha Graduate', DUES]])
+  assert.equal(await certCount(m), 1)
+})
+
+test('a debit committed while waiting for the serial blocks the issue (FUNC-05)', async () => {
+  const c = await moneyCampus('fees')
+  const e = await ceremonyFor(c)
+  await eligibility(c, e)
+  const holder = await corePool.connect()
+  let run: Promise<unknown> | undefined
+  try {
+    await holder.query('begin')
+    await holder.query(`select pg_advisory_xact_lock(hashtext($1 || ':ceremony-serial'))`, [c.id])
+    run = tryIssue(c, e)
+    run.catch(() => undefined)
+    const until = Date.now() + 10_000
+    for (;;) {
+      const r = await authDb.execute(
+        sql`select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and query ilike '%ceremony-serial%' and pid <> pg_backend_pid()`,
+      )
+      if ((r.rows[0] as { n: number }).n >= 1) break
+      if (Date.now() > until) throw new Error('the issue never reached the serial lock')
+      await new Promise((ok) => setTimeout(ok, 50))
+    }
+    await raise(c, 'hostel', 'late-1')
+  } finally {
+    await holder.query('commit')
+    holder.release()
+  }
+  refusal((await run) as { issued: number; skipped: { name: string; reason: string }[] })
+  assert.equal(await certCount(c), 0)
+})
+
+const FEES_TABLES = ['fee_invoices', 'fee_student_charges', 'fee_payments', 'fee_refunds', 'fee_waivers', 'fee_scholarship_awards', 'fee_drop_credits', 'fee_items']
+
+test('a configured provider with no tables stops issue; an unconfigured one counts as zero (FUNC-05)', async () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const clearance = ((await import('./api')) as Record<string, any>).checkCertificateClearanceWithin
+  const c = await campus()
+  const { Client } = createRequire(new URL('../../db/package.json', import.meta.url))('pg') as { Client: new (o: { connectionString?: string }) => { connect(): Promise<void>; query(q: string, v?: unknown[]): Promise<unknown>; end(): Promise<void> } }
+  const client = new Client({ connectionString: process.env.MIGRATION_DATABASE_URL })
+  await client.connect()
+  const stop = new Error('roll back')
+  try {
+    await client.query('begin')
+    for (const t of FEES_TABLES) await client.query(`alter table public.${t} rename to ${t}_clearance_test`)
+    await client.query('alter table public.library_loans rename to library_loans_clearance_test')
+    await client.query(`select set_config('app.institution_id', $1, true)`, [c.id])
+    const run = async () => {
+      await client.query('savepoint s')
+      try {
+        return await clearance(drizzle(client as never) as never, c.id, c.done.id)
+      } finally {
+        await client.query('rollback to savepoint s')
+      }
+    }
+    assert.deepEqual(await run(), { clear: true })
+    for (const moduleId of ['fees', 'library']) {
+      await client.query(`insert into institution_modules (institution_id, module_id, enabled) values ($1, $2, true)
+                          on conflict (institution_id, module_id) do update set enabled = true`, [c.id, moduleId])
+      await assert.rejects(run(), (x) => (x as { status?: number }).status === 503 && (x as { code?: string }).code === 'certificate_clearance_unavailable')
+      await client.query(`update institution_modules set enabled = false where institution_id = $1 and module_id = $2`, [c.id, moduleId])
+    }
+    throw stop
+  } catch (x) {
+    if (x !== stop) throw x
+  } finally {
+    await client.query('rollback')
+    await client.end()
+  }
+  const [r] = (await authDb.execute(sql`select to_regclass('public.fee_invoices') as a, to_regclass('public.library_loans') as b`)).rows as { a: string; b: string }[]
+  assert.ok(r!.a && r!.b)
+})
+
+test('a legacy invoiced marker is not proof of billing: a charge raised after the invoice stays a debt (FUNC-05, review HIGH)', async () => {
+  const c = await moneyCampus('fees')
+  await bill(c, '1000')
+  await cashPay(c, '1000')
+  await raise(c, 'hostel', 'hostel-legacy')
+  const e = await ceremonyFor(c)
+  await eligibility(c, e)
+  // What Fees did before NEW-91: a charge raised while the invoice was priced inherited the marker.
+  await withTenant(c.id, async (tx) => {
+    await tx.execute(sql`select set_config('app.audit_reason', 'test legacy marker', true)`)
+    await tx.execute(sql`update fee_student_charges set invoiced_at = now() where source_id = ${'hostel-legacy:' + c.id}`)
+  })
+  refusal(await tryIssue(c, e))
+  assert.equal(await certCount(c), 0)
+})
+
+test('an incomplete Fees schema fails closed, entitlement on or off (FUNC-05, review HIGH)', async () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const clearance = ((await import('./api')) as Record<string, any>).checkCertificateClearanceWithin
+  const c = await campus()
+  const { Client } = createRequire(new URL('../../db/package.json', import.meta.url))('pg') as { Client: new (o: { connectionString?: string }) => { connect(): Promise<void>; query(q: string, v?: unknown[]): Promise<unknown>; end(): Promise<void> } }
+  const client = new Client({ connectionString: process.env.MIGRATION_DATABASE_URL })
+  await client.connect()
+  const stop = new Error('roll back')
+  const unavailable = (x: unknown) => (x as { status?: number }).status === 503 && (x as { code?: string }).code === 'certificate_clearance_unavailable'
+  try {
+    await client.query('begin')
+    await client.query(`select set_config('app.institution_id', $1, true)`, [c.id])
+    const run = async (breakIt: string) => {
+      await client.query('savepoint s')
+      try {
+        await client.query(breakIt)
+        return await clearance(drizzle(client as never) as never, c.id, c.done.id)
+      } finally {
+        await client.query('rollback to savepoint s')
+      }
+    }
+    const breaks = [
+      'alter table public.fee_invoices rename column voided_at to voided_at_x',
+      'alter table public.fee_invoices rename to fee_invoices_x',
+      'alter table public.fee_student_charges rename column invoiced_at to invoiced_at_x',
+    ]
+    for (const on of [false, true]) {
+      await client.query(`insert into institution_modules (institution_id, module_id, enabled) values ($1, 'fees', $2)
+                          on conflict (institution_id, module_id) do update set enabled = $2`, [c.id, on])
+      for (const b of breaks) await assert.rejects(run(b), unavailable, b)
+    }
+    throw stop
+  } catch (x) {
+    if (x !== stop) throw x
+  } finally {
+    await client.query('rollback')
+    await client.end()
+  }
 })

@@ -142,6 +142,7 @@ export async function demandLetterPdf(v: DemandLetterView): Promise<Uint8Array> 
       ['Bank and branch', `${c.account.bankName}, ${c.account.branch}`],
       ['Account number', c.account.accountNumber],
       ['IFSC', c.account.ifsc],
+      ...(c.account.upiVpa ? ([['UPI ID', c.account.upiVpa]] as [string, string][]) : []),
     ]
     for (const [k, val] of acct) {
       text(k, M, 9, font, faint)

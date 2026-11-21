@@ -8,8 +8,10 @@ import {
   letterSettingsSchema,
   rejectClaimSchema,
   retireBankAccountSchema,
+  setAccountUpiSchema,
   verifyClaimSchema,
 } from './transfers'
+import { receiptLineSchema } from './statement'
 import {
   aidAssessmentSchema,
   awardScholarshipSchema,
@@ -479,10 +481,14 @@ function transfersAndLetters() {
       ...get("The institution's accounts fees are paid into"),
       ...post('Add an account', addBankAccountSchema),
     },
+    [`${base}/bank-accounts/upi`]: post("Set or clear an account's UPI ID", setAccountUpiSchema, 'Payers see its QR; a merchant ID makes the QR carry the amount due.'),
+    [`${base}/statement`]: get('Unmatched credits on the fees bank account, a page at a time', ['q?', 'sort?', 'dir?', 'n?', 'after?']),
+    [`${base}/statement/match`]: post('Match the bank statement to reported payments and payment references', z.object({})),
+    [`${base}/statement/receipt`]: post('Receipt a statement line', receiptLineSchema),
     [`${base}/bank-accounts/retire`]: post('Retire an account', retireBankAccountSchema, 'Claims already made into it stand.'),
     [`${base}/transfers`]: {
-      ...get('Reported transfers, pending first', ['status?']),
-      ...post('Report an RTGS, NEFT or IMPS transfer (the student who made it)', claimTransferSchema, 'A UTR already claimed is refused.'),
+      ...get('Reported payments, pending first, a page at a time', ['status?', 'q?', 'n?', 'after?']),
+      ...post('Report a payment by RTGS, NEFT, IMPS, UPI or a deposited cheque', claimTransferSchema, 'A UTR already claimed is refused.'),
     },
     [`${base}/transfers/mine`]: get("The signed-in student's reported transfers"),
     [`${base}/transfers/verify`]: post(

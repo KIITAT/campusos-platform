@@ -328,6 +328,9 @@ importers:
       '@campusos/module-academic':
         specifier: workspace:*
         version: link:../academic
+      '@campusos/module-fees':
+        specifier: workspace:*
+        version: link:../fees
       '@campusos/module-framework':
         specifier: workspace:*
         version: link:../../module-framework
@@ -440,6 +443,9 @@ importers:
       '@campusos/module-academic':
         specifier: workspace:*
         version: link:../academic
+      '@campusos/module-attendance':
+        specifier: workspace:*
+        version: link:../attendance
       '@campusos/module-feedback':
         specifier: workspace:*
         version: link:../feedback
