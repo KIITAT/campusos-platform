@@ -104,7 +104,7 @@ BEGIN
     IF EXISTS (SELECT 1 FROM documents_signatures s
       WHERE (s.institution_id,s.document_id)=(OLD.institution_id,OLD.id)) THEN
       IF OLD.retain_until<=clock_timestamp() THEN RETURN OLD; END IF;
-    ELSIF OLD.created_at<=clock_timestamp()-interval '90 days' OR EXISTS (
+    ELSIF (OLD.kind<>'record' AND OLD.created_at<=clock_timestamp()-interval '90 days') OR EXISTS (
       SELECT 1 FROM users u WHERE u.id=OLD.subject_user_id
         AND u.institution_id=OLD.institution_id AND u.erased_at IS NOT NULL
     ) THEN RETURN OLD;
@@ -200,7 +200,7 @@ LANGUAGE plpgsql SECURITY INVOKER SET search_path=public,pg_temp AS $$
 DECLARE n integer; m integer;
 BEGIN
   PERFORM 1 FROM documents_files d WHERE d.institution_id=inst AND (
-    d.created_at<=now()-interval '90 days' OR d.retain_until<=now() OR EXISTS (
+    (d.kind<>'record' AND d.created_at<=now()-interval '90 days') OR d.retain_until<=now() OR EXISTS (
       SELECT 1 FROM documents_sign_requests r WHERE (r.institution_id,r.document_id)=(d.institution_id,d.id)
         AND r.status='pending' AND r.code_expires_at<=now())) ORDER BY d.id FOR UPDATE;
   UPDATE documents_sign_requests SET code_digest=NULL,recipient_digest=NULL,code_expires_at=NULL
@@ -209,7 +209,7 @@ BEGIN
   DELETE FROM documents_files d WHERE d.institution_id=inst AND (
     (d.retain_until<=now() AND EXISTS (
       SELECT 1 FROM documents_signatures s WHERE (s.institution_id,s.document_id)=(d.institution_id,d.id))) OR
-    (d.created_at<=now()-interval '90 days' AND NOT EXISTS (
+    (d.kind<>'record' AND d.created_at<=now()-interval '90 days' AND NOT EXISTS (
       SELECT 1 FROM documents_signatures s WHERE (s.institution_id,s.document_id)=(d.institution_id,d.id))));
   GET DIAGNOSTICS n=ROW_COUNT;
   RETURN jsonb_build_object('documents_files',n,'documents_challenges',m);

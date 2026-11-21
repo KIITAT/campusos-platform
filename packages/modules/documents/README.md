@@ -20,7 +20,7 @@ This records an institution's internal evidence of electronic assent. It is not 
 
 ## Retention
 
-Unsigned files are removed after 90 days, and when their subject is erased. A signed file is kept to its recorded end date, which is required at upload (8 days to 10 years), with a basis (`specified_purpose` or `legal_obligation`) and an authority reference. After that date the file is purged and the sealed audit record and hash remain. Data exports list file and signing metadata, never titles, bytes, addresses or code digests.
+Unsigned offers, contracts and agreements (including declined and expired requests) are removed after 90 days, and every unsigned file is removed when its subject is erased. Office and academic record files are never aged out; they follow the institution's retention schedule and leave on erasure of the subject (decision 860). A signed file is kept to its recorded end date, which is required at upload (8 days to 10 years), with a basis (`specified_purpose` or `legal_obligation`) and an authority reference. After that date the file is purged and the sealed audit record and hash remain. Data exports list file and signing metadata, never titles, bytes, addresses or code digests.
 
 ## API
 
