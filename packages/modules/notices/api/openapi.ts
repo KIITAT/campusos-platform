@@ -3,11 +3,13 @@ import { manifest } from '../manifest'
 import {
   attachSchema,
   createNoticeSchema,
+  emailPreferenceSchema,
   inboxSchema,
   mandatorySchema,
   markReadSchema,
   noticeRowSchema,
   preferenceSchema,
+  preferencesSchema,
   publishNoticeSchema,
   removeAttachmentSchema,
   withdrawNoticeSchema,
@@ -133,10 +135,10 @@ export const paths = {
 
   [`${base}/preferences`]: {
     get: {
-      summary: 'Your notification categories',
-      description: 'Every category with whether you muted it and whether the institution made it mandatory.',
+      summary: 'Your notification preferences',
+      description: 'Your notification email preference and the mute and mandatory status of each inbox category.',
       tags: ['notices'],
-      responses: { '200': { description: 'OK' }, ...gated },
+      responses: { '200': { description: 'OK', content: json(preferencesSchema) }, ...gated },
     },
     post: {
       summary: 'Mute or unmute a category for yourself',
@@ -144,6 +146,14 @@ export const paths = {
       tags: ['notices'],
       requestBody: { content: json(preferenceSchema) },
       responses: { '200': { description: 'Saved' }, ...gated, '409': { description: 'The category is mandatory', content: json(err) } },
+    },
+  },
+  [`${base}/preferences/email`]: {
+    post: {
+      summary: 'Turn notification email on or off for yourself',
+      tags: ['notices'],
+      requestBody: { content: json(emailPreferenceSchema) },
+      responses: { '200': { description: 'Saved', content: json(z.object({ notice: z.string() })) }, ...gated },
     },
   },
   [`${base}/preferences/mandatory`]: {

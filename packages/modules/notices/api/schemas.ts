@@ -65,6 +65,15 @@ export const preferenceSchema = z
   .strict()
   .meta({ id: 'NotificationPreference' })
 
+export const emailPreferenceSchema = z
+  .strictObject({ optedOut: z.union([z.boolean(), z.enum(['true', 'false'])]) })
+  .meta({ id: 'NotificationEmailPreference' })
+
+export const preferencesSchema = z.object({
+  emailOptedOut: z.boolean(),
+  categories: z.array(z.object({ moduleId: z.string(), label: z.string(), muted: z.boolean(), mandatory: z.boolean() })),
+}).meta({ id: 'NotificationPreferences' })
+
 export const mandatorySchema = z
   .object({
     moduleId: z.string().min(1).max(40),

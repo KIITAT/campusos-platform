@@ -11,6 +11,7 @@ import {
   preferences,
   publishNotice,
   removeAttachment,
+  setEmailPreference,
   setMandatory,
   setPreference,
   withdrawNotice,
@@ -97,6 +98,11 @@ export const routes: PluginRoute[] = [
     method: 'POST',
     path: '/preferences',
     handler: async (actor, req) => setPreference(actor as Actor, await jsonBody(req)),
+  },
+  {
+    method: 'POST',
+    path: '/preferences/email',
+    handler: async (actor, req) => setEmailPreference(actor as Actor, await jsonBody(req)),
   },
   {
     method: 'POST',
