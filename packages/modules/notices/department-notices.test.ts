@@ -8,6 +8,7 @@ import {
   addAttachment,
   attachmentFile,
   createNotice,
+  departmentChoices,
   inbox,
   markRead,
   noticeView,
@@ -436,4 +437,35 @@ test('the board composer offers departments and routes a blank one to the whole 
   const mine = (await page.load(hodA() as never, new Request('http://x/'))) as { drafts: { value: string }[]; all: { value: string }[] }
   assert.ok(!mine.drafts.some((d) => d.value === draft.id))
   assert.ok(!mine.all.some((d) => d.value === scoped.id))
+})
+
+test('a lecturer addresses department notices only to their own departments (NEW-163)', async () => {
+  // facB teaches in B only: A is refused whatever the audience, B is fine even as the first notice of the department.
+  await assert.rejects(send(facB(), { departmentId: deptA, audienceRoles: ['student'] }), (e) => status(e) === 403 && code(e) === 'department_not_yours')
+  await assert.rejects(send(facB(), { departmentId: deptA, audienceRoles: ['student'], publish: false }), (e) => code(e) === 'department_not_yours')
+  assert.equal((await withTenant(inst, (tx) => tx.select().from(notices))).length, 0)
+  const own = await send(facB(), { departmentId: deptB, audienceRoles: ['student'] })
+  assert.deepEqual(await recipients(own.id), ids('s1', 's2'))
+
+  // The picker offers a lecturer their own departments only, and an administrator all of them.
+  assert.deepEqual((await departmentChoices(facB())).map((c) => c.value), [deptB])
+  assert.deepEqual((await departmentChoices(ctA())).map((c) => c.value), [deptA])
+  assert.deepEqual((await departmentChoices(adm())).map((c) => c.value), [deptA, deptB])
+
+  // Between terms: an offering in a term that has not started yet still counts; with no offering and no section, nothing.
+  const [late] = await authDb.insert(users).values({ email: 'facc@dept.test', institutionId: inst, role: 'faculty', name: 'facc' }).returning({ id: users.id })
+  const facC: Actor = { id: late!.id, role: 'faculty', email: 'facc@dept.test', institutionId: inst }
+  await assert.rejects(send(facC, { departmentId: deptA, audienceRoles: ['student'] }), (e) => code(e) === 'department_not_yours')
+  assert.deepEqual(await departmentChoices(facC), [])
+  const next = await academic.createTerm(adm(), { code: 'dterm2', name: 'Next term', startsOn: await istDay(10), endsOn: await istDay(100) })
+  const course = await academic.createCourse(adm(), { departmentId: deptA, code: 'ca2', title: 'A later course', credits: 3 })
+  await academic.createOffering(adm(), { termId: next.id, courseId: course.id, sectionId: secA, facultyUserId: late!.id })
+  assert.deepEqual((await departmentChoices(facC)).map((c) => c.value), [deptA])
+  await send(facC, { departmentId: deptA, audienceRoles: ['student'] })
+})
+
+test('an administrator is not delivered a scoped notice they manage', async () => {
+  const n = await send(hodA(), { departmentId: deptA, audienceRoles: ['student', 'faculty', 'hod', 'institution_admin'] })
+  assert.ok(!(await recipients(n.id)).includes(p.adm!))
+  assert.ok((await board1(adm())).rows.some((r) => r.id === n.id))
 })
