@@ -387,7 +387,8 @@ test('an erased student is no part of the promotion (P1-13c Opus review)', async
   const y = await year(c)
   await authDb.update(users).set({ erasedAt: new Date() }).where(eq(users.id, c.bala))
   const members = [c.asha, c.bala, c.chitra]
-  const { detainedSectionId: _none, ...body } = y.body({ detainedStudentIds: [], rosterToken: token(members, [c.asha]) })
+  const body: Record<string, unknown> = y.body({ detainedStudentIds: [], rosterToken: token(members, [c.asha]) })
+  delete body.detainedSectionId
   const res = await call(c.admin, '/sections/promote', body)
   assert.equal(res.promoted, 1)
   assert.deepEqual(await sectionsOf(c, c.bala), [y.s6])
