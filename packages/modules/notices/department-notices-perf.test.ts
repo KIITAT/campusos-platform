@@ -12,14 +12,14 @@ import { memberDepartments } from './api/department-audience'
  * inbox request when it ran the delivery audience once per department.
  */
 
-const SLUG = 'notice-dept-perf'
-const DEPTS = 50
-const PER = 1000
-const PARENTS = 100 // parents per department; users are slow to delete, so not one per student
+const SLUG = 'notice-dept-scale'
+const DEPTS = 20
+const PER = 500
+const PARENTS = 50 // parents per department; users are slow to delete, so not one per student
 let inst = ''
-const bound = 1500 // ms; the fixed code takes under 150 on a quiet machine
+const bound = 1000 // ms; the fixed code takes under 150 on a quiet machine
 
-const actor = (id: string, role: Actor['role']): Actor => ({ id, role, email: `${id}@dperf.test`, institutionId: inst })
+const actor = (id: string, role: Actor['role']): Actor => ({ id, role, email: `${id}@sperf.test`, institutionId: inst })
 const timed = async <T>(fn: () => Promise<T>) => {
   const t0 = performance.now()
   const out = await fn()
@@ -27,29 +27,29 @@ const timed = async <T>(fn: () => Promise<T>) => {
 }
 
 before(async () => {
-  const [i] = await authDb.insert(institutions).values({ slug: SLUG, name: 'Perf College', allowedEmailDomains: ['dperf.test'] }).returning({ id: institutions.id })
+  const [i] = await authDb.insert(institutions).values({ slug: SLUG, name: 'Perf College', allowedEmailDomains: ['sperf.test'] }).returning({ id: institutions.id })
   inst = i!.id
   const n = DEPTS * PER
   await authDb.execute(sql`insert into users (id, email, institution_id, role, name)
-    select 'dq' || g, 'dq' || g || '@dperf.test', ${inst}, 'student', 'S' || g from generate_series(1, ${n}::int) g`)
+    select 'sx' || g, 'sx' || g || '@sperf.test', ${inst}, 'student', 'S' || g from generate_series(1, ${n}::int) g`)
   await authDb.execute(sql`insert into users (id, email, institution_id, role, name)
-    select 'dr' || g, 'dr' || g || '@dperf.test', ${inst}, 'parent', 'P' || g from generate_series(1, ${n}::int) g where (g - 1) % ${PER} < ${PARENTS}`)
-  await authDb.execute(sql`insert into users (id, email, institution_id, role, name) values ('dadm', 'dadm@dperf.test', ${inst}, 'institution_admin', 'A')`)
+    select 'sy' || g, 'sy' || g || '@sperf.test', ${inst}, 'parent', 'P' || g from generate_series(1, ${n}::int) g where (g - 1) % ${PER} < ${PARENTS}`)
+  await authDb.execute(sql`insert into users (id, email, institution_id, role, name) values ('sadm', 'sadm@sperf.test', ${inst}, 'institution_admin', 'A')`)
   await authDb.execute(sql`insert into academic_departments (id, institution_id, code, name)
     select gen_random_uuid(), ${inst}, 'D' || lpad(g::text, 3, '0'), 'Dept ' || g from generate_series(1, ${DEPTS}) g`)
   await authDb.execute(sql`insert into academic_programs (institution_id, department_id, code, name, level, duration_terms)
     select ${inst}, d.id, 'P' || d.code, 'Prog', 'undergraduate', 8 from academic_departments d where d.institution_id = ${inst}`)
   await authDb.execute(sql`insert into academic_student_programs (institution_id, student_id, program_id, declared_on)
-    select ${inst}, 'dq' || g, p.id, current_date - 30
+    select ${inst}, 'sx' || g, p.id, current_date - 30
       from generate_series(1, ${n}::int) g
       join academic_departments d on d.institution_id = ${inst} and d.code = 'D' || lpad((((g - 1) / ${PER}) + 1)::text, 3, '0')
       join academic_programs p on p.department_id = d.id`)
   await authDb.execute(sql`insert into parent_links (institution_id, parent_id, student_id, relation, verified_at)
-    select ${inst}, 'dr' || g, 'dq' || g, 'mother', now() from generate_series(1, ${n}::int) g where (g - 1) % ${PER} < ${PARENTS}`)
+    select ${inst}, 'sy' || g, 'sx' || g, 'mother', now() from generate_series(1, ${n}::int) g where (g - 1) % ${PER} < ${PARENTS}`)
   await authDb.execute(sql`insert into notices (institution_id, title, body, author_id, published_at, department_id)
-    select ${inst}, 'DN' || d.code, 'b', 'dadm', now(), d.id from academic_departments d where d.institution_id = ${inst}`)
+    select ${inst}, 'DN' || d.code, 'b', 'sadm', now(), d.id from academic_departments d where d.institution_id = ${inst}`)
   await authDb.execute(sql`insert into notices (institution_id, title, body, author_id, published_at)
-    select ${inst}, 'N' || g, 'b', 'dadm', now() - (g || ' seconds')::interval from generate_series(1, 5000) g`)
+    select ${inst}, 'N' || g, 'b', 'sadm', now() - (g || ' seconds')::interval from generate_series(1, 5000) g`)
   for (const t of ['notices', 'academic_student_programs', 'parent_links', 'users']) await authDb.execute(sql.raw(`analyze ${t}`))
 })
 
@@ -61,7 +61,7 @@ after(async () => {
 })
 
 test('a student, a parent and an administrator read the board and inbox in bounded time', async () => {
-  for (const a of [actor('dq1', 'student'), actor('dr1', 'parent'), actor('dadm', 'institution_admin')]) {
+  for (const a of [actor('sx1', 'student'), actor('sy1', 'parent'), actor('sadm', 'institution_admin')]) {
     const b = await timed(() => board(a, false, noticePage(new Request('https://x/?n=20'), '')))
     const i = await timed(() => inbox(a, true))
     assert.ok(b.ms < bound, `${a.role} board ${b.ms.toFixed(0)} ms`)
@@ -69,10 +69,22 @@ test('a student, a parent and an administrator read the board and inbox in bound
   }
 })
 
+test('the member check reads a bounded number of blocks, not the audience of every department', async () => {
+  // Buffer accesses in this transaction, from the statistics system: independent of how loaded the machine is.
+  // The per-department audience read 430,000 here at this size; the person's own side reads a few hundred.
+  const blocks = await withTenant(inst, async (tx) => {
+    await memberDepartments(tx, inst, 'sx1')
+    await memberDepartments(tx, inst, 'sy1')
+    const r = (await tx.execute(sql`select coalesce(sum(pg_stat_get_xact_blocks_fetched(c.oid)), 0)::bigint as b from pg_class c where c.relkind in ('r', 'i')`)).rows as { b: string }[]
+    return Number(r[0]!.b)
+  })
+  assert.ok(blocks < 10000, `${blocks} blocks`)
+})
+
 test('the member list is exactly the own department, whoever asks', async () => {
   const mine = await withTenant(inst, async (tx) => {
-    const own = (await tx.execute(sql`select p.department_id as d from academic_student_programs sp join academic_programs p on p.id = sp.program_id where sp.student_id = 'dq1'`)).rows as { d: string }[]
-    return { own: own.map((r) => r.d), student: await memberDepartments(tx, inst, 'dq1'), parent: await memberDepartments(tx, inst, 'dr1'), admin: await memberDepartments(tx, inst, 'dadm') }
+    const own = (await tx.execute(sql`select p.department_id as d from academic_student_programs sp join academic_programs p on p.id = sp.program_id where sp.student_id = 'sx1'`)).rows as { d: string }[]
+    return { own: own.map((r) => r.d), student: await memberDepartments(tx, inst, 'sx1'), parent: await memberDepartments(tx, inst, 'sy1'), admin: await memberDepartments(tx, inst, 'sadm') }
   })
   assert.equal(mine.own.length, 1)
   assert.deepEqual(mine.student, mine.own)

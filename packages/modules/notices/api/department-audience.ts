@@ -69,17 +69,58 @@ export function departmentRecipientsSql(tenant: string, department: SQL, withGua
 
 /**
  * The departments, among those with a notice, whose audience includes this
- * person today. Evaluated once per request with the same audience query that
- * delivers, then handed to the board and inbox as a plain list: a per-row
- * correlated copy of the audience query makes the planner's cost estimate high
- * enough for the server to JIT-compile every board page (5 s at 100,000 notices).
+ * person today. Asked from the person's side, with their own id bound, so the
+ * cost follows what they belong to and not the size of the institution (the
+ * audience query run once per department took 4 to 13 s at 100,000 students).
+ * It returns [] without touching anything else when no notice is department
+ * scoped. The rules are those of departmentRecipientsSql; an equivalence test
+ * keeps them together.
  */
 export async function memberDepartments(tx: Tx, tenant: string, userId: string): Promise<string[]> {
+  const scoped = (await tx.execute(sql`select 1 from notices where institution_id = ${tenant} and department_id is not null limit 1`)).rows
+  if (scoped.length === 0) return []
   const withGuardians = await guardiansAvailable(tx)
+  const today = sql`(now() at time zone 'Asia/Kolkata')::date`
+  const children = withGuardians
+    ? sql`
+      union
+      select g.student_id from public.campusos_guardians_of(array(select l.student_id from parent_links l where l.parent_id = ${userId})) g
+        join me on me.role = 'parent'
+        join users s on s.id = g.student_id and s.institution_id = ${tenant} and s.role = 'student' and s.erased_at is null
+       where g.guardian_id = ${userId}`
+    : sql``
   const rows = (await tx.execute(sql`
+    with me as (
+      select u.id, u.role from users u where u.id = ${userId} and u.institution_id = ${tenant} and u.erased_at is null
+    ), kids(user_id) as (
+      select me.id from me where me.role = 'student'${children}
+    ), dep_ids(id) as (
+      select p.department_id from kids k
+        join academic_student_programs sp on sp.student_id = k.user_id and sp.institution_id = ${tenant}
+         and sp.status = 'active' and sp.declared_on <= ${today}
+        join academic_programs p on p.id = sp.program_id and p.institution_id = ${tenant}
+      union
+      select p.department_id from kids k
+        join academic_section_members m on m.user_id = k.user_id and m.institution_id = ${tenant}
+        join academic_sections s on s.id = m.section_id and s.institution_id = ${tenant}
+        join academic_programs p on p.id = s.program_id and p.institution_id = ${tenant}
+       where not exists (select 1 from academic_student_programs x where x.institution_id = ${tenant} and x.student_id = k.user_id)
+      union
+      select d.id from me join academic_departments d on d.hod_user_id = me.id and d.institution_id = ${tenant} where me.role = 'hod'
+      union
+      select p.department_id from me
+        join academic_sections s on s.class_teacher_id = me.id and s.institution_id = ${tenant}
+        join academic_programs p on p.id = s.program_id and p.institution_id = ${tenant}
+       where me.role in ('hod', 'faculty')
+      union
+      select c.department_id from me
+        join academic_offerings o on o.faculty_user_id = me.id and o.institution_id = ${tenant}
+        join academic_courses c on c.id = o.course_id and c.institution_id = ${tenant}
+        join academic_terms te on te.id = o.term_id and te.institution_id = ${tenant} and ${today} between te.starts_on and te.ends_on
+       where me.role in ('hod', 'faculty')
+    )
     select dep.id from academic_departments dep
-     where dep.institution_id = ${tenant}
-       and exists (select 1 from notices n where n.department_id = dep.id)
-       and ${userId} in (${departmentRecipientsSql(tenant, sql`dep.id`, withGuardians)})`)).rows as { id: string }[]
+     where dep.institution_id = ${tenant} and dep.id in (select id from dep_ids)
+       and exists (select 1 from notices n where n.department_id = dep.id)`)).rows as { id: string }[]
   return rows.map((r) => r.id)
 }
