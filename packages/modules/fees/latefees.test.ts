@@ -133,7 +133,7 @@ test('waivers and credits settle the earliest instalment first', async () => {
   await grantWaiver(c.admin, { studentId: c.s1, feeItemId: first.id, amount: '10000', reason: 'hardship case' })
   await issue(c)
   assert.equal((await ledger(c, c.s1)).overduePaise, 4_000_000)
-  const rule = await createScholarship(c.admin, { code: 'MERIT', name: 'Merit', kind: 'merit', basis: 'fixed', amountPaise: '500' })
+  const rule = await createScholarship(c.admin, { code: 'MERIT', name: 'Merit', kind: 'merit', basis: 'fixed', amountPaise: '5000' })
   await awardScholarship(c.admin, { scholarshipId: rule.id, studentId: c.s1, termId: c.termId })
   assert.equal((await ledger(c, c.s1)).overduePaise, 3_500_000)
 })

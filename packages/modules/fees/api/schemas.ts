@@ -170,6 +170,8 @@ export const ledgerLineSchema = z
     waivedPaise: z.number().int(),
     waiverId: uuid.nullable(),
     waiverReason: z.string().nullable(),
+    /** The instalment date (YYYY-MM-DD); null when the line is due once invoiced. */
+    dueOn: z.string().nullable(),
   })
   .meta({ id: 'FeeLedgerLine' })
 
@@ -209,6 +211,8 @@ export const studentLedgerSchema = z
     overpaidPaise: z.number().int(),
     /** On today's price list for the term and not yet issued: not owed until it is. */
     notYetInvoicedPaise: z.number().int(),
+    /** Due before today and unpaid, earliest instalments first. */
+    overduePaise: z.number().int(),
     /** Null until the term's charges have been issued to this student. */
     invoicedAt: z.string().nullable(),
   })
@@ -228,6 +232,7 @@ export const duesRowSchema = z
     outstandingPaise: z.number().int(),
     overpaidPaise: z.number().int(),
     notYetInvoicedPaise: z.number().int(),
+    overduePaise: z.number().int(),
   })
   .meta({ id: 'FeeDuesRow' })
 
@@ -238,6 +243,8 @@ export const duesReportSchema = z
     defaulterCount: z.number().int(),
     notYetInvoicedPaise: z.number().int(),
     notYetInvoicedCount: z.number().int(),
+    totalOverduePaise: z.number().int(),
+    overdueCount: z.number().int(),
     rows: z.array(duesRowSchema),
     total: z.number().int(),
     next: z.string().nullable(),

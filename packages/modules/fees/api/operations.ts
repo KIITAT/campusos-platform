@@ -36,10 +36,10 @@ import {
   type DuesReport,
   type StudentLedger,
 } from './schemas'
-import { postedOf, postedSql, receivableReport } from './books'
+import { overdueSql, postedOf, postedSql, receivableReport } from './books'
 import { postInvoice, postPayment, postRefund, postWaiverChange } from './posting'
 import { notEnrolled, priceListSql, termRoster } from './enrolment'
-import { checkOtherPerson, fiscalShort, settingsWithin } from '@campusos/module-finance/api'
+import { checkOtherPerson, fiscalShort, localToday, settingsWithin } from '@campusos/module-finance/api'
 import { notify } from '@campusos/module-notices/api'
 
 const MODULE = 'fees'
@@ -1100,6 +1100,7 @@ export async function chargesFor(tx: Tx, studentId: string, termId: string) {
     waivedPaise: null as number | null,
     waiverReason: null as string | null,
     postedPaise: null as number | null,
+    dueOn: null as string | null,
   }))
 
   if (ids.length === 0) return own
@@ -1109,6 +1110,7 @@ export async function chargesFor(tx: Tx, studentId: string, termId: string) {
       feeItemId: feeItems.id,
       label: feeItems.label,
       chargedPaise: feeItems.amountPaise,
+      dueOn: feeItems.dueOn,
       waiverId: feeWaivers.id,
       waivedPaise: feeWaivers.amountPaise,
       waiverReason: feeWaivers.reason,
@@ -1121,7 +1123,15 @@ export async function chargesFor(tx: Tx, studentId: string, termId: string) {
     )
     .where(inArray(feeItems.id, ids))
     .orderBy(asc(feeItems.label))
-  return [...items.map((i) => ({ ...i, feeItemId: i.feeItemId as string | null, studentChargeId: null as string | null })), ...own]
+  return [
+    ...items.map((i) => ({
+      ...i,
+      feeItemId: i.feeItemId as string | null,
+      studentChargeId: null as string | null,
+      dueOn: i.dueOn ? i.dueOn.toISOString().slice(0, 10) : (null as string | null),
+    })),
+    ...own,
+  ]
 }
 
 export async function studentLedger(
@@ -1160,6 +1170,8 @@ export async function studentLedger(
     const listed = charges.reduce((n, c) => n + c.chargedPaise, 0)
     const unposted = charges.reduce((n, c) => n + Math.max(0, (c.waivedPaise ?? 0) - (c.postedPaise ?? 0)), 0)
     const payablePaise = p.invoicedPaise - p.waivedPaise - p.creditedPaise
+    const today = await localToday(tx, tenant)
+    const [od] = (await tx.execute(overdueSql(termId, studentId, today))).rows as { overdue_paise: string | number }[]
 
     return {
       studentId,
@@ -1174,6 +1186,7 @@ export async function studentLedger(
         waivedPaise: c.waivedPaise ?? 0,
         waiverId: c.waiverId,
         waiverReason: c.waiverReason,
+        dueOn: c.dueOn,
       })),
       payments: payments.map((p) => ({
         id: p.id,
@@ -1196,6 +1209,7 @@ export async function studentLedger(
       outstandingPaise: Math.max(0, p.balancePaise),
       overpaidPaise: Math.max(0, -p.balancePaise),
       notYetInvoicedPaise: Math.max(0, listed - unposted - p.invoicedPaise),
+      overduePaise: Number(od?.overdue_paise ?? 0),
       invoicedAt: invoice?.issuedAt.toISOString() ?? null,
     }
   })
@@ -1231,6 +1245,7 @@ export async function duesReport(
       .from(terms)
       .where(eq(terms.id, termId))
     if (!term) throw new FeeError(404, 'no_such_term', 'no such term')
+    const today = await localToday(tx, tenant)
 
     const cte = sql`
       with posted as (${postedSql({ termId })}),
@@ -1245,8 +1260,10 @@ export async function duesReport(
                coalesce(p.unreconciled_paise, 0) as unreconciled_paise,
                greatest(coalesce(p.balance_paise, 0), 0) as outstanding_paise,
                greatest(-coalesce(p.balance_paise, 0), 0) as overpaid_paise,
-               greatest(coalesce(l.listed_paise, 0) - coalesce(l.unposted_paise, 0) - coalesce(p.invoiced_paise, 0), 0) as not_yet_invoiced_paise
-          from posted p full join listed l on l.student_id = p.student_id)`
+               greatest(coalesce(l.listed_paise, 0) - coalesce(l.unposted_paise, 0) - coalesce(p.invoiced_paise, 0), 0) as not_yet_invoiced_paise,
+               coalesce(o.overdue_paise, 0)::bigint as overdue_paise
+          from posted p full join listed l on l.student_id = p.student_id
+          left join (${overdueSql(termId, null, today)}) o on o.student_id = coalesce(p.student_id, l.student_id))`
     const shown = sql`(d.payable_paise <> 0 or d.paid_paise <> 0 or d.not_yet_invoiced_paise <> 0)`
     const search = searchAny(page.q, [sql`u.name`, sql`u.email`])
     const where = search ? sql`${shown} and ${search}` : shown
@@ -1271,7 +1288,9 @@ export async function duesReport(
              coalesce(sum(d.outstanding_paise), 0)::bigint as outstanding,
              count(*) filter (where d.outstanding_paise > 0)::int as defaulters,
              coalesce(sum(d.not_yet_invoiced_paise), 0)::bigint as nyi,
-             count(*) filter (where d.not_yet_invoiced_paise > 0)::int as nyi_count
+             count(*) filter (where d.not_yet_invoiced_paise > 0)::int as nyi_count,
+             coalesce(sum(d.overdue_paise), 0)::bigint as overdue,
+             count(*) filter (where d.overdue_paise > 0)::int as overdue_count
         from d join users u on u.id = d.student_id
        where ${where}`)).rows as Record<string, unknown>[]
 
@@ -1288,6 +1307,7 @@ export async function duesReport(
       outstandingPaise: Number(r.outstanding_paise),
       overpaidPaise: Number(r.overpaid_paise),
       notYetInvoicedPaise: Number(r.not_yet_invoiced_paise),
+      overduePaise: Number(r.overdue_paise),
       _cursor: r._cursor as string[],
     }))
     return {
@@ -1296,6 +1316,8 @@ export async function duesReport(
       defaulterCount: Number(sum!.defaulters),
       notYetInvoicedPaise: Number(sum!.nyi),
       notYetInvoicedCount: Number(sum!.nyi_count),
+      totalOverduePaise: Number(sum!.overdue),
+      overdueCount: Number(sum!.overdue_count),
       ...finishPage(mapped, page, Number(sum!.total)),
     }
   })
