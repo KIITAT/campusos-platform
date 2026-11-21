@@ -22,6 +22,8 @@ import {
 } from '../schema'
 import { courseCompletions, courses, institutions, offerings, programs, sectionMembers, sections, studentPrograms, terms, users } from './joins'
 import { ExamError, type Actor } from './operations'
+import { recomputePending, recomputeRequired } from './finalise'
+import { assertEligible, eligibilityWithin, lockEligibility } from './eligibility'
 import {
   bookBacklogSchema,
   cancelBacklogSchema,
@@ -92,6 +94,8 @@ const REFUSALS: Record<string, [400 | 403 | 409, string]> = {
   exam_settings_release: [400, 'the release lead is between 5 minutes and a day'],
   fee_student_charge_invoiced: [409, 'the fee for that booking is already on an invoice; the accounts office refunds it'],
 }
+
+const refusal = (c: string) => new ExamError(REFUSALS[c]![0], c, REFUSALS[c]![1])
 
 async function named<T>(fn: () => Promise<T>): Promise<T> {
   try {
@@ -330,7 +334,8 @@ export async function myExamCycle(actor: Actor, termId?: string | null) {
       .where(eq(courseCompletions.studentId, actor.id))
       .orderBy(asc(terms.startsOn))
     const programme = await leadingProgramme(tx, actor.id)
-    return { term, enrolWindow, backlogWindow, enrolment, papers, classes, backlogs, bookings, reportTerms, programme }
+    const eligibility = await eligibilityWithin(tx, tenant, actor.id, term.id)
+    return { eligibility, term, enrolWindow, backlogWindow, enrolment, papers, classes, backlogs, bookings, reportTerms, programme }
   })
   if (!base) return null
   const feedbackOn = await moduleEnabled(KNOWN, 'feedback', tenant)
@@ -347,6 +352,7 @@ export async function myExamCycle(actor: Actor, termId?: string | null) {
     programme: base.programme,
     feedback: feedbackOn ? { complete: gate.complete, owed: gate.owed } : null,
     enrolWindow: showWindow(base.enrolWindow),
+    eligibility: base.eligibility,
     enrolment: base.enrolment,
     papers: base.papers,
     classes: base.classes,
@@ -370,8 +376,15 @@ export async function enrol(actor: Actor, input: unknown) {
   const p = await studentProfile(actor as unknown as AcademicActor, actor.id)
   return named(() =>
     withTenant(tenant, async (tx) => {
+      await lockEligibility(tx, tenant, actor.id, d.termId)
       const classes = await classesOf(tx, actor.id, d.termId)
       if (!classes.length) throw new ExamError(409, 'no_papers', 'you have no classes this term to sit')
+      // The window and the one-enrolment rule keep their place ahead of eligibility; the database guards stay authoritative.
+      const open = await tx.execute(sql`
+        select now() >= opens_at and now() < closes_at as open from exam_windows where term_id = ${d.termId} and kind = 'enrolment'`)
+      if (!(open.rows[0] as { open: boolean } | undefined)?.open) throw refusal('exam_enrolment_window')
+      if (await activeEnrolment(tx, actor.id, d.termId)) throw refusal('exam_enrolments_once')
+      assertEligible(await eligibilityWithin(tx, tenant, actor.id, d.termId))
       const confirmed = {
         name: p.name,
         email: p.email,
@@ -478,10 +491,12 @@ export interface AdmitCard {
 
 export async function admitCard(actor: Actor, studentId: string, termId: string): Promise<AdmitCard> {
   const tenant = tenantOf(actor)
-  await mayRead(actor, studentId, 'admit_card')
   return withTenant(tenant, async (tx) => {
+    await assertCanAccessStudent(tx, actor, studentId, 'admit_card')
+    await lockEligibility(tx, tenant, studentId, termId)
     const e = await activeEnrolment(tx, studentId, termId)
     if (!e) throw new ExamError(409, 'not_enrolled', 'there is an admit card only for an enrolment; enrol first')
+    assertEligible(await eligibilityWithin(tx, tenant, studentId, termId))
     const [t] = await tx.select().from(terms).where(eq(terms.id, termId))
     const [inst] = await tx.select({ name: institutions.name }).from(institutions).where(eq(institutions.id, tenant))
     const [w] = await tx.select().from(examWindows).where(and(eq(examWindows.termId, termId), eq(examWindows.kind, 'enrolment')))
@@ -662,12 +677,16 @@ export async function gradeReport(actor: Actor, studentId: string, termId: strin
         grade: courseCompletions.gradeLabel,
         points: courseCompletions.gradePoints,
         passed: courseCompletions.passed,
+        pending: recomputePending(studentId),
       })
       .from(courseCompletions)
       .innerJoin(courses, eq(courses.id, courseCompletions.courseId))
       .innerJoin(terms, eq(terms.id, courseCompletions.termId))
       .where(and(eq(courseCompletions.studentId, studentId), sql`${terms.startsOn} <= ${t.startsOn}`))
       .orderBy(asc(courses.code))
+    // The cumulative average reads every term up to this one, so a revised mark
+    // in any of them holds the report until its course is finalised again.
+    if (rows.some((r) => r.pending)) throw recomputeRequired()
     const shape = (r: (typeof rows)[number]): Attempt => ({
       courseId: r.courseId,
       termStartsOn: r.startsOn,

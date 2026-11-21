@@ -116,6 +116,9 @@ test('an enquiry that never became a student is anonymised after a year', async 
   await application(X, 'rejected', 400, null, 'no seat')
   await application(Y, 'accepted', 400, id.S, null)
   await application(Z, 'rejected', 10, null, 'late')
+  // P1-12a: the applicant's own details on the application.
+  await q(`update admissions_applications set applicant_name = 'Purged Applicant', date_of_birth = '2007-01-01', category = 'st' where enquiry_id = $1`, [X])
+  await q(`update admissions_applications set applicant_name = 'Kept Applicant' where enquiry_id = $1`, [Z])
   await purgeExpired({ institutionId: I })
   const row = async (e: string) => (await q(`select name, email, phone, note from admissions_enquiries where id = $1`, [e])).rows[0]
   assert.deepEqual(await row(X), { name: '[erased]', email: `erased+${X}@invalid`, phone: null, note: null })
@@ -123,6 +126,10 @@ test('an enquiry that never became a student is anonymised after a year', async 
   assert.equal((await row(Y)).name, 'Enquirer')
   assert.equal((await row(Z)).name, 'Enquirer')
   assert.equal((await q(`select reason from admissions_applications where enquiry_id = $1`, [Z])).rows[0].reason, 'late')
+  assert.deepEqual((await q(`select applicant_name, date_of_birth, category from admissions_applications where enquiry_id = $1`, [X])).rows[0], {
+    applicant_name: null, date_of_birth: null, category: null,
+  })
+  assert.equal((await q(`select applicant_name from admissions_applications where enquiry_id = $1`, [Z])).rows[0].applicant_name, 'Kept Applicant')
 })
 
 test('a CRM lead idle for two years is anonymised', async () => {

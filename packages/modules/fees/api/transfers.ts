@@ -1,7 +1,18 @@
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm'
 import * as z from 'zod'
 import { audit, users, withTenant } from '@campusos/db'
-import type { Role } from '@campusos/module-framework'
+import { notify } from '@campusos/module-notices/api'
+import {
+  assertCanAccessStudent,
+  cursorColumn,
+  finishPage,
+  keyset,
+  orderKeys,
+  readPage,
+  searchAny,
+  type Role,
+  type SortSpec,
+} from '@campusos/module-framework'
 import { programs, terms } from '@campusos/module-academic/schema'
 import { studentProfile, type Actor as AcademicActor } from '@campusos/module-academic/api'
 import { formatPaise, parseRupeesToPaise } from '@campusos/money'
@@ -13,7 +24,7 @@ import {
   transferClaims,
   type DemandLetterContent,
 } from '../schema'
-import { FeeError, recordPaymentWithin, studentLedger, type Actor } from './operations'
+import { FeeError, lockTermIssue, recordPaymentWithin, studentLedger, type Actor } from './operations'
 import { rupeesInWords } from './words'
 import { enrolledPrograms } from './enrolment'
 
@@ -46,6 +57,14 @@ const requireStudent = (actor: Actor) => {
   if (actor.role !== 'student') throw new FeeError(403, 'forbidden', 'a transfer is claimed by the student who made it')
   return t
 }
+/** The student, or a guardian (who then names the student, and is checked in the transaction). */
+const requireReporter = (actor: Actor) => {
+  const t = tenantOf(actor)
+  if (actor.role !== 'student' && actor.role !== 'parent') {
+    throw new FeeError(403, 'forbidden', 'a payment is reported by the student, or by a guardian through the parents portal')
+  }
+  return t
+}
 
 const REFUSALS: Record<string, [400 | 403 | 409, string]> = {
   fee_bank_accounts_number: [409, 'that account is already listed'],
@@ -53,6 +72,11 @@ const REFUSALS: Record<string, [400 | 403 | 409, string]> = {
   fee_bank_accounts_number_digits: [400, 'an account number is 6 to 20 digits'],
   fee_bank_account_used: [409, 'students have paid into that account; retire it and add the new one'],
   fee_transfer_claims_utr: [409, 'that UTR has already been claimed'],
+  fee_bank_accounts_vpa: [400, "a UPI ID is a name, an @ and the bank's handle, for example fees.kiit@sbi"],
+  fee_bank_accounts_merchant: [400, 'only an account with a UPI ID can be a merchant account'],
+  fee_transfer_claims_upi_shape: [400, 'a UPI reference is the 12-digit number your UPI app shows (UTR or RRN)'],
+  fee_transfer_claims_cheque_shape: [400, 'a cheque needs its 6-digit number, and the IFSC and account number printed on it'],
+  fee_transfer_claims_cheque: [409, 'that cheque has already been reported'],
   fee_transfer_claims_utr_shape: [400, 'a UTR is 6 to 30 letters and digits, as the bank gave it'],
   fee_transfer_claims_ifsc: [400, 'an IFSC is four letters, a zero and six letters or digits'],
   fee_transfer_claims_phone: [400, 'a phone number'],
@@ -93,21 +117,33 @@ export const addBankAccountSchema = z
   })
   .meta({ id: 'FeeBankAccountAdd' })
 
+export const setAccountUpiSchema = z
+  .object({
+    accountId: z.uuid(),
+    vpa: z.preprocess(blankToUndefined, z.string().trim().toLowerCase().optional()),
+    merchant: z.preprocess((v) => v === true || v === 'on' || v === 'true', z.boolean()),
+  })
+  .meta({ id: 'FeeBankAccountUpi' })
+
 export const retireBankAccountSchema = z.object({ accountId: z.uuid() }).meta({ id: 'FeeBankAccountRetire' })
 
 export const claimTransferSchema = z
   .object({
     termId: z.uuid(),
     accountId: z.uuid(),
-    mode: z.enum(['rtgs', 'neft', 'imps']),
+    mode: z.enum(['rtgs', 'neft', 'imps', 'upi', 'cheque']),
     remitterBank: z.string().trim().min(2).max(120),
     remitterBranch: z.preprocess(blankToUndefined, z.string().trim().max(120).optional()),
     remitterIfsc: z.preprocess(blankToUndefined, ifsc.optional()),
+    /** A deposited cheque's account number, as printed on it. */
+    drawerAccount: z.preprocess(blankToUndefined, z.string().optional()),
     accountHolder: z.string().trim().min(2).max(120),
     contactPhone: z.string().trim().regex(/^[0-9+() -]{7,20}$/, 'a phone number'),
     transferredOn: z.iso.date(),
     /** Rupees, as typed. */
     amount: z.string().trim().min(1),
+    /** For the guardian reporting a child's payment; a student's own claim ignores it. */
+    studentId: z.preprocess(blankToUndefined, z.string().min(1).optional()),
     utr: z
       .string()
       .trim()
@@ -200,26 +236,69 @@ export async function retireBankAccount(actor: Actor, input: unknown) {
   )
 }
 
+/**
+ * The account's UPI ID, shown to payers as a QR. Editable at any time: the
+ * statement match keys on the reference, never on the VPA, so changing it
+ * rewrites no money record. A blank ID clears it and the merchant flag.
+ */
+export async function setAccountUpi(actor: Actor, input: unknown) {
+  const tenant = requireAdmin(actor)
+  const d = setAccountUpiSchema.parse(input)
+  return named(() =>
+    withTenant(tenant, async (tx) => {
+      const [old] = await tx
+        .select({ vpa: bankAccounts.upiVpa })
+        .from(bankAccounts)
+        .where(and(eq(bankAccounts.id, d.accountId), isNull(bankAccounts.retiredAt)))
+        .for('update')
+      if (!old) throw new FeeError(404, 'no_such_account', 'no such live account')
+      // A blank ID with the merchant box ticked is refused by the table's check, not silently cleared.
+      const merchant = d.merchant
+      await tx
+        .update(bankAccounts)
+        .set({ upiVpa: d.vpa ?? null, upiMerchant: merchant })
+        .where(eq(bankAccounts.id, d.accountId))
+      await audit(tx, {
+        institutionId: tenant,
+        actorId: actor.id,
+        actorEmail: actor.email ?? null,
+        moduleId: MODULE,
+        action: 'fee.bank_account_upi',
+        entity: 'fee_bank_accounts',
+        entityId: d.accountId,
+        reason: `${old.vpa ?? 'none'} -> ${d.vpa ?? 'none'}${merchant ? ' (merchant)' : ''}`,
+      })
+      return { notice: d.vpa ? `UPI ID ${d.vpa} saved. Payers see its QR on their fee page.` : 'UPI ID removed.' }
+    }),
+  )
+}
+
 // --- claims ------------------------------------------------------------------------
 
 export async function claimTransfer(actor: Actor, input: unknown) {
-  const tenant = requireStudent(actor)
+  const tenant = requireReporter(actor)
   const d = claimTransferSchema.parse(input)
+  // A student reports for themselves, whatever the input says (D12).
+  const studentId = actor.role === 'student' ? actor.id : d.studentId
+  if (!studentId) throw new FeeError(400, 'no_student', 'say which student the payment is for')
   const amountPaise = parseRupeesToPaise(d.amount)
   if (amountPaise === null || amountPaise <= 0) throw new FeeError(400, 'bad_amount', 'enter the amount in rupees, as transferred')
   return named(() =>
     withTenant(tenant, async (tx) => {
+      // A guardian passes only through the parents portal's viewerOf (not_your_student otherwise).
+      await assertCanAccessStudent(tx, actor, studentId, 'fee_ledger')
       const [c] = await tx
         .insert(transferClaims)
         .values({
           institutionId: tenant,
-          studentId: actor.id,
+          studentId,
           termId: d.termId,
           accountId: d.accountId,
           mode: d.mode,
           remitterBank: d.remitterBank,
           remitterBranch: d.remitterBranch ?? null,
           remitterIfsc: d.remitterIfsc ?? null,
+          drawerAccount: d.drawerAccount ? d.drawerAccount.replace(/\s+/g, '').toUpperCase() : null,
           accountHolder: d.accountHolder,
           contactPhone: d.contactPhone,
           transferredOn: d.transferredOn,
@@ -228,6 +307,17 @@ export async function claimTransfer(actor: Actor, input: unknown) {
           bankReference: d.bankReference ?? null,
         })
         .returning()
+      await audit(tx, {
+        institutionId: tenant,
+        actorId: actor.id,
+        actorEmail: actor.email ?? null,
+        moduleId: MODULE,
+        action: 'fee.transfer_claimed',
+        entity: 'fee_transfer_claims',
+        entityId: c!.id,
+        reason: `${d.mode.toUpperCase()} ${c!.utr} for ${formatPaise(amountPaise)}`,
+        detail: { studentId, submittedBy: actor.id, role: actor.role },
+      })
       return {
         ...c!,
         notice: `Submitted: ${formatPaise(amountPaise)} (${rupeesInWords(amountPaise)}), UTR ${c!.utr}. The accounts office checks it against the bank statement; it becomes a receipt when they do.`,
@@ -273,22 +363,176 @@ function claimsQuery(tx: Tx) {
     .leftJoin(feePayments, eq(feePayments.id, transferClaims.paymentId))
 }
 
+/** One student's claims, for the student or a guardian through the parents portal. */
+export async function studentClaims(actor: Actor, studentId: string) {
+  const tenant = tenantOf(actor)
+  return withTenant(tenant, async (tx) => {
+    await assertCanAccessStudent(tx, actor, studentId, 'fee_ledger')
+    return (await claimsQuery(tx).where(eq(transferClaims.studentId, studentId)).orderBy(desc(transferClaims.submittedAt))).map(shapeClaim)
+  })
+}
+
 export async function myClaims(actor: Actor) {
-  const tenant = requireStudent(actor)
+  requireStudent(actor)
+  return studentClaims(actor, actor.id)
+}
+
+// Pending first, then oldest first; the one sort, because the office works the queue in order.
+const CLAIM_SORTS: SortSpec = {
+  queue: {
+    dir: 'asc',
+    keys: [
+      { sql: sql`case when ${transferClaims.status} = 'pending' then 0 else 1 end`, type: 'bigint' },
+      { sql: sql`${transferClaims.submittedAt}`, type: 'timestamptz' },
+      { sql: sql`${transferClaims.id}`, type: 'uuid' },
+    ],
+  },
+}
+export const claimPage = (req: Request, prefix: string) => readPage(req, prefix, CLAIM_SORTS, 'queue', 50)
+
+export async function claimQueue(actor: Actor, status?: string | null, page = claimPage(new Request('https://x/'), '')) {
+  const tenant = requireFinance(actor)
+  return withTenant(tenant, async (tx) => {
+    const keys = CLAIM_SORTS[page.sort]!.keys
+    const filter = and(
+      status === 'pending' || status === 'verified' || status === 'rejected' ? eq(transferClaims.status, status) : undefined,
+      searchAny(page.q, [sql`${users.name}`, sql`${users.email}`, sql`${transferClaims.utr}`]),
+    )
+    const rows = await tx
+      .select({ ...CLAIM_COLUMNS, _cursor: cursorColumn(keys) })
+      .from(transferClaims)
+      .innerJoin(users, eq(users.id, transferClaims.studentId))
+      .innerJoin(terms, eq(terms.id, transferClaims.termId))
+      .innerJoin(bankAccounts, eq(bankAccounts.id, transferClaims.accountId))
+      .leftJoin(feePayments, eq(feePayments.id, transferClaims.paymentId))
+      .where(and(filter, keyset(keys, page)))
+      .orderBy(...orderKeys(keys, page.dir))
+      .limit(page.limit + 1)
+    const [count] = await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(transferClaims)
+      .innerJoin(users, eq(users.id, transferClaims.studentId))
+      .where(filter)
+    const out = finishPage(rows, page, Number(count!.n))
+    return { ...out, rows: out.rows.map(shapeClaim) }
+  })
+}
+
+/** What the queue's header shows: every claim, not just the page. */
+export async function claimCounts(actor: Actor) {
+  const tenant = requireFinance(actor)
+  return withTenant(tenant, async (tx) => {
+    const [r] = (
+      await tx.execute(sql`
+        select count(*) filter (where status = 'pending')::int as pending,
+               coalesce(sum(amount_paise) filter (where status = 'pending'), 0)::bigint as paise,
+               count(*) filter (where status = 'verified')::int as verified
+          from fee_transfer_claims`)
+    ).rows as { pending: number; paise: string | number; verified: number }[]
+    return { pending: Number(r!.pending), pendingPaise: Number(r!.paise), verified: Number(r!.verified) }
+  })
+}
+
+/** The oldest pending claims, for the verify and reject pickers. */
+// ponytail: a cap of 200 until P1-09's searchable picker; the queue page itself is complete.
+export async function pendingClaimOptions(actor: Actor) {
+  const tenant = requireFinance(actor)
   return withTenant(tenant, async (tx) =>
-    (await claimsQuery(tx).where(eq(transferClaims.studentId, actor.id)).orderBy(desc(transferClaims.submittedAt))).map(shapeClaim),
+    (await claimsQuery(tx).where(eq(transferClaims.status, 'pending')).orderBy(asc(transferClaims.submittedAt), asc(transferClaims.id)).limit(200))
+      .map(shapeClaim)
+      .map((c) => ({ value: c.id, label: `${c.student}: ${c.amount} ${c.modeText} ${c.utr} (${c.transferredOn})` })),
   )
 }
 
-export async function claimQueue(actor: Actor, status?: string | null) {
-  const tenant = requireFinance(actor)
-  return withTenant(tenant, async (tx) =>
-    (
-      await claimsQuery(tx)
-        .where(status === 'pending' || status === 'verified' || status === 'rejected' ? eq(transferClaims.status, status) : undefined)
-        .orderBy(sql`${transferClaims.status} = 'pending' desc`, asc(transferClaims.submittedAt))
-    ).map(shapeClaim),
-  )
+/** How each way of reporting a payment is receipted (D11). */
+const METHOD = { rtgs: 'bank_transfer', neft: 'bank_transfer', imps: 'bank_transfer', upi: 'upi', cheque: 'cheque' } as const
+
+/** Tell the student, and their guardians, that money arrived (D21). */
+export async function paymentReceived(
+  tx: Tx,
+  tenant: string,
+  p: { studentId: string; amountPaise: number; reference: string | null; receiptNo: string | null },
+) {
+  await notify(tx, tenant, {
+    userIds: [p.studentId],
+    moduleId: MODULE,
+    title: 'Payment received',
+    body: `${formatPaise(p.amountPaise)} received, reference ${p.reference ?? 'none'}. Receipt ${p.receiptNo ?? 'pending'}.`,
+    link: '/m/fees/me',
+    alsoGuardians: { link: '/m/parents' },
+  })
+}
+
+/**
+ * Reconciled in the same act that recorded it: finding a payment on the bank
+ * statement is exactly what reconciling means (LOW-05). The audit row goes
+ * first, because the payment's guard lets a reconciliation through only after it.
+ */
+export async function reconcileFound(
+  tx: Tx,
+  tenant: string,
+  actor: Actor,
+  paymentId: string,
+  reason: string,
+  detail: Record<string, unknown> = {},
+) {
+  await audit(tx, {
+    institutionId: tenant,
+    actorId: actor.id,
+    actorEmail: actor.email ?? null,
+    moduleId: MODULE,
+    action: 'fee.payment_reconciled',
+    entity: 'fee_payments',
+    entityId: paymentId,
+    reason,
+    // Recording and reconciling are one act here, by design (LOW-05).
+    detail: { recordedBy: actor.id, selfReconciled: true, ...detail },
+  })
+  await tx.update(feePayments).set({ reconciledAt: new Date(), reconciledBy: actor.id }).where(eq(feePayments.id, paymentId))
+}
+
+/**
+ * Turn a pending claim into its payment, in the caller's transaction. Takes the
+ * term's issue lock first, as every path that moves a term's money does (NEW-93),
+ * then the claim's row; the claim's term never changes, so the caller reads it
+ * without a lock and passes it in. A claim decided meanwhile is a 409.
+ */
+export async function verifyWithin(
+  tx: Tx,
+  tenant: string,
+  actor: Actor,
+  claimId: string,
+  termId: string,
+  note: string | null,
+  detail: Record<string, unknown> = {},
+  receivedAt?: Date,
+) {
+  await lockTermIssue(tx, termId)
+  const [c] = await tx.select().from(transferClaims).where(eq(transferClaims.id, claimId)).for('update')
+  if (!c) throw new FeeError(404, 'no_such_claim', 'no such claim')
+  if (c.status !== 'pending') throw new FeeError(409, 'fee_claim_decided', 'that claim has been decided')
+  const payment = await recordPaymentWithin(tx, tenant, actor, {
+    studentId: c.studentId,
+    termId: c.termId,
+    amountPaise: c.amountPaise,
+    method: METHOD[c.mode],
+    reference: c.utr,
+    receivedAt: receivedAt ?? new Date(`${c.transferredOn}T00:00:00+05:30`),
+    notes:
+      c.mode === 'upi'
+        ? `UPI from ${c.remitterBank} (${c.accountHolder})`
+        : c.mode === 'cheque'
+          ? `Cheque ${c.utr} on ${c.remitterIfsc} ${c.drawerAccount} (${c.accountHolder})`
+          : `${c.mode.toUpperCase()} from ${c.remitterBank}${c.remitterBranch ? `, ${c.remitterBranch}` : ''} (${c.accountHolder})`,
+    ...(c.mode === 'cheque' ? { drawerIfsc: c.remitterIfsc, drawerAccount: c.drawerAccount } : {}),
+  })
+  await reconcileFound(tx, tenant, actor, payment.id, note ?? `transfer ${c.utr} found on the bank statement`, detail)
+  await tx
+    .update(transferClaims)
+    .set({ status: 'verified', decidedBy: actor.id, paymentId: payment.id, decisionNote: note })
+    .where(eq(transferClaims.id, c.id))
+  await paymentReceived(tx, tenant, payment)
+  return { claim: c, payment }
 }
 
 /**
@@ -301,36 +545,10 @@ export async function verifyClaim(actor: Actor, input: unknown) {
   const d = verifyClaimSchema.parse(input)
   return named(() =>
     withTenant(tenant, async (tx) => {
-      const [c] = await tx.select().from(transferClaims).where(eq(transferClaims.id, d.claimId)).for('update')
-      if (!c) throw new FeeError(404, 'no_such_claim', 'no such claim')
-      if (c.status !== 'pending') throw new FeeError(409, 'fee_claim_decided', 'that claim has been decided')
-      const payment = await recordPaymentWithin(tx, tenant, actor, {
-        studentId: c.studentId,
-        termId: c.termId,
-        amountPaise: c.amountPaise,
-        method: 'bank_transfer',
-        reference: c.utr,
-        receivedAt: new Date(`${c.transferredOn}T00:00:00+05:30`),
-        notes: `${c.mode.toUpperCase()} from ${c.remitterBank}${c.remitterBranch ? `, ${c.remitterBranch}` : ''} (${c.accountHolder})`,
-      })
-      await audit(tx, {
-        institutionId: tenant,
-        actorId: actor.id,
-        actorEmail: actor.email ?? null,
-        moduleId: MODULE,
-        action: 'fee.payment_reconciled',
-        entity: 'fee_payments',
-        entityId: payment.id,
-        reason: d.note ?? `transfer ${c.utr} found on the bank statement`,
-        // Recording and reconciling are one act here, by design (LOW-05).
-        detail: { recordedBy: actor.id, selfReconciled: true },
-      })
-      await tx.update(feePayments).set({ reconciledAt: new Date(), reconciledBy: actor.id }).where(eq(feePayments.id, payment.id))
-      await tx
-        .update(transferClaims)
-        .set({ status: 'verified', decidedBy: actor.id, paymentId: payment.id, decisionNote: d.note ?? null })
-        .where(eq(transferClaims.id, c.id))
-      return { id: c.id, receiptNo: payment.receiptNo, notice: `Verified: receipt ${payment.receiptNo}, reconciled.` }
+      const [seen] = await tx.select({ termId: transferClaims.termId }).from(transferClaims).where(eq(transferClaims.id, d.claimId))
+      if (!seen) throw new FeeError(404, 'no_such_claim', 'no such claim')
+      const { claim, payment } = await verifyWithin(tx, tenant, actor, d.claimId, seen.termId, d.note ?? null)
+      return { id: claim.id, receiptNo: payment.receiptNo, notice: `Verified: receipt ${payment.receiptNo}, reconciled.` }
     }),
   )
 }
@@ -463,7 +681,7 @@ export async function issueDemandLetter(actor: Actor, input: unknown) {
         },
         term: { code: t!.code, name: t!.name, startsOn: String(t!.startsOn), endsOn: String(t!.endsOn) },
         account: account
-          ? { accountName: account.accountName, bankName: account.bankName, branch: account.branch, accountNumber: account.accountNumber, ifsc: account.ifsc }
+          ? { accountName: account.accountName, bankName: account.bankName, branch: account.branch, accountNumber: account.accountNumber, ifsc: account.ifsc, upiVpa: account.upiVpa ?? null }
           : null,
       }
       if (content.lines.length === 0) throw new FeeError(409, 'nothing_charged', 'there are no fees for that term to state')

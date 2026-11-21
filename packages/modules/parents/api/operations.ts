@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray, isNull, isNotNull, sql } from 'drizzle-orm'
+import * as z from 'zod'
 import {
   addressStatus,
   ageStatus,
@@ -22,7 +23,7 @@ import { manifest as libraryManifest } from '@campusos/module-library/manifest'
 import { manifest as parentsManifest } from '../manifest'
 import { myAttendance } from '@campusos/module-attendance/api'
 import { transcript } from '@campusos/module-examinations/api'
-import { studentLedger } from '@campusos/module-fees/api'
+import { claimTransfer, listBankAccounts, studentClaims, studentLedger, upiFor } from '@campusos/module-fees/api'
 import { borrowerStatus } from '@campusos/module-library/api'
 import { myHostel } from '@campusos/module-hostel/api'
 import { listStructure, recordStudentConsent, studentConsents } from '@campusos/module-academic/api'
@@ -318,6 +319,34 @@ export async function recordChildConsent(actor: Actor, input: unknown) {
     throw new ParentError(403, 'not_your_child', 'that student is not linked to you')
   }
   return recordStudentConsent({ ...actor, viewerOf: [d.studentId] }, d)
+}
+
+/**
+ * A guardian reports a payment made for their child. Fees owns the claim; this
+ * module owns the guardian-child link, so the link is checked here and fees is
+ * called with the one child cleared, exactly as for a consent.
+ */
+export async function claimChildPayment(actor: Actor, input: unknown) {
+  const d = z.object({ studentId: z.string().min(1) }).passthrough().parse(input)
+  if (actor.role !== 'parent') throw new ParentError(403, 'forbidden', 'a payment is reported by the student, or by a guardian through this portal')
+  if (!(await childrenOf(actor)).includes(d.studentId)) {
+    throw new ParentError(403, 'not_your_child', 'that student is not linked to you')
+  }
+  return claimTransfer({ ...actor, viewerOf: [d.studentId] }, input)
+}
+
+/** What a guardian needs to report a payment for one child: the accounts it can go into, and what was already reported. */
+export async function childFeeDesk(actor: Actor, studentId: string) {
+  if (!isAdmin(actor.role) && !(await childrenOf(actor)).includes(studentId)) {
+    throw new ParentError(403, 'not_your_child', 'that student is not linked to you')
+  }
+  const viewer = { ...actor, viewerOf: [studentId] }
+  return {
+    accounts: (await listBankAccounts(viewer))
+      .filter((x) => x.state === 'active')
+      .map((x) => ({ value: x.id, label: `${x.label}: ${x.bankName} ${x.accountNumber}` })),
+    claims: await studentClaims(viewer, studentId),
+  }
 }
 
 /** The choices recorded for one of the guardian's children. */
@@ -744,6 +773,8 @@ export async function childOverview(
       const ledger = await studentLedger(viewer, studentId, term.id)
       overview.fees = {
         termCode: ledger.termCode,
+        termId: term.id,
+        upi: await upiFor(viewer, studentId, term.id),
         payablePaise: ledger.payablePaise,
         paidPaise: ledger.paidPaise,
         outstandingPaise: ledger.outstandingPaise,

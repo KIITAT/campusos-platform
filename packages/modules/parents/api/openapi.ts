@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { claimTransferSchema } from '@campusos/module-fees/api'
 import { manifest } from '../manifest'
 import {
   childOverviewSchema,
@@ -64,6 +65,19 @@ export const paths = {
       tags: ['parents'],
       requestBody: { content: json(decideLinkSchema) },
       responses: { '204': { description: 'Revoked' }, ...gated },
+    },
+  },
+  [`${base}/fee-claims`]: {
+    post: {
+      summary: 'Report a payment made for your child',
+      description: 'Refused 403 not_your_child when the student is not linked to the caller. The fees module owns the claim; the accounts office finds it on the bank statement and turns it into a receipt.',
+      tags: ['parents'],
+      requestBody: { content: json(claimTransferSchema) },
+      responses: {
+        '200': { description: 'Reported, pending' },
+        ...gated,
+        '409': { description: 'That reference was already reported', content: json(err) },
+      },
     },
   },
   [`${base}/consents`]: {

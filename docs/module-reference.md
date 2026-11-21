@@ -7,31 +7,31 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 
 | Module | Version | Pages | API routes | Dependencies |
 |---|---|---:|---:|---|
-| [Academic Core](#academic) | 0.12.0 | 7 | 42 | None |
-| [Admissions](#admissions) | 0.8.0 | 3 | 9 | academic |
+| [Academic Core](#academic) | 0.13.0 | 7 | 42 | None |
+| [Admissions](#admissions) | 0.10.0 | 3 | 9 | academic |
 | [Alumni and events](#alumni) | 0.5.0 | 4 | 12 | None |
-| [Attendance & QR](#attendance) | 0.16.0 | 8 | 30 | academic, notices |
-| [Student Care](#care) | 0.11.0 | 7 | 24 | academic, notices |
+| [Attendance & QR](#attendance) | 0.18.0 | 8 | 30 | academic, notices |
+| [Student Care](#care) | 0.12.0 | 7 | 24 | academic, notices |
 | [Ceremonies](#ceremonies) | 0.8.0 | 5 | 18 | academic |
-| [Sales CRM](#crm) | 0.8.0 | 4 | 32 | finance, notices |
-| [Enrollment](#enrollment) | 0.8.0 | 3 | 9 | academic |
-| [Examinations & Grading](#examinations) | 0.23.0 | 9 | 36 | academic, notices |
-| [Feedback](#feedback) | 0.8.0 | 8 | 19 | academic |
-| [Fees & Finance](#fees) | 0.27.0 | 11 | 43 | academic, finance, notices |
+| [Sales CRM](#crm) | 0.9.0 | 4 | 32 | finance, notices |
+| [Enrollment](#enrollment) | 0.9.0 | 3 | 9 | academic |
+| [Examinations & Grading](#examinations) | 0.27.0 | 9 | 40 | academic, notices |
+| [Feedback](#feedback) | 0.9.0 | 8 | 19 | academic |
+| [Fees & Finance](#fees) | 0.29.0 | 12 | 47 | academic, finance, notices |
 | [Finance & Books](#finance) | 0.22.0 | 92 | 208 | None |
 | [Helpdesk and grievance](#helpdesk) | 0.5.0 | 2 | 7 | None |
-| [Hostel](#hostel) | 0.12.0 | 5 | 20 | academic |
-| [HR & Payroll](#hr) | 0.25.0 | 18 | 134 | finance, notices |
+| [Hostel](#hostel) | 0.14.0 | 5 | 20 | academic |
+| [HR & Payroll](#hr) | 0.26.0 | 18 | 134 | finance, notices |
 | [Library](#library) | 0.16.0 | 5 | 18 | academic |
-| [Mentoring](#mentoring) | 0.23.0 | 6 | 19 | academic, notices |
-| [Communication & Notices](#notices) | 0.14.0 | 4 | 13 | academic |
-| [Parent Portal](#parents) | 0.23.0 | 4 | 11 | academic |
-| [Placement](#placement) | 0.11.0 | 8 | 15 | academic, notices |
+| [Mentoring](#mentoring) | 0.27.0 | 6 | 19 | academic, notices |
+| [Communication & Notices](#notices) | 0.15.0 | 4 | 13 | academic |
+| [Parent Portal](#parents) | 0.27.0 | 4 | 12 | academic |
+| [Placement](#placement) | 0.12.0 | 8 | 15 | academic, notices |
 | [Projects and timesheets](#projects) | 0.5.0 | 6 | 27 | finance |
-| [Quizzes](#quizzes) | 0.8.0 | 7 | 22 | academic |
-| [Reports](#reports) | 0.2.0 | 5 | 10 | notices |
+| [Quizzes](#quizzes) | 0.9.0 | 7 | 22 | academic |
+| [Reports](#reports) | 0.3.0 | 5 | 10 | notices |
 | [Skills](#skills) | 0.5.0 | 5 | 12 | None |
-| [Timetable](#timetable) | 0.9.0 | 12 | 42 | academic |
+| [Timetable](#timetable) | 0.10.0 | 12 | 42 | academic |
 | [Transport](#transport) | 0.5.0 | 4 | 14 | None |
 
 <a id="academic"></a>
@@ -84,7 +84,7 @@ Source: `campusos-platform/packages/modules/academic/`.
 | `POST /api/v1/modules/academic/eligibility` | Whether a student may take a course, and what is missing if not | `studentId`, `courseId` |
 | `POST /api/v1/modules/academic/completions/correct` | Correct a completed course, with a reason that goes on the record | `completionId`, `credits`, `gradePoints`, `gradeLabel`, `passed`, `reason` |
 | `POST /api/v1/modules/academic/degree-audit` | What a student's degree still needs, and what the average is | `studentId`, `studentProgramId` |
-| `POST /api/v1/modules/academic/profile` | Set a student's roll and registration numbers, phone and address (the office) | `studentId`, `rollNo`, `registrationNo`, `phone`, `addressLine`, `city`, `state`, `postalCode`, `emergencyContact`, `house`, `dateOfBirth`, `apaarId` |
+| `POST /api/v1/modules/academic/profile` | Set a student's roll and registration numbers, phone and address (the office) | `studentId`, `rollNo`, `registrationNo`, `phone`, `addressLine`, `city`, `state`, `postalCode`, `emergencyContact`, `house`, `dateOfBirth`, `apaarId`, `category` |
 | `POST /api/v1/modules/academic/consents` | Record a choice for a student: a guardian for a minor, the student once adult, or the office from a form | `studentId`, `purpose`, `decision`, `note` |
 | `POST /api/v1/modules/academic/classes/change` | Cancel, move or hand to a substitute one meeting of a class | `slotId`, `onDate`, `kind`, `movedOn`, `movedStarts`, `movedEnds`, `movedRoomId`, `substituteId`, `reason` |
 | `POST /api/v1/modules/academic/classes/change/withdraw` | Withdraw a change: the class meets as usual | `changeId`, `reason` |
@@ -124,9 +124,9 @@ Source: `campusos-platform/packages/modules/admissions/`.
 | `GET /api/v1/modules/admissions/enquiries` | List enquiries | See runtime OpenAPI schema |
 | `GET /api/v1/modules/admissions/applications` | List applications | See runtime OpenAPI schema |
 | `POST /api/v1/modules/admissions/enquiries` | Record an enquiry | `name`, `email`, `phone`, `note` |
-| `POST /api/v1/modules/admissions/applications` | Submit an application | `enquiryId`, `programId`, `termId` |
+| `POST /api/v1/modules/admissions/applications` | Submit an application | `enquiryId`, `programId`, `termId`, `applicantName`, `applicantEmail`, `dateOfBirth`, `category` |
 | `POST /api/v1/modules/admissions/applications/decision` | Offer, reject or withdraw | `applicationId`, `decision`, `reason` |
-| `POST /api/v1/modules/admissions/applications/accept` | Accept and link academic student | `applicationId`, `studentId` |
+| `POST /api/v1/modules/admissions/applications/accept` | Accept and enrol | `applicationId`, `sectionId`, `studentId` |
 | `GET /api/v1/modules/admissions/imports` | What this module can import from CSV, with each file’s columns | See runtime OpenAPI schema |
 | `GET /api/v1/modules/admissions/imports/template` | A CSV template: the header and one example row (binary response) | `id` (query) |
 | `POST /api/v1/modules/admissions/imports/run` | Check a CSV file, or with apply import it: all rows or none | `importId`, `file`, `csv`, `apply` |
@@ -435,7 +435,10 @@ Source: `campusos-platform/packages/modules/examinations/`.
 | `POST /api/v1/modules/examinations/exams/unpublish` | Withdraw published results. Admin only, reason mandatory. | `examId`, `reason` |
 | `GET /api/v1/modules/examinations/marks` | The marks sheet for one exam, absent students included | See runtime OpenAPI schema |
 | `POST /api/v1/modules/examinations/marks` | Enter or amend marks for an unpublished exam | `examId`, `marks` |
-| `POST /api/v1/modules/examinations/marks/revise` | Change a published mark. The reason is mandatory and audited. | `examId`, `studentId`, `obtained`, `absent`, `reason` |
+| `POST /api/v1/modules/examinations/marks/revise` | Propose a different score or an absence for a published mark | `examId`, `studentId`, `obtained`, `absent`, `expectedRevision`, `requestId`, `reason` |
+| `POST /api/v1/modules/examinations/marks/recheck` | A student asks for a recheck or re-evaluation of their own published mark | `markId`, `kind`, `reason` |
+| `POST /api/v1/modules/examinations/marks/decide` | Approve a proposed revision, or close a review. Administrator only, never the proposer. | `requestId`, `decision`, `reason` |
+| `GET /api/v1/modules/examinations/marks/requests` | Reviews of marks, newest first, 50 at a time | See runtime OpenAPI schema |
 | `POST /api/v1/modules/examinations/finalise` | Turn a course’s published marks into the academic record, correcting it where a mark has since been revised | `offeringId`, `reason` |
 | `GET /api/v1/modules/examinations/scales` | Grading schemes for this institution | See runtime OpenAPI schema |
 | `GET /api/v1/modules/examinations/scales/programs` | Programmes that grade on their own scale rather than the default | See runtime OpenAPI schema |
@@ -452,6 +455,7 @@ Source: `campusos-platform/packages/modules/examinations/`.
 | `POST /api/v1/modules/examinations/enrol` | Enrol for the term’s examinations, confirming one’s details | `termId`, `confirm` |
 | `GET /api/v1/modules/examinations/enrolments` | Who is enrolled for a term, and who has classes but is not | `termId` (query) |
 | `POST /api/v1/modules/examinations/enrolments/cancel` | Cancel an enrolment, with a reason | `enrolmentId`, `reason` |
+| `POST /api/v1/modules/examinations/eligibility/waiver` | Grant or revoke a per-term eligibility waiver (attendance or posted fees), with an audited reason | `termId`, `studentId`, `check`, `action`, `reason` |
 | `GET /api/v1/modules/examinations/admit-card.pdf` | The admit card for an enrolment (binary response) | `termId` (query), `studentId` (query) |
 | `POST /api/v1/modules/examinations/backlogs` | Book a failed paper to sit again | `termId`, `courseId`, `bookingType` |
 | `POST /api/v1/modules/examinations/backlogs/cancel` | Cancel a backlog booking and its fee | `bookingId`, `reason` |
@@ -530,10 +534,11 @@ Source: `campusos-platform/packages/modules/fees/`.
 | `/m/fees/me` | My fees | student |
 | `/m/fees/aid` | Aid and refunds | institution_admin, super_admin |
 | `/m/fees/reconciliation` | Fee ledger against the books | institution_admin, super_admin, accounts_staff |
-| `/m/fees/transfer` | Pay by bank transfer | student |
+| `/m/fees/transfer` | Pay fees | student |
 | `/m/fees/letter` | Demand letter | student |
-| `/m/fees/transfers` | Reported transfers | institution_admin, super_admin, accounts_staff |
+| `/m/fees/transfers` | Reported payments | institution_admin, super_admin, accounts_staff |
 | `/m/fees/accounts` | Accounts and letters | institution_admin, super_admin, accounts_staff |
+| `/m/fees/statement` | Bank statement | institution_admin, accounts_staff |
 
 ### Operations
 
@@ -541,10 +546,14 @@ Source: `campusos-platform/packages/modules/fees/`.
 |---|---|---|
 | `GET /api/v1/modules/fees/bank-accounts` | The institution's accounts fees are paid into | See runtime OpenAPI schema |
 | `POST /api/v1/modules/fees/bank-accounts` | Add an account | `label`, `accountName`, `bankName`, `branch`, `accountNumber`, `ifsc` |
+| `POST /api/v1/modules/fees/bank-accounts/upi` | Set or clear an account's UPI ID | `accountId`, `vpa`, `merchant` |
+| `GET /api/v1/modules/fees/statement` | Unmatched credits on the fees bank account, a page at a time | `q` (query), `sort` (query), `dir` (query), `n` (query), `after` (query) |
+| `POST /api/v1/modules/fees/statement/match` | Match the bank statement to reported payments and payment references | See runtime OpenAPI schema |
+| `POST /api/v1/modules/fees/statement/receipt` | Receipt a statement line | `lineId`, `studentId`, `termId`, `method`, `reference`, `drawerIfsc`, `drawerAccount` |
 | `POST /api/v1/modules/fees/bank-accounts/retire` | Retire an account | `accountId` |
-| `POST /api/v1/modules/fees/transfers` | Report an RTGS, NEFT or IMPS transfer (the student who made it) | `termId`, `accountId`, `mode`, `remitterBank`, `remitterBranch`, `remitterIfsc`, `accountHolder`, `contactPhone`, `transferredOn`, `amount`, `utr`, `bankReference` |
+| `POST /api/v1/modules/fees/transfers` | Report a payment by RTGS, NEFT, IMPS, UPI or a deposited cheque | `termId`, `accountId`, `mode`, `remitterBank`, `remitterBranch`, `remitterIfsc`, `drawerAccount`, `accountHolder`, `contactPhone`, `transferredOn`, `amount`, `studentId`, `utr`, `bankReference` |
 | `GET /api/v1/modules/fees/transfers/mine` | The signed-in student's reported transfers | See runtime OpenAPI schema |
-| `GET /api/v1/modules/fees/transfers` | Reported transfers, pending first | `status` (query) |
+| `GET /api/v1/modules/fees/transfers` | Reported payments, pending first, a page at a time | `status` (query), `q` (query), `n` (query), `after` (query) |
 | `POST /api/v1/modules/fees/transfers/verify` | Verify a transfer against the bank statement | `claimId`, `note` |
 | `POST /api/v1/modules/fees/transfers/reject` | Reject a reported transfer, with a reason | `claimId`, `reason` |
 | `GET /api/v1/modules/fees/letters/settings` | Who signs demand letters, and what they say | See runtime OpenAPI schema |
@@ -1299,6 +1308,7 @@ Source: `campusos-platform/packages/modules/parents/`.
 | `POST /api/v1/modules/parents/links/decide` | Verify or refuse a claimed link. Reason mandatory and audited. | `linkId`, `approve`, `reason` |
 | `POST /api/v1/modules/parents/links/revoke` | Withdraw a verified link. Reason mandatory and audited. | `linkId`, `approve`, `reason` |
 | `POST /api/v1/modules/parents/consents` | A parent or guardian gives, refuses or withdraws a consent for a child under 18. Audited. | `studentId`, `purpose`, `decision` |
+| `POST /api/v1/modules/parents/fee-claims` | Report a payment made for your child | `termId`, `accountId`, `mode`, `remitterBank`, `remitterBranch`, `remitterIfsc`, `drawerAccount`, `accountHolder`, `contactPhone`, `transferredOn`, `amount`, `studentId`, `utr`, `bankReference` |
 | `POST /api/v1/modules/parents/links/adult` | A student aged 18 or over keeps or ends a guardian’s access. Audited. | `linkId`, `keep` |
 | `GET /api/v1/modules/parents/guardians` | Guardian invitations: open, accepted, expired or withdrawn, and for which children | See runtime OpenAPI schema |
 | `POST /api/v1/modules/parents/guardians/invite` | Invite a guardian, at their own address, for a child | `email`, `studentId`, `relation`, `days` |

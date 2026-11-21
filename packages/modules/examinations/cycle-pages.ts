@@ -1,6 +1,7 @@
 import { param, type PluginPage, type PluginSection } from '@campusos/module-framework'
 import { listStructure, type Actor as AcademicActor } from '@campusos/module-academic/api'
 import {
+  BLOCKER_TEXT,
   backlogList,
   enrolmentList,
   examCycleSettings,
@@ -25,6 +26,8 @@ type Cycle = NonNullable<Awaited<ReturnType<typeof myExamCycle>>>
 
 const SITTING = { internal: 'internal assessment', university: 'university exam', both: 'both' } as const
 
+const GATE_WORDS = { not_applicable: 'Not applicable', passed: 'Cleared', failed: 'Blocked', unavailable: 'Unavailable', waived: 'Waived' } as const
+
 const PHASE_WORDS = { none: 'not set', upcoming: 'upcoming', open: 'open', closed: 'closed' } as const
 
 export const cyclePages: PluginPage[] = [
@@ -44,6 +47,17 @@ export const cyclePages: PluginPage[] = [
         bookings: c.bookings.map((b) => ({ ...b, bookedOn: wallClock(b.bookedAt, ZONE), sitting: SITTING[b.bookingType] })),
         reports: c.reports.map((r) => ({ ...r, state: r.held ? 'held' : 'ready', link: r.held ? '' : 'Download' })),
         owed: c.feedback?.owed ?? [],
+        gate: [
+          {
+            check: 'Attendance',
+            state: GATE_WORDS[c.eligibility.attendance.state],
+            detail:
+              c.eligibility.attendance.percent !== null && c.eligibility.attendance.minimumPercent !== null
+                ? `${c.eligibility.attendance.percent.toFixed(1)}% / ${c.eligibility.attendance.minimumPercent}% required`
+                : '',
+          },
+          { check: 'Posted fees', state: GATE_WORDS[c.eligibility.dues], detail: '' },
+        ],
         backlogOptions: c.backlogs.filter((b) => !b.booked).map((b) => ({ value: b.courseId, label: `${b.code} ${b.title} (failed ${b.failedIn ?? ''})` })),
         cancellable: c.bookings.filter((b) => b.state === 'booked').map((b) => ({ value: b.id, label: `${b.code} ${b.title}` })),
       }
@@ -78,6 +92,18 @@ export const cyclePages: PluginPage[] = [
           { label: 'Enrolled', value: c.enrolment ? 'yes' : 'no' },
         ],
       })
+      const held = c.eligibility.blocker
+      out.push({
+        kind: 'table',
+        title: 'Exam eligibility',
+        rows: 'gate',
+        columns: [
+          { key: 'check', label: 'Check' },
+          { key: 'state', label: 'State', kind: 'status' },
+          { key: 'detail', label: '' },
+        ],
+      })
+      if (held) out.push({ kind: 'note', tone: 'warn', text: `${BLOCKER_TEXT[held]} Contact the examination cell.` })
       if (c.enrolment) {
         out.push({
           kind: 'table',
@@ -89,11 +115,13 @@ export const cyclePages: PluginPage[] = [
             { key: 'title', label: 'Title' },
           ],
         })
-        out.push({
-          kind: 'links',
-          title: 'Step 3. Admit card',
-          links: [{ label: `Download the admit card for ${c.term.code}`, href: `/api/v1/modules/examinations/admit-card.pdf?termId=${c.term.id}` }],
-        })
+        if (!held) {
+          out.push({
+            kind: 'links',
+            title: 'Step 3. Admit card',
+            links: [{ label: `Download the admit card for ${c.term.code}`, href: `/api/v1/modules/examinations/admit-card.pdf?termId=${c.term.id}` }],
+          })
+        }
       } else {
         out.push({
           kind: 'note',
@@ -103,7 +131,7 @@ export const cyclePages: PluginPage[] = [
             `Phone: ${p.phone ?? 'not recorded'}. Address: ${p.address ?? 'not recorded'}. ` +
             'If anything is wrong, contact the office before enrolling: it is printed on your admit card.',
         })
-        if (w?.phase === 'open') {
+        if (w?.phase === 'open' && !held) {
           out.push({
             kind: 'form',
             title: `Enrol for ${c.term.code}`,
@@ -116,7 +144,7 @@ export const cyclePages: PluginPage[] = [
               { name: 'confirm', label: 'I have checked my name, numbers, phone and address, and they are correct', kind: 'checkbox', value: 'false' },
             ],
           })
-        } else {
+        } else if (!held) {
           out.push({
             kind: 'note',
             tone: 'warn',
@@ -233,6 +261,7 @@ export const cyclePages: PluginPage[] = [
         backlogs,
         terms: structure.terms.map((t) => ({ label: t.code, href: `/m/examinations/cycle?termId=${t.id}`, active: t.id === term?.id })),
         termOptions: structure.terms.map((t) => ({ value: t.id, label: `${t.code} - ${t.name}${t.isCurrent ? ' (current)' : ''}` })),
+        waiverStudents: enrolled.map((e) => ({ value: e.studentId, label: e.name })),
         enrolledOptions: enrolled.filter((e) => e.enrolmentId).map((e) => ({ value: e.enrolmentId!, label: e.name })),
         counts: {
           enrolled: enrolled.filter((e) => e.enrolmentId).length,
@@ -323,6 +352,37 @@ export const cyclePages: PluginPage[] = [
           fields: [
             { name: 'enrolmentId', label: 'Student', kind: 'select', options: 'enrolledOptions' },
             { name: 'reason', label: 'Why', kind: 'textarea', rows: 2 },
+          ],
+        },
+        {
+          kind: 'form',
+          title: 'Set eligibility waiver',
+          note: 'Use an administrative reason. Leave out medical and payment details. A waiver lasts until it is revoked, and both the grant and the revoke are recorded with this reason.',
+          submit: 'Save waiver',
+          path: '/eligibility/waiver',
+          roles: [...CELL],
+          fields: [
+            { name: 'termId', label: '', kind: 'hidden', value: String((data.term as { id?: string } | null)?.id ?? '') },
+            { name: 'studentId', label: 'Student', kind: 'select', options: 'waiverStudents' },
+            {
+              name: 'check',
+              label: 'Check',
+              kind: 'select',
+              options: [
+                { value: 'attendance', label: 'Attendance' },
+                { value: 'dues', label: 'Posted fees' },
+              ],
+            },
+            {
+              name: 'action',
+              label: 'Action',
+              kind: 'select',
+              options: [
+                { value: 'grant', label: 'Grant' },
+                { value: 'revoke', label: 'Revoke' },
+              ],
+            },
+            { name: 'reason', label: 'Reason', kind: 'text' },
           ],
         },
         {
