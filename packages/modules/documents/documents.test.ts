@@ -271,11 +271,13 @@ test('erasure: an unsigned subject file and its challenge go, signed evidence st
   assert.equal((await authDb.execute(sql`select 1 from documents_signatures where id = ${signed.signatureId}`)).rows.length, 1)
 })
 
-test('purge: expired unsigned and signed files are removed, current ones are kept', async () => {
+test('purge (D860): unsigned drafts and expired signed files are removed; records are never aged out, current ones are kept', async () => {
   const { authDb } = await import('@campusos/db')
   const { sql } = await import('drizzle-orm')
   const campus = await college()
-  const old = await seedFile(campus, { ageDays: 100 })
+  const old = await seedFile(campus, { ageDays: 100, scope: 'signer' })
+  const oldRecord = await seedFile(campus, { ageDays: 100 })
+  const oldAcademic = await seedFile(campus, { ageDays: 100, scope: 'student_academic' })
   const fresh = await seedFile(campus)
   const expiredSigned = await seedSigned(campus, { ageDays: 20, retainUntilDays: 15 })
   const heldSigned = await seedSigned(campus)
@@ -285,7 +287,7 @@ test('purge: expired unsigned and signed files are removed, current ones are kep
   assert.equal(result.r.documents_files, 2)
   assert.equal(result.r.documents_challenges, 1)
   const left = new Set((await authDb.execute(sql`select id from documents_files where institution_id = ${campus.id}`)).rows.map(row => (row as { id: string }).id))
-  assert.deepEqual([old.id, fresh.id, expiredSigned.documentId, heldSigned.documentId, pending.id].map(id => left.has(id)), [false, true, false, true, true])
+  assert.deepEqual([old.id, fresh.id, expiredSigned.documentId, heldSigned.documentId, pending.id, oldRecord.id, oldAcademic.id].map(id => left.has(id)), [false, true, false, true, true, true, true])
   const [req] = (await authDb.execute(sql`select code_digest from documents_sign_requests where id = ${request}`)).rows as { code_digest: string | null }[]
   assert.equal(req!.code_digest, null)
 })
