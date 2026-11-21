@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { eq, sql } from 'drizzle-orm'
 import { authDb, institutions, withTenant } from '@campusos/db'
 import { board, inbox, noticePage, type Actor } from './api'
-import { memberDepartments } from './api/department-audience'
+import { memberDepartments, scopedNoticeGuard } from './api/department-audience'
 
 /**
  * Department notices at scale (P1-07e review, BLOCKER): the member check must
@@ -90,4 +90,30 @@ test('the member list is exactly the own department, whoever asks', async () => 
   assert.deepEqual(mine.student, mine.own)
   assert.deepEqual(mine.parent, mine.own)
   assert.deepEqual(mine.admin, [])
+})
+
+test('the scoped-notice guard costs the caller, not the hub (P1-07e review 2, HIGH)', async () => {
+  const [o] = await authDb.insert(institutions).values({ slug: 'notice-dept-scale-other', name: 'Busy College', allowedEmailDomains: ['sother.test'] }).returning({ id: institutions.id })
+  const [q] = await authDb.insert(institutions).values({ slug: 'notice-dept-scale-quiet', name: 'Quiet College', allowedEmailDomains: ['squiet.test'] }).returning({ id: institutions.id })
+  try {
+    await authDb.execute(sql`insert into users (id, email, institution_id, role, name) values ('oadm', 'oadm@sother.test', ${o!.id}, 'institution_admin', 'A')`)
+    await authDb.execute(sql`insert into users (id, email, institution_id, role, name) values ('qadm', 'qadm@squiet.test', ${q!.id}, 'institution_admin', 'A')`)
+    await authDb.execute(sql`insert into academic_departments (institution_id, code, name) values (${o!.id}, 'BUSY', 'Busy')`)
+    await authDb.execute(sql`insert into notices (institution_id, title, body, author_id, published_at, department_id)
+      select ${o!.id}, 'X' || g, 'b', 'oadm', now(), (select id from academic_departments where institution_id = ${o!.id}) from generate_series(1, 200000) g`)
+    await authDb.execute(sql`insert into notices (institution_id, title, body, author_id, published_at)
+      select ${q!.id}, 'Q' || g, 'b', 'qadm', now() - (g || ' seconds')::interval from generate_series(1, 100000) g`)
+    await authDb.execute(sql`analyze notices`)
+    const plan = await withTenant(q!.id, async (tx) => {
+      assert.deepEqual(await memberDepartments(tx, q!.id, 'nobody'), [])
+      return ((await tx.execute(sql`explain (analyze, buffers) ${scopedNoticeGuard(q!.id)}`)).rows as { 'QUERY PLAN': string }[]).map((r) => r['QUERY PLAN']).join(' ')
+    })
+    // The caller's own 100,000 unscoped notices and the hub's 200,000 scoped ones must not be read: the first form read thousands of blocks.
+    const read = Number(/Buffers: shared hit=(\d+)/.exec(plan)?.[1] ?? 0) // the top node's count
+    assert.ok(read < 100, `${read} blocks: ${plan}`)
+  } finally {
+    await authDb.execute(sql`delete from notices where institution_id in (${o!.id}, ${q!.id})`)
+    await authDb.delete(institutions).where(eq(institutions.id, o!.id))
+    await authDb.delete(institutions).where(eq(institutions.id, q!.id))
+  }
 })

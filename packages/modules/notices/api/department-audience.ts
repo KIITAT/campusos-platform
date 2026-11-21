@@ -67,6 +67,10 @@ export function departmentRecipientsSql(tenant: string, department: SQL, withGua
     select user_id from department_staff${guardians}`
 }
 
+/** Is any notice of this institution department-scoped? Asked through the institution's own departments. */
+export const scopedNoticeGuard = (tenant: string): SQL =>
+  sql`select 1 from notices where institution_id = ${tenant} and department_id is not null limit 1`
+
 /**
  * The departments, among those with a notice, whose audience includes this
  * person today. Asked from the person's side, with their own id bound, so the
@@ -77,7 +81,7 @@ export function departmentRecipientsSql(tenant: string, department: SQL, withGua
  * keeps them together.
  */
 export async function memberDepartments(tx: Tx, tenant: string, userId: string): Promise<string[]> {
-  const scoped = (await tx.execute(sql`select 1 from notices where institution_id = ${tenant} and department_id is not null limit 1`)).rows
+  const scoped = (await tx.execute(scopedNoticeGuard(tenant))).rows
   if (scoped.length === 0) return []
   const withGuardians = await guardiansAvailable(tx)
   const today = sql`(now() at time zone 'Asia/Kolkata')::date`
