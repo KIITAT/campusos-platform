@@ -91,21 +91,41 @@ export async function termRoster(tx: Tx, termId: string, studentId?: string | nu
  * and their own live charges. The waiver columns say how much of a line's
  * waiver the books have not yet been told about. Null `studentIds` means the
  * whole term.
+ *
+ * One line per programme and label: the most specific item for the student's
+ * batch and category, category before batch (ACC-21, P1-03d). The batch is the
+ * latest admission year among the student's sections of the programme, else the
+ * year they declared it; the category is the one on their profile (P1-12a).
+ * `waived` is the line's waiver amount and `due_on` its instalment date, null
+ * for a student's own charges.
  */
 export function priceListSql(termId: string, studentIds: string[] | null): SQL {
   const only = (col: SQL) => (studentIds ? sql` and ${col} = any(array[${sql.join(studentIds.map((i) => sql`${i}`), sql`, `)}]::text[])` : sql``)
   return sql`
     select e.student_id, f.id as fee_item_id, null::uuid as student_charge_id, f.amount_paise::bigint as charged,
-           w.id as waiver_id, greatest(coalesce(w.amount_paise - w.posted_paise, 0), 0)::bigint as unposted_waived
-      from (select distinct sp.student_id, sp.program_id
+           w.id as waiver_id, greatest(coalesce(w.amount_paise - w.posted_paise, 0), 0)::bigint as unposted_waived,
+           coalesce(w.amount_paise, 0)::bigint as waived, (f.due_on at time zone 'UTC')::date as due_on
+      from (select distinct on (sp.student_id, sp.program_id) sp.student_id, sp.program_id,
+                   coalesce((select max(s.admission_year) from academic_section_members m
+                               join academic_sections s on s.id = m.section_id
+                              where m.user_id = sp.student_id and s.program_id = sp.program_id),
+                            extract(year from sp.declared_on)::int) as batch
               from academic_student_programs sp join academic_terms t on t.id = ${termId}::uuid
              where sp.declared_on <= t.ends_on
                and (sp.ended_on is null or sp.ended_on > t.starts_on)
-               and (sp.ended_on is null or sp.ended_on > sp.declared_on)${only(sql`sp.student_id`)}) e
-      join fee_items f on f.program_id = e.program_id and f.term_id = ${termId}::uuid
+               and (sp.ended_on is null or sp.ended_on > sp.declared_on)${only(sql`sp.student_id`)}
+             order by sp.student_id, sp.program_id, sp.declared_on desc) e
+      left join academic_student_profiles sp2 on sp2.student_id = e.student_id
+      join lateral (
+        select distinct on (fi.label) fi.id, fi.amount_paise, fi.due_on
+          from fee_items fi
+         where fi.program_id = e.program_id and fi.term_id = ${termId}::uuid
+           and (fi.admission_year is null or fi.admission_year = e.batch)
+           and (fi.category is null or fi.category = sp2.category)
+         order by fi.label, (fi.category is not null) desc, (fi.admission_year is not null) desc) f on true
       left join fee_waivers w on w.fee_item_id = f.id and w.student_id = e.student_id
     union all
-    select c.student_id, null::uuid, c.id, c.amount_paise::bigint, null::uuid, 0::bigint
+    select c.student_id, null::uuid, c.id, c.amount_paise::bigint, null::uuid, 0::bigint, 0::bigint, null::date
       from fee_student_charges c
      where c.term_id = ${termId}::uuid and c.cancelled_at is null${only(sql`c.student_id`)}`
 }

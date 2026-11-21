@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, sql } from 'drizzle-orm'
+import { and, asc, eq, sql } from 'drizzle-orm'
 import { audit, users, withTenant } from '@campusos/db'
 import { moduleEnabled } from '@campusos/module-framework'
 import { degreeAudit, type Actor as Academic } from '@campusos/module-academic/api'
@@ -9,7 +9,6 @@ import { registrations } from '@campusos/module-enrollment/schema'
 import { manifest as feesManifest } from '../manifest'
 import {
   dropCredits,
-  feeItems,
   refundRules,
   scholarshipAwards,
   scholarships,
@@ -25,7 +24,7 @@ import {
   type AidAssessment,
 } from './schemas'
 import { postDropCredit, postScholarship } from './posting'
-import { enrolledPrograms } from './enrolment'
+import { priceListSql } from './enrolment'
 
 /**
  * Student financials: the aid an institution funds itself, and what a course
@@ -88,11 +87,6 @@ const asAcademic = (a: Actor): Academic => ({
   institutionId: a.institutionId,
 })
 
-/** The programmes this student is enrolled in for the term, which is what they are charged for (ACC-19). */
-async function programsOf(tx: Tx, studentId: string, termId: string): Promise<string[]> {
-  return (await enrolledPrograms(tx, studentId, termId)).map((r) => r.programId)
-}
-
 /** What a term's charges come to for this student, gross of anything forgiven. */
 async function chargedPaise(
   tx: Tx,
@@ -100,19 +94,13 @@ async function chargedPaise(
   termId: string,
   proratableOnly = false,
 ): Promise<number> {
-  const progs = await programsOf(tx, studentId, termId)
-  if (progs.length === 0) return 0
-
-  const [row] = await tx
-    .select({ total: sql<number>`coalesce(sum(${feeItems.amountPaise}), 0)::bigint` })
-    .from(feeItems)
-    .where(
-      and(
-        eq(feeItems.termId, termId),
-        inArray(feeItems.programId, progs),
-        proratableOnly ? eq(feeItems.proratable, true) : undefined,
-      ),
-    )
+  // The student's own lines, by the one rule that picks them (ACC-21).
+  const [row] = (
+    await tx.execute(sql`
+      select coalesce(sum(l.charged), 0)::bigint as total
+        from (${priceListSql(termId, [studentId])}) l
+        join fee_items f on f.id = l.fee_item_id${proratableOnly ? sql` where f.proratable` : sql``}`)
+  ).rows as { total: string | number }[]
   return Number(row?.total ?? 0)
 }
 

@@ -38,7 +38,7 @@ import {
 } from './schemas'
 import { postedOf, postedSql, receivableReport } from './books'
 import { postInvoice, postPayment, postRefund, postWaiverChange } from './posting'
-import { enrolledPrograms, notEnrolled, priceListSql, termRoster } from './enrolment'
+import { notEnrolled, priceListSql, termRoster } from './enrolment'
 import { checkOtherPerson, fiscalShort, settingsWithin } from '@campusos/module-finance/api'
 import { notify } from '@campusos/module-notices/api'
 
@@ -221,8 +221,7 @@ export async function grantWaiver(actor: Actor, input: unknown) {
     // Only a charge the student actually has (ACC-22): an item of a programme
     // they are enrolled in for its term, by the rule that bills them. Anything
     // else would post waiver expense against a debt that was never raised.
-    const enrolled = await enrolledPrograms(tx, data.studentId, item.termId)
-    if (!enrolled.some((p) => p.programId === item.programId)) {
+    if (!(await itemsCharged(tx, data.studentId, item.termId)).includes(data.feeItemId)) {
       throw new FeeError(
         400,
         'item_not_charged',
@@ -1052,12 +1051,21 @@ export async function paymentTrail(actor: Actor, paymentId: string) {
 
 // --- reads ----------------------------------------------------------------
 
+/** The fee items one student is charged for in a term: the price list's pick (ACC-21). */
+async function itemsCharged(tx: Tx, studentId: string, termId: string): Promise<string[]> {
+  const rows = (
+    await tx.execute(sql`select fee_item_id from (${priceListSql(termId, [studentId])}) l where fee_item_id is not null`)
+  ).rows as { fee_item_id: string }[]
+  return rows.map((r) => String(r.fee_item_id))
+}
+
 /**
- * Charges applying to one student in one term: the fee items of the
- * programmes they are enrolled in for it (ACC-19), and their own charges.
+ * Charges applying to one student in one term: the fee items the price list
+ * picks for them (the programmes they are enrolled in, ACC-19; the most
+ * specific line of each label, ACC-21), and their own charges.
  */
 export async function chargesFor(tx: Tx, studentId: string, termId: string) {
-  const progs = await enrolledPrograms(tx, studentId, termId)
+  const ids = await itemsCharged(tx, studentId, termId)
 
   // Charges on this student alone -- a backlog paper -- whatever programme
   // they read, billed beside the programme's own lines.
@@ -1084,7 +1092,7 @@ export async function chargesFor(tx: Tx, studentId: string, termId: string) {
     postedPaise: null as number | null,
   }))
 
-  if (progs.length === 0) return own
+  if (ids.length === 0) return own
 
   const items = await tx
     .select({
@@ -1101,12 +1109,7 @@ export async function chargesFor(tx: Tx, studentId: string, termId: string) {
       feeWaivers,
       and(eq(feeWaivers.feeItemId, feeItems.id), eq(feeWaivers.studentId, studentId)),
     )
-    .where(
-      and(
-        eq(feeItems.termId, termId),
-        inArray(feeItems.programId, progs.map((p) => p.programId)),
-      ),
-    )
+    .where(inArray(feeItems.id, ids))
     .orderBy(asc(feeItems.label))
   return [...items.map((i) => ({ ...i, feeItemId: i.feeItemId as string | null, studentChargeId: null as string | null })), ...own]
 }
