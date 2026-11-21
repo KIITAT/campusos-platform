@@ -97,7 +97,7 @@ export const notifications = pgTable(
     link: text(),
     noticeId: uuid('notice_id').references(() => notices.id, { onDelete: 'cascade' }),
     readAt: timestamp('read_at', { withTimezone: true }),
-    /** Unused since P1-02 (decision 280); kept so no data is dropped. */
+    /** Set by the worker when the SMTP relay accepts the email. */
     emailedAt: timestamp('emailed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },

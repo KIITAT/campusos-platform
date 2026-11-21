@@ -16,6 +16,7 @@ import {
   type SortSpec,
 } from '@campusos/module-framework'
 import { departments } from '@campusos/module-academic/schema'
+import { emailNotificationChannel } from './email-channel'
 import { noticeAttachments, notices, notificationEmailOptOuts, notificationMandatory, notificationOptOuts, notifications } from '../schema'
 import {
   attachSchema,
@@ -115,6 +116,7 @@ export interface NotificationChannel {
 }
 
 const channels = new Map<string, NotificationChannel>()
+registerNotificationChannel(emailNotificationChannel)
 
 /** Add a delivery channel beside the in-app inbox. Returns a function that removes it. */
 export function registerNotificationChannel(channel: NotificationChannel): () => void {

@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
-import { eq } from 'drizzle-orm'
-import { authDb, institutions, jobs, users, withTenant } from '@campusos/db'
-import { createNotice, inbox, notify, publishNotice } from './api'
+import { eq, sql } from 'drizzle-orm'
+import { authDb, claimJob, institutions, jobActor, jobs, runClaimedJob, users, withTenant } from '@campusos/db'
+import { createNotice, inbox, notify, publishNotice, setEmailPreference, setMandatory, setPreference } from './api'
+import { emailNotificationChannel } from './api/email-channel'
 import { plugin } from './plugin'
 
 const slug = 'notice-email-channel-test'
@@ -26,6 +27,7 @@ after(async () => {
 })
 
 const student = () => ({ id: studentId, institutionId: tenant, role: 'student' as const })
+const admin = () => ({ id: adminId, institutionId: tenant, role: 'institution_admin' as const })
 const emailJobs = () => withTenant(tenant, (tx) => tx.select().from(jobs).where(eq(jobs.kind, 'notices.email')))
 
 async function withEmailEnabled(run: () => Promise<void>) {
@@ -55,12 +57,16 @@ test('a committed inbox notification queues exactly one opaque email job', () =>
   assert.equal(job.actorId, null)
   assert.equal(job.maxAttempts, 5)
   assert.deepEqual(job.payload, { notificationId: item.id })
+  await withTenant(tenant, (tx) => emailNotificationChannel.deliver(tx, [{
+    notificationId: item.id, institutionId: tenant, userId: studentId, moduleId: 'fees', title, body: 'Fixture', link: null,
+  }]))
+  assert.equal((await emailJobs()).length, before + 1, 'redispatching the same inbox row cannot enqueue it twice')
 }))
 
 test('a published notice queues email and the member opt-out removes only email', () => withEmailEnabled(async () => {
   const preference = plugin.routes.find((route) => route.method === 'POST' && route.path === '/preferences/email')
   assert.ok(preference, 'members have a notification email opt-out route')
-  const actor = { id: adminId, institutionId: tenant, role: 'institution_admin' as const }
+  const actor = admin()
   const publish = async (title: string) => {
     const draft = await createNotice(actor, { title, body: 'Example board notice', publish: false, audienceRoles: ['student'] })
     const published = await publishNotice(actor, { noticeId: draft.id })
@@ -80,4 +86,111 @@ test('a published notice queues email and the member opt-out removes only email'
   } finally {
     await setOptOut(false)
   }
+}))
+
+test('email enqueue rolls back with the producer transaction', () => withEmailEnabled(async () => {
+  const before = (await emailJobs()).length
+  const title = 'A rolled-back fee event'
+  await assert.rejects(withTenant(tenant, async (tx) => {
+    await notify(tx, tenant, { userIds: [studentId], moduleId: 'fees', title, body: 'An example fee event' })
+    const queued = await tx.select().from(jobs).where(eq(jobs.kind, 'notices.email'))
+    assert.equal(queued.length, before + 1)
+    throw new Error('rollback fixture')
+  }), /rollback fixture/)
+  assert.equal((await emailJobs()).length, before)
+  assert.ok(!(await inbox(student())).items.some((item) => item.title === title))
+}))
+
+test('category mutes control inbox delivery and the email opt-out even applies to mandatory categories', () => withEmailEnabled(async () => {
+  const before = (await emailJobs()).length
+  const deliver = (title: string) => withTenant(tenant, (tx) =>
+    notify(tx, tenant, { userIds: [studentId], moduleId: 'fees', title, body: 'An example fee event' }))
+  const setFeeMandatory = (mandatory: boolean) => setMandatory(admin(), { moduleId: 'fees', mandatory, reason: 'Email fixture' })
+  await setPreference(student(), { moduleId: 'fees', muted: true })
+  try {
+    assert.equal(await deliver('A muted notification'), 0)
+    await setFeeMandatory(true)
+    await setEmailPreference(student(), { optedOut: true })
+    assert.equal(await deliver('A mandatory notification'), 1)
+    assert.equal((await emailJobs()).length, before)
+    assert.ok((await inbox(student())).items.some((item) => item.title === 'A mandatory notification'))
+  } finally {
+    await setEmailPreference(student(), { optedOut: false })
+    await setFeeMandatory(false)
+    await setPreference(student(), { moduleId: 'fees', muted: false })
+  }
+}))
+
+test('queued publish reuses its pending job and emits one email for the recipient', () => withEmailEnabled(async () => {
+  const [isolated] = await authDb.insert(institutions).values({ slug: 'notice-email-queued-test', name: 'Queued email test' }).returning()
+  const institutionId = isolated!.id
+  try {
+    const [poster] = await authDb.insert(users).values({ institutionId, email: 'poster@queued-email.example', role: 'institution_admin' }).returning()
+    const actor = { institutionId, id: poster!.id, role: 'institution_admin' as const }
+    const draft = await createNotice(actor, { title: 'Queued email', body: 'Example notice', publish: false })
+    const publish = () => publishNotice(actor, { noticeId: draft.id, queued: true })
+    assert.deepEqual(await publish(), await publish())
+    const claimed = await claimJob(institutionId, 'notices-email-test')
+    assert.equal(claimed?.kind, 'notices.publish')
+    const handler = plugin.jobs!.find((job) => job.kind === claimed!.kind)!
+    const run = () => runClaimedJob(institutionId, claimed!.id, claimed!.leaseToken!, async (tx, job) => {
+      const current = await jobActor(tx, institutionId, job.actorId, 'notices', handler.roles, true)
+      return handler.run(current, tx, job.payload)
+    })
+    await run()
+    await assert.rejects(run(), /lease/)
+    const queued = await withTenant(institutionId, (tx) => tx.select().from(jobs).where(eq(jobs.kind, 'notices.email')))
+    assert.equal(queued.length, 1)
+    assert.equal((await inbox(actor)).items.length, 1)
+    assert.ok(!(await emailJobs()).some((row) => row.id === queued[0]!.id))
+  } finally {
+    await authDb.delete(institutions).where(eq(institutions.id, institutionId))
+  }
+}))
+
+test('guardian delivery uses the same email channel and leaves private details in the inbox', () => withEmailEnabled(async () => {
+  const [parent] = await authDb.insert(users).values({ institutionId: tenant, email: 'parent@notice-channel.example', role: 'parent' }).returning()
+  const parentId = parent!.id
+  await authDb.execute(sql`insert into parent_links (institution_id, parent_id, student_id, relation, verified_at)
+    values (${tenant}, ${parentId}, ${studentId}, 'mother', now())`)
+  try {
+    const title = 'Example attendance detail'
+    const delivered = await withTenant(tenant, (tx) => notify(tx, tenant, {
+      userIds: [studentId], moduleId: 'attendance', title, body: 'Private student data', alsoGuardians: { link: '/m/parents' },
+    }))
+    assert.equal(delivered, 2)
+    const parentNotice = (await inbox({ institutionId: tenant, id: parentId, role: 'parent' })).items.find((item) => item.title === title)
+    assert.equal(parentNotice?.link, '/m/parents')
+    const parentJob = (await emailJobs()).find((job) => job.dedupeKey === `notices.email:${parentNotice!.id}`)
+    assert.deepEqual(parentJob?.payload, { notificationId: parentNotice!.id })
+  } finally {
+    await authDb.delete(users).where(eq(users.id, parentId))
+  }
+}))
+
+test('a 30,000-person board fan-out queues the eligible audience in one bulk operation', () => withEmailEnabled(async () => {
+  // Roll back the whole fixture to avoid firing every module's user-delete
+  // triggers for 30,000 people. Publication itself runs as the app role.
+  const rollback = new Error('bulk fixture complete')
+  await assert.rejects(authDb.transaction(async (tx) => {
+    const [isolated] = await tx.insert(institutions).values({ slug: 'notice-email-bulk-test', name: 'Bulk email test' }).returning()
+    const institutionId = isolated!.id
+    const [poster] = await tx.insert(users).values({ institutionId, email: 'poster@bulk-email.example', role: 'institution_admin' }).returning()
+    await tx.execute(sql`insert into users (id, institution_id, email, role)
+      select 'email-bulk-' || n, ${institutionId}, 'student-' || n || '@bulk-email.example', 'student'
+      from generate_series(1, 30000) as n`)
+    const actor = { institutionId, id: poster!.id, role: 'institution_admin' as const }
+    const { rows: [draft] } = await tx.execute<{ id: string }>(sql`
+      insert into notices (institution_id, title, body, audience_roles, author_id)
+      values (${institutionId}, 'Bulk notice', 'Example notice', array['student']::role[], ${actor.id}) returning id`)
+    await tx.execute(sql`set local role campusos_app`)
+    await tx.execute(sql`select set_config('app.institution_id', ${institutionId}, true)`)
+    const handler = plugin.jobs!.find((job) => job.kind === 'notices.publish')!
+    const outcome = await handler.run(actor, tx, { noticeId: draft!.id })
+    assert.equal((outcome as { reach: number }).reach, 30000)
+    const { rows: [queued] } = await tx.execute<{ count: number }>(sql`
+      select count(*)::int as count from background_jobs where kind = 'notices.email'`)
+    assert.equal(queued!.count, 30000)
+    throw rollback
+  }), (error: unknown) => error === rollback)
 }))
