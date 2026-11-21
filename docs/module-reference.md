@@ -12,7 +12,7 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | [Alumni and events](#alumni) | 0.5.0 | 4 | 12 | None |
 | [Attendance & QR](#attendance) | 0.18.0 | 8 | 30 | academic, notices |
 | [Student Care](#care) | 0.12.0 | 7 | 24 | academic, notices |
-| [Ceremonies](#ceremonies) | 0.9.0 | 5 | 18 | academic |
+| [Ceremonies](#ceremonies) | 0.10.0 | 6 | 23 | academic |
 | [Sales CRM](#crm) | 0.9.0 | 4 | 32 | finance, notices |
 | [Enrollment](#enrollment) | 0.9.0 | 3 | 9 | academic |
 | [Examinations & Grading](#examinations) | 0.27.0 | 9 | 40 | academic, notices |
@@ -273,7 +273,7 @@ Source: `campusos-platform/packages/modules/care/`.
 <a id="ceremonies"></a>
 ## Ceremonies
 
-Convocation: who may graduate, found by the degree audit rather than by a list somebody typed; replies and guests; office holds; check-in on the day; and degree certificates, issued only to a student the audit cleared, revoked with a reason and reissued under a new serial.
+Convocation: who may graduate, found by the degree audit rather than by a list somebody typed; replies and guests; office holds; check-in on the day; and degree certificates, issued only to a student the audit cleared, revoked with a reason and reissued under a new serial; and numbered school transfer certificates (CBSE Annexure I), issued by the office once the pupil has left and the dues are clear.
 
 Module roles: `super_admin`, `institution_admin`, `hod`, `faculty`, `student`.
 Source: `campusos-platform/packages/modules/ceremonies/`.
@@ -287,6 +287,7 @@ Source: `campusos-platform/packages/modules/ceremonies/`.
 | `/m/ceremonies/certificate` | Certificate | institution_admin, super_admin, hod, student |
 | `/m/ceremonies/checkin` | Check-in | institution_admin, super_admin, hod, faculty |
 | `/m/ceremonies/me` | My graduation | student |
+| `/m/ceremonies/transfer-certificates` | Transfer certificates | institution_admin, super_admin |
 
 ### Operations
 
@@ -309,6 +310,11 @@ Source: `campusos-platform/packages/modules/ceremonies/`.
 | `POST /api/v1/modules/ceremonies/certificates/reissue` | Reissue a revoked certificate under a new serial | `certificateId` |
 | `GET /api/v1/modules/ceremonies/certificate` | One certificate; a student sees only their own | `certificateId` (query) |
 | `GET /api/v1/modules/ceremonies/certificate.pdf` | The certificate to print (binary response) | `certificateId` (query) |
+| `GET /api/v1/modules/ceremonies/transfer-certificates` | The confidential register of school transfer certificates: one pupil or one serial, newest 50 | `studentId` (query), `serial` (query) |
+| `POST /api/v1/modules/ceremonies/transfer-certificates/issue` | Issue a numbered school transfer certificate (CBSE Annexure I) | `studentProgramId`, `schoolAddress`, `affiliationNo`, `schoolCode`, `bookNo`, `admissionNo`, `motherName`, `fatherOrGuardianName`, `birthInWords`, `nationality`, `reservationCategory`, `firstAdmittedOn`, `firstClass`, `lastClassFigures`, `lastClassWords`, `lastExamResult`, `repeatCount`, `subjects`, `promotionEligible`, `promotionClassFigures`, `promotionClassWords`, `paidThroughMonth`, `feeConcession`, `workingDays`, `presentDays`, `activitiesUniformed`, `activitiesOther`, `conduct`, `appliedOn`, `leavingReason`, `remarks`, `checkedBy` |
+| `POST /api/v1/modules/ceremonies/transfer-certificates/revoke` | Revoke a transfer certificate, with a reason (no personal details) | `certificateId`, `reason` |
+| `POST /api/v1/modules/ceremonies/transfer-certificates/reissue` | Replace a revoked transfer certificate under a new serial | `certificateId`, `schoolAddress`, `affiliationNo`, `schoolCode`, `bookNo`, `admissionNo`, `motherName`, `fatherOrGuardianName`, `birthInWords`, `nationality`, `reservationCategory`, `firstAdmittedOn`, `firstClass`, `lastClassFigures`, `lastClassWords`, `lastExamResult`, `repeatCount`, `subjects`, `promotionEligible`, `promotionClassFigures`, `promotionClassWords`, `paidThroughMonth`, `feeConcession`, `workingDays`, `presentDays`, `activitiesUniformed`, `activitiesOther`, `conduct`, `appliedOn`, `leavingReason`, `remarks`, `checkedBy` |
+| `GET /api/v1/modules/ceremonies/transfer-certificate.pdf` | The school transfer certificate to print, from the saved snapshot (binary response) | `certificateId` (query) |
 | `GET /api/v1/modules/ceremonies/verify` | Check a certificate by the code printed on it | `code` (query) |
 
 ### Background jobs
