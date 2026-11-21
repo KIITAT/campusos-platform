@@ -22,6 +22,7 @@ import {
   listTransferCertificates,
   reissueTransferCertificate,
   revokeTransferCertificate,
+  transferCertificateDocument,
   type Actor,
 } from './api'
 
@@ -82,6 +83,21 @@ export const routes: PluginRoute[] = [
   post('/transfer-certificates/issue', issueTransferCertificate),
   post('/transfer-certificates/revoke', revokeTransferCertificate),
   post('/transfer-certificates/reissue', reissueTransferCertificate),
+  {
+    method: 'GET',
+    path: '/transfer-certificate.pdf',
+    raw: true,
+    handler: async (a, req) => {
+      const { bytes, serial } = await transferCertificateDocument(a as Actor, requiredParam(req, 'certificateId'))
+      return new Response(bytes as unknown as BodyInit, {
+        headers: {
+          'content-type': 'application/pdf',
+          'content-disposition': `inline; filename="transfer-certificate-${serial}.pdf"`,
+          'cache-control': 'private, no-store',
+        },
+      })
+    },
+  },
   {
     method: 'GET',
     path: '/verify',

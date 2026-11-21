@@ -11,7 +11,11 @@ import {
   type Actor as AcademicActor,
 } from '@campusos/module-academic/api'
 import { studentPrograms } from '@campusos/module-academic/schema'
+import { PDFDocument } from 'pdf-lib'
+import { pdfText, printedText } from '@campusos/module-framework/pdf'
 import type { Actor } from './api'
+import { PAGE, fieldsOf, transferCertificatePdf, wrapLines } from './api/transfer-pdf'
+import type { TransferSnapshot } from './transfer-schema'
 import * as fees from '../fees/api'
 import { setSingleOfficer } from '../finance/api'
 import { plugin } from './plugin'
@@ -324,4 +328,63 @@ test('the office checks what it types: dates, promotion, subjects, glyphs; a rep
   // The address was typed over two lines and is stored as one.
   const [p] = await withTenant(c.id, async (tx) => (await tx.execute(sql`select snapshot->>'schoolAddress' as a from ceremony_transfer_payloads p join ceremony_transfer_certificates h on h.id = p.certificate_id where h.serial_no = 1`)).rows as { a: string }[])
   assert.equal(p!.a, '12 Station Road Pune 411001')
+})
+
+// --- print (step 4) ----------------------------------------------------------
+
+const printRoute = (a: Actor, id: string) => route('GET', '/transfer-certificate.pdf').handler(a as never, new Request(`http://localhost/api/transfer-certificate.pdf?certificateId=${id}`)) as Promise<Response>
+const textOf = async (res: Response) => printedText(new Uint8Array(await res.arrayBuffer()))
+
+test('the certificate prints privately from the saved snapshot, an Indic name included, and stops when revoked (MG-05)', async () => {
+  const c = await school()
+  await authDb.update(users).set({ name: 'ଅଭିଷେକ / अभिषेक' }).where(eq(users.id, c.pupil.id))
+  const one = (await post(c.admin, '/transfer-certificates/issue', tcBody(c.declarationId))) as { id: string; serial: string }
+  const res = await printRoute(c.admin, one.id)
+  assert.equal(res.headers.get('content-type'), 'application/pdf')
+  assert.equal(res.headers.get('cache-control'), 'private, no-store')
+  assert.equal(res.headers.get('content-disposition'), `inline; filename="transfer-certificate-${one.serial}.pdf"`)
+  const text = await textOf(res)
+  assert.ok(text.includes('ଅଭିଷେକ / अभिषेक'))
+  assert.ok(text.includes('Affiliated to the Central Board of Secondary Education'))
+  assert.ok(text.includes('14/03/2010 (Fourteenth March Two Thousand Ten)'))
+  // Changing the live name or the programme changes nothing on the print.
+  await authDb.update(users).set({ name: 'Someone Else' }).where(eq(users.id, c.pupil.id))
+  await withTenant(c.id, (tx) => tx.execute(sql`update academic_programs set name = 'Renamed' where id = ${c.programId}`))
+  const again = await textOf(await printRoute(c.admin, one.id))
+  assert.ok(again.includes('ଅଭିଷେକ / अभिषेक') && !again.includes('Someone Else') && !again.some((l) => l.includes('Renamed')))
+  await assert.rejects(withTenant(c.id, (tx) => tx.execute(sql`update ceremony_transfer_payloads set snapshot = snapshot || '{"conduct":"x"}'::jsonb`)), (e) => constraintOf(e) === 'transfer_payload_locked')
+  // Office only; another tenant sees nothing.
+  await assert.rejects(printRoute(c.faculty, one.id), failsWith(403, 'forbidden'))
+  await assert.rejects(printRoute((await school()).admin, one.id), failsWith(404, 'no_such_transfer_certificate'))
+  await assert.rejects(printRoute(c.admin, 'not-a-uuid'), failsWith(404, 'no_such_transfer_certificate'))
+  // Revoked: unavailable. The replacement prints its own serial, names the old one, and is a newly confirmed snapshot.
+  await post(c.admin, '/transfer-certificates/revoke', { certificateId: one.id, reason: 'name to be corrected' })
+  await assert.rejects(printRoute(c.admin, one.id), failsWith(409, 'transfer_pdf_unavailable', 'This transfer certificate is unavailable for printing.'))
+  const two = (await post(c.admin, '/transfer-certificates/reissue', tcBody(c.declarationId, { certificateId: one.id, studentProgramId: undefined }))) as { id: string; serial: string }
+  const t2 = await textOf(await printRoute(c.admin, two.id))
+  assert.ok(t2.some((l) => l.includes(`Serial No. ${two.serial}`)))
+  assert.ok(t2.includes(`Replacement for ${one.serial}`))
+  assert.ok(t2.includes('Someone Else'))
+})
+
+test('the longest permitted certificate overflows no line and breaks across pages (MG-05)', async () => {
+  const w = (n: number) => 'W'.repeat(n)
+  const s = {
+    ...tcBody('x'),
+    format: 'cbse_annexure_i_v1', schoolName: w(120), pupilName: w(120), birthOn: '2010-03-14', lastProgramCode: 'X', lastProgramName: w(100), endedOn: '2026-06-30', issuedOn: '2026-11-21',
+    schoolAddress: w(240), motherName: w(120), fatherOrGuardianName: w(120), birthInWords: w(90),
+    subjects: Array.from({ length: 16 }, () => w(80)), lastExamResult: w(120), feeConcession: w(120), activitiesUniformed: w(160), activitiesOther: w(160),
+    conduct: w(80), leavingReason: w(160), remarks: w(160), checkedBy: w(120), replacesSerial: 'TC-2026-000001',
+  } as unknown as TransferSnapshot
+  const pages = (await PDFDocument.load(await transferCertificatePdf(s, 'TC-2026-000002', '7', 'A-1042'))).getPageCount()
+  assert.ok(pages >= 2, 'the longest certificate runs onto a continuation page')
+  const t = await pdfText(await PDFDocument.create(), JSON.stringify(fieldsOf(s)))
+  const valueWidth = PAGE.w - PAGE.margin - (PAGE.margin + PAGE.labelWidth + 10)
+  for (const [label, value] of fieldsOf(s)) {
+    for (const line of wrapLines((x) => t.width(x, PAGE.text), value, valueWidth)) assert.ok(t.width(line, PAGE.text) <= valueWidth, `value of ${label} fits`)
+    for (const line of wrapLines((x) => t.width(x, PAGE.text, 'bold'), label, PAGE.labelWidth)) assert.ok(t.width(line, PAGE.text, 'bold') <= PAGE.labelWidth, `label ${label} fits`)
+  }
+  // A token wider than the column is cut between grapheme clusters and loses nothing.
+  const cut = wrapLines((x) => t.width(x, PAGE.text), w(200), valueWidth)
+  assert.ok(cut.length > 1 && cut.join('') === w(200))
 })

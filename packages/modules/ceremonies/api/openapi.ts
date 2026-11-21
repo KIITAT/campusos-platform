@@ -109,5 +109,16 @@ export const paths = {
     'The fields are confirmed again and the dues are checked again: outstanding dues return 409 (certificate_dues_outstanding).',
     unavailable,
   ),
+  [`${base}/transfer-certificate.pdf`]: {
+    get: {
+      summary: 'The school transfer certificate to print, from the saved snapshot',
+      tags: ['ceremonies'],
+      parameters: [{ name: 'certificateId', in: 'query', required: true, schema: { type: 'string' } }],
+      responses: {
+        '200': { description: 'PDF, private and not cached', content: { 'application/pdf': { schema: { type: 'string', format: 'binary' } } } },
+        '409': { description: 'Revoked or erased certificates are not printed (transfer_pdf_unavailable)', content: json(err) },
+      },
+    },
+  },
   [`${base}/verify`]: get('Check a certificate by the code printed on it', ['code']),
 }
