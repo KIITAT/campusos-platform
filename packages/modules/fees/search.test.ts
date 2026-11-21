@@ -1,6 +1,7 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { like } from 'drizzle-orm'
+import { readFileSync } from 'node:fs'
+import { like, sql } from 'drizzle-orm'
 import { authDb, institutions, users, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
 import { authorizeRoute } from '@campusos/module-framework'
@@ -150,5 +151,34 @@ test('the charge and demand-letter pages no longer preload students', async () =
     const forms = page.sections(data as never).filter((s) => s.kind === 'form') as { fields: { name: string; kind?: string; lookup?: { path: string } }[] }[]
     const field = forms.flatMap((f) => f.fields).find((f) => f.name === 'studentId')
     if (field) assert.deepEqual(field.lookup, { path: '/student-choices' })
+  }
+})
+
+test('0013 lifts the statement timeout and caps the lock wait for the installer\'s transaction (NEW-80 class)', async () => {
+  const file = readFileSync(new URL('./migrations/0013_record_search.sql', import.meta.url), 'utf8')
+  const alterAt = file.indexOf('ALTER TABLE public.fee_payments ADD COLUMN')
+  const settings = file.slice(0, alterAt).split('--> statement-breakpoint').map((s) => s.trim()).filter((s) => /^SET LOCAL /m.test(s.replace(/^--.*$/gm, '').trim()))
+  assert.deepEqual(
+    settings.map((s) => s.replace(/^--.*$/gm, '').trim()),
+    ['SET LOCAL statement_timeout = 0;', "SET LOCAL lock_timeout = '5s';"],
+    'both settings come before the ALTER',
+  )
+  // As the installer runs a migration: one transaction on a pool that has a 30 s limit (here 1 s), statement by statement.
+  const seen = await authDb.transaction(async (tx) => {
+    await tx.execute(sql`set local statement_timeout = '1s'`)
+    for (const s of settings) await tx.execute(sql.raw(s.replace(/^--.*$/gm, '')))
+    await tx.execute(sql`select pg_sleep(1.5)`) // would be cancelled without the first setting
+    const r = await tx.execute(sql`select current_setting('statement_timeout') as st, current_setting('lock_timeout') as lt`)
+    return r.rows[0] as { st: string; lt: string }
+  })
+  assert.deepEqual(seen, { st: '0', lt: '5s' })
+})
+
+test('academic 0014, library 0004 and core 0018 lift the timeouts before their stored-column ALTER too', () => {
+  for (const f of ['../academic/migrations/0014_record_search.sql', '../library/migrations/0004_record_search.sql', '../../db/migrations/0018_record_search.sql']) {
+    const file = readFileSync(new URL(f, import.meta.url), 'utf8')
+    const sets = file.indexOf("SET LOCAL lock_timeout = '5s'")
+    assert.ok(file.indexOf('SET LOCAL statement_timeout = 0') >= 0 && sets > file.indexOf('SET LOCAL statement_timeout = 0'), f)
+    assert.ok(sets < file.indexOf('ADD COLUMN'), f)
   }
 })

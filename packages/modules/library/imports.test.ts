@@ -44,3 +44,9 @@ test('a copy the form would refuse is refused here, and a student cannot catalog
   await assert.rejects(run(librarian, 'accession_no,title,author,year\nACC-9,Old Book,Anon,1066\n'), /line 2: year/)
   await assert.rejects(run({ ...librarian, role: 'student' }, REGISTER), /cannot import/)
 })
+
+test('an author past 200 characters is refused on its line, as the form refuses it, and nothing is inserted (P1-09c)', async () => {
+  const before = (await withTenant(tenant, (tx) => tx.select().from(titles))).length
+  await assert.rejects(run(librarian, `accession_no,title,author\nACC-LONG,Long Author Book,${'a'.repeat(201)}\n`), /line 2/)
+  assert.equal((await withTenant(tenant, (tx) => tx.select().from(titles))).length, before)
+})
