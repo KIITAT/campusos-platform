@@ -137,12 +137,13 @@ async function lockMember(tx: Tx, sectionId: string, studentId: string) {
 async function joinSection(tx: Tx, tenant: string, sectionId: string, studentId: string): Promise<boolean> {
   if (!(await followsRegistration(tx, sectionId))) return false
   await lockMember(tx, sectionId, studentId)
-  // A savepoint, so a school student already seated in another section of this class and year (NEW-166) is not seated, rather than failing the registration.
+  // A savepoint, so a refused seat does not fail the registration.
   try {
     await tx.transaction((sp) => sp.insert(sectionMembers).values({ institutionId: tenant, sectionId, userId: studentId }).onConflictDoNothing({ target: [sectionMembers.sectionId, sectionMembers.userId] }))
   } catch (e) {
     const cause = ((e as { cause?: unknown }).cause ?? e) as { constraint?: string }
-    if (cause.constraint === 'academic_school_member_one_section') return false
+    // Seated elsewhere in this class and year (NEW-166), or the section was promoted since: the registration stands, the roster takes nobody.
+    if (cause.constraint === 'academic_school_member_one_section' || cause.constraint === 'academic_school_section_finalised') return false
     throw e
   }
   return true
