@@ -1,4 +1,5 @@
--- P2-19: document store and audited signing (MG-71; decisions D850 to D859).
+-- P2-19: document store and audited signing (MG-71; decisions D850 to D860).
+-- campusos:contract the only TRUNCATE here is REVOKE TRUNCATE, which removes a privilege from a new table
 -- Rollback (nothing else depends on these; keep the applied migration and the evidence in production):
 --   DROP FUNCTION dpdp_subject.erase_documents(text), dpdp_retention.purge_documents(uuid);
 --   DROP TABLE documents_signatures, documents_sign_requests, documents_files;
