@@ -381,3 +381,16 @@ test('the two terms must be adjacent regular terms across the cut', async () => 
   await refused({ nextTermId: late.id }) // not the first term of the new session
   await call(c.admin, '/sections/promote', y.body())
 })
+
+test('an erased student is no part of the promotion (P1-13c Opus review)', async () => {
+  const c = await campus()
+  const y = await year(c)
+  await authDb.update(users).set({ erasedAt: new Date() }).where(eq(users.id, c.bala))
+  const members = [c.asha, c.bala, c.chitra]
+  const { detainedSectionId: _none, ...body } = y.body({ detainedStudentIds: [], rosterToken: token(members, [c.asha]) })
+  const res = await call(c.admin, '/sections/promote', body)
+  assert.equal(res.promoted, 1)
+  assert.deepEqual(await sectionsOf(c, c.bala), [y.s6])
+  assert.deepEqual(await sectionsOf(c, c.asha), [y.next7, y.s6].sort())
+  assert.equal((await programsOf(c, c.bala)).length, 1)
+})
