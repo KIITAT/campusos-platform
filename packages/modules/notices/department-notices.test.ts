@@ -382,6 +382,31 @@ test('without the guardians function no parent is inferred and students remain',
   assert.ok(await withTenant(inst, (tx) => guardiansAvailable(tx)), 'the function is back after the rollback')
 })
 
+test('memberDepartments, asked from the person, matches the delivery audience for every role', async () => {
+  const { departmentRecipientsSql, guardiansAvailable, memberDepartments } = await import('./api/department-audience')
+  // No scoped notice: nothing to answer.
+  assert.deepEqual(await withTenant(inst, (tx) => memberDepartments(tx, inst, p.s1!)), [])
+  await send(adm(), { departmentId: deptA })
+  await send(adm(), { departmentId: deptB })
+  await withTenant(inst, async (tx) => {
+    const withGuardians = await guardiansAvailable(tx)
+    const audience = async (dept: string) =>
+      new Set(((await tx.execute(sql`${departmentRecipientsSql(inst, sql`${dept}::uuid`, withGuardians)}`)).rows as { user_id: string }[]).map((r) => r.user_id))
+    const [a, b] = [await audience(deptA), await audience(deptB)]
+    for (const [key, id] of Object.entries(p)) {
+      if (key === 'fadm') continue
+      const want = [deptA, deptB].filter((_, i) => (i === 0 ? a : b).has(id)).sort()
+      assert.deepEqual((await memberDepartments(tx, inst, id)).sort(), want, key)
+    }
+    // The fixture exercises the rules: a declared student, a section-only student, a parent, a head, a teacher.
+    assert.deepEqual(await memberDepartments(tx, inst, p.s1!), [deptA])
+    assert.deepEqual(await memberDepartments(tx, inst, p.s2!), [deptB])
+    assert.deepEqual(await memberDepartments(tx, inst, p.parV!), [deptA])
+    assert.deepEqual(await memberDepartments(tx, inst, p.hodA!), [deptA])
+    assert.deepEqual(await memberDepartments(tx, inst, p.facB!), [deptB])
+  })
+})
+
 test('the board composer offers departments and routes a blank one to the whole institution', async () => {
   const page = pages.find((x) => x.path === '/')!
   const data = (await page.load(adm() as never, new Request('http://x/'))) as Record<string, unknown>
