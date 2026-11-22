@@ -313,10 +313,28 @@ export async function grantWaiver(actor: Actor, input: unknown) {
         label: item.label,
         studentName: await nameOf(tx, data.studentId),
       })
+      await noteOwed(tx, item.termId, [data.studentId])
     }
 
     return row!
   })
+}
+
+/**
+ * Notes on each live invoice of these students what it now asks for, net of
+ * the waivers posted against the term (P1-03d): late fees judge an instalment
+ * on what was owed as at its day, not on what is owed today.
+ */
+export async function noteOwed(tx: Tx, termId: string, studentIds: string[]) {
+  if (studentIds.length === 0) return
+  await tx.execute(sql`
+    update fee_invoices i
+       set owed_at = array_append(i.owed_at, now()),
+           owed_paise = array_append(i.owed_paise, i.charged_paise - coalesce(
+             (select sum(w.posted_paise) from fee_waivers w join fee_items f on f.id = w.fee_item_id
+               where w.student_id = i.student_id and f.term_id = i.term_id), 0))
+     where i.term_id = ${termId}::uuid and i.voided_at is null
+       and i.student_id = any(array[${sql.join(studentIds.map((s) => sql`${s}`), sql`, `)}]::text[])`)
 }
 
 export async function revokeWaiver(actor: Actor, input: unknown) {
@@ -374,6 +392,7 @@ export async function revokeWaiver(actor: Actor, input: unknown) {
     }
 
     await tx.delete(feeWaivers).where(eq(feeWaivers.id, data.waiverId))
+    if (row.postedPaise > 0) await noteOwed(tx, at.termId, [row.studentId])
   })
 }
 
@@ -821,6 +840,7 @@ async function issueChunk(
 
   if (issued.length > 0) {
     const issuedIds = issued.map((i) => i.studentId)
+    await noteOwed(tx, termId, issuedIds)
     // The student's own charges this run priced are in the books now: from
     // here they are waived or refunded, not cancelled. Only those (NEW-91): a
     // charge raised while the chunk ran was not billed and stays cancellable.

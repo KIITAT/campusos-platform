@@ -116,7 +116,6 @@ async function shiftIssues(c: Campus, k: number, studentId?: string) {
     .execute(sql`update fee_invoices
      set owed_at = (select coalesce(array_agg(t - make_interval(days => ${k}) order by o), '{}') from unnest(owed_at) with ordinality u(t, o))
    where term_id = ${c.termId}::uuid${only}`)
-    .catch(() => {}) // RED: the column arrives with the fix
 }
 const issueAgo = async (c: Campus, k: number) => {
   await issue(c)
@@ -557,7 +556,6 @@ test('voiding and issuing an invoice again does not move the instalment or charg
   await authDb.execute(sql`update fee_invoices set versions_issued_at = array[now() - interval '20 days'] where term_id = ${c.termId}::uuid and student_id = ${c.s1} and voided_at is null`)
   await authDb
     .execute(sql`update fee_invoices set owed_at = array[now() - interval '20 days'] where term_id = ${c.termId}::uuid and student_id = ${c.s1} and voided_at is null`)
-    .catch(() => {}) // RED: the column arrives with the fix
   assert.equal((await run(c)).charged, 0)
   assert.equal((await lateCharges(c, c.s1)).length, 1)
 })

@@ -99,7 +99,7 @@ test('30,000 students invoice in under ten minutes, 500 to a transaction', { ski
 
   // P1-03d: late fees for every one of them, one instalment and one rule, in one run.
   await authDb.execute(sql`update fee_items set due_on = (current_date - 40)::timestamptz, created_at = now() - interval '60 days' where institution_id = ${c.id}::uuid`)
-  await authDb.execute(sql`update fee_invoices set versions_issued_at = array[now() - interval '50 days'] where institution_id = ${c.id}::uuid`)
+  await authDb.execute(sql`update fee_invoices set versions_issued_at = array[now() - interval '50 days'], owed_at = array[now() - interval '50 days'] where institution_id = ${c.id}::uuid`)
   await authDb.execute(sql`insert into fee_late_fees (institution_id, term_id, after_days, amount_paise, created_at) values (${c.id}::uuid, ${c.termId}::uuid, 10, 10000, now() - interval '400 days')`)
   const t3 = Date.now()
   const late = await withTenant(c.id, (tx) => chargeLateFees(c.admin, tx))

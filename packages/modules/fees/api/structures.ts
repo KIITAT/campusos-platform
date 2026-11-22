@@ -94,9 +94,13 @@ export const LATE_FEE_RECOUNT = 'no longer owed on the nightly recount'
  * that was later (a late joiner, a line added afterwards); a line with no due
  * date is due the day it is invoiced, and starts no instalment of its own. For
  * a rule and an instalment day, the cutoff is that day plus the rule's days; a
- * student is late when what was due by the instalment day is more than what
- * they paid by the cutoff, counting a pending transfer claim dated by then as
- * paid. A late fee not yet on an invoice is provisional: every run recounts,
+ * student is late when what was due by the instalment day, and no more than
+ * the invoice asked for (net of posted waivers) as at that day, is more than
+ * what they paid by the cutoff, counting a pending transfer claim dated by then
+ * as paid. A line is dated by the student's first issue for the term at or
+ * after it was created, voided invoices included: a void corrects the bill, it
+ * does not re-date the instalment. One late fee per instalment and slab, even
+ * if its rule was removed and added again. A late fee not yet on an invoice is provisional: every run recounts,
  * and one no longer owed (a payment entered later with its true date, a claim
  * pending) is cancelled with LATE_FEE_RECOUNT, so it comes back if the claim is
  * rejected. One on an invoice stays (waiver or refund), and so does one the
@@ -117,12 +121,18 @@ export async function chargeLateFees(actor: Actor, tx: Tx) {
     const [term] = await tx.select({ code: terms.code }).from(terms).where(eq(terms.id, termId))
     const all = (
       await tx.execute(sql`
-        with lines as (
+        with issues as (
+          select i.student_id, array_agg(v) as vs
+            from fee_invoices i cross join unnest(i.versions_issued_at) v
+           where i.term_id = ${termId}::uuid
+           group by i.student_id),
+        lines as (
           select l.student_id, l.charged - l.waived as net, l.due_on,
-                 ((select min(v) from unnest(i.versions_issued_at) v where v >= coalesce(f.created_at, c.created_at))
+                 ((select min(v) from unnest(iss.vs) v where v >= coalesce(f.created_at, c.created_at))
                    at time zone ${tz})::date as invoiced_on
             from (${priceListSql(termId, null)}) l
             join fee_invoices i on i.student_id = l.student_id and i.term_id = ${termId}::uuid and i.voided_at is null
+            join issues iss on iss.student_id = l.student_id
             left join fee_items f on f.id = l.fee_item_id
             left join fee_student_charges c on c.id = l.student_charge_id
            where c.id is null or not (c.source_module = 'fees' and c.source_id like 'late:%')),
@@ -155,15 +165,25 @@ export async function chargeLateFees(actor: Actor, tx: Tx) {
             from slabs s join fee_payments p on p.student_id = s.student_id and p.term_id = ${termId}::uuid and p.status = 'live'
             join fee_refunds r on r.payment_id = p.id and (r.refunded_at at time zone ${tz})::date <= s.cutoff
            group by s.student_id, s.rule_id, s.due_on),
+        owed as (
+          select distinct on (s.student_id, s.rule_id, s.due_on) s.student_id, s.rule_id, s.due_on, e.paise as owed
+            from slabs s
+            join (select i.student_id, e.at, e.paise
+                    from fee_invoices i cross join unnest(i.owed_at, i.owed_paise) e(at, paise)
+                   where i.term_id = ${termId}::uuid) e
+              on e.student_id = s.student_id and (e.at at time zone ${tz})::date <= s.due_on
+           order by s.student_id, s.rule_id, s.due_on, e.at desc),
         late as (
           select x.student_id, x.amount_paise, x.due_on, x.cutoff,
-                 'late:' || x.rule_id || ':' || to_char(x.due_on, 'YYYY-MM-DD') || ':' || x.student_id as source_id
+                 'late:' || x.rule_id || ':' || to_char(x.due_on, 'YYYY-MM-DD') || ':' || x.student_id as source_id,
+                 'Late fee: instalment due ' || to_char(x.due_on, 'DD Mon YYYY') || ', unpaid after ' || to_char(x.cutoff, 'DD Mon YYYY') as label
             from sched x
             join posted b on b.student_id = x.student_id
+            join owed o on o.student_id = x.student_id and o.rule_id = x.rule_id and o.due_on = x.due_on
             left join paid pd on pd.student_id = x.student_id and pd.rule_id = x.rule_id and pd.due_on = x.due_on
             left join claimed cl on cl.student_id = x.student_id and cl.rule_id = x.rule_id and cl.due_on = x.due_on
             left join refunded rf on rf.student_id = x.student_id and rf.rule_id = x.rule_id and rf.due_on = x.due_on
-           where least(b.invoiced_paise - b.waived_paise, x.scheduled) - b.credited_paise
+           where least(b.invoiced_paise - b.waived_paise, x.scheduled, o.owed) - b.credited_paise
                  - coalesce(pd.paid, 0) - coalesce(cl.claimed, 0) + coalesce(rf.refunded, 0) > 0),
         removed as (
           update fee_student_charges c set cancelled_at = now(), cancel_reason = ${LATE_FEE_RECOUNT}
@@ -174,13 +194,15 @@ export async function chargeLateFees(actor: Actor, tx: Tx) {
           returning c.student_id, c.amount_paise, c.label, c.source_id),
         raised as (
           insert into fee_student_charges (institution_id, student_id, term_id, label, amount_paise, source_module, source_id, created_by)
-          select ${tenant}::uuid, l.student_id, ${termId}::uuid,
-                 'Late fee: instalment due ' || to_char(l.due_on, 'DD Mon YYYY') || ', unpaid after ' || to_char(l.cutoff, 'DD Mon YYYY'),
-                 l.amount_paise, 'fees', l.source_id, ${actor.id}
+          select ${tenant}::uuid, l.student_id, ${termId}::uuid, l.label, l.amount_paise, 'fees', l.source_id, ${actor.id}
             from late l
            where not exists (select 1 from fee_student_charges c
                               where c.source_module = 'fees' and c.source_id = l.source_id
                                 and (c.cancelled_at is null or c.cancel_reason is distinct from ${LATE_FEE_RECOUNT}))
+             -- One late fee per instalment and slab, whichever rule raised it (a rule removed and added again).
+             and not exists (select 1 from fee_student_charges c
+                              where c.student_id = l.student_id and c.term_id = ${termId}::uuid and c.source_module = 'fees'
+                                and c.source_id like 'late:%' and c.cancelled_at is null and c.label = l.label)
           returning student_id, amount_paise, label, source_id)
         select true as raised, * from raised
         union all
