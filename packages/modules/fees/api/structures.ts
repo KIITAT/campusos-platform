@@ -84,14 +84,24 @@ export async function removeLateFee(actor: Actor, input: unknown) {
   })
 }
 
+/** The reason on a late fee the nightly recount took back; a late fee cancelled for this reason may be raised again. */
+export const LATE_FEE_RECOUNT = 'no longer owed on the nightly recount'
+
 /**
- * Raises the late fees that have fallen due, once each (ACC-21, P1-03d). For a
- * rule and an instalment date, the cutoff is the date plus the rule's days; a
- * student is late when, counting only payments and refunds dated on or before
- * the cutoff, they still owed some of what was scheduled through that date.
- * A rule never reaches back before the day it was made, an unpaid late fee is
- * not itself an instalment, and a late fee cancelled by the office is never
- * raised again (its source id stays taken).
+ * Raises the late fees that have fallen due, and takes back those no longer
+ * owed (ACC-21, P1-03d). Each student is judged on their own instalments only.
+ * An invoiced line is due on its due date, or on the day it was invoiced if
+ * that was later (a late joiner, a line added afterwards); a line with no due
+ * date is due the day it is invoiced, and starts no instalment of its own. For
+ * a rule and an instalment day, the cutoff is that day plus the rule's days; a
+ * student is late when what was due by the instalment day is more than what
+ * they paid by the cutoff, counting a pending transfer claim dated by then as
+ * paid. A late fee not yet on an invoice is provisional: every run recounts,
+ * and one no longer owed (a payment entered later with its true date, a claim
+ * pending) is cancelled with LATE_FEE_RECOUNT, so it comes back if the claim is
+ * rejected. One on an invoice stays (waiver or refund), and so does one the
+ * office cancelled. A rule never reaches back before the day it was made, and
+ * an unpaid late fee is not itself an instalment.
  *
  * ponytail: flat per instalment and slab; per-day accrual would need a charge
  * that changes nightly (owner question 2).
@@ -105,58 +115,92 @@ export async function chargeLateFees(actor: Actor, tx: Tx) {
   let totalPaise = 0
   for (const termId of termIds) {
     const [term] = await tx.select({ code: terms.code }).from(terms).where(eq(terms.id, termId))
-    const rows = (
+    const all = (
       await tx.execute(sql`
         with lines as (
-          select l.* from (${priceListSql(termId, null)}) l
-           where l.student_charge_id is null
-              or not exists (select 1 from fee_student_charges c
-                              where c.id = l.student_charge_id and c.source_module = 'fees' and c.source_id like 'late:%')),
+          select l.student_id, l.charged - l.waived as net, l.due_on,
+                 ((select min(v) from unnest(i.versions_issued_at) v where v >= coalesce(f.created_at, c.created_at))
+                   at time zone ${tz})::date as invoiced_on
+            from (${priceListSql(termId, null)}) l
+            join fee_invoices i on i.student_id = l.student_id and i.term_id = ${termId}::uuid and i.voided_at is null
+            left join fee_items f on f.id = l.fee_item_id
+            left join fee_student_charges c on c.id = l.student_charge_id
+           where c.id is null or not (c.source_module = 'fees' and c.source_id like 'late:%')),
+        due as (
+          select student_id, net, due_on is not null as dated, greatest(due_on, invoiced_on) as due_on
+            from lines where invoiced_on is not null),
         posted as (${postedSql({ termId })}),
-        dates as (select distinct due_on from lines where due_on is not null),
         slabs as (
-          select r.id as rule_id, r.amount_paise, d.due_on, d.due_on + r.after_days::int as cutoff
-            from fee_late_fees r cross join dates d
-           where r.term_id = ${termId}::uuid
+          select distinct d.student_id, r.id as rule_id, r.amount_paise, d.due_on, d.due_on + r.after_days::int as cutoff
+            from due d join fee_late_fees r on r.term_id = ${termId}::uuid
+           where d.dated
              and d.due_on + r.after_days::int < ${today}::date
              and d.due_on + r.after_days::int >= (r.created_at at time zone ${tz})::date),
         sched as (
-          select s.rule_id, s.amount_paise, s.due_on, s.cutoff, l.student_id, sum(l.charged - l.waived)::bigint as scheduled
-            from slabs s join lines l on l.due_on <= s.due_on
-               or (l.due_on is null
-                   and (l.student_charge_id is null
-                        or exists (select 1 from fee_student_charges c
-                                    where c.id = l.student_charge_id
-                                      and (c.created_at at time zone ${tz})::date <= s.cutoff)))
-           group by s.rule_id, s.amount_paise, s.due_on, s.cutoff, l.student_id),
+          select s.student_id, s.rule_id, s.amount_paise, s.due_on, s.cutoff, sum(d.net)::bigint as scheduled
+            from slabs s join due d on d.student_id = s.student_id and d.due_on <= s.due_on
+           group by s.student_id, s.rule_id, s.amount_paise, s.due_on, s.cutoff),
         paid as (
-          select s.rule_id, s.due_on, p.student_id, sum(p.amount_paise)::bigint as paid
-            from slabs s join fee_payments p on p.term_id = ${termId}::uuid and p.status = 'live'
+          select s.student_id, s.rule_id, s.due_on, sum(p.amount_paise)::bigint as paid
+            from slabs s join fee_payments p on p.student_id = s.student_id and p.term_id = ${termId}::uuid and p.status = 'live'
              and (p.received_at at time zone ${tz})::date <= s.cutoff
-           group by s.rule_id, s.due_on, p.student_id),
+           group by s.student_id, s.rule_id, s.due_on),
+        claimed as (
+          select s.student_id, s.rule_id, s.due_on, sum(t.amount_paise)::bigint as claimed
+            from slabs s join fee_transfer_claims t on t.student_id = s.student_id and t.term_id = ${termId}::uuid
+             and t.status = 'pending' and t.transferred_on <= s.cutoff
+           group by s.student_id, s.rule_id, s.due_on),
         refunded as (
-          select s.rule_id, s.due_on, p.student_id, sum(r.amount_paise)::bigint as refunded
-            from slabs s join fee_refunds r on (r.refunded_at at time zone ${tz})::date <= s.cutoff
-            join fee_payments p on p.id = r.payment_id and p.term_id = ${termId}::uuid and p.status = 'live'
-           group by s.rule_id, s.due_on, p.student_id),
+          select s.student_id, s.rule_id, s.due_on, sum(r.amount_paise)::bigint as refunded
+            from slabs s join fee_payments p on p.student_id = s.student_id and p.term_id = ${termId}::uuid and p.status = 'live'
+            join fee_refunds r on r.payment_id = p.id and (r.refunded_at at time zone ${tz})::date <= s.cutoff
+           group by s.student_id, s.rule_id, s.due_on),
         late as (
-          select x.student_id, x.rule_id, x.amount_paise, x.due_on, x.cutoff
+          select x.student_id, x.amount_paise, x.due_on, x.cutoff,
+                 'late:' || x.rule_id || ':' || to_char(x.due_on, 'YYYY-MM-DD') || ':' || x.student_id as source_id
             from sched x
             join posted b on b.student_id = x.student_id
-            left join paid pd on pd.rule_id = x.rule_id and pd.due_on = x.due_on and pd.student_id = x.student_id
-            left join refunded rf on rf.rule_id = x.rule_id and rf.due_on = x.due_on and rf.student_id = x.student_id
+            left join paid pd on pd.student_id = x.student_id and pd.rule_id = x.rule_id and pd.due_on = x.due_on
+            left join claimed cl on cl.student_id = x.student_id and cl.rule_id = x.rule_id and cl.due_on = x.due_on
+            left join refunded rf on rf.student_id = x.student_id and rf.rule_id = x.rule_id and rf.due_on = x.due_on
            where least(b.invoiced_paise - b.waived_paise, x.scheduled) - b.credited_paise
-                 - coalesce(pd.paid, 0) + coalesce(rf.refunded, 0) > 0)
-        insert into fee_student_charges (institution_id, student_id, term_id, label, amount_paise, source_module, source_id, created_by)
-        select ${tenant}::uuid, l.student_id, ${termId}::uuid,
-               'Late fee: instalment due ' || to_char(l.due_on, 'DD Mon YYYY') || ', unpaid after ' || to_char(l.cutoff, 'DD Mon YYYY'),
-               l.amount_paise, 'fees', 'late:' || l.rule_id || ':' || to_char(l.due_on, 'YYYY-MM-DD') || ':' || l.student_id, ${actor.id}
-          from late l
-         where not exists (select 1 from fee_student_charges c
-                            where c.source_module = 'fees'
-                              and c.source_id = 'late:' || l.rule_id || ':' || to_char(l.due_on, 'YYYY-MM-DD') || ':' || l.student_id)
-        returning student_id, amount_paise, label`)
-    ).rows as { student_id: string; amount_paise: string | number; label: string }[]
+                 - coalesce(pd.paid, 0) - coalesce(cl.claimed, 0) + coalesce(rf.refunded, 0) > 0),
+        removed as (
+          update fee_student_charges c set cancelled_at = now(), cancel_reason = ${LATE_FEE_RECOUNT}
+           where c.term_id = ${termId}::uuid and c.source_module = 'fees' and c.source_id like 'late:%'
+             and c.cancelled_at is null and c.invoiced_at is null
+             and split_part(c.source_id, ':', 2) in (select id::text from fee_late_fees where term_id = ${termId}::uuid)
+             and not exists (select 1 from late l where l.source_id = c.source_id)
+          returning c.student_id, c.amount_paise, c.label, c.source_id),
+        raised as (
+          insert into fee_student_charges (institution_id, student_id, term_id, label, amount_paise, source_module, source_id, created_by)
+          select ${tenant}::uuid, l.student_id, ${termId}::uuid,
+                 'Late fee: instalment due ' || to_char(l.due_on, 'DD Mon YYYY') || ', unpaid after ' || to_char(l.cutoff, 'DD Mon YYYY'),
+                 l.amount_paise, 'fees', l.source_id, ${actor.id}
+            from late l
+           where not exists (select 1 from fee_student_charges c
+                              where c.source_module = 'fees' and c.source_id = l.source_id
+                                and (c.cancelled_at is null or c.cancel_reason is distinct from ${LATE_FEE_RECOUNT}))
+          returning student_id, amount_paise, label, source_id)
+        select true as raised, * from raised
+        union all
+        select false, * from removed`)
+    ).rows as { raised: boolean; student_id: string; amount_paise: string | number; label: string; source_id: string }[]
+    const gone = all.filter((r) => !r.raised)
+    if (gone.length > 0) {
+      await audit(tx, {
+        institutionId: tenant,
+        actorId: actor.id,
+        actorEmail: actor.email ?? null,
+        moduleId: MODULE,
+        action: 'fee.late_fees_removed',
+        entity: 'fee_late_fees',
+        entityId: termId,
+        reason: LATE_FEE_RECOUNT,
+        detail: { termId, count: gone.length, totalPaise: gone.reduce((n, r) => n + Number(r.amount_paise), 0), sourceIds: gone.map((r) => r.source_id) },
+      })
+    }
+    const rows = all.filter((r) => r.raised)
     if (rows.length === 0) continue
     const sum = rows.reduce((n, r) => n + Number(r.amount_paise), 0)
     charged += rows.length

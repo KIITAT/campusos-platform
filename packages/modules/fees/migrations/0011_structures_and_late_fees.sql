@@ -10,7 +10,10 @@
 -- Pre-flight: none needed. The new columns are nullable and every existing
 -- row keeps both null, which the new CHECKs accept; the re-made identity index
 -- adds key columns, so every set of rows unique under the old index is unique
--- under the new one; the new table is empty.
+-- under the new one; the new table is empty. fee_invoices.versions_issued_at
+-- is filled for every existing invoice: version 1 at issued_at, any later
+-- version at the time of this upgrade (the day it was really issued is not
+-- kept in fees; later is the side that never raises a late fee early).
 --
 -- Rollback (forward-only; decision 162): restore the pre-upgrade backup with
 -- the previous fees version. Otherwise a later migration that, after checking
@@ -18,6 +21,7 @@
 --    group by 1, 2, 3 having count(*) > 1;   -- must return no rows
 -- (else delete or relabel the batch and category lines first), runs:
 --   DROP TABLE fee_late_fees;
+--   ALTER TABLE fee_invoices DROP CONSTRAINT fee_invoices_versions, DROP COLUMN versions_issued_at;
 --   DROP INDEX fee_items_identity;
 --   ALTER TABLE fee_items DROP COLUMN admission_year, DROP COLUMN category;
 --   CREATE UNIQUE INDEX fee_items_identity ON fee_items (program_id, term_id, label);
@@ -46,5 +50,10 @@ ALTER TABLE "fee_late_fees" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
 ALTER TABLE "fee_late_fees" ADD CONSTRAINT "fee_late_fees_institution_id_institutions_id_fk" FOREIGN KEY ("institution_id") REFERENCES "public"."institutions"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fee_late_fees" ADD CONSTRAINT "fee_late_fees_term_id_academic_terms_id_fk" FOREIGN KEY ("term_id") REFERENCES "public"."academic_terms"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "fee_late_fees" ADD CONSTRAINT "fee_late_fees_created_by_users_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+-- When each version of an invoice was issued, so a late fee judges a cutoff on
+-- what had been invoiced to the student by then (P1-03d second review).
+ALTER TABLE "fee_invoices" ADD COLUMN "versions_issued_at" timestamp with time zone[] NOT NULL DEFAULT ARRAY[now()];--> statement-breakpoint
+UPDATE "fee_invoices" SET "versions_issued_at" = ARRAY["issued_at"] || array_fill(now(), ARRAY["version" - 1]);--> statement-breakpoint
+ALTER TABLE "fee_invoices" ADD CONSTRAINT "fee_invoices_versions" CHECK (cardinality(versions_issued_at) = version);--> statement-breakpoint
 CREATE UNIQUE INDEX "fee_late_fees_slab" ON "fee_late_fees" USING btree ("term_id","after_days");--> statement-breakpoint
 CREATE POLICY "fee_late_fees_tenant_isolation" ON "fee_late_fees" AS PERMISSIVE FOR ALL TO "campusos_app" USING (institution_id = nullif(current_setting('app.institution_id', true), '')::uuid) WITH CHECK (institution_id = nullif(current_setting('app.institution_id', true), '')::uuid);

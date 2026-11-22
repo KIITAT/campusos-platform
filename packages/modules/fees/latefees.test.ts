@@ -109,7 +109,7 @@ async function shiftIssues(c: Campus, k: number, studentId?: string) {
   await authDb.execute(sql`update fee_invoices set issued_at = issued_at - make_interval(days => ${k}) where term_id = ${c.termId}::uuid${only}`)
   await authDb.execute(sql`update fee_invoices
      set versions_issued_at = (select array_agg(t - make_interval(days => ${k}) order by o) from unnest(versions_issued_at) with ordinality u(t, o))
-   where term_id = ${c.termId}::uuid${only}`).catch(() => {}) // RED: the column arrives with the fix
+   where term_id = ${c.termId}::uuid${only}`)
 }
 const issueAgo = async (c: Campus, k: number) => {
   await issue(c)

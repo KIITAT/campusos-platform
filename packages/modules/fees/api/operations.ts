@@ -784,7 +784,10 @@ async function issueChunk(
       )[0]!.id
 
     if (invoice) {
-      await tx.update(feeInvoices).set({ chargedPaise: listed, version }).where(eq(feeInvoices.id, invoice.id))
+      await tx
+        .update(feeInvoices)
+        .set({ chargedPaise: listed, version, versionsIssuedAt: sql`array_append(${feeInvoices.versionsIssuedAt}, now())` })
+        .where(eq(feeInvoices.id, invoice.id))
     }
 
     // Waivers the books have not been told about: everything granted before
