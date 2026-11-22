@@ -195,3 +195,25 @@ test('a 30,000-person board fan-out queues the eligible audience in one bulk ope
     throw rollback
   }), (error: unknown) => error === rollback)
 }))
+
+test('an enqueue that cannot run never fails the producer transaction (review note)', () => withEmailEnabled(async () => {
+  const warnings: string[] = []
+  const original = console.warn
+  console.warn = (line: unknown) => { warnings.push(String(line)) }
+  try {
+    await withTenant(tenant, async (tx) => {
+      // An older Notices (no email tables) fails inside the savepoint; the producer's own transaction must go on.
+      const older = { transaction: async (run: (inner: unknown) => Promise<void>) => run({
+        execute: async () => { throw new Error('relation "notification_email_opt_outs" does not exist') },
+      }) }
+      await emailNotificationChannel.deliver(older as never, [{
+        notificationId: '00000000-0000-4000-8000-000000000001', institutionId: tenant, userId: studentId,
+        moduleId: 'fees', title: 'x', body: 'x', link: null,
+      }])
+      await tx.execute(sql`select 1`)
+    })
+  } finally {
+    console.warn = original
+  }
+  assert.deepEqual(warnings.map((line) => JSON.parse(line)), [{ event: 'notices.email_enqueue_skipped' }])
+}))
