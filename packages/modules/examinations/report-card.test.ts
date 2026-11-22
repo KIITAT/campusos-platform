@@ -31,7 +31,7 @@ const status = (e: unknown) => (e as { status?: number }).status
 type A = api.Actor & { viewerOf?: string[] }
 const as = (id: string, role: api.Actor['role'], inst: string, over: Record<string, unknown> = {}) => ({ id, email: `${role}@rc.test`, role, institutionId: inst, ...over }) as A
 
-async function campus(opts: { level?: 'school' | 'undergraduate'; programCode?: string } = {}) {
+async function campus(opts: { level?: 'school' | 'undergraduate'; programCode?: string; extraOffering?: boolean } = {}) {
   const tag = `${SLUG}${++n}`
   const [i] = await authDb
     .insert(institutions)
@@ -67,9 +67,18 @@ async function campus(opts: { level?: 'school' | 'undergraduate'; programCode?: 
     enrichment: await exam(offering.id, 'Subject Enrichment', 'assignment', 5, 5),
     term: await exam(offering.id, 'Term Examination', 'final', 80, 80),
   }
+  const crafts = opts.extraOffering
+    ? await academic.createCourse(a, { departmentId: dept.id, code: 'CRAFT', title: 'Craft', credits: 1 })
+    : null
+  const craftA = crafts && await academic.createOffering(a, { termId: term.id, courseId: crafts.id, sectionId: sec.id, facultyUserId: mt })
+  const craftB = crafts && await academic.createOffering(a, { termId: term.id, courseId: crafts.id, sectionId: secB.id, facultyUserId: mt })
+  const craftBExamId = craftB && await exam(craftB.id, 'Craft final', 'final', 100, 100)
   return {
     id,
     tag,
+    craftAId: craftA?.id,
+    craftBId: craftB?.id,
+    craftBExamId,
     admin,
     classTeacher: as(ct, 'faculty', id),
     teacher,
@@ -126,6 +135,50 @@ const download = (c: C, who: A, studentId?: string, sectionId = c.sectionId) =>
 
 after(async () => {
   await authDb.delete(institutions).where(like(institutions.slug, `${SLUG}%`))
+})
+
+test('template exclusions accept only exam-free offerings in the selected programme and term', async () => {
+  const c = await campus({ extraOffering: true })
+  const foreign = await campus({ extraOffering: true })
+  const template = defaultSchoolTemplate(6)!
+  const excluding = (id: string) => ({ ...template, excludedOfferingIds: [id] })
+  const refusal = (e: unknown) =>
+    code(e) === 'invalid_report_card_exclusion' && status(e) === 400 && (e as Error).message === 'Choose offerings in this class and term that have no exams.'
+
+  for (const id of [c.craftBId!, c.offeringId, foreign.craftAId!, crypto.randomUUID()]) {
+    await assert.rejects(saveTemplate(c, { template: excluding(id) }), refusal)
+  }
+  await assert.rejects(saveTemplate(c, { termId: c.otherTermId, template: excluding(c.craftAId!) }), refusal)
+  await assert.rejects(saveTemplate(c, { template: excluding(c.craftAId!) }, c.classTeacher), (e) => code(e) === 'forbidden')
+  assert.equal(await revisionOf(c), 0)
+
+  assert.equal((await saveTemplate(c, { template })).revision, 1)
+  assert.equal((await saveTemplate(c, { expectedRevision: 1, template: { ...template, excludedOfferingIds: [] } })).revision, 1)
+  assert.equal((await saveTemplate(c, { expectedRevision: 1, template: excluding(c.craftAId!) })).revision, 2)
+  const [row] = await withTenant(c.id, (tx) => tx.select().from(reportCardTemplates))
+  assert.deepEqual(row!.template, excluding(c.craftAId!))
+  const details = await withTenant(c.id, (tx) => tx.select({ detail: auditLog.detail }).from(auditLog).where(eq(auditLog.action, 'report_card.template_saved')))
+  assert.ok(details.some(({ detail }) => (detail as { excludedOfferingCount?: number }).excludedOfferingCount === 1))
+  assert.ok(!JSON.stringify(details).includes(c.craftAId!))
+  await saveEntry(c, 'art', 'a')
+  assert.equal((await saveTemplate(c, { expectedRevision: 2, template: excluding(c.craftAId!) })).revision, 2)
+  await assert.rejects(saveTemplate(c, { expectedRevision: 2, template: excluding(c.craftBId!) }), (e) => code(e) === 'report_card_template_locked')
+})
+
+test('an explicitly excluded exam-free offering allows publication and leaves the same course assessed in another section', async () => {
+  const c = await campus({ extraOffering: true })
+  const template = defaultSchoolTemplate(6)!
+  const subjectOverrides = [{ courseCode: 'CRAFT', components: [{ key: 'paper', label: 'Craft exam', weight: 100, selectors: [{ kind: 'final' }] }] }]
+  await publishMarks(c)
+  await assert.rejects(publication(c), (e) => code(e) === 'report_card_incomplete')
+  await saveTemplate(c, { template: { ...template, subjectOverrides, excludedOfferingIds: [c.craftAId!, c.offeringBId] } })
+  assert.equal((await publication(c)).notice, 'Report card published.')
+
+  await api.enterMarks(c.teacher, { examId: c.craftBExamId!, marks: [{ studentId: c.otherPupil.id, obtained: 75 }] })
+  await api.publishExam(c.teacher, { examId: c.craftBExamId! })
+  await publication(c, { sectionId: c.sectionBId, studentId: c.otherPupil.id }, c.admin)
+  const other = await api.reportCard(c.otherPupil, c.otherPupil.id, c.termId, c.sectionBId)
+  assert.equal(other.subjects.find((s) => s.courseCode === 'CRAFT')?.total, 75)
 })
 
 // --- the template -------------------------------------------------------------
