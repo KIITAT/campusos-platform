@@ -196,24 +196,30 @@ test('a 30,000-person board fan-out queues the eligible audience in one bulk ope
   }), (error: unknown) => error === rollback)
 }))
 
-test('an enqueue that cannot run never fails the producer transaction (review note)', () => withEmailEnabled(async () => {
+test('an enqueue that really fails never fails the producer transaction (review note)', () => withEmailEnabled(async () => {
+  // A trigger stands in for an older Notices whose e-mail tables are missing: the e-mail insert fails for real.
+  // The test database role is the owner here (AUTH_DATABASE_URL unset), so `authDb` may run DDL.
+  await authDb.execute(sql`create or replace function test_fail_email() returns trigger language plpgsql as $$
+    begin raise exception 'simulated missing e-mail table'; end $$`)
+  await authDb.execute(sql`create trigger test_fail_email before insert on background_jobs for each row
+    when (new.kind = 'notices.email') execute function test_fail_email()`)
   const warnings: string[] = []
   const original = console.warn
   console.warn = (line: unknown) => { warnings.push(String(line)) }
+  const title = 'Producer survives a failed e-mail enqueue'
+  const queuedBefore = (await emailJobs()).length
   try {
     await withTenant(tenant, async (tx) => {
-      // An older Notices (no email tables) fails inside the savepoint; the producer's own transaction must go on.
-      const older = { transaction: async (run: (inner: unknown) => Promise<void>) => run({
-        execute: async () => { throw new Error('relation "notification_email_opt_outs" does not exist') },
-      }) }
-      await emailNotificationChannel.deliver(older as never, [{
-        notificationId: '00000000-0000-4000-8000-000000000001', institutionId: tenant, userId: studentId,
-        moduleId: 'fees', title: 'x', body: 'x', link: null,
-      }])
-      await tx.execute(sql`select 1`)
+      assert.equal(await notify(tx, tenant, { userIds: [studentId], moduleId: 'fees', title, body: 'Example' }), 1)
+      const { rows } = await tx.execute<{ n: number }>(sql`select count(*)::int as n from notifications where title = ${title}`)
+      assert.equal(rows[0]!.n, 1, 'the inbox row is in the producer transaction after the failed enqueue')
     })
   } finally {
     console.warn = original
+    await authDb.execute(sql`drop trigger test_fail_email on background_jobs`)
+    await authDb.execute(sql`drop function test_fail_email()`)
   }
+  assert.equal((await inbox(student())).items.filter((row) => row.title === title).length, 1, 'the inbox row committed')
+  assert.equal((await emailJobs()).length, queuedBefore, 'no queue row for the failed enqueue')
   assert.deepEqual(warnings.map((line) => JSON.parse(line)), [{ event: 'notices.email_enqueue_skipped' }])
 }))
