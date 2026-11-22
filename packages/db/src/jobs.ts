@@ -26,6 +26,9 @@ export const jobs = pgTable('background_jobs', {
 }, (table) => [
   uniqueIndex('background_jobs_dedupe').on(table.institutionId, table.dedupeKey),
   index('background_jobs_due').on(table.institutionId, table.status, table.runAfter),
+  // One partial index per claim lane, so a backlog of one kind is never sorted to find a job of the other.
+  index('background_jobs_claim_other').on(table.institutionId, table.runAfter, table.createdAt).where(sql`kind <> 'notices.email' and status in ('queued', 'running')`),
+  index('background_jobs_claim_email').on(table.institutionId, table.runAfter, table.createdAt).where(sql`kind = 'notices.email' and status in ('queued', 'running')`),
   check('background_jobs_status', sql`${table.status} in ('queued','running','succeeded','dead')`),
   check('background_jobs_attempts', sql`${table.maxAttempts} between 1 and 10 and ${table.attempts} between 0 and ${table.maxAttempts}`),
   tenantPolicy('background_jobs'),
@@ -47,12 +50,20 @@ export async function enqueueJob(tx: JobTransaction, input: {
   return existing
 }
 
-export async function claimJob(tenant: string, workerId: string, leaseSeconds = 120): Promise<BackgroundJob | null> {
+/**
+ * `lane` keeps one bulk kind from starving the rest: 'email' claims only
+ * `notices.email` jobs, 'other' everything else, 'any' (default) both. The
+ * predicates are literals so the partial indexes above serve them.
+ */
+export type ClaimLane = 'any' | 'email' | 'other'
+const laneFilter = { any: sql.raw('true'), email: sql.raw(`kind = 'notices.email' and status in ('queued', 'running')`), other: sql.raw(`kind <> 'notices.email' and status in ('queued', 'running')`) }
+
+export async function claimJob(tenant: string, workerId: string, leaseSeconds = 120, lane: ClaimLane = 'any'): Promise<BackgroundJob | null> {
   if (!workerId || workerId.length > 100 || !Number.isInteger(leaseSeconds) || leaseSeconds < 1 || leaseSeconds > 3600) throw new Error('invalid lease')
   return withTenant(tenant, async (tx) => {
     await tx.execute(sql`with expired as (select id from background_jobs where status='running' and lease_until < now() and attempts >= max_attempts for update skip locked) update background_jobs set status='dead', completed_at=now(), error_code='lease_exhausted', lease_token=null, lease_until=null from expired where background_jobs.id=expired.id`)
     const result = await tx.execute<{ id: string }>(sql`with candidate as (
-      select id from background_jobs where attempts < max_attempts and
+      select id from background_jobs where ${laneFilter[lane]} and attempts < max_attempts and
       ((status='queued' and run_after <= now()) or (status='running' and lease_until < now()))
       order by run_after, created_at for update skip locked limit 1
     ) update background_jobs set status='running', attempts=attempts+1,
@@ -75,12 +86,12 @@ export async function runClaimedJob<T>(tenant: string, id: string, leaseToken: s
   })
 }
 
-export async function failJob(tenant: string, id: string, leaseToken: string, errorCode: string): Promise<BackgroundJob> {
+export async function failJob(tenant: string, id: string, leaseToken: string, errorCode: string, retryDelaysSeconds?: readonly number[]): Promise<BackgroundJob> {
   return withTenant(tenant, async (tx) => {
     const [job] = await tx.select().from(jobs).where(eq(jobs.id, id)).for('update')
     if (!job || job.status !== 'running' || job.leaseToken !== leaseToken) throw new Error('job lease lost')
     const dead = job.attempts >= job.maxAttempts
-    const [failed] = await tx.update(jobs).set({ status: dead ? 'dead' : 'queued', completedAt: dead ? new Date() : null, leaseToken: null, leaseUntil: null, errorCode: /^[a-z_]{1,64}$/.test(errorCode) ? errorCode : 'handler_failed', runAfter: new Date(Date.now() + Math.min(3600, 5 * 2 ** (job.attempts - 1)) * 1000) }).where(eq(jobs.id, id)).returning()
+    const [failed] = await tx.update(jobs).set({ status: dead ? 'dead' : 'queued', completedAt: dead ? new Date() : null, leaseToken: null, leaseUntil: null, errorCode: /^[a-z_]{1,64}$/.test(errorCode) ? errorCode : 'handler_failed', runAfter: new Date(Date.now() + (retryDelaysSeconds ? retryDelaysSeconds[Math.min(job.attempts, retryDelaysSeconds.length) - 1]! : Math.min(3600, 5 * 2 ** (job.attempts - 1))) * 1000) }).where(eq(jobs.id, id)).returning()
     return failed!
   })
 }
