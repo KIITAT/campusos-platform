@@ -107,6 +107,10 @@ export async function reportCardPdf(r: ReportCard): Promise<Uint8Array> {
       gap(4)
       // The heading never sits alone at the foot of a page: it keeps one line with it.
       para(`${s.courseCode}  ${s.title}`, { weight: 'bold', keep: 14 })
+      if (s.notAssessed) {
+        para('Not assessed', { x: M + 12 })
+        continue
+      }
       for (const c of s.components) para(`${c.label}: ${c.absent ? 'Absent' : c.value === null ? 'Pending' : c.value.toFixed(2)} / ${c.max}`, { x: M + 12 })
       para(`Total: ${s.total === null ? 'Pending' : `${s.total.toFixed(2)} / 100`}`, { x: M + 12, weight: 'bold' })
       para(`Grade: ${grade(s.grade)}`, { x: M + 12, weight: 'bold' })

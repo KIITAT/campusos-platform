@@ -173,12 +173,52 @@ test('an explicitly excluded exam-free offering allows publication and leaves th
   await assert.rejects(publication(c), (e) => code(e) === 'report_card_incomplete')
   await saveTemplate(c, { template: { ...template, subjectOverrides, excludedOfferingIds: [c.craftAId!, c.offeringBId] } })
   assert.equal((await publication(c)).notice, 'Report card published.')
+  const report = await reportOf(c, c.pupil)
+  assert.deepEqual(report.subjects[0], {
+    courseCode: 'CRAFT', title: 'Craft', components: [], total: null, grade: null, notAssessed: true,
+  })
+  assert.deepEqual([report.subjects[1]!.total, report.subjects[1]!.grade], [87, 'A2'])
+  assert.ok(!('notAssessed' in report.subjects[1]!))
+  const lines = (await printed(await api.reportCardPdf(report))).split(' | ')
+  const craft = lines.indexOf('CRAFT Craft')
+  const maths = lines.findIndex((line) => line.endsWith(' Mathematics'))
+  assert.ok(craft >= 0 && maths > craft)
+  assert.deepEqual(lines.slice(craft + 1, maths), ['Not assessed'])
+  assert.ok(lines.includes('Total: 87.00 / 100') && lines.includes('Grade: A2'))
 
   await api.enterMarks(c.teacher, { examId: c.craftBExamId!, marks: [{ studentId: c.otherPupil.id, obtained: 75 }] })
   await api.publishExam(c.teacher, { examId: c.craftBExamId! })
   await publication(c, { sectionId: c.sectionBId, studentId: c.otherPupil.id }, c.admin)
   const other = await api.reportCard(c.otherPupil, c.otherPupil.id, c.termId, c.sectionBId)
   assert.equal(other.subjects.find((s) => s.courseCode === 'CRAFT')?.total, 75)
+})
+
+test('an exam created after publication requires complete assessment before the next download', async () => {
+  const c = await campus({ extraOffering: true })
+  const template = defaultSchoolTemplate(6)!
+  const subjectOverrides = [{ courseCode: 'CRAFT', components: [{ key: 'paper', label: 'Craft exam', weight: 100, selectors: [{ kind: 'final' }] }] }]
+  await publishMarks(c)
+  await saveTemplate(c, { template: { ...template, subjectOverrides, excludedOfferingIds: [c.craftAId!] } })
+  await publication(c)
+  assert.equal((await download(c, c.pupil)).status, 200)
+
+  const exam = await api.createExam(c.teacher, { offeringId: c.craftAId!, name: 'Craft final', kind: 'final', maxMarks: 100, weightPercent: 100 })
+  await assert.rejects(download(c, c.pupil), (e) => code(e) === 'report_card_incomplete')
+  await api.enterMarks(c.teacher, { examId: exam.id, marks: [{ studentId: c.pupil.id, obtained: 80 }] })
+  await assert.rejects(reportOf(c, c.pupil), (e) => code(e) === 'report_card_incomplete')
+  await api.publishExam(c.teacher, { examId: exam.id })
+  const craft = (await reportOf(c, c.pupil)).subjects[0]!
+  assert.deepEqual([craft.total, craft.grade, craft.notAssessed], [80, 'B1', undefined])
+  assert.equal((await download(c, c.pupil)).status, 200)
+})
+
+test('a marks report can publish when all of the section offerings are excluded', async () => {
+  const c = await campus()
+  await saveTemplate(c, { template: { ...defaultSchoolTemplate(6)!, excludedOfferingIds: [c.offeringBId] } })
+  assert.equal((await publication(c, { sectionId: c.sectionBId, studentId: c.otherPupil.id }, c.admin)).notice, 'Report card published.')
+  const report = await api.reportCard(c.otherPupil, c.otherPupil.id, c.termId, c.sectionBId)
+  assert.equal(report.subjects.length, 1)
+  assert.equal(report.subjects[0]!.notAssessed, true)
 })
 
 // --- the template -------------------------------------------------------------
