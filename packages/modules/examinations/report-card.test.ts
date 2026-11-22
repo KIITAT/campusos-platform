@@ -550,7 +550,8 @@ const req = (qs: string) => new Request(`http://t.test/m/examinations/report-car
 const forms = (sections: unknown) => (sections as { kind: string; path?: string }[]).filter((s) => s.kind === 'form')
 
 test('the staff page offers a class teacher only their own sections, and the template only to the office', async () => {
-  const c = await campus()
+  const c = await campus({ extraOffering: true })
+  const foreign = await campus({ extraOffering: true })
   await publishMarks(c)
   const p = page('/report-cards')
   assert.deepEqual(p.roles.sort(), ['faculty', 'hod', 'institution_admin', 'super_admin'])
@@ -566,8 +567,21 @@ test('the staff page offers a class teacher only their own sections, and the tem
   assert.equal(all.sectionId, '', 'no section is preselected')
 
   const q = `termId=${c.termId}&sectionId=${c.sectionId}&studentId=${c.pupil.id}`
-  const adminView = forms(p.sections(await p.load(c.admin as never, req(q))))
-  const teacherView = forms(p.sections(await p.load(c.classTeacher as never, req(q))))
+  const adminData = await p.load(c.admin as never, req(q))
+  const teacherData = await p.load(c.classTeacher as never, req(q))
+  const adminSections = p.sections(adminData)
+  const teacherSections = p.sections(teacherData)
+  const adminView = forms(adminSections)
+  const teacherView = forms(teacherSections)
+  const table = adminSections.find((s) => s.kind === 'table' && s.title === 'Offerings with no exams')
+  assert.ok(table?.kind === 'table')
+  assert.deepEqual(table.columns.map((c) => c.label), ['Section', 'Course', 'Offering ID'])
+  const eligible = JSON.stringify(adminData[table.rows])
+  assert.ok(eligible.includes(c.craftAId!))
+  for (const id of [c.offeringId, c.craftBId!, foreign.craftAId!]) assert.ok(!eligible.includes(id), id)
+  assert.ok(adminSections.some((s) => s.kind === 'note' && s.text === 'Add offering IDs to excludedOfferingIds to print Not assessed.'))
+  assert.ok(!teacherSections.some((s) => s.kind === 'table' && s.title === table.title))
+  assert.ok(!JSON.stringify(teacherData).includes(c.craftAId!))
   assert.ok(adminView.some((f) => f.path === '/report-card/template'))
   assert.ok(!teacherView.some((f) => f.path === '/report-card/template'))
   for (const path of ['/report-card/entry', '/report-card/publication']) assert.ok(teacherView.some((f) => f.path === path), path)

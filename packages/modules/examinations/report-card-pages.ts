@@ -2,7 +2,7 @@ import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm'
 import { withTenant } from '@campusos/db'
 import { canAccessStudent, param, type PluginPage, type PluginSection } from '@campusos/module-framework'
 import { studentProfiles } from '@campusos/module-academic/schema'
-import { reportCardRefusal } from './api/report-card-store'
+import { listUnassessedOfferings, reportCardRefusal } from './api/report-card-store'
 import { reportCardWorkspace } from './api/report-card'
 import { offerings, programs, sectionMembers, sections, terms, users } from './api/joins'
 import { reportCardEntries } from './schema'
@@ -40,7 +40,7 @@ export const reportCardPages: PluginPage[] = [
       const base = await withTenant(tenant, async (tx) => {
         const termRows = await tx.select({ id: terms.id, code: terms.code, name: terms.name }).from(terms).orderBy(desc(terms.startsOn), asc(terms.id))
         const sectionRows = await tx
-          .select({ id: sections.id, label: sections.label, program: programs.code })
+          .select({ id: sections.id, label: sections.label, program: programs.code, programId: programs.id })
           .from(sections)
           .innerJoin(programs, eq(programs.id, sections.programId))
           .where(office ? eq(programs.level, 'school') : and(eq(programs.level, 'school'), eq(sections.classTeacherId, a.id)))
@@ -62,7 +62,10 @@ export const reportCardPages: PluginPage[] = [
             roster.sort((x, y) => Number(x.roll === null) - Number(y.roll === null) || (x.roll ?? '').localeCompare(y.roll ?? '') || (x.name ?? '').localeCompare(y.name ?? '') || (x.id < y.id ? -1 : 1))
           }
         }
-        return { termRows, sectionRows, term, section, roster }
+        const unassessedOfferings = office && term && section && roster.some((p) => p.id === wantStudent)
+          ? await listUnassessedOfferings(tx, term.id, section.programId)
+          : []
+        return { termRows, sectionRows, term, section, roster, unassessedOfferings }
       })
       const pupil = base.roster.find((p) => p.id === wantStudent)
       const work = base.term && base.section && pupil ? await reportCardWorkspace(a, base.term.id, base.section.id, pupil.id) : null
@@ -76,6 +79,7 @@ export const reportCardPages: PluginPage[] = [
         studentId: work ? pupil!.id : '',
         pupilName: pupil?.name ?? '',
         work,
+        unassessedOfferings: base.unassessedOfferings.map((o) => ({ id: o.id, section: o.section, course: `${o.courseCode} ${o.title}` })),
         rosterEmpty: Boolean(base.term && base.section && !base.roster.length),
       }
     },
@@ -121,7 +125,7 @@ export const reportCardPages: PluginPage[] = [
       ]
       out.push({ kind: 'prose', title: data.pupilName as string, text: work.template ? `${work.template.name}. ${work.published ? 'Published.' : 'Not published.'}` : '' })
 
-      if (data.office)
+      if (data.office) {
         out.push({
           kind: 'form',
           title: 'Edit term template',
@@ -136,6 +140,23 @@ export const reportCardPages: PluginPage[] = [
             { name: 'template', label: 'Template JSON', kind: 'textarea', rows: 14, value: work.template ? JSON.stringify(work.template, null, 2) : '' },
           ],
         })
+
+        if (work.template?.mode === 'marks' && (data.unassessedOfferings as unknown[]).length) {
+          out.push(
+            { kind: 'note', text: 'Add offering IDs to excludedOfferingIds to print Not assessed.' },
+            {
+              kind: 'table',
+              title: 'Offerings with no exams',
+              rows: 'unassessedOfferings',
+              columns: [
+                { key: 'section', label: 'Section' },
+                { key: 'course', label: 'Course' },
+                { key: 'id', label: 'Offering ID' },
+              ],
+            },
+          )
+        }
+      }
 
       if (!work.template) {
         out.push({ kind: 'note', tone: 'warn', text: reportCardRefusal('no_report_card_template').message })
@@ -172,7 +193,7 @@ export const reportCardPages: PluginPage[] = [
       out.push({
         kind: 'form',
         title: 'Publication',
-        note: 'Publishing needs every result, or every scholastic rating, to be complete. A published report cannot be edited until it is withdrawn.',
+        note: 'Publishing needs every assessed result, or every scholastic rating, to be complete. A published report cannot be edited until it is withdrawn.',
         path: '/report-card/publication',
         placement: 'inline',
         submit: 'Save publication',
