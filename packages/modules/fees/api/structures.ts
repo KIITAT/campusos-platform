@@ -119,6 +119,10 @@ export async function chargeLateFees(actor: Actor, tx: Tx) {
   let totalPaise = 0
   for (const termId of termIds) {
     const [term] = await tx.select({ code: terms.code }).from(terms).where(eq(terms.id, termId))
+    // The price list's row estimates are tiny (lateral lines, filtered CTEs), and
+    // a nested loop over the per-student CTEs is quadratic at 30,000 students:
+    // hash joins only, for this statement (reset below).
+    await tx.execute(sql`set local enable_nestloop = off`)
     const all = (
       await tx.execute(sql`
         with issues as (
@@ -208,6 +212,7 @@ export async function chargeLateFees(actor: Actor, tx: Tx) {
         union all
         select false, * from removed`)
     ).rows as { raised: boolean; student_id: string; amount_paise: string | number; label: string; source_id: string }[]
+    await tx.execute(sql`set local enable_nestloop = on`)
     const gone = all.filter((r) => !r.raised)
     if (gone.length > 0) {
       await audit(tx, {
