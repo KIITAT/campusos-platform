@@ -18,7 +18,8 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core'
 import { institutions, tenantPolicy, users } from '@campusos/db'
-import { courses, offerings, programs, rooms, terms } from '@campusos/module-academic/schema'
+import { courses, offerings, programs, rooms, sections, terms } from '@campusos/module-academic/schema'
+import type { SchoolTemplate } from './api/school-policy'
 
 /**
  * Examinations and grading.
@@ -54,6 +55,8 @@ export const schemeKindEnum = pgEnum('grading_scheme_kind', [
   'percentage',
   'gpa',
   'custom',
+  /** A school's marks-and-grade policy (P1-13b); created only through the report card operations. */
+  'school',
 ])
 
 // --- grading schemes -------------------------------------------------------
@@ -501,5 +504,63 @@ export const eligibilityWaivers = pgTable(
     check('exam_eligibility_waivers_kind', sql`check_kind in ('attendance', 'dues')`),
     index('exam_eligibility_waivers_student').on(t.studentId),
     tenantPolicy('exam_eligibility_waivers'),
+  ],
+)
+
+// --- school term reports (P1-13b) ---------------------------------------------
+
+/**
+ * The report template of one class in one term: a validated version-1 document,
+ * revised by compare-and-swap and frozen once a pupil's entry exists. Without a
+ * row the class's built-in default applies. Mirrors migration 0006.
+ */
+export const reportCardTemplates = pgTable(
+  'exam_report_card_templates',
+  {
+    institutionId: tenantId(),
+    termId: uuid('term_id')
+      .notNull()
+      .references(() => terms.id, { onDelete: 'cascade' }),
+    programId: uuid('program_id')
+      .notNull()
+      .references(() => programs.id, { onDelete: 'cascade' }),
+    revision: integer().notNull(),
+    template: jsonb().$type<SchoolTemplate>().notNull(),
+  },
+  (t) => [
+    primaryKey({ name: 'exam_report_card_templates_pk', columns: [t.institutionId, t.termId, t.programId] }),
+    check('exam_report_card_templates_revision', sql`revision > 0`),
+    check('exam_report_card_templates_shape', sql`jsonb_typeof(template) = 'object' AND (template->'version' = '1'::jsonb) IS TRUE`),
+    tenantPolicy('exam_report_card_templates'),
+  ],
+)
+
+/**
+ * A pupil's teacher-observed grades and remark for a term, and whether the
+ * report is published. One row per term, section and pupil; a cleared row stays.
+ */
+export const reportCardEntries = pgTable(
+  'exam_report_card_entries',
+  {
+    institutionId: tenantId(),
+    termId: uuid('term_id')
+      .notNull()
+      .references(() => terms.id, { onDelete: 'cascade' }),
+    sectionId: uuid('section_id')
+      .notNull()
+      .references(() => sections.id, { onDelete: 'cascade' }),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    grades: jsonb().$type<Record<string, string>>().notNull().default({}),
+    remarkKey: text('remark_key'),
+    publishedAt: timestamp('published_at', { withTimezone: true }),
+  },
+  (t) => [
+    primaryKey({ name: 'exam_report_card_entries_pk', columns: [t.institutionId, t.termId, t.sectionId, t.studentId] }),
+    check('exam_report_card_entries_grades', sql`jsonb_typeof(grades) = 'object'`),
+    check('exam_report_card_entries_remark', sql`remark_key is null or remark_key ~ '^[a-z][a-z0-9_-]{0,31}$'`),
+    index('exam_report_card_entries_student').on(t.studentId),
+    tenantPolicy('exam_report_card_entries'),
   ],
 )

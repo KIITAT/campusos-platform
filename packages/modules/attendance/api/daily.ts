@@ -61,13 +61,16 @@ async function today(tx: Tx, tenant: string): Promise<string> {
   return r!.d
 }
 
-async function pupilsOf(tx: Tx, sectionId: string): Promise<Pupil[]> {
+/** A school section promoted on or before `onDate` keeps its members for the record but is no register (P1-13c): they sit in the next section. */
+async function pupilsOf(tx: Tx, sectionId: string, onDate: string): Promise<Pupil[]> {
   return (await tx.execute(sql`
     select u.id, coalesce(u.name, u.email) as name, p.roll_no
       from academic_section_members m
       join users u on u.id = m.user_id and u.role = 'student' and u.erased_at is null
       left join academic_student_profiles p on p.student_id = u.id
      where m.section_id = ${sectionId}
+       and not exists (select 1 from academic_sections s where s.id = m.section_id
+                          and (s.school_promoted_at at time zone 'Asia/Kolkata')::date <= ${onDate}::date)
      order by p.roll_no nulls last, name, u.id`)).rows as unknown as Pupil[]
 }
 
@@ -85,7 +88,7 @@ export async function markDay(actor: Actor, input: unknown) {
     if (!ok!.ok) throw new AttendanceError(400, 'day_out_of_range', `attendance is marked for today or the ${DAILY_BACKDATE_DAYS} days before it`)
     // Two saves of one register serialise here, so an absentee is told once.
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`attendance.daily:${d.sectionId}:${d.onDate}`}, 0))`)
-    const pupils = await pupilsOf(tx, d.sectionId)
+    const pupils = await pupilsOf(tx, d.sectionId, d.onDate)
     if (pupils.length === 0) throw new AttendanceError(409, 'empty_section', 'the section has no students')
     const ids = new Set(pupils.map((p) => p.id))
     if ([...absent].some((id) => !ids.has(id))) throw new AttendanceError(400, 'not_in_section', 'one of those students is not in this section')
@@ -158,7 +161,7 @@ export async function dailySheet(actor: Actor, sectionId?: string | null, onDate
     const id = q.sectionId ?? sections[0]?.value ?? null
     const day = q.onDate ?? now
     if (!id) return { sections, sectionId: null, onDate: day, today: now, students: [], absent: [] as string[], marked: false }
-    const pupils = await pupilsOf(tx, id)
+    const pupils = await pupilsOf(tx, id, day)
     const marks = (await tx.execute(sql`
       select student_id, present from attendance_daily_marks where section_id = ${id} and on_date = ${day}::date`)).rows as { student_id: string; present: boolean }[]
     return {

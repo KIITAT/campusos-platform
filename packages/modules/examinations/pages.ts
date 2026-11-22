@@ -17,6 +17,7 @@ import {
 } from './api'
 import { wallClock } from './api/time'
 import { cyclePages } from './cycle-pages'
+import { reportCardPages } from './report-card-pages'
 
 const MARKERS = ['institution_admin', 'super_admin', 'faculty', 'hod'] as const
 const ADMIN = ['institution_admin', 'super_admin'] as const
@@ -452,4 +453,5 @@ export const pages: PluginPage[] = [
     ],
   },
   ...cyclePages,
+  ...reportCardPages,
 ]
