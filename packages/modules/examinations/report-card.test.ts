@@ -625,3 +625,27 @@ test('a pupil and a guardian list only published reports, with no draft link', a
   assert.deepEqual((await p.load(c.stranger as never, req(''))).rows, [], 'a guardian of another child sees nothing of this one')
   assert.ok(!JSON.stringify(mine).includes(c.pupil2.id), 'the other pupil’s draft is not listed')
 })
+
+test('the cohort lock is one lock whatever the case of the ids (NEW-212)', async () => {
+  const c = await campus()
+  let release!: () => void
+  let locked!: () => void
+  const gate = new Promise<void>((r) => (release = r))
+  const ready = new Promise<void>((r) => (locked = r))
+  const done = withTenant(c.id, async (tx) => {
+    await lockReportCard(tx, c.id, c.termId.toUpperCase(), c.programId.toUpperCase())
+    locked()
+    await gate
+  })
+  await ready
+  try {
+    const second = await withTenant(c.id, async (tx) => {
+      await tx.execute(sql`set local lock_timeout = '300ms'`)
+      return lockReportCard(tx, c.id, c.termId, c.programId).then(() => null, (e: unknown) => e)
+    })
+    assert.ok(second, 'the lower-case ids took a different lock')
+  } finally {
+    release()
+  }
+  await done
+})
