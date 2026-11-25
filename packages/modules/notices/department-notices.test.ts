@@ -469,3 +469,19 @@ test('an administrator is not delivered a scoped notice they manage', async () =
   assert.ok(!(await recipients(n.id)).includes(p.adm!))
   assert.ok((await board1(adm())).rows.some((r) => r.id === n.id))
 })
+
+test('publishing a lecturer’s department draft checks the department again (P1-07e merge)', async () => {
+  // facD teaches in B for a while, drafts a notice, then loses the offering: the draft cannot go out.
+  const [row] = await authDb.insert(users).values({ email: 'facd@dept.test', institutionId: inst, role: 'faculty', name: 'facd' }).returning({ id: users.id })
+  const facD: Actor = { id: row!.id, role: 'faculty', email: 'facd@dept.test', institutionId: inst }
+  const term = await academic.createTerm(adm(), { code: 'dterm3', name: 'Third term', startsOn: await istDay(-1), endsOn: await istDay(1) })
+  const course = await academic.createCourse(adm(), { departmentId: deptB, code: 'cb2', title: 'Another B course', credits: 3 })
+  await academic.createOffering(adm(), { termId: term.id, courseId: course.id, sectionId: secB, facultyUserId: facD.id })
+  const draft = await send(facD, { departmentId: deptB, audienceRoles: ['student'], publish: false })
+  await withTenant(inst, (tx) => tx.execute(sql`delete from academic_offerings where faculty_user_id = ${facD.id}`))
+  await assert.rejects(publishNotice(facD, { noticeId: draft.id }), (e) => status(e) === 403 && code(e) === 'department_not_yours')
+  await assert.rejects(publishNotice(facD, { noticeId: draft.id, queued: true }), (e) => code(e) === 'department_not_yours')
+  assert.equal((await withTenant(inst, (tx) => tx.select().from(notices).where(eq(notices.id, draft.id))))[0]!.publishedAt, null)
+  // Office staff address any department (orchestrator decision): only a lecturer is limited.
+  await send(adm(), { departmentId: deptB, audienceRoles: ['student'] })
+})
