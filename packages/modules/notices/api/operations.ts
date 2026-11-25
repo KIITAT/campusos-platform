@@ -575,11 +575,19 @@ export async function publishNotice(actor: Actor, input: unknown) {
       const [notice] = await tx.select().from(notices).where(eq(notices.id, d.noticeId)).for('update')
       if (notice && !canManageNotice(actor, notice)) throw new NoticeError(404, 'no_such_notice', 'no such notice')
       if (!notice || notice.publishedAt) throw new NoticeError(409, 'not_a_draft', 'select an unpublished draft')
+      await ownsDepartmentOf(tx, actor, notice)
       const job = await enqueueJob(tx, { institutionId: tenant, actorId: actor.id, kind: 'notices.publish', dedupeKey: `notice:${d.noticeId}`, payload: { noticeId: d.noticeId } })
       return { id: d.noticeId, queued: true, jobId: job.id, reach: 0 }
     }
     return publishWithin(tx, actor, d.noticeId)
   })
+}
+
+/** A lecturer's department draft goes out only while the department is still theirs (NEW-163); office staff address any. */
+async function ownsDepartmentOf(tx: Tx, actor: Actor, notice: { departmentId: string | null; institutionId: string }) {
+  if (actor.role !== 'faculty' || !notice.departmentId) return
+  if (!(await ownDepartments(tx, notice.institutionId, actor.id)).includes(notice.departmentId))
+    throw new NoticeError(403, 'department_not_yours', 'a lecturer may address only their own departments')
 }
 
 export async function publishWithin(tx: Tx, actor: Actor, noticeId: string) {
@@ -589,6 +597,7 @@ export async function publishWithin(tx: Tx, actor: Actor, noticeId: string) {
     if (row.publishedAt) throw new NoticeError(409, 'already_published', 'already published')
     if (row.expiresAt && row.expiresAt <= new Date()) throw new NoticeError(409, 'notice_expired', 'the notice has expired')
     if (actor.role === 'faculty' && row.audienceRoles.some((role) => role !== 'student')) throw new NoticeError(403, 'audience_too_wide', 'a lecturer may post to students')
+    await ownsDepartmentOf(tx, actor, row)
 
     const reach = await publishRowWithin(tx, actor, row, new Date())
     return { id: noticeId, reach }
