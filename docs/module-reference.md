@@ -7,7 +7,7 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 
 | Module | Version | Pages | API routes | Dependencies |
 |---|---|---:|---:|---|
-| [Academic Core](#academic) | 0.14.0 | 8 | 45 | None |
+| [Academic Core](#academic) | 0.15.0 | 8 | 45 | None |
 | [Admissions](#admissions) | 0.12.0 | 3 | 9 | academic |
 | [Alumni and events](#alumni) | 0.5.0 | 4 | 12 | None |
 | [Attendance & QR](#attendance) | 0.19.0 | 8 | 30 | academic, notices |
@@ -23,7 +23,7 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | [Helpdesk and grievance](#helpdesk) | 0.5.0 | 2 | 7 | None |
 | [Hostel](#hostel) | 0.15.0 | 5 | 20 | academic |
 | [HR & Payroll](#hr) | 0.27.0 | 18 | 134 | finance, notices |
-| [Library](#library) | 0.17.0 | 5 | 19 | academic |
+| [Library](#library) | 0.18.0 | 5 | 19 | academic |
 | [Mentoring](#mentoring) | 0.30.0 | 6 | 19 | academic, notices |
 | [Communication & Notices](#notices) | 0.16.0 | 4 | 13 | academic |
 | [Parent Portal](#parents) | 0.30.0 | 4 | 13 | academic |
