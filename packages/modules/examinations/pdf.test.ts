@@ -5,6 +5,8 @@ import { transcriptPdf } from './api/transcript-pdf'
 import { admitCardPdf, gradeReportPdf } from './api/cycle-pdf'
 import type { Transcript } from './api/schemas'
 import type { AdmitCard, GradeReport } from './api/cycle'
+import { reportCardPdf } from './api/report-card-pdf'
+import type { ReportCard } from './api/report-card'
 
 const NAME = 'অভিষেক চট্টোপাধ্যায়'
 
@@ -58,4 +60,22 @@ test('an admit card prints a Bengali name (UX-01)', async () => {
     papers: [{ code: 'DS1', title: 'Data Structures', exam: 'Final', when: '2026-12-01 10:00', room: 'R1' }],
   }
   assert.ok((await printedText(await admitCardPdf(a))).includes(NAME))
+})
+
+test('a school term report prints a Bengali name (UX-01)', async () => {
+  const r: ReportCard = {
+    institution: 'Plain School',
+    term: { code: 'T1', name: 'Term 1' },
+    classNumber: 2,
+    sectionLabel: 'A',
+    name: NAME,
+    rollNo: 'R1',
+    templateName: 'Foundational progress',
+    mode: 'observations',
+    subjects: [],
+    areas: [{ key: 'language', label: 'Language and literacy', group: 'scholastic', grade: 'Proficient' }],
+    remark: null,
+    legend: [],
+  }
+  assert.ok((await printedText(await reportCardPdf(r))).includes(NAME))
 })

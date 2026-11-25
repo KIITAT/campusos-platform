@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNotNull } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm'
 import { audit, auditLog, users, withTenant } from '@campusos/db'
 import { notify } from '@campusos/module-notices/api'
 import { assertCanAccessStudent, type Role, type ViewerScope } from '@campusos/module-framework'
@@ -11,13 +11,12 @@ import {
   sections,
   terms,
 } from './joins'
-import { bands, examMarks, exams, schemePrograms, schemes } from '../schema'
+import { bands, examMarks, exams, marksHistory, schemePrograms, schemes } from '../schema'
 import {
   createExamSchema,
   createSchemeSchema,
   enterMarksSchema,
   publishExamSchema,
-  reviseMarkSchema,
   setProgramSchemeSchema,
   unpublishExamSchema,
   type Transcript,
@@ -46,7 +45,7 @@ export class ExamError extends Error {
   }
 }
 
-const tenantOf = (actor: Actor): string => {
+export const tenantOf = (actor: Actor): string => {
   if (!actor.institutionId) {
     throw new ExamError(400, 'no_institution', 'no institution for this session')
   }
@@ -54,21 +53,23 @@ const tenantOf = (actor: Actor): string => {
 }
 
 /** Who may enter marks: the lecturer of the offering, and staff above. */
-const canMark = (r: Role) =>
+export const canMark = (r: Role) =>
   r === 'faculty' || r === 'hod' || r === 'institution_admin' || r === 'super_admin'
 
-const isAdmin = (r: Role) => r === 'institution_admin' || r === 'super_admin'
+export const isAdmin = (r: Role) => r === 'institution_admin' || r === 'super_admin'
 
 const num = (v: string | null) => (v === null ? null : Number(v))
 
 type Tx = Parameters<Parameters<typeof withTenant>[1]>[0]
+/** A tenant transaction, for the review operations that share the offering lock. */
+export type MarkTx = Tx
 
 /**
  * A lecturer may only touch their own offering. Checked in one place because
  * every write in this module needs it and forgetting it once would let any
  * lecturer grade any cohort.
  */
-async function assertOwnsOffering(tx: Tx, actor: Actor, offeringId: string) {
+export async function assertOwnsOffering(tx: Tx, actor: Actor, offeringId: string) {
   const [row] = await tx
     .select({ faculty: offerings.facultyUserId })
     .from(offerings)
@@ -77,6 +78,29 @@ async function assertOwnsOffering(tx: Tx, actor: Actor, offeringId: string) {
   if (actor.role === 'faculty' && row.faculty !== actor.id) {
     throw new ExamError(403, 'not_your_offering', 'that is not your course')
   }
+}
+
+/**
+ * One lock per offering, taken by everything that decides a mark's result:
+ * entering marks, publishing, hiding, reviewing and finalising. They queue in
+ * the order they acquire it, so a review approved while a course is being
+ * finalised is either wholly before it or wholly after (P1-07c, decision 880).
+ * Held until the transaction ends.
+ */
+export async function lockOfferingMarks(tx: MarkTx, tenant: string, offeringId: string): Promise<void> {
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(hashtextextended('examinations:marks:' || ${tenant}::text || ':' || ${offeringId}::text, 0))`,
+  )
+}
+
+/** Resolve an exam, take its offering's lock, then re-read it so the state used is the state after any queued writer. */
+export async function lockedExam(tx: MarkTx, tenant: string, examId: string) {
+  const [first] = await tx.select({ offeringId: exams.offeringId }).from(exams).where(eq(exams.id, examId))
+  if (!first) throw new ExamError(404, 'no_such_exam', 'no such exam')
+  await lockOfferingMarks(tx, tenant, first.offeringId)
+  const [exam] = await tx.select().from(exams).where(eq(exams.id, examId))
+  if (!exam) throw new ExamError(404, 'no_such_exam', 'no such exam')
+  return exam
 }
 
 // --- grading schemes -------------------------------------------------------
@@ -193,7 +217,8 @@ export async function setProgramScheme(actor: Actor, input: unknown) {
   const data = setProgramSchemeSchema.parse(input)
 
   return withTenant(tenant, async (tx) => {
-    const [scheme] = await tx.select().from(schemes).where(eq(schemes.id, data.schemeId))
+    // A school scheme belongs to the report card operations, not to a programme's scale (D808).
+    const [scheme] = await tx.select().from(schemes).where(and(eq(schemes.id, data.schemeId), ne(schemes.kind, 'school')))
     if (!scheme) throw new ExamError(404, 'no_such_scheme', 'no such grading scheme')
     const [program] = await tx.select().from(programs).where(eq(programs.id, data.programId))
     if (!program) throw new ExamError(404, 'no_such_program', 'no such programme')
@@ -291,17 +316,17 @@ export async function enterMarks(actor: Actor, input: unknown) {
   const data = enterMarksSchema.parse(input)
 
   await withTenant(tenant, async (tx) => {
-    const [exam] = await tx.select().from(exams).where(eq(exams.id, data.examId))
-    if (!exam) throw new ExamError(404, 'no_such_exam', 'no such exam')
+    const exam = await lockedExam(tx, tenant, data.examId)
     await assertOwnsOffering(tx, actor, exam.offeringId)
 
     // Refused here with a usable message; the database trigger refuses it too,
-    // which is what makes the guarantee rather than the convention.
-    if (exam.publishedAt) {
+    // which is what makes the guarantee rather than the convention. Hiding the
+    // results does not reopen the marks, so the test is "ever published".
+    if (exam.publishedAt || exam.everPublished) {
       throw new ExamError(
         409,
         'published',
-        'results are published — use a revision, which records a reason',
+        'results are published — a change needs a review, proposed by one person and approved by another administrator',
       )
     }
 
@@ -368,10 +393,25 @@ export async function publishExam(actor: Actor, input: unknown) {
   const { examId } = publishExamSchema.parse(input)
 
   await withTenant(tenant, async (tx) => {
-    const [exam] = await tx.select().from(exams).where(eq(exams.id, examId))
-    if (!exam) throw new ExamError(404, 'no_such_exam', 'no such exam')
+    const exam = await lockedExam(tx, tenant, examId)
     await assertOwnsOffering(tx, actor, exam.offeringId)
     if (exam.publishedAt) throw new ExamError(409, 'already_published', 'already published')
+
+    // Who has a mark to be told about, before the cohort is filled in below.
+    const marked = await tx.selectDistinct({ studentId: examMarks.studentId }).from(examMarks).where(eq(examMarks.examId, examId))
+
+    // First publication gives every student in the cohort a pending row, so a
+    // mark entered later is a reviewed revision and never a fresh insert into
+    // protected results. A republication has them already.
+    if (!exam.everPublished) {
+      await tx.execute(sql`
+        insert into exam_marks (institution_id, exam_id, student_id, entered_by)
+        select ${tenant}, ${examId}, sm.user_id, ${actor.id}
+          from academic_section_members sm
+          join academic_offerings o on o.section_id = sm.section_id
+         where o.id = ${exam.offeringId}
+        on conflict (exam_id, student_id) do nothing`)
+    }
 
     await tx
       .update(exams)
@@ -395,7 +435,6 @@ export async function publishExam(actor: Actor, input: unknown) {
       .from(offerings)
       .innerJoin(courses, eq(courses.id, offerings.courseId))
       .where(eq(offerings.id, exam.offeringId))
-    const marked = await tx.selectDistinct({ studentId: examMarks.studentId }).from(examMarks).where(eq(examMarks.examId, examId))
     if (marked.length > 0) {
       await notify(tx, tenant, {
         userIds: marked.map((m) => m.studentId),
@@ -409,73 +448,13 @@ export async function publishExam(actor: Actor, input: unknown) {
   })
 }
 
-/**
- * The only path that changes a published mark. audit() sets the reason the
- * trigger looks for, in the same transaction, so the audit row and the change
- * cannot come apart.
- */
-export async function reviseMark(actor: Actor, input: unknown) {
-  const tenant = tenantOf(actor)
-  if (!canMark(actor.role)) throw new ExamError(403, 'forbidden', 'not permitted')
-  const data = reviseMarkSchema.parse(input)
-
-  await withTenant(tenant, async (tx) => {
-    const [exam] = await tx.select().from(exams).where(eq(exams.id, data.examId))
-    if (!exam) throw new ExamError(404, 'no_such_exam', 'no such exam')
-    await assertOwnsOffering(tx, actor, exam.offeringId)
-
-    const max = Number(exam.maxMarks)
-    if (data.obtained != null && data.obtained > max) {
-      throw new ExamError(400, 'above_max', `${data.obtained} exceeds the maximum of ${max}`)
-    }
-
-    const [before] = await tx
-      .select()
-      .from(examMarks)
-      .where(and(eq(examMarks.examId, data.examId), eq(examMarks.studentId, data.studentId)))
-    if (!before) throw new ExamError(404, 'no_such_mark', 'no mark to revise')
-
-    // Written first: it is what unlocks the row, and it means an aborted
-    // transaction leaves neither the change nor a dangling audit entry.
-    await audit(tx, {
-      institutionId: tenant,
-      actorId: actor.id,
-      actorEmail: actor.email ?? null,
-      moduleId: MODULE,
-      action: 'mark.revised',
-      entity: 'exam_marks',
-      entityId: before.id,
-      reason: data.reason,
-      detail: {
-        examName: exam.name,
-        studentId: data.studentId,
-        from: { obtained: num(before.obtained), absent: before.absent },
-        to: { obtained: data.obtained ?? null, absent: data.absent },
-        revision: before.revision + 1,
-      },
-    })
-
-    await tx
-      .update(examMarks)
-      .set({
-        obtained: data.absent ? null : (data.obtained?.toString() ?? null),
-        absent: data.absent,
-        enteredBy: actor.id,
-        enteredAt: new Date(),
-        revision: before.revision + 1,
-      })
-      .where(eq(examMarks.id, before.id))
-  })
-}
-
 export async function unpublishExam(actor: Actor, input: unknown) {
   const tenant = tenantOf(actor)
   if (!isAdmin(actor.role)) throw new ExamError(403, 'forbidden', 'not permitted')
   const data = unpublishExamSchema.parse(input)
 
   await withTenant(tenant, async (tx) => {
-    const [exam] = await tx.select().from(exams).where(eq(exams.id, data.examId))
-    if (!exam) throw new ExamError(404, 'no_such_exam', 'no such exam')
+    const exam = await lockedExam(tx, tenant, data.examId)
     if (!exam.publishedAt) throw new ExamError(409, 'not_published', 'not published')
 
     await audit(tx, {
@@ -494,16 +473,32 @@ export async function unpublishExam(actor: Actor, input: unknown) {
       .update(exams)
       .set({ publishedAt: null, publishedBy: null })
       .where(eq(exams.id, data.examId))
+
+    // Hidden is not the same as unmarked: the official outputs wait for the
+    // course to be finalised again (decision 881).
+    await tx.update(examMarks).set({ needsRecompute: true }).where(eq(examMarks.examId, data.examId))
   })
 }
 
-/** The full history of one mark, which is what a dispute actually needs. */
+/**
+ * The full history of one mark, which is what a dispute actually needs: the
+ * audit trail (who and why) and the value before and after every change,
+ * drafts included.
+ */
 export async function markHistory(actor: Actor, markId: string) {
   const tenant = tenantOf(actor)
   if (!canMark(actor.role)) throw new ExamError(403, 'forbidden', 'not permitted')
 
-  return withTenant(tenant, (tx) =>
-    tx
+  return withTenant(tenant, async (tx) => {
+    const [row] = await tx
+      .select({ offeringId: exams.offeringId })
+      .from(examMarks)
+      .innerJoin(exams, eq(exams.id, examMarks.examId))
+      .where(eq(examMarks.id, markId))
+    if (!row) throw new ExamError(404, 'no_such_mark', 'No such mark.')
+    await assertOwnsOffering(tx, actor, row.offeringId)
+
+    const trail = await tx
       .select({
         at: auditLog.at,
         action: auditLog.action,
@@ -513,8 +508,19 @@ export async function markHistory(actor: Actor, markId: string) {
       })
       .from(auditLog)
       .where(and(eq(auditLog.entity, 'exam_marks'), eq(auditLog.entityId, markId)))
-      .orderBy(asc(auditLog.at)),
-  )
+      .orderBy(asc(auditLog.at))
+    const history = await tx
+      .select({
+        event: marksHistory.event,
+        before: marksHistory.beforeMark,
+        after: marksHistory.afterMark,
+        at: marksHistory.at,
+      })
+      .from(marksHistory)
+      .where(eq(marksHistory.markId, markId))
+      .orderBy(asc(marksHistory.at), asc(marksHistory.id))
+    return { audit: trail, history }
+  })
 }
 
 // --- grades and transcripts ------------------------------------------------
@@ -542,6 +548,7 @@ export async function sheet(actor: Actor, examId: string) {
         obtained: examMarks.obtained,
         absent: examMarks.absent,
         revision: examMarks.revision,
+        needsRecompute: examMarks.needsRecompute,
       })
       .from(sectionMembers)
       .innerJoin(users, eq(users.id, sectionMembers.userId))
@@ -560,11 +567,14 @@ export async function sheet(actor: Actor, examId: string) {
         maxMarks: Number(exam.maxMarks),
         weightPercent: Number(exam.weightPercent),
         published: exam.publishedAt !== null,
+        /** Published at least once: the marks stay protected even while the results are hidden. */
+        everPublished: exam.everPublished,
       },
       entries: rows.map((r) => ({
         ...r,
         obtained: num(r.obtained),
         revision: r.revision ?? 0,
+        needsRecompute: r.needsRecompute ?? false,
       })),
     }
   })

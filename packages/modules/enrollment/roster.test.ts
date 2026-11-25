@@ -272,3 +272,16 @@ test('leaving a queue does not remove a member who was added by hand', async () 
   await api.drop(c.b, { offeringId: o.id })
   assert.equal(await member(c, c.ML, c.b.id), true)
 })
+
+test('a registration into a fed school section that has been promoted still stands, and seats nobody (P1-13c Opus review)', async () => {
+  const c = await campus()
+  const school = await academicApi.createProgram(academic(c.admin), { departmentId: c.deptId, code: 'C6', name: 'Class 6', level: 'school', durationTerms: 2 })
+  const S = await academicApi.createSection(academic(c.admin), { programId: school.id, label: 'A', admissionYear: 2025 })
+  const o = await offering(c, S.id)
+  await feed(c, S.id, true)
+  // A promotion marks the section finalised; the empty roster here stands in for one.
+  await authDb.execute(sql`update academic_sections set school_promoted_at = now() where id = ${S.id}`)
+  const r = await api.register(c.a, { offeringId: o.id })
+  assert.equal(r.status, 'registered')
+  assert.equal(await member(c, S.id, c.a.id), false)
+})

@@ -1,6 +1,7 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- exports under test are looked up by name, so a missing one fails as an assertion */
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { eq, like } from 'drizzle-orm'
+import { eq, like, sql } from 'drizzle-orm'
 import { authDb, institutions, users, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
 import { trialBalance, type Actor as Books } from '@campusos/module-finance/api'
@@ -25,7 +26,7 @@ import {
   verifyDemandLetter,
   type Actor,
 } from './api'
-import { demandLetters, transferClaims } from './schema'
+import { demandLetters, feePayments, transferClaims } from './schema'
 
 /**
  * KIIT's "RTGS Submit Application" and "Download Demand Letter": a transfer
@@ -161,7 +162,7 @@ test('a transfer not on the statement is rejected with a reason, and can be clai
   // A rejected UTR is free again.
   const again = await claim(c, { utr: 'TYPO000000001', amount: '21,310' })
   assert.equal(again.status, 'pending')
-  const queue = await claimQueue(c.clerk)
+  const queue = (await claimQueue(c.clerk)).rows
   assert.deepEqual(queue.map((q) => q.status), ['pending', 'rejected'], 'pending first')
 
   await retireBankAccount(c.admin, { accountId: c.accountId })
@@ -196,4 +197,123 @@ test('a demand letter states the term’s fees and what is due, numbered and kep
     withTenant(c.id, (tx) => tx.update(demandLetters).set({ addressee: 'Somebody else' }).where(eq(demandLetters.id, first.id))),
     (e) => String((e as { cause?: { constraint?: string } }).cause?.constraint) === 'fee_demand_letter_kept',
   )
+})
+
+test('a UPI payment is claimed by its 12-digit reference and verified as UPI', async () => {
+  const c = await campus()
+  await issueInvoices(c.admin, { termId: c.termId })
+  const cl = await claim(c, { mode: 'upi', utr: '412345678901', amount: '45,000' })
+  assert.equal(cl.status, 'pending')
+  await assert.rejects(claim(c, { mode: 'upi', utr: '41234567890A' }), (e) => code(e) === 'fee_transfer_claims_upi_shape')
+  await verifyClaim(c.clerk, { claimId: cl.id })
+  const p = (await studentLedger(c.asha, c.asha.id, c.termId)).payments[0]!
+  assert.equal(p.method, 'upi')
+  assert.equal(p.reference, '412345678901')
+})
+
+test('a deposited cheque is claimed with its drawer and verified as a cheque', async () => {
+  const c = await campus()
+  await issueInvoices(c.admin, { termId: c.termId })
+  const cl = await claim(c, { mode: 'cheque', utr: '000123', remitterIfsc: 'sbin0001234', drawerAccount: '1234 5678 901', amount: '45,000' })
+  assert.equal(cl.drawerAccount, '12345678901')
+  assert.equal(cl.remitterIfsc, 'SBIN0001234')
+  await assert.rejects(claim(c, { mode: 'cheque', utr: '000124', remitterIfsc: 'SBIN0001234' }), (e) => code(e) === 'fee_transfer_claims_cheque_shape')
+  await assert.rejects(
+    claim(c, { mode: 'cheque', utr: 'AB1234', remitterIfsc: 'SBIN0001234', drawerAccount: '12345678901' }),
+    (e) => code(e) === 'fee_transfer_claims_cheque_shape',
+  )
+  const v = await verifyClaim(c.clerk, { claimId: cl.id })
+  const [pay] = await withTenant(c.id, (tx) => tx.select().from(feePayments).where(eq(feePayments.receiptNo, v.receiptNo)))
+  assert.equal(pay!.method, 'cheque')
+  assert.equal(pay!.reference, '000123')
+  assert.equal(pay!.drawerIfsc, 'SBIN0001234')
+  assert.equal(pay!.drawerAccount, '12345678901')
+})
+
+test('the same cheque number on another account is another cheque, on the same account it is refused', async () => {
+  const c = await campus()
+  const cheque = (ifsc: string, account: string) => claim(c, { mode: 'cheque', utr: '000555', remitterIfsc: ifsc, drawerAccount: account, amount: '1,000' })
+  await cheque('SBIN0001234', '11111111')
+  await cheque('HDFC0000123', '11111111')
+  await assert.rejects(cheque('SBIN0001234', '11111111'), (e) => code(e) === 'fee_transfer_claims_cheque')
+  await claim(c, { mode: 'neft', utr: '000555AB', amount: '1,000' })
+})
+
+test('a claim takes the term issue lock, as every other money path does (NEW-93)', async () => {
+  const c = await campus()
+  await issueInvoices(c.admin, { termId: c.termId })
+  const cl = await claim(c, { utr: 'LOCK00000001', amount: '1,000' })
+  let verified = false
+  let pending: Promise<void> | undefined
+  await authDb.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${'fees.issue:' + c.termId}, 0))`)
+    pending = verifyClaim(c.clerk, { claimId: cl.id }).then(() => {
+      verified = true
+    })
+    await new Promise((r) => setTimeout(r, 500))
+    assert.equal(verified, false, 'verifying waits for the term lock')
+  })
+  await pending
+  assert.equal(verified, true)
+})
+
+const importing = async (name: string) => ((await import('./api')) as Record<string, any>)[name]
+
+test('a guardian reports a payment for their child only through the parents portal, and the report is audited', async () => {
+  const claimStudent = await importing('studentClaims')
+  const c = await campus()
+  const [p] = await authDb
+    .insert(users)
+    .values({ email: `p@${SLUG}guardian${n}.test`, institutionId: c.id, role: 'parent', name: 'Parent' })
+    .returning({ id: users.id })
+  const guardian: Actor = { id: p!.id, role: 'parent', institutionId: c.id }
+  const fields = (over: Record<string, unknown> = {}) => ({
+    termId: c.termId,
+    accountId: c.accountId,
+    mode: 'neft',
+    remitterBank: 'State Bank of India',
+    accountHolder: 'Parent',
+    contactPhone: '+91 98765 43210',
+    transferredOn: today(),
+    amount: '1,000',
+    utr: 'GUARD0000001',
+    ...over,
+  })
+  await assert.rejects(claimTransfer(guardian, fields({ studentId: c.asha.id })), (e) => code(e) === 'not_your_student')
+  const through = { ...guardian, viewerOf: [c.asha.id] } as Actor
+  const made = await claimTransfer(through, fields({ studentId: c.asha.id }))
+  assert.equal(made.studentId, c.asha.id)
+  await assert.rejects(claimTransfer(through, fields({ utr: 'GUARD0000002' })), (e) => code(e) === 'no_student')
+  await assert.rejects(claimTransfer(c.clerk, fields({ utr: 'GUARD0000003', studentId: c.asha.id })), (e) => code(e) === 'forbidden')
+  const logged = await withTenant(c.id, (tx) =>
+    tx.execute(sql`select detail from audit_log where action = 'fee.transfer_claimed' and entity_id = ${made.id}`),
+  )
+  const detail = (logged.rows[0] as { detail: { submittedBy: string; role: string } }).detail
+  assert.equal(detail.submittedBy, guardian.id)
+  assert.equal(detail.role, 'parent')
+  assert.equal((await claimStudent(through, c.asha.id)).length, 1)
+})
+
+test('the claim queue pages, pending first, and counts every claim (LOW-04)', async () => {
+  const claimPage = await importing('claimPage')
+  const claimCounts = await importing('claimCounts')
+  const pendingClaimOptions = await importing('pendingClaimOptions')
+  const c = await campus()
+  const ids: string[] = []
+  for (let i = 1; i <= 55; i++) ids.push((await claim(c, { utr: `QUEUE${String(i).padStart(7, '0')}`, amount: '1,000' })).id)
+  await rejectClaim(c.clerk, { claimId: ids[0], reason: 'not on the statement' })
+  const first = await claimQueue(c.clerk, null, claimPage(new Request('https://x/'), ''))
+  assert.equal(first.rows.length, 50)
+  assert.equal(first.total, 55)
+  assert.notEqual(first.next, null)
+  assert.equal(first.rows[0]!.status, 'pending')
+  const second = await claimQueue(c.clerk, null, claimPage(new Request(`https://x/?after=${encodeURIComponent(first.next!)}`), ''))
+  assert.equal(second.rows.length, 5)
+  assert.equal(second.rows[4]!.status, 'rejected')
+  assert.equal(second.next, null)
+  assert.equal((await claimQueue(c.clerk, 'rejected', claimPage(new Request('https://x/'), ''))).total, 1)
+  assert.deepEqual(await claimCounts(c.clerk), { pending: 54, pendingPaise: 54 * 100_000, verified: 0 })
+  const options = await pendingClaimOptions(c.clerk)
+  assert.equal(options.length, 54)
+  assert.equal(options[0].value, ids[1])
 })

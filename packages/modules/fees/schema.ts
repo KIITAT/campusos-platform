@@ -599,16 +599,22 @@ export const bankAccounts = pgTable(
     ifsc: text().notNull(),
     retiredAt: timestamp('retired_at', { withTimezone: true }),
     createdAt: createdAt(),
+    /** The account's UPI ID (VPA), lower-case; shown to payers as a QR (P1-03c). */
+    upiVpa: text('upi_vpa'),
+    /** A merchant VPA, whose QR may carry the amount due. */
+    upiMerchant: boolean('upi_merchant').notNull().default(false),
   },
   (t) => [
     uniqueIndex('fee_bank_accounts_number').on(t.institutionId, t.accountNumber),
     check('fee_bank_accounts_ifsc', sql`ifsc ~ '^[A-Z]{4}0[A-Z0-9]{6}$'`),
     check('fee_bank_accounts_number_digits', sql`account_number ~ '^[0-9]{6,20}$'`),
+    check('fee_bank_accounts_vpa', sql`upi_vpa IS NULL OR upi_vpa ~ '^[a-z0-9][a-z0-9._-]{1,255}@[a-z][a-z0-9.-]{1,63}$'`),
+    check('fee_bank_accounts_merchant', sql`NOT upi_merchant OR upi_vpa IS NOT NULL`),
     tenantPolicy('fee_bank_accounts'),
   ],
 )
 
-export const transferModeEnum = pgEnum('fee_transfer_mode', ['rtgs', 'neft', 'imps'])
+export const transferModeEnum = pgEnum('fee_transfer_mode', ['rtgs', 'neft', 'imps', 'upi', 'cheque'])
 export const claimStatusEnum = pgEnum('fee_claim_status', ['pending', 'verified', 'rejected'])
 
 /**
@@ -636,6 +642,8 @@ export const transferClaims = pgTable(
     remitterBank: text('remitter_bank').notNull(),
     remitterBranch: text('remitter_branch'),
     remitterIfsc: text('remitter_ifsc'),
+    /** The account number printed on a deposited cheque; set exactly for mode 'cheque'. */
+    drawerAccount: text('drawer_account'),
     accountHolder: text('account_holder').notNull(),
     contactPhone: text('contact_phone').notNull(),
     transferredOn: date('transferred_on').notNull(),
@@ -655,10 +663,18 @@ export const transferClaims = pgTable(
     index('fee_transfer_claims_pending').on(t.institutionId, t.status),
     uniqueIndex('fee_transfer_claims_utr')
       .on(t.institutionId, sql`upper(${t.utr})`)
-      .where(sql`status <> 'rejected'`),
+      .where(sql`status <> 'rejected' AND drawer_account IS NULL`),
+    uniqueIndex('fee_transfer_claims_cheque')
+      .on(t.institutionId, t.remitterIfsc, t.drawerAccount, t.utr)
+      .where(sql`status <> 'rejected' AND drawer_account IS NOT NULL`),
     check('fee_transfer_claims_amount', sql`amount_paise > 0`),
     check('fee_transfer_claims_utr_shape', sql`utr ~ '^[A-Za-z0-9]{6,30}$'`),
     check('fee_transfer_claims_ifsc', sql`remitter_ifsc is null or remitter_ifsc ~ '^[A-Z]{4}0[A-Z0-9]{6}$'`),
+    check('fee_transfer_claims_upi_shape', sql`mode::text <> 'upi' OR utr ~ '^[0-9]{12}$'`),
+    check(
+      'fee_transfer_claims_cheque_shape',
+      sql`(mode::text = 'cheque') = (drawer_account IS NOT NULL) AND (mode::text <> 'cheque' OR (utr ~ '^[0-9]{6}$' AND remitter_ifsc IS NOT NULL AND drawer_account ~ '^[0-9A-Z]{6,20}$'))`,
+    ),
     check('fee_transfer_claims_phone', sql`contact_phone ~ '^[0-9+() -]{7,20}$'`),
     check(
       'fee_transfer_claims_decided',
@@ -714,7 +730,7 @@ export interface DemandLetterContent {
   balancePaise: number
   student: { name: string; rollNo: string | null; registrationNo: string | null; programme: string | null }
   term: { code: string; name: string; startsOn: string; endsOn: string }
-  account: { accountName: string; bankName: string; branch: string; accountNumber: string; ifsc: string } | null
+  account: { accountName: string; bankName: string; branch: string; accountNumber: string; ifsc: string; upiVpa?: string | null } | null
 }
 
 /** Who signs a demand letter, and what it says around the figures. One row; absent is the default. */

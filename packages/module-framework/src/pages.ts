@@ -299,6 +299,19 @@ export interface PluginChart {
   empty?: string
 }
 
+/**
+ * A QR code the host draws from a string -- a UPI payment link -- with a caption.
+ */
+export interface PluginQr {
+  kind: 'qr'
+  title?: string
+  /** What the code encodes; at most 512 characters. */
+  value: string
+  caption?: string
+  /** Text of a link to `value`, drawn only for a `upi://pay?` value. */
+  link?: string
+}
+
 export type Tone = 'gray' | 'blue' | 'green' | 'orange' | 'red' | 'violet'
 
 export type PluginSection =
@@ -311,6 +324,7 @@ export type PluginSection =
   | PluginKanban
   | PluginShortcuts
   | PluginChart
+  | PluginQr
 
 /**
  * The lifecycle a record can opt into: draft, then submitted, then possibly

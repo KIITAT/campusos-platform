@@ -32,6 +32,7 @@ import {
 } from './schemas'
 import { studentProfileSchema } from './profiles'
 import { recordConsentSchema } from './consents'
+import { promoteSectionSchema, setNextSchoolProgramSchema } from './promotion'
 import { changeClassSchema, withdrawChangeSchema } from './changes'
 
 /**
@@ -130,6 +131,8 @@ export const paths = {
   [`${base}/sections`]: post('Create a cohort', createSectionSchema),
   [`${base}/sections/members`]: post('Add a student to a cohort', addSectionMemberSchema),
   [`${base}/sections/class-teacher`]: post("Set or clear a cohort's class teacher, by email", setClassTeacherSchema),
+  [`${base}/programs/next`]: post("Set or clear a school class's next class, for the year-end promotion", setNextSchoolProgramSchema),
+  [`${base}/sections/promote`]: post('Promote and detain a school section at the end of the session, once', promoteSectionSchema),
   [`${base}/departments/head`]: post("Set or clear a department's head (a HoD), by email", setDepartmentHeadSchema),
   [`${base}/offerings`]: post('Offer a course to a cohort in a term', createOfferingSchema),
   [`${base}/slots`]: post('Add a weekly timetable slot', createSlotSchema),

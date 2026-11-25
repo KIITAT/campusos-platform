@@ -1,6 +1,7 @@
 import { flag, jsonBody, requiredParam, type PluginRoute } from '@campusos/module-framework'
 import {
   childOverview,
+  claimChildPayment,
   claimLink,
   recordChildConsent,
   confirmAsAdult,
@@ -43,6 +44,11 @@ export const routes: PluginRoute[] = [
     method: 'POST',
     path: '/consents',
     handler: async (actor, req) => recordChildConsent(actor as Actor, await jsonBody(req)),
+  },
+  {
+    method: 'POST',
+    path: '/fee-claims',
+    handler: async (actor, req) => claimChildPayment(actor as Actor, await jsonBody(req)),
   },
   {
     method: 'POST',

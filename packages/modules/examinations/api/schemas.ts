@@ -58,15 +58,84 @@ export const publishExamSchema = z
  * audit row, and in the database trigger -- three places, because this is the
  * one path an institution will be asked to justify in a dispute.
  */
+const reviewReason = z.string().trim().min(10).max(500)
+
+/**
+ * A proposal, not a change: one person names the new value, a different
+ * administrator decides it (P1-07c). `expectedRevision` is the revision of the
+ * mark the proposer was looking at; a stale proposal is refused.
+ */
 export const reviseMarkSchema = z
-  .object({
+  .strictObject({
     examId: uuid,
     studentId: z.string().min(1),
     obtained: marks.nullish(),
     absent: z.boolean().default(false),
-    reason: z.string().trim().min(10).max(500),
+    expectedRevision: z.coerce.number().int().min(0).max(32766),
+    /** The student's open request this proposal answers, if any. */
+    requestId: uuid.optional(),
+    reason: reviewReason,
+  })
+  .refine((m) => (m.absent ? m.obtained == null : m.obtained != null), {
+    message: 'propose a score, or mark the student absent without one',
+    path: ['obtained'],
   })
   .meta({ id: 'ExamReviseMark' })
+
+/** A student asks for their own visible mark to be looked at again. */
+export const requestMarkReviewSchema = z
+  .strictObject({
+    markId: uuid,
+    kind: z.enum(['recheck', 're_evaluation']),
+    reason: reviewReason,
+  })
+  .meta({ id: 'ExamRequestMarkReview' })
+
+export const decideMarkReviewSchema = z
+  .strictObject({
+    requestId: uuid,
+    decision: z.enum(['approve', 'reject']),
+    reason: reviewReason,
+  })
+  .meta({ id: 'ExamDecideMarkReview' })
+
+export const listMarkReviewsSchema = z
+  .strictObject({ examId: uuid.optional(), after: uuid.optional() })
+  .meta({ id: 'ExamListMarkReviews' })
+
+const reviewStatus = z.enum(['requested', 'proposed', 'approved', 'rejected'])
+
+/** What every review mutation answers with. */
+export const markReviewResultSchema = z
+  .object({ requestId: uuid, status: reviewStatus, notice: z.string() })
+  .meta({ id: 'ExamMarkReviewResult' })
+
+export const markReviewPageSchema = z
+  .object({
+    rows: z.array(
+      z.object({
+        requestId: uuid,
+        markId: uuid,
+        examId: uuid,
+        kind: z.enum(['correction', 'recheck', 're_evaluation']),
+        status: reviewStatus,
+        createdAt: z.string(),
+        decidedAt: z.string().nullable(),
+        /** Staff only; a student's page never carries it. */
+        staff: z
+          .object({
+            studentId: z.string(),
+            makerId: z.string().nullable(),
+            baseRevision: z.number().int(),
+            proposedScore: z.number().nullable(),
+            proposedAbsent: z.boolean().nullable(),
+          })
+          .optional(),
+      }),
+    ),
+    next: uuid.nullable(),
+  })
+  .meta({ id: 'ExamMarkReviewPage' })
 
 export const unpublishExamSchema = z
   .object({
@@ -89,7 +158,8 @@ export const bandSchema = z
 export const createSchemeSchema = z
   .object({
     name,
-    kind: z.enum(schemeKindEnum.enumValues),
+    // A school scheme is made by the report card operations, never by hand (D808).
+    kind: z.enum(['percentage', 'gpa', 'custom']),
     maxPoints: z.coerce.number().min(1).max(100).nullish(),
     isDefault: z.boolean().default(false),
     bands: z.array(bandSchema).max(30).default([]),

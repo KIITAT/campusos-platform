@@ -13,6 +13,7 @@ export const routeRoles: Record<string, readonly Role[]> = {
   'POST /links/revoke': ADMIN,
   'POST /links/adult': ['student'],
   'POST /consents': ['parent'],
+  'POST /fee-claims': ['parent'],
   'GET /guardians': ADMIN,
   'GET /student-choices': ADMIN,
   'POST /guardians/invite': ADMIN,

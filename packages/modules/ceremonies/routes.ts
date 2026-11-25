@@ -1,4 +1,4 @@
-import { jsonBody, requiredParam, type PluginRoute } from '@campusos/module-framework'
+import { jsonBody, param, requiredParam, type PluginRoute } from '@campusos/module-framework'
 import {
   certificateDocument,
   certificateView,
@@ -18,6 +18,11 @@ import {
   runEligibility,
   setCeremonyStatus,
   verifyCertificate,
+  issueTransferCertificate,
+  listTransferCertificates,
+  reissueTransferCertificate,
+  revokeTransferCertificate,
+  transferCertificateDocument,
   type Actor,
 } from './api'
 
@@ -66,6 +71,29 @@ export const routes: PluginRoute[] = [
         headers: {
           'content-type': 'application/pdf',
           'content-disposition': `inline; filename="certificate-${serial}.pdf"`,
+        },
+      })
+    },
+  },
+  {
+    method: 'GET',
+    path: '/transfer-certificates',
+    handler: (a, req) => listTransferCertificates(a as Actor, { serial: param(req, 'serial'), studentId: param(req, 'studentId') }),
+  },
+  post('/transfer-certificates/issue', issueTransferCertificate),
+  post('/transfer-certificates/revoke', revokeTransferCertificate),
+  post('/transfer-certificates/reissue', reissueTransferCertificate),
+  {
+    method: 'GET',
+    path: '/transfer-certificate.pdf',
+    raw: true,
+    handler: async (a, req) => {
+      const { bytes, serial } = await transferCertificateDocument(a as Actor, requiredParam(req, 'certificateId'))
+      return new Response(bytes as unknown as BodyInit, {
+        headers: {
+          'content-type': 'application/pdf',
+          'content-disposition': `inline; filename="transfer-certificate-${serial}.pdf"`,
+          'cache-control': 'private, no-store',
         },
       })
     },

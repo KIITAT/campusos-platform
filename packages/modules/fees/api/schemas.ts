@@ -25,7 +25,7 @@ const positiveRupees = rupees.refine((p) => p > 0, 'must be more than zero')
 const blank = (v: unknown) => (typeof v === 'string' && v.trim() === '' ? undefined : v)
 
 /** The drawer's IFSC and account, as printed on a CTS-2010 cheque (D16). */
-const drawerIfsc = z.preprocess(
+export const drawerIfsc = z.preprocess(
   blank,
   z
     .string()
@@ -33,7 +33,7 @@ const drawerIfsc = z.preprocess(
     .pipe(z.string().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, 'an IFSC is four letters, a zero and six letters or digits'))
     .optional(),
 )
-const drawerAccount = z.preprocess(
+export const drawerAccount = z.preprocess(
   blank,
   z
     .string()

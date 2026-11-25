@@ -18,6 +18,7 @@ import {
   listWaivers,
   type Actor,
 } from './api'
+import { promotionPage } from './promotion-page'
 import { CATEGORY_LABELS, STUDENT_CATEGORIES } from './schema'
 
 const REGISTRAR = ['institution_admin', 'super_admin'] as const
@@ -1133,4 +1134,5 @@ export const pages: PluginPage[] = [
       },
     ],
   },
+  promotionPage,
 ]
