@@ -64,7 +64,7 @@ export const isAdmin = (r: Actor['role']) => r === 'institution_admin' || r === 
  * of one grade into the entry's grades never race another writer.
  */
 export async function lockReportCard(tx: Tx, tenant: string, termId: string, programId: string): Promise<void> {
-  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`examinations.report-card:${tenant}:${termId}:${programId}`}, 0))`)
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`examinations.report-card:${tenant}:${termId}:${programId}`.toLowerCase()}, 0))`)
 }
 
 /** A template as stored, checked again on the way out: a row edited by hand must not be trusted. */
