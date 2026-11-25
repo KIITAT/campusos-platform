@@ -2,7 +2,7 @@
 # rewrite with UPDATE_MATRIX=1. Columns: S=super_admin I=institution_admin H=hod F=faculty A=accounts_staff L=library_staff O=hostel_staff s=student p=parent n=pending.
 # Last column: op = the operation also refuses every undeclared role; gate = the gate is its only role check.
 
-## academic 0.14.0
+## academic 0.15.0
 POST /api/v1/modules/academic/departments                                SI........ op
 POST /api/v1/modules/academic/programs                                   SI........ op
 POST /api/v1/modules/academic/courses                                    SI........ op
@@ -124,7 +124,7 @@ POST /api/v1/modules/care/requests/close                                 SIHFALO
 POST /api/v1/modules/care/appointments                                   SIHFALO... gate
 POST /api/v1/modules/care/appointments/record                            SIHFALO... gate
 POST /api/v1/modules/care/notes                                          SIHFALO... gate
-GET /api/v1/modules/care/statistics                                      SI........ gate
+GET /api/v1/modules/care/statistics                                      SI........ op
 GET /api/v1/modules/care/settings                                        SI........ op
 POST /api/v1/modules/care/settings                                       SI........ op
 POST /api/v1/modules/care/counsellors                                    SI........ op
@@ -469,7 +469,7 @@ POST /api/v1/modules/finance/material-requests/issue                     SIHFALO
 POST /api/v1/modules/finance/material-requests/order                     SI..A..... op
 GET /api/v1/modules/finance/rfqs                                         SI..A..... op
 GET /api/v1/modules/finance/rfqs/compare                                 SI..A..... op
-POST /api/v1/modules/finance/rfqs                                        SI..A..... gate
+POST /api/v1/modules/finance/rfqs                                        SI..A..... op
 GET /api/v1/modules/finance/supplier-quotations                          SI..A..... op
 POST /api/v1/modules/finance/supplier-quotations                         SIHFALO... gate
 GET /api/v1/modules/finance/commitments                                  SI..A..... op
@@ -707,7 +707,7 @@ GET /api/v1/modules/hr/imports                                           SI.....
 GET /api/v1/modules/hr/imports/template                                  SI........ gate
 POST /api/v1/modules/hr/imports/run                                      SI........ gate
 
-## library 0.17.0
+## library 0.18.0
 GET /api/v1/modules/library/record-search                                SIHF.L.s.. op
 GET /api/v1/modules/library/titles                                       SIHF.L.s.. gate
 POST /api/v1/modules/library/titles                                      SI...L.... op
@@ -780,17 +780,17 @@ GET /api/v1/modules/parents/children                                     SI.....
 GET /api/v1/modules/parents/child                                        SI......p. gate
 
 ## placement 0.13.0
-GET /api/v1/modules/placement/workspace                                  SI.....s.. gate
-GET /api/v1/modules/placement/statistics                                 SI........ gate
+GET /api/v1/modules/placement/workspace                                  SI.....s.. op
+GET /api/v1/modules/placement/statistics                                 SI........ op
 POST /api/v1/modules/placement/officers                                  SI........ op
-POST /api/v1/modules/placement/companies                                 SI........ gate
-POST /api/v1/modules/placement/drives                                    SI........ gate
-POST /api/v1/modules/placement/drives/state                              SI........ gate
+POST /api/v1/modules/placement/companies                                 SI........ op
+POST /api/v1/modules/placement/drives                                    SI........ op
+POST /api/v1/modules/placement/drives/state                              SI........ op
 POST /api/v1/modules/placement/apply                                     .......s.. op
 POST /api/v1/modules/placement/withdraw                                  .......s.. op
-POST /api/v1/modules/placement/rounds                                    SI........ gate
-POST /api/v1/modules/placement/results                                   SI........ gate
-POST /api/v1/modules/placement/offers                                    SI........ gate
+POST /api/v1/modules/placement/rounds                                    SI........ op
+POST /api/v1/modules/placement/results                                   SI........ op
+POST /api/v1/modules/placement/offers                                    SI........ op
 POST /api/v1/modules/placement/offers/respond                            .......s.. op
 GET /api/v1/modules/placement/imports                                    SIHF...... gate
 GET /api/v1/modules/placement/imports/template                           SIHF...... gate
