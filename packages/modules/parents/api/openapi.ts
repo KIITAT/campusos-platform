@@ -1,4 +1,5 @@
 import * as z from 'zod'
+import { claimTransferSchema } from '@campusos/module-fees/api'
 import { manifest } from '../manifest'
 import {
   childOverviewSchema,
@@ -19,6 +20,19 @@ const gated = {
 }
 
 export const paths = {
+  [`${base}/student-choices`]: {
+    get: {
+      summary: 'Find a student by roll, registration or name for the guardian invitation (the administrators)',
+      tags: ['parents'],
+      parameters: [{ name: 'q', in: 'query', required: true, description: 'One to 100 characters', schema: { type: 'string', minLength: 1, maxLength: 100 } }],
+      responses: {
+        '200': { description: 'At most 12 hits: id, title, detail and href (null)' },
+        '400': { description: 'invalid_search', content: json(err) },
+        ...gated,
+        '429': { description: 'Too many lookups (120 a minute); see Retry-After', content: json(err) },
+      },
+    },
+  },
   [`${base}/links`]: {
     get: {
       summary: 'Parent-student links, optionally only those awaiting a decision',
@@ -64,6 +78,19 @@ export const paths = {
       tags: ['parents'],
       requestBody: { content: json(decideLinkSchema) },
       responses: { '204': { description: 'Revoked' }, ...gated },
+    },
+  },
+  [`${base}/fee-claims`]: {
+    post: {
+      summary: 'Report a payment made for your child',
+      description: 'Refused 403 not_your_child when the student is not linked to the caller. The fees module owns the claim; the accounts office finds it on the bank statement and turns it into a receipt.',
+      tags: ['parents'],
+      requestBody: { content: json(claimTransferSchema) },
+      responses: {
+        '200': { description: 'Reported, pending' },
+        ...gated,
+        '409': { description: 'That reference was already reported', content: json(err) },
+      },
     },
   },
   [`${base}/consents`]: {

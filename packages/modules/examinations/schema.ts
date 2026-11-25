@@ -18,7 +18,8 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core'
 import { institutions, tenantPolicy, users } from '@campusos/db'
-import { courses, offerings, programs, rooms, terms } from '@campusos/module-academic/schema'
+import { courses, offerings, programs, rooms, sections, terms } from '@campusos/module-academic/schema'
+import type { SchoolTemplate } from './api/school-policy'
 
 /**
  * Examinations and grading.
@@ -54,6 +55,8 @@ export const schemeKindEnum = pgEnum('grading_scheme_kind', [
   'percentage',
   'gpa',
   'custom',
+  /** A school's marks-and-grade policy (P1-13b); created only through the report card operations. */
+  'school',
 ])
 
 // --- grading schemes -------------------------------------------------------
@@ -169,6 +172,12 @@ export const exams = pgTable(
     publishedBy: text('published_by').references(() => users.id, {
       onDelete: 'set null',
     }),
+    /**
+     * Set the first time results are published and never cleared: hiding results
+     * is a visibility change, it does not reopen the marks (P1-07c, decision 875).
+     * Written by the database (exams_guard_unpublish), not by the application.
+     */
+    everPublished: boolean('ever_published').notNull().default(false),
     createdAt: createdAt(),
   },
   (t) => [
@@ -201,6 +210,8 @@ export const examMarks = pgTable(
     enteredAt: timestamp('entered_at', { withTimezone: true }).notNull().defaultNow(),
     /** Bumped by every audited revision, so a disputed mark shows its history depth. */
     revision: smallint().notNull().default(0),
+    /** An approved revision or a hidden exam: official outputs wait until the course is finalised again. */
+    needsRecompute: boolean('needs_recompute').notNull().default(false),
   },
   (t) => [
     uniqueIndex('exam_marks_once').on(t.examId, t.studentId),
@@ -388,6 +399,87 @@ export const examSettings = pgTable(
 
 export type ExamWindow = typeof examWindows.$inferSelect
 
+// --- marks integrity (P1-07c, AUD-05) ----------------------------------------
+
+/** A mark as the history and the approval evidence record it. */
+export type MarkSnapshot = { obtained: number | null; absent: boolean; revision: number }
+
+/**
+ * A review of one mark: asked for by the student, or started by staff as a
+ * correction; proposed by one person and decided by a different administrator.
+ * The reasons live in the audit chain, not here. The database refuses any
+ * transition the workflow does not allow and binds an approval to the audit row
+ * and the mark change made in the same transaction.
+ */
+export const markRequests = pgTable(
+  'exam_mark_requests',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    markId: uuid('mark_id')
+      .notNull()
+      .references(() => examMarks.id, { onDelete: 'cascade' }),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    kind: text().$type<'correction' | 'recheck' | 're_evaluation'>().notNull(),
+    status: text().$type<'requested' | 'proposed' | 'approved' | 'rejected'>().notNull(),
+    makerId: text('maker_id'),
+    checkerId: text('checker_id'),
+    baseRevision: smallint('base_revision').notNull(),
+    proposedScore: marks('proposed_score'),
+    proposedAbsent: boolean('proposed_absent'),
+    createdAt: createdAt(),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    approvedXid: text('approved_xid'),
+  },
+  (t) => [
+    uniqueIndex('exam_mark_requests_live')
+      .on(t.markId)
+      .where(sql`status in ('requested', 'proposed')`),
+    index('exam_mark_requests_page').on(t.institutionId, t.id.desc()),
+    index('exam_mark_requests_student').on(t.studentId),
+    check('exam_mark_requests_kind_check', sql`kind in ('correction', 'recheck', 're_evaluation')`),
+    check('exam_mark_requests_status_check', sql`status in ('requested', 'proposed', 'approved', 'rejected')`),
+    check('exam_mark_requests_base_revision_check', sql`base_revision between 0 and 32766`),
+    check('exam_mark_requests_distinct_checker', sql`checker_id is null or checker_id is distinct from maker_id`),
+    check(
+      'exam_mark_requests_decided',
+      sql`(status in ('approved', 'rejected')) = (checker_id is not null and decided_at is not null)`,
+    ),
+    check('exam_mark_requests_approved_xid', sql`(status = 'approved') = (approved_xid is not null)`),
+    check(
+      'exam_mark_requests_proposal',
+      sql`status not in ('proposed', 'approved') or (maker_id is not null and proposed_absent is not null and ((proposed_absent and proposed_score is null) or (not proposed_absent and proposed_score is not null and proposed_score >= 0)))`,
+    ),
+    tenantPolicy('exam_mark_requests'),
+  ],
+)
+
+/** Every insert, score change and draft delete of a mark, append-only (trigger). */
+export const marksHistory = pgTable(
+  'exam_marks_history',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    /** Not a foreign key: a deleted draft mark's history outlives it. */
+    markId: uuid('mark_id').notNull(),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    event: text().$type<'insert' | 'update' | 'delete'>().notNull(),
+    beforeMark: jsonb('before_mark').$type<MarkSnapshot | null>(),
+    afterMark: jsonb('after_mark').$type<MarkSnapshot | null>(),
+    at: timestamp({ withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('exam_marks_history_mark').on(t.institutionId, t.markId, t.at, t.id),
+    index('exam_marks_history_student').on(t.studentId),
+    check('exam_marks_history_event_check', sql`event in ('insert', 'update', 'delete')`),
+    tenantPolicy('exam_marks_history'),
+  ],
+)
+
 /**
  * A waiver of one eligibility check for one student and term (P1-07b). Live
  * while the row exists; granting and revoking are audit events, which carry
@@ -412,5 +504,63 @@ export const eligibilityWaivers = pgTable(
     check('exam_eligibility_waivers_kind', sql`check_kind in ('attendance', 'dues')`),
     index('exam_eligibility_waivers_student').on(t.studentId),
     tenantPolicy('exam_eligibility_waivers'),
+  ],
+)
+
+// --- school term reports (P1-13b) ---------------------------------------------
+
+/**
+ * The report template of one class in one term: a validated version-1 document,
+ * revised by compare-and-swap and frozen once a pupil's entry exists. Without a
+ * row the class's built-in default applies. Mirrors migration 0006.
+ */
+export const reportCardTemplates = pgTable(
+  'exam_report_card_templates',
+  {
+    institutionId: tenantId(),
+    termId: uuid('term_id')
+      .notNull()
+      .references(() => terms.id, { onDelete: 'cascade' }),
+    programId: uuid('program_id')
+      .notNull()
+      .references(() => programs.id, { onDelete: 'cascade' }),
+    revision: integer().notNull(),
+    template: jsonb().$type<SchoolTemplate>().notNull(),
+  },
+  (t) => [
+    primaryKey({ name: 'exam_report_card_templates_pk', columns: [t.institutionId, t.termId, t.programId] }),
+    check('exam_report_card_templates_revision', sql`revision > 0`),
+    check('exam_report_card_templates_shape', sql`jsonb_typeof(template) = 'object' AND (template->'version' = '1'::jsonb) IS TRUE`),
+    tenantPolicy('exam_report_card_templates'),
+  ],
+)
+
+/**
+ * A pupil's teacher-observed grades and remark for a term, and whether the
+ * report is published. One row per term, section and pupil; a cleared row stays.
+ */
+export const reportCardEntries = pgTable(
+  'exam_report_card_entries',
+  {
+    institutionId: tenantId(),
+    termId: uuid('term_id')
+      .notNull()
+      .references(() => terms.id, { onDelete: 'cascade' }),
+    sectionId: uuid('section_id')
+      .notNull()
+      .references(() => sections.id, { onDelete: 'cascade' }),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    grades: jsonb().$type<Record<string, string>>().notNull().default({}),
+    remarkKey: text('remark_key'),
+    publishedAt: timestamp('published_at', { withTimezone: true }),
+  },
+  (t) => [
+    primaryKey({ name: 'exam_report_card_entries_pk', columns: [t.institutionId, t.termId, t.sectionId, t.studentId] }),
+    check('exam_report_card_entries_grades', sql`jsonb_typeof(grades) = 'object'`),
+    check('exam_report_card_entries_remark', sql`remark_key is null or remark_key ~ '^[a-z][a-z0-9_-]{0,31}$'`),
+    index('exam_report_card_entries_student').on(t.studentId),
+    tenantPolicy('exam_report_card_entries'),
   ],
 )

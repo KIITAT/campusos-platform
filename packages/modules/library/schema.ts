@@ -57,6 +57,8 @@ export const titles = pgTable(
     isbn: text(),
     title: text().notNull(),
     author: text().notNull(),
+    titleKey: text('title_key').generatedAlwaysAs(sql`lower(title)`),
+    authorKey: text('author_key').generatedAlwaysAs(sql`lower(author)`),
     publisher: text(),
     year: smallint(),
     category: text(),
@@ -67,6 +69,9 @@ export const titles = pgTable(
       .on(t.institutionId, t.isbn)
       .where(sql`isbn is not null`),
     index('library_titles_search').on(t.institutionId, t.title),
+    // Record search (P1-09c, 0004): a title or author found ignoring case, one tenant at a time.
+    index('library_titles_title_key').on(t.institutionId, t.titleKey),
+    index('library_titles_author_key').on(t.institutionId, t.authorKey),
     check('library_titles_title', sql`length(trim(title)) > 0`),
     check(
       'library_titles_year',

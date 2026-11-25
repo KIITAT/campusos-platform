@@ -4,6 +4,7 @@ import { createDocument } from 'zod-openapi'
 import {
   assignRoleSchema,
   consentStateSchema,
+  documentChallengeSchema,
   createInstitutionSchema,
   eraseUserSchema,
   errorSchema,
@@ -179,6 +180,22 @@ export const coreDocument = createDocument({
           '200': { description: 'Erased' },
           '403': { description: 'Forbidden', content: json(errorSchema) },
           '409': { description: 'That is the only administrator', content: json(errorSchema) },
+        },
+      },
+    },
+    '/api/v1/document-assent/challenge': {
+      post: {
+        summary: 'Mail the signed-in signer a one-time code for a Documents signing request',
+        description:
+          'A host route: the Documents module issues the code and keeps only a digest; this mails it to ' +
+          'the current address of the signer. Same-origin browser requests with a session only. Answers with a fixed notice, never the code.',
+        requestBody: { content: json(documentChallengeSchema) },
+        responses: {
+          '200': { description: 'Confirmation code sent' },
+          '403': { description: 'Forbidden', content: json(errorSchema) },
+          '409': { description: 'Request closed, expired, not yet downloaded, or too soon', content: json(errorSchema) },
+          '429': { description: 'Too many attempts; see Retry-After', content: json(errorSchema) },
+          '503': { description: 'Confirmation email is unavailable', content: json(errorSchema) },
         },
       },
     },

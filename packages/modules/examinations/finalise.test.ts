@@ -7,6 +7,7 @@ import {
   ExamError,
   createExam,
   createScheme,
+  decideMarkReview,
   enterMarks,
   finaliseCourse,
   officialTranscript,
@@ -279,11 +280,17 @@ test('a revised mark, finalised again, corrects the record with a reason', async
   const exam = await wholeCourse(c, [{ studentId: c.a, obtained: 47 }])
   await finaliseCourse(c.admin, { offeringId: c.offeringId })
 
-  await reviseMark(c.faculty, {
+  const proposal = await reviseMark(c.faculty, {
     examId: exam.id,
     studentId: c.a,
     obtained: 82,
+    expectedRevision: 0,
     reason: 'question three was marked against the wrong scheme',
+  })
+  await decideMarkReview(c.admin, {
+    requestId: proposal.requestId,
+    decision: 'approve',
+    reason: 'the scheme was checked by the registrar',
   })
 
   const out = await finaliseCourse(c.admin, {

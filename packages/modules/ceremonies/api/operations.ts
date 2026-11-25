@@ -10,12 +10,13 @@ import {
   users,
   withTenant,
 } from '@campusos/db'
-import { assertCanAccessStudent, type Role } from '@campusos/module-framework'
+import { assertCanAccessStudent, PluginError, type Role } from '@campusos/module-framework'
 import { MissingGlyphError, unprintable } from '@campusos/module-framework/pdf'
 import { degreeAudit, degreeAuditWithin, type DegreeAudit } from '@campusos/module-academic/api'
 import { programs, studentPrograms } from '@campusos/module-academic/schema'
 import { candidates, ceremonies, certificates, holds, type Candidate } from '../schema'
 import { certificatePdf } from './certificate-pdf'
+import { assertCertificateClearanceWithin } from './clearance'
 import {
   ceremonyRefSchema,
   ceremonyStatusSchema,
@@ -549,6 +550,14 @@ export async function issueCertificates(actor: Actor, input: unknown) {
       const bad = unprintable(label) ?? unprintable(c.programName) ?? unprintable(institutionName)
       if (bad) return `cannot be printed: "${bad}" (U+${(bad.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')})`
 
+      const serial = await nextSerial(tx, tenant, ceremony.heldOn.slice(0, 4))
+      try {
+        await assertCertificateClearanceWithin(tx, tenant, c.studentId)
+      } catch (e) {
+        if (e instanceof PluginError && e.status === 409 && e.code === 'certificate_dues_outstanding') return e.message
+        throw e
+      }
+
       const [cert] = await tx
         .insert(certificates)
         .values({
@@ -556,7 +565,7 @@ export async function issueCertificates(actor: Actor, input: unknown) {
           candidateId: c.id,
           ceremonyId: ceremony.id,
           studentId: c.studentId,
-          serial: await nextSerial(tx, tenant, ceremony.heldOn.slice(0, 4)),
+          serial,
           verificationCode: code(),
           studentName: label,
           programCode: c.programCode,
@@ -633,8 +642,10 @@ export async function reissueCertificate(actor: Actor, input: unknown) {
     const [student] = await tx.select({ name: users.name }).from(users).where(eq(users.id, old.studentId))
     const bad = unprintable(student?.name ?? old.studentName) ?? unprintable(old.programName)
     if (bad) throw new MissingGlyphError(bad)
+    const serial = await nextSerial(tx, tenant, old.conferredOn.slice(0, 4))
+    await assertCertificateClearanceWithin(tx, tenant, old.studentId)
     const draft = await amendDocument(tx, certificates, old.id, who(actor, tenant), {
-      serial: await nextSerial(tx, tenant, old.conferredOn.slice(0, 4)),
+      serial,
       verification_code: code(),
       student_name: student?.name ?? old.studentName,
       cgpa: a.cgpa === null ? null : a.cgpa.toFixed(2),

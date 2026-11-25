@@ -4,6 +4,7 @@ import {
   check,
   customType,
   date,
+  foreignKey,
   index,
   numeric,
   pgEnum,
@@ -86,10 +87,15 @@ export const programs = pgTable(
     level: programLevelEnum().notNull(),
     /** Terms to completion, e.g. 8 for a four-year semesterised degree. */
     durationTerms: smallint('duration_terms').notNull(),
+    /** A school class's successor, for the year-end promotion (P1-13c). Null: none, or not a school class. */
+    nextProgramId: uuid('next_program_id'),
     createdAt: createdAt(),
   },
   (t) => [
     uniqueIndex('academic_programs_code').on(t.institutionId, t.code),
+    uniqueIndex('academic_programs_tenant_id').on(t.institutionId, t.id),
+    foreignKey({ name: 'academic_school_successor_fk', columns: [t.institutionId, t.nextProgramId], foreignColumns: [t.institutionId, t.id] }),
+    check('academic_school_successor', sql`next_program_id is null or (level = 'school' and next_program_id <> id)`),
     check('academic_programs_duration', sql`duration_terms between 1 and 24`),
     tenantPolicy('academic_programs'),
   ],
@@ -220,6 +226,8 @@ export const sections = pgTable(
      * and records (student_relations.academic_class_teacher, P0-03).
      */
     classTeacherId: text('class_teacher_id').references(() => users.id, { onDelete: 'set null' }),
+    /** Set once by the year-end promotion of a school section; no new member joins afterwards (P1-13c). */
+    schoolPromotedAt: timestamp('school_promoted_at', { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
@@ -254,11 +262,18 @@ export const sectionMembers = pgTable(
     userId: text('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
+    /** Filled by the database from the section, for school classes only; never assigned here (P1-13c). */
+    schoolProgramId: uuid('school_program_id'),
+    schoolAdmissionYear: smallint('school_admission_year'),
     createdAt: createdAt(),
   },
   (t) => [
     primaryKey({ columns: [t.sectionId, t.userId] }),
     index('academic_section_members_user').on(t.userId),
+    // One section per school class and session, whoever writes the row.
+    uniqueIndex('academic_school_member_one_section')
+      .on(t.institutionId, t.userId, t.schoolProgramId, t.schoolAdmissionYear)
+      .where(sql`school_program_id is not null`),
     tenantPolicy('academic_section_members'),
   ],
 )
@@ -678,6 +693,8 @@ export const studentProfiles = pgTable(
     institutionId: tenantId(),
     rollNo: text('roll_no'),
     registrationNo: text('registration_no'),
+    rollKey: text('roll_key').generatedAlwaysAs(sql`lower(roll_no)`),
+    registrationKey: text('registration_key').generatedAlwaysAs(sql`lower(registration_no)`),
     phone: text(),
     addressLine: text('address_line'),
     city: text(),
@@ -698,6 +715,9 @@ export const studentProfiles = pgTable(
     uniqueIndex('academic_student_profiles_roll').on(t.institutionId, t.rollNo),
     uniqueIndex('academic_student_profiles_registration').on(t.institutionId, t.registrationNo),
     check('academic_student_profiles_phone', sql`phone is null or phone ~ '^[0-9+() -]{7,20}$'`),
+    // Record search (P1-09c, 0014): exact lookups that ignore case, on the stored lower-cased copies.
+    index('academic_student_profiles_roll_key').on(t.institutionId, t.rollKey),
+    index('academic_student_profiles_registration_key').on(t.institutionId, t.registrationKey),
     uniqueIndex('academic_student_profiles_apaar_unique').on(t.institutionId, t.apaarId),
     check('academic_student_profiles_apaar', sql`apaar_id is null or apaar_id ~ '^[0-9]{12}$'`),
     check('academic_student_profiles_house', sql`house is null or length(trim(house)) between 1 and 40`),

@@ -2,22 +2,31 @@ import type { PluginPage, PluginSection } from '@campusos/module-framework'
 import { formatPaise } from '@campusos/money'
 import { listStructure } from '@campusos/module-academic/api'
 import {
+  claimCounts,
+  claimPage,
   claimQueue,
   letterSettingsOf,
   listBankAccounts,
   listDemandLetters,
   myClaims,
-  studentChoices,
+  pendingClaimOptions,
+  qrSection,
+  statementPage,
+  statementView,
+  upiFor,
   type Actor,
+  type UpiPay,
 } from './api'
 
 const OFFICE = ['institution_admin', 'super_admin', 'accounts_staff'] as const
 const ADMIN = ['institution_admin', 'super_admin'] as const
 
 const MODES = [
+  { value: 'upi', label: 'UPI' },
   { value: 'neft', label: 'NEFT' },
   { value: 'rtgs', label: 'RTGS' },
   { value: 'imps', label: 'IMPS' },
+  { value: 'cheque', label: 'Cheque deposited at the bank' },
 ]
 const PURPOSES = [
   { value: 'education_loan', label: 'Education loan' },
@@ -39,14 +48,15 @@ const day = (d: Date | string | null) => (d ? new Date(d).toISOString().slice(0,
 export const transferPages: PluginPage[] = [
   {
     path: '/transfer',
-    title: 'Pay by bank transfer',
-    menu: 'Bank transfer',
+    title: 'Pay fees',
+    menu: 'Pay fees',
     roles: ['student'],
     async load(actor) {
       const a = actor as Actor
       const [accounts, claims, t] = await Promise.all([listBankAccounts(a), myClaims(a), termOptions(a)])
       const live = accounts.filter((x) => x.state === 'active')
       return {
+        upi: t.current ? await upiFor(a, a.id, t.current) : null,
         accounts: live,
         accountOptions: live.map((x) => ({ value: x.id, label: `${x.label}: ${x.bankName} ${x.accountNumber}` })),
         claims: claims.map((c) => ({ ...c, submitted: day(c.submittedAt), decided: day(c.decidedAt) })),
@@ -57,9 +67,10 @@ export const transferPages: PluginPage[] = [
       {
         kind: 'note',
         text:
-          'Paid your fees by RTGS, NEFT or IMPS? Tell the accounts office here, exactly as your bank shows it. ' +
-          'They find it on the bank statement and turn it into a receipt; until then it shows as pending. A UTR can be claimed once.',
+          'Paid by UPI, RTGS, NEFT or IMPS, or deposited a cheque at the bank? Tell the accounts office here, exactly as your bank shows it. ' +
+          'They find it on the bank statement and turn it into a receipt; until then it shows as pending. A reference can be reported once.',
       },
+      ...(data.upi ? [qrSection(data.upi as UpiPay)] : []),
       {
         kind: 'table',
         title: 'Pay into',
@@ -76,7 +87,7 @@ export const transferPages: PluginPage[] = [
       },
       {
         kind: 'form',
-        title: 'Report a transfer',
+        title: 'Report a payment',
         submit: 'Submit',
         path: '/transfers',
         fields: [
@@ -85,10 +96,15 @@ export const transferPages: PluginPage[] = [
           { name: 'mode', label: 'How', kind: 'radio', options: MODES, value: 'neft' },
           { name: 'transferredOn', label: 'Date of the transfer', kind: 'date' },
           { name: 'amount', label: 'Amount', kind: 'money', hint: 'Rupees, exactly as transferred.' },
-          { name: 'utr', label: 'UTR number', hint: 'The unique transaction reference on your bank’s confirmation.' },
+          {
+            name: 'utr',
+            label: 'UTR, UPI reference or cheque number',
+            hint: 'UPI: the 12-digit reference your UPI app shows. Cheque: the 6-digit number. Transfers: the UTR on your bank’s confirmation.',
+          },
           { name: 'remitterBank', label: 'Your bank' },
           { name: 'remitterBranch', label: 'Your branch', optional: true },
-          { name: 'remitterIfsc', label: 'Your bank’s IFSC', optional: true },
+          { name: 'remitterIfsc', label: 'Your bank’s IFSC', optional: true, hint: 'Cheques: the IFSC printed on the cheque' },
+          { name: 'drawerAccount', label: 'Cheque’s account number', optional: true, hint: 'Cheques only: printed at the bottom of the cheque' },
           { name: 'accountHolder', label: 'Paid from the account of', hint: 'Whose account it came from: you, a parent.' },
           { name: 'contactPhone', label: 'Phone, if the office needs to ask' },
           { name: 'bankReference', label: 'Bank reference, if given', optional: true },
@@ -161,20 +177,21 @@ export const transferPages: PluginPage[] = [
 
   {
     path: '/transfers',
-    title: 'Reported transfers',
-    menu: 'Transfers',
+    title: 'Reported payments',
+    menu: 'Reported payments',
     roles: [...OFFICE],
-    async load(actor) {
-      const claims = await claimQueue(actor as Actor)
-      const pending = claims.filter((c) => c.status === 'pending')
+    async load(actor, req) {
+      const a = actor as Actor
+      const [claims, pendingOptions, counts] = await Promise.all([
+        claimQueue(a, null, claimPage(req, 'claims')),
+        pendingClaimOptions(a),
+        claimCounts(a),
+      ])
       return {
-        claims: claims.map((c) => ({ ...c, submitted: day(c.submittedAt) })),
-        pendingOptions: pending.map((c) => ({ value: c.id, label: `${c.student}: ${c.amount} ${c.modeText} ${c.utr} (${c.transferredOn})` })),
-        counts: {
-          pending: pending.length,
-          pendingAmount: pending.reduce((n, c) => n + c.amountPaise, 0),
-          verified: claims.filter((c) => c.status === 'verified').length,
-        },
+        claims: claims.rows.map((c) => ({ ...c, submitted: day(c.submittedAt) })),
+        claimsPage: { total: claims.total, next: claims.next },
+        pendingOptions,
+        counts: { pending: counts.pending, pendingAmount: counts.pendingPaise, verified: counts.verified },
       }
     },
     sections: (data) => {
@@ -191,15 +208,15 @@ export const transferPages: PluginPage[] = [
         {
           kind: 'note',
           text:
-            'Find each transfer on the bank statement by its UTR, date and amount. Verifying records the payment, gives the student a receipt and marks it reconciled, in one act; ' +
+            'Find each payment on the bank statement by its reference, date and amount, or let Match the statement on the Bank statement page do it. Verifying records the payment, gives the student a receipt and marks it reconciled, in one act; ' +
             'a transfer not on the statement is rejected with a reason the student reads.',
         },
         {
           kind: 'table',
-          title: 'Transfers',
+          title: 'Reported payments',
           rows: 'claims',
           empty: 'Nothing reported.',
-          pageSize: 50,
+          paging: { data: 'claimsPage', sorts: ['queue'] },
           columns: [
             { key: 'student', label: 'Student' },
             { key: 'term', label: 'Term', kind: 'code' },
@@ -251,11 +268,10 @@ export const transferPages: PluginPage[] = [
     roles: [...OFFICE],
     async load(actor) {
       const a = actor as Actor
-      const [accounts, letters, settings, students, t] = await Promise.all([
+      const [accounts, letters, settings, t] = await Promise.all([
         listBankAccounts(a),
         listDemandLetters(a),
         letterSettingsOf(a),
-        studentChoices(a),
         termOptions(a),
       ])
       return {
@@ -263,7 +279,6 @@ export const transferPages: PluginPage[] = [
         liveOptions: accounts.filter((x) => x.state === 'active').map((x) => ({ value: x.id, label: `${x.label}: ${x.accountNumber}` })),
         letters: letters.map((l) => ({ ...l, issued: day(l.issuedAt), pdf: 'PDF' })),
         settings,
-        students,
         ...t,
       }
     },
@@ -282,6 +297,7 @@ export const transferPages: PluginPage[] = [
             { key: 'branch', label: 'Branch' },
             { key: 'accountNumber', label: 'Number', kind: 'code' },
             { key: 'ifsc', label: 'IFSC', kind: 'code' },
+            { key: 'upiVpa', label: 'UPI ID', kind: 'code' },
             { key: 'state', label: 'State', kind: 'status' },
           ],
         },
@@ -298,6 +314,18 @@ export const transferPages: PluginPage[] = [
             { name: 'branch', label: 'Branch' },
             { name: 'accountNumber', label: 'Account number' },
             { name: 'ifsc', label: 'IFSC' },
+          ],
+        },
+        {
+          kind: 'form',
+          title: 'UPI for an account',
+          submit: 'Save',
+          path: '/bank-accounts/upi',
+          roles: [...ADMIN],
+          fields: [
+            { name: 'accountId', label: 'Account', kind: 'select', options: 'liveOptions' },
+            { name: 'vpa', label: 'UPI ID', optional: true, hint: 'For example fees.kiit@sbi. Leave empty to remove.' },
+            { name: 'merchant', label: 'This is a merchant UPI ID (the QR then carries the amount due)', kind: 'checkbox', optional: true },
           ],
         },
         {
@@ -333,7 +361,7 @@ export const transferPages: PluginPage[] = [
           submit: 'Issue',
           path: '/letters',
           fields: [
-            { name: 'studentId', label: 'Student', kind: 'select', options: 'students' },
+            { name: 'studentId', label: 'Student', hint: 'Search by roll number, registration number or name.', lookup: { path: '/student-choices' } },
             { name: 'termId', label: 'Term', kind: 'select', options: 'terms', value: String(data.current ?? '') },
             { name: 'addressee', label: 'Addressed to' },
             { name: 'purpose', label: 'For', kind: 'radio', options: PURPOSES, value: 'education_loan' },
@@ -356,4 +384,80 @@ export const transferPages: PluginPage[] = [
       ]
     },
   },
+  {
+    path: '/statement',
+    title: 'Bank statement',
+    menu: 'Bank statement',
+    roles: ['institution_admin', 'accounts_staff'],
+    async load(actor, req) {
+      const a = actor as Actor
+      const [view, t] = await Promise.all([statementView(a, statementPage(req, 'rows')), termOptions(a)])
+      return {
+        ...view,
+        rows: 'rows' in view ? view.rows : [],
+        rowsPage: 'rows' in view ? { total: view.total, next: view.next } : { total: 0, next: null },
+        ...t,
+      }
+    },
+    sections: (data) => {
+      if (!data.account) return [{ kind: 'note', tone: 'warn', text: String(data.message ?? '') }]
+      const totals = data.totals as { count: number; amountPaise: number }
+      return [
+        {
+          kind: 'figures',
+          figures: [
+            { label: 'Credits not yet matched', value: String(totals.count), tone: totals.count ? 'due' : 'clear' },
+            { label: 'Amount', value: formatPaise(totals.amountPaise) },
+          ],
+        },
+        {
+          kind: 'note',
+          text:
+            'Import the statement under Finance, Bank accounts. Matching receipts the payments that name a reported UPI or transfer reference, or the reference on our UPI QR, and marks them reconciled; ' +
+            'everything else waits here for you. A line that is not a fee: set it aside on the finance bank page.',
+        },
+        { kind: 'form', title: 'Match the statement', submit: 'Match', path: '/statement/match', fields: [] },
+        {
+          kind: 'table',
+          title: 'Credits not yet matched',
+          rows: 'rows',
+          empty: 'Every credit on the statement is matched.',
+          paging: { data: 'rowsPage', sorts: ['date'] },
+          columns: [
+            { key: 'txnDate', label: 'Date', kind: 'date' },
+            { key: 'description', label: 'Narration' },
+            { key: 'reference', label: 'Reference', kind: 'code' },
+            { key: 'depositPaise', label: 'Amount', kind: 'money' },
+            { key: 'suggested', label: 'Suggested' },
+          ],
+        },
+        {
+          kind: 'form',
+          title: 'Receipt a statement line',
+          submit: 'Receipt',
+          path: '/statement/receipt',
+          fields: [
+            { name: 'lineId', label: 'Statement line', kind: 'select', options: 'lineOptions' },
+            { name: 'studentId', label: 'Student', hint: 'Search by roll number, registration number or name.', lookup: { path: '/student-choices' } },
+            { name: 'termId', label: 'Term', kind: 'select', options: 'terms', value: String(data.current ?? '') },
+            {
+              name: 'method',
+              label: 'How it was paid',
+              kind: 'radio',
+              options: [
+                { value: 'upi', label: 'UPI' },
+                { value: 'bank_transfer', label: 'Bank transfer' },
+                { value: 'cheque', label: 'Cheque' },
+              ],
+              value: 'upi',
+            },
+            { name: 'reference', label: 'Reference as on the statement' },
+            { name: 'drawerIfsc', label: 'Cheque: drawer’s IFSC', optional: true },
+            { name: 'drawerAccount', label: 'Cheque: drawer’s account number', optional: true },
+          ],
+        },
+      ]
+    },
+  },
+
 ]

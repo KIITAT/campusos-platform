@@ -110,8 +110,16 @@ export const users = pgTable(
      */
     dateOfBirth: date('date_of_birth', { mode: 'string' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    // Record search (P1-09c, core 0018): a stored lower-cased name, compared as a plain column
+    // because lower() and LIKE are not leakproof under row-level security (NEW-175).
+    nameKey: text('name_key').generatedAlwaysAs(sql`lower(coalesce(name, ''))`),
   },
-  () => [tenantPolicy('users')],
+  (t) => [
+    tenantPolicy('users'),
+    index('campusos_users_student_name_key')
+      .on(t.institutionId, t.nameKey)
+      .where(sql`role = 'student' and erased_at is null`),
+  ],
 )
 
 /**

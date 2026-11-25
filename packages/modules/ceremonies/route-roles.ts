@@ -24,5 +24,10 @@ export const routeRoles: Record<string, readonly Role[]> = {
   'POST /certificates/reissue': ADMIN,
   'GET /certificate': [...ADMIN, 'hod', 'student'],
   'GET /certificate.pdf': [...ADMIN, 'hod', 'student'],
+  'GET /transfer-certificates': ADMIN,
+  'POST /transfer-certificates/issue': ADMIN,
+  'POST /transfer-certificates/revoke': ADMIN,
+  'POST /transfer-certificates/reissue': ADMIN,
+  'GET /transfer-certificate.pdf': ADMIN,
   'GET /verify': TEACHING,
 }

@@ -1,13 +1,14 @@
 import { formatPaise } from '@campusos/money'
 import { flag, param, type PluginPage } from '@campusos/module-framework'
+import { qrSection, type UpiPay } from '@campusos/module-fees/api'
 import {
   childConsents,
+  childFeeDesk,
   childOverview,
   listGuardianInvites,
   listLinks,
   myChildren,
   myGuardians,
-  studentChoices,
   type Actor,
 } from './api'
 
@@ -31,6 +32,7 @@ export const pages: PluginPage[] = [
       const child = chosen ? await childOverview(a, chosen.studentId) : null
       // A choice is the guardian's for a student under 18; for an adult the link has lapsed and no row is read.
       const consents = chosen ? await childConsents(a, chosen.studentId).catch(() => []) : []
+      const desk = chosen && child?.fees ? await childFeeDesk(a, chosen.studentId) : null
 
       return {
         waiting: claims.length > 0 && verified.length === 0 && lapsed.length === 0,
@@ -56,6 +58,10 @@ export const pages: PluginPage[] = [
         attendance: child?.attendance?.marked ?? null,
         recent: child?.attendance?.recent ?? [],
         fees: child?.fees ?? null,
+        upi: child?.fees?.upi ?? null,
+        feeTermId: child?.fees?.termId ?? null,
+        accountOptions: desk?.accounts ?? [],
+        feeClaims: (desk?.claims ?? []).map((c) => ({ ...c, submitted: c.submittedAt.toISOString().slice(0, 10) })),
         library: child?.library ?? null,
         hostel: child?.hostel ?? null,
       }
@@ -117,6 +123,66 @@ export const pages: PluginPage[] = [
                       ? ('due' as const)
                       : ('clear' as const),
                 },
+              ],
+            },
+          ]
+        : []),
+      ...(data.fees && data.upi ? [qrSection(data.upi as UpiPay)] : []),
+      ...(data.fees && (data.accountOptions as unknown[]).length > 0
+        ? [
+            {
+              kind: 'form' as const,
+              title: 'Report a payment',
+              note: 'Paid by UPI, RTGS, NEFT or IMPS, or deposited a cheque at the bank? Tell the accounts office, exactly as the bank shows it. They find it on the bank statement and turn it into a receipt.',
+              submit: 'Submit',
+              path: '/fee-claims',
+              fields: [
+                { name: 'studentId', label: 'Child', kind: 'hidden' as const, value: String(data.studentId ?? '') },
+                { name: 'termId', label: 'Term', kind: 'hidden' as const, value: String(data.feeTermId ?? '') },
+                { name: 'accountId', label: 'Paid into', kind: 'select' as const, options: 'accountOptions' },
+                {
+                  name: 'mode',
+                  label: 'How',
+                  kind: 'radio' as const,
+                  options: [
+                    { value: 'upi', label: 'UPI' },
+                    { value: 'neft', label: 'NEFT' },
+                    { value: 'rtgs', label: 'RTGS' },
+                    { value: 'imps', label: 'IMPS' },
+                    { value: 'cheque', label: 'Cheque deposited at the bank' },
+                  ],
+                  value: 'upi',
+                },
+                { name: 'transferredOn', label: 'Date of the payment', kind: 'date' as const },
+                { name: 'amount', label: 'Amount', kind: 'money' as const, hint: 'Rupees, exactly as paid.' },
+                {
+                  name: 'utr',
+                  label: 'UTR, UPI reference or cheque number',
+                  hint: 'UPI: the 12-digit reference the UPI app shows. Cheque: the 6-digit number. Transfers: the UTR on the bank’s confirmation.',
+                },
+                { name: 'remitterBank', label: 'Bank paid from' },
+                { name: 'remitterBranch', label: 'Branch', optional: true },
+                { name: 'remitterIfsc', label: 'Bank’s IFSC', optional: true, hint: 'Cheques: the IFSC printed on the cheque' },
+                { name: 'drawerAccount', label: 'Cheque’s account number', optional: true, hint: 'Cheques only: printed at the bottom of the cheque' },
+                { name: 'accountHolder', label: 'Paid from the account of' },
+                { name: 'contactPhone', label: 'Phone, if the office needs to ask' },
+              ],
+            },
+            {
+              kind: 'table' as const,
+              title: 'Payments reported',
+              rows: 'feeClaims',
+              empty: 'Nothing reported yet.',
+              columns: [
+                { key: 'submitted', label: 'Reported' },
+                { key: 'term', label: 'Term', kind: 'code' as const },
+                { key: 'modeText', label: 'How' },
+                { key: 'transferredOn', label: 'Paid on' },
+                { key: 'amount', label: 'Amount' },
+                { key: 'utr', label: 'Reference', kind: 'code' as const },
+                { key: 'status', label: 'State', kind: 'status' as const },
+                { key: 'receiptNo', label: 'Receipt', kind: 'code' as const },
+                { key: 'decisionNote', label: 'Note' },
               ],
             },
           ]
@@ -424,13 +490,9 @@ export const pages: PluginPage[] = [
     roles: [...ADMIN],
     async load(actor) {
       const a = actor as Actor
-      const [invites, students] = await Promise.all([listGuardianInvites(a), studentChoices(a)])
+      const invites = await listGuardianInvites(a)
       return {
         invites: invites.map((i) => ({ ...i, open: i.state === 'open' })),
-        studentOptions: students.map((s) => ({
-          value: s.id,
-          label: `${s.name ?? s.email} (${s.email})`,
-        })),
         liveOptions: invites
           .filter((i) => i.state === 'open' || i.state === 'accepted')
           .map((i) => ({ value: i.id, label: `${i.email} (${i.state}): ${i.children}` })),
@@ -454,7 +516,7 @@ export const pages: PluginPage[] = [
         path: '/guardians/invite',
         fields: [
           { name: 'email', label: 'Guardian’s email address' },
-          { name: 'studentId', label: 'Child', kind: 'select', options: 'studentOptions' },
+          { name: 'studentId', label: 'Child', hint: 'Search by roll number, registration number or name.', lookup: { path: '/student-choices' } },
           { name: 'relation', label: 'Relation', hint: 'mother, father, guardian...' },
           { name: 'days', label: 'Days to accept', kind: 'number', value: '7', hint: '1 to 30' },
         ],

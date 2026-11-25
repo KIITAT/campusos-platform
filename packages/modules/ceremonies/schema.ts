@@ -189,3 +189,5 @@ export const certificates = pgTable(
 export type Ceremony = typeof ceremonies.$inferSelect
 export type Candidate = typeof candidates.$inferSelect
 export type Certificate = typeof certificates.$inferSelect
+
+export * from './transfer-schema'

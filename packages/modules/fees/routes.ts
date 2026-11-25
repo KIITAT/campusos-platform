@@ -8,9 +8,12 @@ import { eq } from 'drizzle-orm'
 import { db, institutions } from '@campusos/db'
 import {
   addBankAccount,
+  searchFeeReceipts,
+  searchFeeStudents,
   bouncePayment,
   voidInvoice,
   voidPayment,
+  claimPage,
   claimQueue,
   claimTransfer,
   demandLetter,
@@ -19,6 +22,7 @@ import {
   letterSettingsOf,
   listBankAccounts,
   listDemandLetters,
+  matchStatement,
   myClaims,
   rejectClaim,
   retireBankAccount,
@@ -53,7 +57,11 @@ import {
   recordPayment,
   reconcilePayment,
   refundPayment,
+  receiptLine,
   revokeWaiver,
+  setAccountUpi,
+  statementPage,
+  statementView,
   studentLedger,
   type Actor,
 } from './api'
@@ -61,10 +69,14 @@ import {
 export const routes: PluginRoute[] = [
   { method: 'GET', path: '/bank-accounts', handler: (actor) => listBankAccounts(actor as Actor) },
   { method: 'POST', path: '/bank-accounts', handler: async (actor, req) => addBankAccount(actor as Actor, await jsonBody(req)) },
+  { method: 'POST', path: '/bank-accounts/upi', handler: async (actor, req) => setAccountUpi(actor as Actor, await jsonBody(req)) },
+  { method: 'GET', path: '/statement', handler: (actor, req) => statementView(actor as Actor, statementPage(req, '')) },
+  { method: 'POST', path: '/statement/match', handler: (actor) => matchStatement(actor as Actor) },
+  { method: 'POST', path: '/statement/receipt', handler: async (actor, req) => receiptLine(actor as Actor, await jsonBody(req)) },
   { method: 'POST', path: '/bank-accounts/retire', handler: async (actor, req) => retireBankAccount(actor as Actor, await jsonBody(req)) },
   { method: 'POST', path: '/transfers', handler: async (actor, req) => claimTransfer(actor as Actor, await jsonBody(req)) },
   { method: 'GET', path: '/transfers/mine', handler: (actor) => myClaims(actor as Actor) },
-  { method: 'GET', path: '/transfers', handler: (actor, req) => claimQueue(actor as Actor, param(req, 'status')) },
+  { method: 'GET', path: '/transfers', handler: (actor, req) => claimQueue(actor as Actor, param(req, 'status'), claimPage(req, '')) },
   { method: 'POST', path: '/transfers/verify', handler: async (actor, req) => verifyClaim(actor as Actor, await jsonBody(req)) },
   { method: 'POST', path: '/transfers/reject', handler: async (actor, req) => rejectClaim(actor as Actor, await jsonBody(req)) },
   { method: 'GET', path: '/letters/settings', handler: (actor) => letterSettingsOf(actor as Actor) },
@@ -252,6 +264,10 @@ export const routes: PluginRoute[] = [
     path: '/dues',
     handler: (actor, req) => duesReport(actor as Actor, requiredParam(req, 'termId'), duesPage(req, '')),
   },
+
+  // Record lookups for the office (P1-09c): a receipt by number, a student for a form.
+  { method: 'GET', path: '/record-search', lookup: 'global', handler: (actor, req) => searchFeeReceipts(actor as Actor, req) },
+  { method: 'GET', path: '/student-choices', lookup: 'picker', handler: (actor, req) => searchFeeStudents(actor as Actor, req) },
 
   {
     method: 'GET',

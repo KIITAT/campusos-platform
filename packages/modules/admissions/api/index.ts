@@ -165,7 +165,7 @@ export async function acceptApplication(actor: Actor, input: unknown) {
     const seated = await transaction.select({ sectionId: sectionMembers.sectionId }).from(sectionMembers).innerJoin(sections, eq(sections.id, sectionMembers.sectionId))
       .where(and(eq(sectionMembers.userId, studentId), eq(sections.programId, row.programId), eq(sections.admissionYear, section.admissionYear), ne(sectionMembers.sectionId, data.sectionId)))
     if (seated.length) throw new DomainError(409, 'already_seated', 'This student already has a seat in another section of this programme and year. Move the student there first.')
-    await transaction.insert(sectionMembers).values({ institutionId, sectionId: data.sectionId, userId: studentId }).onConflictDoNothing()
+    await transaction.insert(sectionMembers).values({ institutionId, sectionId: data.sectionId, userId: studentId }).onConflictDoNothing({ target: [sectionMembers.sectionId, sectionMembers.userId] })
 
     const [profile] = await transaction.select({ rollNo: studentProfiles.rollNo, category: studentProfiles.category }).from(studentProfiles).where(eq(studentProfiles.studentId, studentId))
     const rollNo = profile?.rollNo ?? await nextRollNo(transaction, institutionId, row.programId, program!.code, Number(term!.startsOn.slice(0, 4)))

@@ -32,6 +32,7 @@ import {
 } from './schemas'
 import { studentProfileSchema } from './profiles'
 import { recordConsentSchema } from './consents'
+import { promoteSectionSchema, setNextSchoolProgramSchema } from './promotion'
 import { changeClassSchema, withdrawChangeSchema } from './changes'
 
 /**
@@ -77,7 +78,22 @@ const list = (summary: string) => ({
   },
 })
 
+const lookup = (summary: string) => ({
+  get: {
+    summary,
+    tags: ['academic'],
+    parameters: [{ name: 'q', in: 'query', required: true, description: 'One to 100 characters', schema: { type: 'string', minLength: 1, maxLength: 100 } }],
+    responses: {
+      '200': { description: 'At most 12 hits: id, title, detail and href (null for a picker)' },
+      '400': { description: 'invalid_search', content: { 'application/json': { schema: errorRef } } },
+      '403': { description: 'Forbidden, or the module is not enabled', content: { 'application/json': { schema: errorRef } } },
+      '429': { description: 'Too many lookups (120 a minute); see Retry-After', content: { 'application/json': { schema: errorRef } } },
+    },
+  },
+})
+
 export const paths = {
+  [`${base}/record-search`]: lookup('Find a student by roll number, registration number or name (the office)'),
   [`${base}/classes/change`]: post('Cancel, move or hand to a substitute one meeting of a class', changeClassSchema),
   [`${base}/classes/change/withdraw`]: post('Withdraw a change: the class meets as usual', withdrawChangeSchema),
   [`${base}/week`]: list('The week containing a date (date=YYYY-MM-DD), with changes applied, for the caller'),
@@ -115,6 +131,8 @@ export const paths = {
   [`${base}/sections`]: post('Create a cohort', createSectionSchema),
   [`${base}/sections/members`]: post('Add a student to a cohort', addSectionMemberSchema),
   [`${base}/sections/class-teacher`]: post("Set or clear a cohort's class teacher, by email", setClassTeacherSchema),
+  [`${base}/programs/next`]: post("Set or clear a school class's next class, for the year-end promotion", setNextSchoolProgramSchema),
+  [`${base}/sections/promote`]: post('Promote and detain a school section at the end of the session, once', promoteSectionSchema),
   [`${base}/departments/head`]: post("Set or clear a department's head (a HoD), by email", setDepartmentHeadSchema),
   [`${base}/offerings`]: post('Offer a course to a cohort in a term', createOfferingSchema),
   [`${base}/slots`]: post('Add a weekly timetable slot', createSlotSchema),

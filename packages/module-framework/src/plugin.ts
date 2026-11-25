@@ -51,6 +51,13 @@ export interface PluginActor extends ViewerScope {
 
 export type PluginMethod = 'GET' | 'POST' | 'PUT' | 'DELETE'
 
+/**
+ * One record a lookup route found (P1-09c). `href` is the place to open it
+ * for a global search hit and null for a picker, which only needs the id.
+ */
+export type LookupHit = { id: string; title: string; detail: string | null; href: string | null }
+export type LookupResult = { hits: LookupHit[] }
+
 export interface PluginRoute {
   method: PluginMethod
   /**
@@ -73,6 +80,13 @@ export interface PluginRoute {
    * its own check: page loaders and other modules call it in-process.
    */
   roles?: readonly Role[]
+  /**
+   * Marks a GET route as a record lookup (P1-09c): `global` is offered to the
+   * portal's search at `/record-search`, `picker` feeds a searchable field at
+   * `/student-choices`. Both take `q` and answer `LookupResult`. Type only: an
+   * older host ignores it and the field stays a plain text box.
+   */
+  lookup?: 'global' | 'picker'
 }
 
 /** The whole of a plugin's public surface. */
@@ -181,6 +195,11 @@ export function validatePlugin(plugin: Plugin): void {
         if (!ROLES.includes(role)) throw new Error(`${manifest.id}: route ${key} names unknown role ${role}`)
         if (role === 'pending') throw new Error(`${manifest.id}: route ${key} admits pending`)
       }
+    }
+    if (r.lookup) {
+      const want = r.lookup === 'global' ? '/record-search' : r.lookup === 'picker' ? '/student-choices' : null
+      if (r.method !== 'GET' || r.raw || r.path !== want) throw new Error(`${manifest.id}: route ${key} is a ${r.lookup} lookup: it must be a plain GET at ${want}`)
+      if (!r.roles?.length) throw new Error(`${manifest.id}: lookup route ${key} declares no roles`)
     }
     if (seen.has(key)) throw new Error(`${manifest.id}: duplicate route ${key}`)
     seen.add(key)
