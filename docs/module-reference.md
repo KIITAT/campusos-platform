@@ -16,7 +16,7 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | [Sales CRM](#crm) | 0.10.0 | 4 | 32 | finance, notices |
 | [Documents](#documents) | 0.1.0 | 1 | 8 | None |
 | [Enrollment](#enrollment) | 0.10.0 | 3 | 9 | academic |
-| [Examinations & Grading](#examinations) | 0.29.0 | 11 | 44 | academic, notices |
+| [Examinations & Grading](#examinations) | 0.30.0 | 11 | 44 | academic, notices |
 | [Feedback](#feedback) | 0.10.0 | 8 | 19 | academic |
 | [Fees & Finance](#fees) | 0.30.0 | 12 | 47 | academic, finance, notices |
 | [Finance & Books](#finance) | 0.22.0 | 92 | 208 | None |
@@ -24,9 +24,9 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | [Hostel](#hostel) | 0.15.0 | 5 | 20 | academic |
 | [HR & Payroll](#hr) | 0.27.0 | 18 | 134 | finance, notices |
 | [Library](#library) | 0.17.0 | 5 | 18 | academic |
-| [Mentoring](#mentoring) | 0.29.0 | 6 | 19 | academic, notices |
+| [Mentoring](#mentoring) | 0.30.0 | 6 | 19 | academic, notices |
 | [Communication & Notices](#notices) | 0.16.0 | 4 | 13 | academic |
-| [Parent Portal](#parents) | 0.29.0 | 4 | 12 | academic |
+| [Parent Portal](#parents) | 0.30.0 | 4 | 12 | academic |
 | [Placement](#placement) | 0.13.0 | 8 | 15 | academic, notices |
 | [Projects and timesheets](#projects) | 0.5.0 | 6 | 27 | finance |
 | [Quizzes](#quizzes) | 0.10.0 | 7 | 22 | academic |
