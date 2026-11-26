@@ -18,6 +18,10 @@ A lead has no stage. Qualifying it makes it an opportunity at the first active s
 
 A contact is not a user. A staff member's DPDP export shows that they owned or worked a lead, never the contact's data. `POST /leads/erase` (administrators, with a reason that is a request reference) clears the contact and the activity summaries; the finance customer made from it stays, as a financial record. `dpdp_retention.purge_crm` anonymises a lead idle for 730 days the same way. No contact data goes to the audit log or into a notification. P1-08b's guardian-consent rules apply to students who are minors and not to CRM contacts; whether a privacy notice must be sent to a business contact is counsel's question.
 
+## Migration 0001 rollback (NEW-264)
+
+0001 (`0001_crm_odoo_features.sql`) is applied and frozen, and it has no header of its own. It needs no pre-flight: the new columns carry valid defaults and the widened activity-kind check accepts every existing row. To roll back, drop `crm_notes` and `crm_activity_scripts`, drop the four columns it added, restore the activity-kind check from 0000, and restore the `dpdp_retention.purge_crm` body from 0000 (the 0001 body also blanks `crm_notes`). Dropping the tables alone leaves the new purge function pointing at a missing table. Roll back through a restore from the pre-upgrade dump when any note or script has been written.
+
 ## Reminders
 
 The job `crm.activity-reminders` runs every 15 minutes and sends each due activity's reminder once, to its assignee, through notices (`moduleId: 'crm'`, category `Sales CRM`). The text carries the kind and the time only.

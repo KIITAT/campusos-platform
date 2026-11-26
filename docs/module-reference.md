@@ -13,7 +13,7 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | [Attendance & QR](#attendance) | 0.20.0 | 8 | 30 | academic, notices |
 | [Student Care](#care) | 0.14.0 | 7 | 24 | academic, notices |
 | [Ceremonies](#ceremonies) | 0.12.0 | 6 | 23 | academic |
-| [Sales CRM](#crm) | 0.11.0 | 4 | 32 | finance, notices |
+| [Sales CRM](#crm) | 0.12.0 | 4 | 32 | finance, notices |
 | [Documents](#documents) | 0.1.0 | 1 | 8 | None |
 | [Enrollment](#enrollment) | 0.10.0 | 3 | 9 | academic |
 | [Examinations & Grading](#examinations) | 0.31.0 | 11 | 44 | academic, notices |
