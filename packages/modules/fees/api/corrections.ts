@@ -254,7 +254,14 @@ export async function voidInvoice(actor: Actor, input: unknown) {
     })
     await tx
       .update(feeInvoices)
-      .set({ voidedAt: new Date(), voidedBy: actor.id, voidReason: data.reason })
+      .set({
+        voidedAt: new Date(),
+        voidedBy: actor.id,
+        voidReason: data.reason,
+        // From now this invoice owes nothing: a late fee for an instalment due after it is judged on what is owed then.
+        owedAt: sql`array_append(${feeInvoices.owedAt}, now())`,
+        owedDues: sql`array_append(${feeInvoices.owedDues}, '{}'::jsonb)`,
+      })
       .where(eq(feeInvoices.id, invoice.id))
     if (waivers.length > 0) {
       await tx.execute(sql`update fee_waivers set posted_paise = 0 where id in (${sql.join(waivers.map((w) => sql`${w.id}::uuid`), sql`, `)})`)

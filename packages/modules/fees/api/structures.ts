@@ -169,14 +169,20 @@ export async function chargeLateFees(actor: Actor, tx: Tx) {
             from slabs s join fee_payments p on p.student_id = s.student_id and p.term_id = ${termId}::uuid and p.status = 'live'
             join fee_refunds r on r.payment_id = p.id and (r.refunded_at at time zone ${tz})::date <= s.cutoff
            group by s.student_id, s.rule_id, s.due_on),
-        owed as (
-          select distinct on (s.student_id, s.rule_id, s.due_on) s.student_id, s.rule_id, s.due_on, e.paise as owed
+        owed_at_day as (
+          select distinct on (s.student_id, s.rule_id, s.due_on) s.student_id, s.rule_id, s.due_on, e.dues
             from slabs s
-            join (select i.student_id, e.at, e.paise
-                    from fee_invoices i cross join unnest(i.owed_at, i.owed_paise) e(at, paise)
+            join (select i.student_id, e.at, e.dues
+                    from fee_invoices i cross join unnest(i.owed_at, i.owed_dues) e(at, dues)
                    where i.term_id = ${termId}::uuid) e
               on e.student_id = s.student_id and (e.at at time zone ${tz})::date <= s.due_on
            order by s.student_id, s.rule_id, s.due_on, e.at desc),
+        owed as (
+          select o.student_id, o.rule_id, o.due_on,
+                 (select coalesce(sum(j.value::bigint), 0)
+                    from jsonb_each_text(o.dues) j
+                   where case when j.key = 'undated' then true else j.key::date <= o.due_on end)::bigint as owed
+            from owed_at_day o),
         late as (
           select x.student_id, x.amount_paise, x.due_on, x.cutoff,
                  'late:' || x.rule_id || ':' || to_char(x.due_on, 'YYYY-MM-DD') || ':' || x.student_id as source_id,

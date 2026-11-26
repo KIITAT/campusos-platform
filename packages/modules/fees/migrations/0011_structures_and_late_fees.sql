@@ -14,9 +14,10 @@
 -- is filled for every existing invoice: version 1 at issued_at, any later
 -- version at the time of this upgrade (the day it was really issued is not
 -- kept in fees; later is the side that never raises a late fee early).
--- fee_invoices.owed_at and owed_paise are filled with one entry at issued_at:
--- the charged total today less the waivers posted today, the most a late fee
--- could be judged on (a rule never reaches back before the day it was made).
+-- fee_invoices.owed_at and owed_dues are filled with one entry at issued_at:
+-- the charged total today less the waivers posted today, as one figure that
+-- counts at every instalment day (the key 'undated'): the most a late fee could
+-- be judged on (a rule never reaches back before the day it was made).
 --
 -- Rollback (forward-only; decision 162): restore the pre-upgrade backup with
 -- the previous fees version. Otherwise a later migration that, after checking
@@ -25,7 +26,7 @@
 -- (else delete or relabel the batch and category lines first), runs:
 --   DROP TABLE fee_late_fees;
 --   ALTER TABLE fee_invoices DROP CONSTRAINT fee_invoices_versions, DROP COLUMN versions_issued_at;
---   ALTER TABLE fee_invoices DROP CONSTRAINT fee_invoices_owed, DROP COLUMN owed_at, DROP COLUMN owed_paise;
+--   ALTER TABLE fee_invoices DROP CONSTRAINT fee_invoices_owed, DROP COLUMN owed_at, DROP COLUMN owed_dues;
 --   DROP INDEX fee_items_identity;
 --   ALTER TABLE fee_items DROP COLUMN admission_year, DROP COLUMN category;
 --   CREATE UNIQUE INDEX fee_items_identity ON fee_items (program_id, term_id, label);
@@ -59,13 +60,16 @@ ALTER TABLE "fee_late_fees" ADD CONSTRAINT "fee_late_fees_created_by_users_id_fk
 ALTER TABLE "fee_invoices" ADD COLUMN "versions_issued_at" timestamp with time zone[] NOT NULL DEFAULT ARRAY[now()];--> statement-breakpoint
 UPDATE "fee_invoices" SET "versions_issued_at" = ARRAY["issued_at"] || array_fill(now(), ARRAY["version" - 1]);--> statement-breakpoint
 ALTER TABLE "fee_invoices" ADD CONSTRAINT "fee_invoices_versions" CHECK (cardinality(versions_issued_at) = version);--> statement-breakpoint
--- What the invoice asked for, net of posted waivers, after each issue and each
--- waiver change: what was owed as at a day.
+-- What the invoice asked for, net of posted waivers, after each issue, each
+-- waiver change and each void: what was owed as at a day. owed_dues[k] says it
+-- per due date: {"2026-10-17": net paise of the lines due that day, "undated": net
+-- of the lines with no due date}; a void is an empty object. The figure for an
+-- instalment is the sum of the keys up to its day, plus 'undated'.
 ALTER TABLE "fee_invoices" ADD COLUMN "owed_at" timestamp with time zone[] NOT NULL DEFAULT '{}';--> statement-breakpoint
-ALTER TABLE "fee_invoices" ADD COLUMN "owed_paise" bigint[] NOT NULL DEFAULT '{}';--> statement-breakpoint
+ALTER TABLE "fee_invoices" ADD COLUMN "owed_dues" jsonb[] NOT NULL DEFAULT '{}';--> statement-breakpoint
 UPDATE "fee_invoices" i SET "owed_at" = ARRAY[i."issued_at"],
-  "owed_paise" = ARRAY[i."charged_paise" - coalesce((SELECT sum(w."posted_paise") FROM "fee_waivers" w JOIN "fee_items" f ON f."id" = w."fee_item_id"
-                                              WHERE w."student_id" = i."student_id" AND f."term_id" = i."term_id"), 0)];--> statement-breakpoint
-ALTER TABLE "fee_invoices" ADD CONSTRAINT "fee_invoices_owed" CHECK (cardinality(owed_at) = cardinality(owed_paise));--> statement-breakpoint
+  "owed_dues" = ARRAY[jsonb_build_object('undated', i."charged_paise" - coalesce((SELECT sum(w."posted_paise") FROM "fee_waivers" w JOIN "fee_items" f ON f."id" = w."fee_item_id"
+                                              WHERE w."student_id" = i."student_id" AND f."term_id" = i."term_id"), 0))];--> statement-breakpoint
+ALTER TABLE "fee_invoices" ADD CONSTRAINT "fee_invoices_owed" CHECK (cardinality(owed_at) = cardinality(owed_dues));--> statement-breakpoint
 CREATE UNIQUE INDEX "fee_late_fees_slab" ON "fee_late_fees" USING btree ("term_id","after_days");--> statement-breakpoint
 CREATE POLICY "fee_late_fees_tenant_isolation" ON "fee_late_fees" AS PERMISSIVE FOR ALL TO "campusos_app" USING (institution_id = nullif(current_setting('app.institution_id', true), '')::uuid) WITH CHECK (institution_id = nullif(current_setting('app.institution_id', true), '')::uuid);

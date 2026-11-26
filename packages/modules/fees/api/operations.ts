@@ -321,18 +321,25 @@ export async function grantWaiver(actor: Actor, input: unknown) {
 }
 
 /**
- * Notes on each live invoice of these students what it now asks for, net of
- * the waivers posted against the term (P1-03d): late fees judge an instalment
- * on what was owed as at its day, not on what is owed today.
+ * Notes on each live invoice of these students what it now asks for, per due
+ * date and net of the waivers posted against the term (P1-03d): late fees
+ * judge an instalment on what had been scheduled up to its day as at that day,
+ * not on what is owed today. The student's late fees are not instalments and
+ * stay out, as they do in the late-fee run.
  */
 export async function noteOwed(tx: Tx, termId: string, studentIds: string[]) {
   if (studentIds.length === 0) return
   await tx.execute(sql`
     update fee_invoices i
        set owed_at = array_append(i.owed_at, now()),
-           owed_paise = array_append(i.owed_paise, i.charged_paise - coalesce(
-             (select sum(w.posted_paise) from fee_waivers w join fee_items f on f.id = w.fee_item_id
-               where w.student_id = i.student_id and f.term_id = i.term_id), 0))
+           owed_dues = array_append(i.owed_dues, coalesce(
+             (select jsonb_object_agg(x.k, x.net)
+                from (select coalesce(l.due_on::text, 'undated') as k, sum(l.charged - l.waived)::bigint as net
+                        from (${priceListSql(termId, studentIds)}) l
+                        left join fee_student_charges c on c.id = l.student_charge_id
+                       where l.student_id = i.student_id
+                         and (c.id is null or not (c.source_module = 'fees' and c.source_id like 'late:%'))
+                       group by 1) x), '{}'::jsonb))
      where i.term_id = ${termId}::uuid and i.voided_at is null
        and i.student_id = any(array[${sql.join(studentIds.map((s) => sql`${s}`), sql`, `)}]::text[])`)
 }
@@ -1272,7 +1279,8 @@ export async function duesReport(
 
     const cte = sql`
       with posted as (${postedSql({ termId })}),
-      listed as (select student_id, sum(charged)::bigint as listed_paise, sum(unposted_waived)::bigint as unposted_paise
+      listed as (select student_id, sum(charged)::bigint as listed_paise, sum(unposted_waived)::bigint as unposted_paise,
+                     coalesce(sum(charged - waived) filter (where due_on is null or due_on < ${today}::date), 0)::bigint as scheduled_paise
                    from (${priceListSql(termId, null)}) l group by student_id),
       d as (
         select coalesce(p.student_id, l.student_id) as student_id,
@@ -1284,9 +1292,10 @@ export async function duesReport(
                greatest(coalesce(p.balance_paise, 0), 0) as outstanding_paise,
                greatest(-coalesce(p.balance_paise, 0), 0) as overpaid_paise,
                greatest(coalesce(l.listed_paise, 0) - coalesce(l.unposted_paise, 0) - coalesce(p.invoiced_paise, 0), 0) as not_yet_invoiced_paise,
-               coalesce(o.overdue_paise, 0)::bigint as overdue_paise
-          from posted p full join listed l on l.student_id = p.student_id
-          left join (${overdueSql(termId, null, today)}) o on o.student_id = coalesce(p.student_id, l.student_id))`
+               -- overdueSql's arithmetic on the scheduled amount already priced above, not a second pass over the price list.
+               greatest(0, least(coalesce(p.invoiced_paise, 0) - coalesce(p.waived_paise, 0), coalesce(l.scheduled_paise, 0))
+                           - coalesce(p.credited_paise, 0) - (coalesce(p.paid_paise, 0) - coalesce(p.refunded_paise, 0)))::bigint as overdue_paise
+          from posted p full join listed l on l.student_id = p.student_id)`
     const shown = sql`(d.payable_paise <> 0 or d.paid_paise <> 0 or d.not_yet_invoiced_paise <> 0)`
     const search = searchAny(page.q, [sql`u.name`, sql`u.email`])
     const where = search ? sql`${shown} and ${search}` : shown

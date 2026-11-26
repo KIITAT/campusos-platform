@@ -332,11 +332,13 @@ export const feeInvoices = pgTable(
     versionsIssuedAt: timestamp('versions_issued_at', { withTimezone: true }).array().notNull().default(sql`ARRAY[now()]`),
     /**
      * What the invoice asked for, net of the waivers posted against the term,
-     * after each issue and each waiver change, and when: what was owed as at a
-     * given day (P1-03d late fees). owed_paise[k] is the amount from owed_at[k].
+     * after each issue, each waiver change and each void, and when: what was
+     * owed as at a given day (P1-03d late fees). owed_dues[k] is the amount from
+     * owed_at[k] per due date ({"2026-10-17": paise, "undated": paise}), empty
+     * for a void; an instalment's figure is the keys up to its day and 'undated'.
      */
     owedAt: timestamp('owed_at', { withTimezone: true }).array().notNull().default(sql`'{}'`),
-    owedPaise: bigint('owed_paise', { mode: 'number' }).array().notNull().default(sql`'{}'`),
+    owedDues: jsonb('owed_dues').array().notNull().default(sql`'{}'`),
     issuedBy: text('issued_by').references(() => users.id, { onDelete: 'set null' }),
     createdAt: createdAt(),
     /** An invoice issued in error is voided, never deleted (fees 0009). */
@@ -350,7 +352,7 @@ export const feeInvoices = pgTable(
     index('fee_invoices_term').on(t.termId),
     check('fee_invoices_amount', sql`charged_paise > 0`),
     check('fee_invoices_versions', sql`cardinality(versions_issued_at) = version`),
-    check('fee_invoices_owed', sql`cardinality(owed_at) = cardinality(owed_paise)`),
+    check('fee_invoices_owed', sql`cardinality(owed_at) = cardinality(owed_dues)`),
     check(
       'fee_invoices_void_shape',
       sql`(voided_at IS NULL) = (void_reason IS NULL) AND (void_reason IS NULL OR length(btrim(void_reason)) >= 5)`,
