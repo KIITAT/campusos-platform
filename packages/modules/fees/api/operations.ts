@@ -313,7 +313,7 @@ export async function grantWaiver(actor: Actor, input: unknown) {
         label: item.label,
         studentName: await nameOf(tx, data.studentId),
       })
-      await noteOwed(tx, item.termId, [data.studentId])
+      await noteWaiver(tx, data.studentId, data.feeItemId, data.amount - (existing?.postedPaise ?? 0))
     }
 
     return row!
@@ -321,11 +321,13 @@ export async function grantWaiver(actor: Actor, input: unknown) {
 }
 
 /**
- * Notes on each live invoice of these students what it now asks for, per due
- * date and net of the waivers posted against the term (P1-03d): late fees
- * judge an instalment on what had been scheduled up to its day as at that day,
- * not on what is owed today. The student's late fees are not instalments and
- * stay out, as they do in the late-fee run.
+ * Notes on each live invoice of these students what it asks for, per due date
+ * and net of the waivers posted against the term (P1-03d): late fees judge an
+ * instalment on what had been scheduled up to its day as at that day, not on
+ * what is owed today. The student's late fees are not instalments and stay out,
+ * as they do in the late-fee run. Read from the price list as it stands, so only
+ * for an issue, where the price list and the invoice agree; a waiver change
+ * goes through noteWaiver.
  */
 export async function noteOwed(tx: Tx, termId: string, studentIds: string[]) {
   if (studentIds.length === 0) return
@@ -342,6 +344,25 @@ export async function noteOwed(tx: Tx, termId: string, studentIds: string[]) {
                        group by 1) x), '{}'::jsonb))
      where i.term_id = ${termId}::uuid and i.voided_at is null
        and i.student_id = any(array[${sql.join(studentIds.map((s) => sql`${s}`), sql`, `)}]::text[])`)
+}
+
+/**
+ * A waiver granted, revised or revoked moves one line of what the invoice asks
+ * for: the line's due-date key falls by the amount newly posted (negative when
+ * a waiver is taken back), and nothing else changes. Not read from the price
+ * list: a category or batch correction that has not been issued is not owed yet,
+ * whatever a waiver on the corrected line does (fix verification 4 HIGH 1).
+ */
+async function noteWaiver(tx: Tx, studentId: string, feeItemId: string, deltaPaise: number) {
+  await tx.execute(sql`
+    with k as (select coalesce((f.due_on at time zone 'UTC')::date::text, 'undated') as key from fee_items f where f.id = ${feeItemId}::uuid)
+    update fee_invoices i
+       set owed_at = array_append(i.owed_at, now()),
+           owed_dues = array_append(i.owed_dues, coalesce(i.owed_dues[cardinality(i.owed_dues)], '{}'::jsonb)
+             || jsonb_build_object(k.key, greatest(coalesce((i.owed_dues[cardinality(i.owed_dues)] ->> k.key)::bigint, 0) - ${deltaPaise}::bigint, 0)))
+      from k
+     where i.student_id = ${studentId} and i.voided_at is null
+       and i.term_id = (select f.term_id from fee_items f where f.id = ${feeItemId}::uuid)`)
 }
 
 export async function revokeWaiver(actor: Actor, input: unknown) {
@@ -399,7 +420,7 @@ export async function revokeWaiver(actor: Actor, input: unknown) {
     }
 
     await tx.delete(feeWaivers).where(eq(feeWaivers.id, data.waiverId))
-    if (row.postedPaise > 0) await noteOwed(tx, at.termId, [row.studentId])
+    if (row.postedPaise > 0) await noteWaiver(tx, row.studentId, row.feeItemId, -row.postedPaise)
   })
 }
 
