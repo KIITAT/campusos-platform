@@ -154,6 +154,8 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   exam_marks_history: 'export',
   exam_question_papers: 'export',
   exam_report_card_entries: 'export',
+  // Issued report cards (P1-13b.3): the pupil's own version metadata and printable payload; erasure empties the payload.
+  exam_report_card_versions: 'export',
   exam_windows: 'export',
   exams: 'export',
 
