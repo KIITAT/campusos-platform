@@ -39,7 +39,7 @@ const reportCardPublicationBody = z
   .object({ ...identity, published: z.boolean(), reason: z.string().min(10).max(240) })
   .meta({ id: 'ExamReportCardPublication' })
 const reportCardErrors = {
-  '400': { description: 'invalid_report_card_template or unknown_report_card_value', content: json(err) },
+  '400': { description: 'invalid_report_card_template, invalid_report_card_exclusion or unknown_report_card_value', content: json(err) },
   '404': { description: 'no_such_school_pupil', content: json(err) },
   '409': {
     description: 'report_card_stale, report_card_template_locked, report_card_published, report_card_incomplete, report_card_unpublished or no_report_card_template',

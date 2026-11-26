@@ -52,6 +52,7 @@ export const schoolTemplateSchema = z
     mode: z.enum(['observations', 'marks']),
     components: z.array(component).max(6),
     subjectOverrides: z.array(z.strictObject({ courseCode: text(32), components: z.array(component).max(6) })).max(20),
+    excludedOfferingIds: z.array(z.string().transform(norm).pipe(z.uuid())).max(100).optional(),
     bands: z.array(z.strictObject({ floor: z.number().min(0).max(100), grade: text(20) })).max(12),
     areas: z.array(area).max(16),
     remarks: z.array(z.strictObject({ key, label: text(80) })).max(8),
@@ -65,7 +66,10 @@ export const schoolTemplateSchema = z
     dup(t.remarks.map((r) => r.key), 'remarks', 'remark keys must be unique')
     dup(t.subjectOverrides.map((o) => norm(o.courseCode)), 'subjectOverrides', 'subject codes must be unique')
     dup(t.bands.map((b) => String(b.floor)), 'bands', 'band floors must be unique')
+    const excluded = t.excludedOfferingIds ?? []
+    dup(excluded, 'excludedOfferingIds', 'offering IDs must be unique')
     if (t.mode === 'observations') {
+      if (excluded.length) ctx.addIssue({ code: 'custom', path: ['excludedOfferingIds'], message: 'an observation template has no offering exclusions' })
       if (t.components.length || t.subjectOverrides.length || t.bands.length)
         ctx.addIssue({ code: 'custom', path: ['mode'], message: 'an observation template has no components, overrides or bands' })
       if (!t.areas.some((a) => a.group === 'scholastic')) ctx.addIssue({ code: 'custom', path: ['areas'], message: 'an observation template needs a scholastic area' })
@@ -80,6 +84,9 @@ export const schoolTemplateSchema = z
       if (t.areas.some((a) => a.group === 'scholastic')) ctx.addIssue({ code: 'custom', path: ['areas'], message: 'a marks template has no scholastic observation area' })
     }
   })
+  .transform(({ excludedOfferingIds, ...t }): typeof t & { excludedOfferingIds?: string[] } =>
+    excludedOfferingIds?.length ? { ...t, excludedOfferingIds: excludedOfferingIds.sort() } : t,
+  )
 
 export type SchoolTemplate = z.infer<typeof schoolTemplateSchema>
 
@@ -190,5 +197,6 @@ export function classNumberOf(programCode: string): number | null {
 export function canonicalTemplate(t: SchoolTemplate): string {
   const sort = (v: unknown): unknown =>
     Array.isArray(v) ? v.map(sort) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, x]) => [k, sort(x)])) : v
-  return JSON.stringify(sort(t))
+  const { excludedOfferingIds, ...template } = t
+  return JSON.stringify(sort(excludedOfferingIds?.length ? { ...template, excludedOfferingIds: [...excludedOfferingIds].sort() } : template))
 }

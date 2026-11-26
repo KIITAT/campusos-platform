@@ -16,10 +16,12 @@ import {
   type SortSpec,
 } from '@campusos/module-framework'
 import { departments } from '@campusos/module-academic/schema'
-import { noticeAttachments, notices, notificationMandatory, notificationOptOuts, notifications } from '../schema'
+import { emailNotificationChannel } from './email-channel'
+import { noticeAttachments, notices, notificationEmailOptOuts, notificationMandatory, notificationOptOuts, notifications } from '../schema'
 import {
   attachSchema,
   createNoticeSchema,
+  emailPreferenceSchema,
   mandatorySchema,
   markReadSchema,
   preferenceSchema,
@@ -125,6 +127,7 @@ export interface NotificationChannel {
 }
 
 const channels = new Map<string, NotificationChannel>()
+registerNotificationChannel(emailNotificationChannel)
 
 /** Add a delivery channel beside the in-app inbox. Returns a function that removes it. */
 export function registerNotificationChannel(channel: NotificationChannel): () => void {
@@ -232,7 +235,10 @@ export async function preferences(actor: Actor) {
   return withTenant(tenant, async (tx) => {
     const muted = new Set((await tx.select({ m: notificationOptOuts.moduleId }).from(notificationOptOuts).where(eq(notificationOptOuts.userId, actor.id))).map((r) => r.m))
     const mandatory = new Set((await tx.select({ m: notificationMandatory.moduleId }).from(notificationMandatory)).map((r) => r.m))
+    const [emailOptOut] = await tx.select({ userId: notificationEmailOptOuts.userId }).from(notificationEmailOptOuts)
+      .where(eq(notificationEmailOptOuts.userId, actor.id))
     return {
+      emailOptedOut: Boolean(emailOptOut),
       categories: Object.entries(NOTIFICATION_CATEGORIES).map(([moduleId, label]) => ({
         moduleId,
         label,
@@ -240,6 +246,22 @@ export async function preferences(actor: Actor) {
         mandatory: mandatory.has(moduleId),
       })),
     }
+  })
+}
+
+/** A member sets their own email preference independently of their inbox. */
+export async function setEmailPreference(actor: Actor, input: unknown): Promise<{ notice: string }> {
+  const tenant = tenantOf(actor)
+  if (actor.role === 'pending') throw new NoticeError(403, 'forbidden', 'not permitted')
+  const { optedOut } = emailPreferenceSchema.parse(input)
+  const mute = optedOut === true || optedOut === 'true'
+  return withTenant(tenant, async (tx) => {
+    if (mute) {
+      await tx.insert(notificationEmailOptOuts).values({ institutionId: tenant, userId: actor.id }).onConflictDoNothing()
+    } else {
+      await tx.delete(notificationEmailOptOuts).where(eq(notificationEmailOptOuts.userId, actor.id))
+    }
+    return { notice: mute ? 'Notification email turned off.' : 'Notification email turned on.' }
   })
 }
 

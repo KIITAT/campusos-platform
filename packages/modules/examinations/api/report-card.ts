@@ -24,7 +24,7 @@ export type ReportCard = {
   rollNo: string | null
   templateName: string
   mode: SchoolTemplate['mode']
-  subjects: ({ courseCode: string; title: string } & SchoolSubject)[]
+  subjects: ({ courseCode: string; title: string } & SchoolSubject & { notAssessed?: true })[]
   areas: { key: string; label: string; group: 'scholastic' | 'co_scholastic'; grade: string | null }[]
   remark: string | null
   legend: { grade: string; floor: number }[]
@@ -85,21 +85,26 @@ const templateOf = (s: Snapshot): SchoolTemplate | null => {
 /** The report as the snapshot stands, and whether it is complete enough to publish. */
 function assemble(s: Snapshot, t: SchoolTemplate): { report: ReportCard; complete: boolean } {
   const c = s.cand!
-  const subjects =
+  const excluded = new Set(t.excludedOfferingIds)
+  const subjects: ReportCard['subjects'] =
     t.mode === 'marks'
-      ? s.offerings.map((o) => ({
-          courseCode: o.code,
-          title: o.title,
-          ...schoolSubject(
-            t,
-            o.code,
-            o.exams.map((e) => ({ examId: e.id, name: e.name, kind: e.kind, maxMarks: Number(e.max_marks), weightPercent: Number(e.weight_percent), published: e.published, obtained: e.obtained === null ? null : Number(e.obtained), absent: e.absent === true })),
-          ),
-        }))
+      ? s.offerings.map((o) => {
+          const subject = { courseCode: o.code, title: o.title }
+          if (excluded.has(o.id) && o.exams.length === 0)
+            return { ...subject, components: [], total: null, grade: null, notAssessed: true as const }
+          return {
+            ...subject,
+            ...schoolSubject(
+              t,
+              o.code,
+              o.exams.map((e) => ({ examId: e.id, name: e.name, kind: e.kind, maxMarks: Number(e.max_marks), weightPercent: Number(e.weight_percent), published: e.published, obtained: e.obtained === null ? null : Number(e.obtained), absent: e.absent === true })),
+            ),
+          }
+        })
       : []
   const grades = s.entry?.grades ?? {}
   const areas = t.areas.map((a) => ({ key: a.key, label: a.label, group: a.group, grade: a.grades.find((g) => g.key === grades[a.key])?.label ?? null }))
-  const complete = t.mode === 'marks' ? subjects.every((x) => x.total !== null) : areas.filter((a) => a.group === 'scholastic').every((a) => a.grade !== null)
+  const complete = t.mode === 'marks' ? subjects.every((x) => x.notAssessed === true || x.total !== null) : areas.filter((a) => a.group === 'scholastic').every((a) => a.grade !== null)
   return {
     complete,
     report: {
@@ -227,7 +232,7 @@ export async function setReportCardEntry(actor: Actor, input: unknown): Promise<
 
 /**
  * Publish or withdraw a pupil's report, with a reason. Publishing needs every
- * subject's result, or every scholastic area's rating, to be complete; withdrawing
+ * assessed result, or every scholastic area's rating, to be complete; withdrawing
  * reopens the ratings for editing.
  */
 export async function setReportCardPublication(actor: Actor, input: unknown): Promise<{ changed: boolean; notice: string }> {

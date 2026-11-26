@@ -14,6 +14,7 @@ import {
   noticeView,
   notify,
   publishNotice,
+  preferences,
   readNotice,
   registerNotificationChannel,
   removeAttachment,
@@ -24,6 +25,7 @@ import {
   type Delivery,
 } from './api'
 import { plugin } from './plugin'
+import { authorizeRoute } from '@campusos/module-framework'
 import { noticeAttachments, notices, notificationMandatory, notificationOptOuts, notifications } from './schema'
 
 // The audit trail is append-only (AUD-01): a reset cannot empty it, so each
@@ -335,6 +337,59 @@ test('preferences are per institution', async () => {
 })
 
 // --- preferences, mandatory categories, channels (P1-02) -------------------
+
+test('the member email preference route changes only the signed-in user', async () => {
+  const route = plugin.routes.find((entry) => entry.method === 'POST' && entry.path === '/preferences/email')
+  assert.ok(route, 'the member email preference route is installed')
+  const caller = student(ids.s1)
+  const update = (actor: Actor, input: unknown) => route.handler(actor, new Request('http://localhost/preferences/email', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
+  }))
+  assert.equal(authorizeRoute(plugin.manifest, route, 'student'), 'allow')
+  assert.equal(authorizeRoute(plugin.manifest, route, 'pending'), 'deny')
+  const initial = await preferences(caller)
+  assert.equal(initial.emailOptedOut, false)
+  assert.deepEqual(await update(caller, { optedOut: true }), { notice: 'Notification email turned off.' })
+  assert.deepEqual(await preferences(caller), { ...initial, emailOptedOut: true })
+  assert.equal((await preferences(student(ids.s2))).emailOptedOut, false)
+  await assert.rejects(update(caller, { optedOut: false, userId: ids.s2, institutionId: other }))
+  await assert.rejects(update(caller, { optedOut: 'on' }))
+  await assert.rejects(update(A({ id: ids.pending, role: 'pending' }), { optedOut: true }), (e: unknown) => status(e) === 403)
+  await assert.rejects(update({ ...caller, institutionId: other }, { optedOut: true }), saysDb(/row-level security/))
+  assert.deepEqual(await update(caller, { optedOut: 'false' }), { notice: 'Notification email turned on.' })
+  assert.deepEqual(await preferences(caller), initial)
+})
+
+test('notification settings offer only the signed-in member’s email toggle', async () => {
+  const page = plugin.pages!.find((entry) => entry.path === '/preferences')!
+  const route = plugin.routes.find((entry) => entry.method === 'POST' && entry.path === '/preferences/email')!
+  const actor = student(ids.s1)
+  const url = 'http://localhost/m/notices/preferences'
+  const form = async () => {
+    const sections = page.sections(await page.load(actor, new Request(url)))
+    const section = sections.find((entry) => entry.kind === 'form' && entry.path === '/preferences/email')
+    assert.ok(section?.kind === 'form', 'the settings page offers a notification email toggle')
+    return section
+  }
+  const off = await form()
+  assert.equal(off.title, 'Notification email')
+  assert.equal(off.note, 'This setting does not change in-app notifications or sign-in emails.')
+  assert.equal(off.submit, 'Stop notification emails')
+  assert.deepEqual(off.fields.map(({ name, value }) => [name, value]), [['optedOut', 'true']])
+  // The host translates form fields into a JSON request before calling the route.
+  const post = (optedOut: string) => route.handler(actor, new Request(url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ optedOut }),
+  }))
+  await post('true')
+  try {
+    const on = await form()
+    assert.equal(on.submit, 'Send notification emails')
+    assert.deepEqual(on.fields.map(({ name, value }) => [name, value]), [['optedOut', 'false']])
+    assert.equal((await preferences(student(ids.s2))).emailOptedOut, false)
+  } finally {
+    await post('false')
+  }
+})
 
 const titlesFor = async (id: string, noticeId: string) =>
   (await inbox(student(id))).items.filter((i) => i.noticeId === noticeId)

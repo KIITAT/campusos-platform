@@ -1,8 +1,8 @@
 import * as z from 'zod'
-import { and, eq, sql } from 'drizzle-orm'
+import { and, asc, eq, notExists, sql } from 'drizzle-orm'
 import { audit, withTenant } from '@campusos/db'
-import { reportCardEntries, reportCardTemplates } from '../schema'
-import { programs, sections, terms } from './joins'
+import { exams, reportCardEntries, reportCardTemplates } from '../schema'
+import { courses, offerings, programs, sections, terms } from './joins'
 import { ExamError, type Actor } from './operations'
 import { canonicalTemplate, schoolTemplateSchema, type SchoolTemplate } from './school-policy'
 
@@ -13,6 +13,23 @@ import { canonicalTemplate, schoolTemplateSchema, type SchoolTemplate } from './
 
 export type Tx = Parameters<Parameters<typeof withTenant>[1]>[0]
 
+export type UnassessedOffering = { id: string; section: string; courseCode: string; title: string }
+
+export async function listUnassessedOfferings(tx: Tx, termId: string, programId: string, ids?: string[]): Promise<UnassessedOffering[]> {
+  return tx
+    .select({ id: offerings.id, section: sections.label, courseCode: courses.code, title: courses.title })
+    .from(offerings)
+    .innerJoin(sections, eq(sections.id, offerings.sectionId))
+    .innerJoin(courses, eq(courses.id, offerings.courseId))
+    .where(and(
+      eq(offerings.termId, termId),
+      eq(sections.programId, programId),
+      notExists(tx.select({ one: sql`1` }).from(exams).where(eq(exams.offeringId, offerings.id))),
+      ids && sql`${offerings.id} = any(array[${sql.join(ids.map((id) => sql`${id}`), sql`, `)}]::uuid[])`,
+    ))
+    .orderBy(asc(sections.label), asc(courses.code), asc(offerings.id))
+}
+
 /** The outcomes of a school report card, with the words the portal and the API both use (D809). */
 const REFUSALS = {
   no_such_school_pupil: [404, 'No such pupil for this section and term.'],
@@ -20,6 +37,7 @@ const REFUSALS = {
   report_card_stale: [409, 'The template changed. Reload before saving.'],
   report_card_template_locked: [409, 'A pupil report has been started. Use a different term to change the template.'],
   invalid_report_card_template: [400, 'Enter a valid report card template.'],
+  invalid_report_card_exclusion: [400, 'Choose offerings in this class and term that have no exams.'],
   unknown_report_card_value: [400, 'Choose a value from this template.'],
   report_card_unpublished: [409, 'This report card has not been published.'],
   report_card_incomplete: [409, 'This report card has incomplete results.'],
@@ -46,7 +64,7 @@ export const isAdmin = (r: Actor['role']) => r === 'institution_admin' || r === 
  * of one grade into the entry's grades never race another writer.
  */
 export async function lockReportCard(tx: Tx, tenant: string, termId: string, programId: string): Promise<void> {
-  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`examinations.report-card:${tenant}:${termId}:${programId}`}, 0))`)
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`examinations.report-card:${tenant}:${termId}:${programId}`.toLowerCase()}, 0))`)
 }
 
 /** A template as stored, checked again on the way out: a row edited by hand must not be trusted. */
@@ -116,6 +134,10 @@ export async function setReportCardTemplate(actor: Actor, input: unknown): Promi
       .limit(1)
     if (started) throw reportCardRefusal('report_card_template_locked')
 
+    const excluded = template.excludedOfferingIds ?? []
+    if (excluded.length && (await listUnassessedOfferings(tx, termId, programId, excluded)).length !== excluded.length)
+      throw reportCardRefusal('invalid_report_card_exclusion')
+
     const revision = current + 1
     await tx
       .insert(reportCardTemplates)
@@ -130,7 +152,7 @@ export async function setReportCardTemplate(actor: Actor, input: unknown): Promi
       entity: 'exam_report_card_templates',
       entityId: `${termId}:${programId}`,
       reason: 'school report template saved',
-      detail: { termId, programId, revision, classNumber: template.classNumber },
+      detail: { termId, programId, revision, classNumber: template.classNumber, excludedOfferingCount: excluded.length },
     })
     return { revision, notice: NOTICES.template }
   })

@@ -124,6 +124,29 @@ test('a template is refused for every rule it can break, with the path', () => {
   assert.ok(policy.schoolTemplateSchema.safeParse({ ...ok, subjectOverrides: [{ courseCode: 'PE1', components: [{ key: 'terminal', label: 'Terminal', weight: 20, selectors: [{ kind: 'final' }] }, { key: 'practical', label: 'Practical', weight: 80, selectors: [{ kind: 'practical' }] }] }] }).success)
 })
 
+test('marks templates normalize and sort optional offering exclusions', () => {
+  const template = policy.defaultSchoolTemplate(6)!
+  const ids = ['aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb']
+  assert.deepEqual(policy.schoolTemplateSchema.parse({ ...template, excludedOfferingIds: [` ${ids[1]!.toUpperCase()} `, ids[0]] }), { ...template, excludedOfferingIds: ids })
+  assert.deepEqual(policy.schoolTemplateSchema.parse({ ...template, excludedOfferingIds: [] }), template)
+  assert.equal(policy.canonicalTemplate({ ...template, excludedOfferingIds: [] } as policy.SchoolTemplate), policy.canonicalTemplate(template))
+  assert.equal(
+    policy.canonicalTemplate({ ...template, excludedOfferingIds: [...ids].reverse() } as policy.SchoolTemplate),
+    policy.canonicalTemplate({ ...template, excludedOfferingIds: ids } as policy.SchoolTemplate),
+  )
+})
+
+test('offering exclusions reject malformed UUIDs, normalized duplicates, excess IDs and observation exclusions', () => {
+  const template = policy.defaultSchoolTemplate(6)!
+  const id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+  for (const excludedOfferingIds of [[id, ` ${id.toUpperCase()} `], ['abc'], Array.from({ length: 101 }, () => crypto.randomUUID())]) {
+    assert.equal(policy.schoolTemplateSchema.safeParse({ ...template, excludedOfferingIds }).success, false)
+  }
+  const observations = policy.defaultSchoolTemplate(2)!
+  assert.equal(policy.schoolTemplateSchema.safeParse({ ...observations, excludedOfferingIds: [id] }).success, false)
+  assert.deepEqual(policy.schoolTemplateSchema.parse({ ...observations, excludedOfferingIds: [] }), observations)
+})
+
 test('the band edges: 32.99 is E, 33.00 is D, 90.99 is A2, 91.00 is A1', () => {
   const t = single()
   for (const [score, grade] of [[32.99, 'E'], [33, 'D'], [90.99, 'A2'], [91, 'A1'], [0, 'E'], [100, 'A1']] as const) {

@@ -163,3 +163,41 @@ test('finished jobs are purged after their time, live ones never (REL-05)', asyn
     await database.authDb.delete(database.institutions).where(eq(database.institutions.slug, 'jobs-purge'))
   }
 })
+
+test('an ordinary job is claimed ahead of a 30,000-job email backlog, and e-mail has its own lane', async () => {
+  const t = await freshInstitution('jobs-lanes')
+  const c = new pg.Client({ connectionString: process.env.MIGRATION_DATABASE_URL })
+  await c.connect()
+  try {
+    await c.query(`insert into background_jobs (institution_id, actor_id, kind, dedupe_key, payload, run_after, created_at)
+      select $1, null, 'notices.email', 'notices.email:' || g, '{}'::jsonb, now() - interval '1 hour', now() - interval '1 hour' + g * interval '1 millisecond'
+        from generate_series(1, 30000) g`, [t.id])
+    await c.query('analyze background_jobs')
+    await enqueueIn(t, 'ordinary')
+    const started = performance.now()
+    const ordinary = await database.claimJob(t.id, 'lane-other', 120, 'other')
+    const elapsed = performance.now() - started
+    assert.equal(ordinary?.kind, 'test.discovery')
+    assert.ok(elapsed < 150, `the ordinary claim took ${elapsed} ms beside the backlog`)
+    assert.equal(await database.claimJob(t.id, 'lane-other', 120, 'other'), null, 'no ordinary job is left')
+    assert.equal((await database.claimJob(t.id, 'lane-email', 120, 'email'))?.kind, 'notices.email')
+    const { rows } = await c.query(`select indexname from pg_indexes where tablename = 'background_jobs' and indexname in ('background_jobs_claim_other', 'background_jobs_claim_email')`)
+    assert.equal(rows.length, 2, 'both lanes have a partial index')
+  } finally {
+    await c.end()
+    await database.authDb.delete(database.institutions).where(eq(database.institutions.slug, 'jobs-lanes'))
+  }
+})
+
+test('a failed job can carry its own retry delays', async () => {
+  const t = await freshInstitution('jobs-delays')
+  try {
+    await enqueueIn(t, 'slow-retry')
+    const claimed = await database.claimJob(t.id, 'delays')
+    const before = Date.now()
+    const failed = await database.failJob(t.id, claimed!.id, claimed!.leaseToken!, 'handler_failed', [60, 300])
+    assert.ok(failed.runAfter.getTime() >= before + 60_000 && failed.runAfter.getTime() <= Date.now() + 61_000)
+  } finally {
+    await database.authDb.delete(database.institutions).where(eq(database.institutions.slug, 'jobs-delays'))
+  }
+})
