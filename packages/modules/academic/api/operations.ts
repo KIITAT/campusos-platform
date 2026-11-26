@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { users, withTenant } from '@campusos/db'
 import type { Role, ViewerScope } from '@campusos/module-framework'
 import {
@@ -179,6 +179,19 @@ export async function createTerm(actor: Actor, input: unknown) {
     })
     return row
   }).catch((e) => rethrowConflict(e, 'invalid', 'term rejected by a constraint'))
+}
+
+/**
+ * The institution's terms as the desktop's year selector reads them (P2-23,
+ * W5), newest first. The module keeps no separate academic year, so a term is
+ * the closest thing there is. Who may ask is the route's role table.
+ */
+export async function listYears(actor: Actor) {
+  if (!actor.institutionId) throw new AcademicError(400, 'no_institution', 'no institution for this session')
+  const rows = await withTenant(actor.institutionId, (tx) =>
+    tx.select({ id: terms.id, label: terms.name, current: terms.isCurrent }).from(terms).orderBy(desc(terms.startsOn), desc(terms.code)),
+  )
+  return rows
 }
 
 /**

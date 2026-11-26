@@ -11,7 +11,7 @@ export const manifest: ModuleManifest = {
   name: 'Academic Core',
   description:
     'Departments, programmes, courses, terms, cohorts, rooms and the weekly timetable.',
-  version: '0.16.0',
+  version: '0.17.0',
   alwaysEnabled: true,
   dependsOn: [],
   pricing: { model: 'included_in_base', priceINR: null },
@@ -65,4 +65,7 @@ export const manifest: ModuleManifest = {
   routeRoles: true,
 
   apiBasePath: '/api/v1/modules/academic',
+
+  // The desktop client's year selector (P2-23, W5): the terms, newest first.
+  academicYears: { route: '/years' },
 }

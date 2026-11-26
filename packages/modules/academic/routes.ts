@@ -26,6 +26,7 @@ import {
   createRequirement,
   createSlot,
   createTerm,
+  listYears,
   checkEligibility,
   correctCompletion,
   declareProgram,
@@ -67,6 +68,7 @@ export const routes: PluginRoute[] = [
   post('/sections/members', addSectionMember),
   post('/offerings', createOffering),
   post('/slots', createSlot),
+  { method: 'GET', path: '/years', handler: (actor) => listYears(actor as Actor) },
   { method: 'GET', path: '/timetable', handler: (actor) => getTimetable(actor as Actor) },
 
   // The registrar's half: what a degree requires, what a course requires, and
