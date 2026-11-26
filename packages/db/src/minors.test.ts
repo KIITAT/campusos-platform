@@ -160,3 +160,29 @@ test('another institution sees none of these consents', async () => {
   const seen = await withTenant(other, (tx) => tx.execute(sql`select 1 from guardian_consents where student_id = ${s}`))
   assert.equal(seen.rows.length, 0)
 })
+
+test('hostel_presence consent can be recorded and read back', async () => {
+  const s = await student(15)
+  await withTenant(inst, (tx) =>
+    recordGuardianConsent(tx, {
+      institutionId: inst, studentId: s, purpose: 'hostel_presence', decision: 'given',
+      basis: 'guardian', guardianId: parent, recordedBy: admin, note: null,
+    }),
+  )
+  assert.equal(await withTenant(inst, (tx) => consentGiven(tx, s, 'hostel_presence')), true)
+})
+
+test('a purpose outside the list is still refused by the database', async () => {
+  const s = await student(15)
+  await rejectsWith(
+    () =>
+      owner((c) =>
+        c.query(
+          `insert into guardian_consents (institution_id, student_id, purpose, decision, basis, guardian_id, recorded_by, notice_version)
+           values ($1, $2, 'x', 'given', 'guardian', $3, $4, 'v1')`,
+          [inst, s, parent, admin],
+        ),
+      ),
+    /guardian_consents_purpose/,
+  )
+})
