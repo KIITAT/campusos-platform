@@ -256,6 +256,8 @@ export async function setReportCardPublication(actor: Actor, input: unknown): Pr
     const live = Boolean(snap.entry?.published_at)
     if (expectedVersion !== undefined && expectedVersion !== last) throw reportCardRefusal('report_card_version_stale')
     if (republish && !live) throw reportCardRefusal('report_card_version_stale')
+    // A card published before issues existed is reissued as version 1 by the office only (decision 1196).
+    if (republish && last === 0 && !isAdmin(actor.role)) throw new ExamError(403, 'forbidden', 'not permitted')
     const notice = republish ? NOTICES.republished : d.published ? NOTICES.published : NOTICES.unpublished
     const detail = { termId: d.termId, sectionId: d.sectionId, studentId: d.studentId }
 

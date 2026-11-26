@@ -50,6 +50,13 @@ function wrap(t: PdfText, text: string, size: number, width: number): string[] {
 const attendanceLine = (a: IssuedReportCard['attendance']) =>
   a.state === 'unavailable' ? 'Daily attendance: Unavailable' : a.held > 0 ? `Daily attendance: ${a.present} present out of ${a.held} recorded days` : 'Daily attendance: No register entries'
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+/** The calendar date in India (UTC+5:30, no daylight saving) of an instant. */
+const istDate = (d: Date) => {
+  const ist = new Date(d.getTime() + 330 * 60_000)
+  return `${ist.getUTCDate()} ${MONTHS[ist.getUTCMonth()]} ${ist.getUTCFullYear()}`
+}
+
 export async function reportCardPdf(r: IssuedReportCard): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
   doc.setTitle('School term report')
@@ -104,7 +111,7 @@ export async function reportCardPdf(r: IssuedReportCard): Promise<Uint8Array> {
   para(`Class ${r.classNumber} · Section ${r.sectionLabel}`)
   para(r.name, { size: 12, weight: 'bold' })
   para([r.rollNo ? `Roll number ${r.rollNo}` : null, r.templateName].filter(Boolean).join('   '), { color: faint })
-  para(`Issue version ${r.version}`, { color: faint })
+  para(`Issue version ${r.version}  ·  Issued on ${istDate(issued)}`, { color: faint })
   para(attendanceLine(r.attendance), { color: faint })
   gap(6)
   hr()
