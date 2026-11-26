@@ -573,3 +573,57 @@ test('a rule removed and added again does not charge an instalment twice (fix ve
   assert.equal((await run(c)).charged, 0)
   assert.equal((await lateCharges(c, c.s1)).length, 1)
 })
+
+// Opus fix verification (round 4): the cap is per instalment, and a void before the day owes nothing at it.
+
+test('a category correction in a two-instalment term raises no late fee for the paid instalment (fix verification 3 HIGH 1, P1)', async () => {
+  const c = await campus()
+  for (const [cat, amt] of [['general', '50000'], ['sc', '30000']] as const) {
+    await createFeeItem(c.admin, { programId: c.programId, termId: c.termId, label: 'Tuition I', amount: amt, dueOn: await ago(c, 40), category: cat })
+    await createFeeItem(c.admin, { programId: c.programId, termId: c.termId, label: 'Tuition II', amount: amt, dueOn: await ahead(c, 30), category: cat })
+  }
+  await academic.setStudentProfile(c.admin, { studentId: c.s1, category: 'sc' })
+  const r = await api.createLateFee(c.admin, { termId: c.termId, afterDays: 5, amount: '500' })
+  await backdate(c, r.id, 400)
+  await issueAgo(c, 45)
+  await cash(c, c.s1, '30000', `${await ago(c, 39)}T06:00:00.000Z`)
+  await cash(c, c.s2, '50000', `${await ago(c, 39)}T06:00:00.000Z`)
+  assert.equal((await run(c)).charged, 0)
+  await academic.setStudentProfile(c.admin, { studentId: c.s1, category: 'general' })
+  await issue(c)
+  assert.equal((await run(c)).charged, 0)
+  assert.equal((await lateCharges(c, c.s1)).length, 0)
+})
+
+test('a waiver revoked in a two-instalment term raises no late fee for the paid instalment (fix verification 3 HIGH 1, P2)', async () => {
+  const c = await campus()
+  const t1 = await item(c, 'Tuition I', '50000', await ago(c, 40))
+  await item(c, 'Tuition II', '50000', await ahead(c, 30))
+  const w = await grantWaiver(c.admin, { studentId: c.s1, feeItemId: t1.id, amount: '10000', reason: 'hardship case' })
+  const r = await api.createLateFee(c.admin, { termId: c.termId, afterDays: 5, amount: '500' })
+  await backdate(c, r.id, 400)
+  await issueAgo(c, 45)
+  await cash(c, c.s1, '40000', `${await ago(c, 39)}T06:00:00.000Z`)
+  await cash(c, c.s2, '50000', `${await ago(c, 39)}T06:00:00.000Z`)
+  assert.equal((await run(c)).charged, 0)
+  await revokeWaiver(c.admin, { waiverId: (w as { id: string }).id, reason: 'granted in error' })
+  assert.equal((await run(c)).charged, 0)
+  assert.equal((await lateCharges(c, c.s1)).length, 0)
+  await reconciled(c)
+})
+
+test('an invoice voided before the due day owes nothing at it, whatever is invoiced later (fix verification 3 HIGH 2, P5)', async () => {
+  const c = await campus()
+  await item(c, 'Tuition I', '50000', await ago(c, 40))
+  const r = await api.createLateFee(c.admin, { termId: c.termId, afterDays: 5, amount: '500' })
+  await backdate(c, r.id, 400)
+  await issueAgo(c, 45)
+  await cash(c, c.s2, '50000', `${await ago(c, 39)}T06:00:00.000Z`)
+  await voidInvoice(c.admin, { studentId: c.s1, termId: c.termId, reason: 'issued in error, not admitted yet' })
+  // As if the void had been 44 days ago, before the due day.
+  await authDb.execute(sql`update fee_invoices set voided_at = now() - interval '44 days', owed_at[cardinality(owed_at)] = now() - interval '44 days'
+     where term_id = ${c.termId}::uuid and student_id = ${c.s1}`)
+  await issue(c)
+  assert.equal((await run(c)).charged, 0)
+  assert.equal((await lateCharges(c, c.s1)).length, 0)
+})
