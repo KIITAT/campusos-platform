@@ -193,23 +193,38 @@ test('an explicitly excluded exam-free offering allows publication and leaves th
   assert.equal(other.subjects.find((s) => s.courseCode === 'CRAFT')?.total, 75)
 })
 
-test('an exam created after publication requires complete assessment before the next download', async () => {
+test('an added exam never breaks an issued exclusion', async () => {
   const c = await campus({ extraOffering: true })
   const template = defaultSchoolTemplate(6)!
   const subjectOverrides = [{ courseCode: 'CRAFT', components: [{ key: 'paper', label: 'Craft exam', weight: 100, selectors: [{ kind: 'final' }] }] }]
   await publishMarks(c)
   await saveTemplate(c, { template: { ...template, subjectOverrides, excludedOfferingIds: [c.craftAId!] } })
   await publication(c)
-  assert.equal((await download(c, c.pupil)).status, 200)
+  const text = async () => {
+    const res = await download(c, c.pupil)
+    assert.equal(res.status, 200)
+    return printed(new Uint8Array(await res.arrayBuffer()))
+  }
+  const issued = async () => {
+    const t = await text()
+    assert.ok(t.includes('Not assessed') && t.includes('87.00') && t.includes('Issue version 1'), 'the issued card is unchanged')
+  }
+  await issued()
 
   const exam = await api.createExam(c.teacher, { offeringId: c.craftAId!, name: 'Craft final', kind: 'final', maxMarks: 100, weightPercent: 100 })
-  await assert.rejects(download(c, c.pupil), (e) => code(e) === 'report_card_incomplete')
+  await issued()
   await api.enterMarks(c.teacher, { examId: exam.id, marks: [{ studentId: c.pupil.id, obtained: 80 }] })
-  await assert.rejects(reportOf(c, c.pupil), (e) => code(e) === 'report_card_incomplete')
+  await issued()
+  const republish = (expectedVersion: number) => publication(c, { republish: true, expectedVersion, reason: 'Craft examination now assessed' })
+  await assert.rejects(republish(1), (e) => code(e) === 'report_card_incomplete' && status(e) === 409)
+  await issued()
   await api.publishExam(c.teacher, { examId: exam.id })
-  const craft = (await reportOf(c, c.pupil)).subjects[0]!
-  assert.deepEqual([craft.total, craft.grade, craft.notAssessed], [80, 'B1', undefined])
-  assert.equal((await download(c, c.pupil)).status, 200)
+  await issued()
+
+  assert.equal((await republish(1)).changed, true)
+  const second = await text()
+  assert.ok(second.includes('80.00') && second.includes('B1') && second.includes('Issue version 2') && !second.includes('Not assessed'))
+  assert.equal((await reportOf(c, c.pupil)).subjects[0]!.notAssessed, undefined)
 })
 
 test('a marks report can publish when all of the section offerings are excluded', async () => {
@@ -314,7 +329,7 @@ test('a published Class 6 report prints Indic text, 87.00 and A2, with no colleg
   for (const never of ['SGPA', 'CGPA', 'Second Pupil', 'Other Pupil']) assert.ok(!text.includes(never), never)
 })
 
-test('PDF a draft refuses, a published one downloads, and a revised mark reprints', async () => {
+test('approved marks require a new issue', async () => {
   const c = await campus()
   await publishMarks(c)
   await saveEntry(c, 'art', 'a')
@@ -326,18 +341,36 @@ test('PDF a draft refuses, a published one downloads, and a revised mark reprint
   assert.equal(res.headers.get('cache-control'), 'no-store')
   assert.match(res.headers.get('content-disposition')!, /^inline; filename="report-card-[A-Za-z0-9._-]+\.pdf"$/)
   assert.ok(!res.headers.get('content-disposition')!.includes(NAME))
+  const text = async () => printed(new Uint8Array(await (await download(c, c.pupil)).arrayBuffer()))
   const first = await printed(new Uint8Array(await res.arrayBuffer()))
-  assert.ok(first.includes('87.00') && first.includes(NAME))
+  assert.ok(first.includes('87.00') && first.includes('A2') && first.includes(NAME) && first.includes('Issue version 1'))
+  assert.match(res.headers.get('content-disposition')!, /-v1.pdf"$/)
   // P1-07c: a revision is a proposal; the card moves only when an administrator approves it.
   const p1 = await api.reviseMark(c.teacher, { examId: c.exams.term, studentId: c.pupil.id, obtained: 80, expectedRevision: 0, reason: 'Re-evaluated answer script' })
-  assert.ok((await printed(new Uint8Array(await (await download(c, c.pupil)).arrayBuffer()))).includes('87.00'), 'a proposal changes nothing')
+  assert.ok((await text()).includes('87.00'), 'a proposal changes nothing')
   await api.decideMarkReview(c.admin, { requestId: p1.requestId, decision: 'approve', reason: 'checked against the script' })
-  const again = await printed(new Uint8Array(await (await download(c, c.pupil)).arrayBuffer()))
-  assert.ok(again.includes('97.00') && again.includes('A1'), 'the reprint shows the revised value')
+  const unchanged = await text()
+  assert.ok(unchanged.includes('87.00') && unchanged.includes('A2') && !unchanged.includes('97.00'), 'an approval does not change an issued card')
+  assert.equal((await reportOf(c, c.pupil)).subjects[0]!.total, 87)
+  assert.equal(await audits(c, 'report_card.republished'), 0)
+
+  await assert.rejects(publication(c, { republish: true, expectedVersion: 1, reason: 'short' }), (e) => code(e) === 'invalid_report_card_republication' && status(e) === 400)
+  await assert.rejects(publication(c, { republish: true, reason: 'Re-evaluated answer script approved' }), (e) => code(e) === 'invalid_report_card_republication')
+  assert.equal((await publication(c, { republish: true, expectedVersion: 1, reason: 'Re-evaluated answer script approved' })).notice, 'Report card republished.')
+  const again = await text()
+  assert.ok(again.includes('97.00') && again.includes('A1') && again.includes('Issue version 2'), 'the reissue shows the revised value')
+  await assert.rejects(publication(c, { republish: true, expectedVersion: 1, reason: 'A second click on the same form' }), (e) => code(e) === 'report_card_version_stale' && status(e) === 409)
+  assert.equal(await audits(c, 'report_card.republished'), 1)
+  const [log] = await withTenant(c.id, (tx) => tx.select().from(auditLog).where(eq(auditLog.action, 'report_card.republished')))
+  assert.equal(log!.reason, 'Re-evaluated answer script approved')
+  assert.deepEqual([(log!.detail as { previousVersion: number; version: number }).previousVersion, (log!.detail as { version: number }).version], [1, 2])
+
   const p2 = await api.reviseMark(c.teacher, { examId: c.exams.term, studentId: c.pupil.id, obtained: null, absent: true, expectedRevision: 1, reason: 'Absent at the re-evaluation sitting' })
   await api.decideMarkReview(c.admin, { requestId: p2.requestId, decision: 'approve', reason: 'checked against the script' })
-  const absent = await printed(new Uint8Array(await (await download(c, c.pupil)).arrayBuffer()))
-  assert.ok(!absent.includes('97.00'), 'an approved absence reprints the card without the old total')
+  assert.ok((await text()).includes('97.00'), 'an approved absence waits for a reissue')
+  await publication(c, { republish: true, expectedVersion: 2, reason: 'Absence recorded after re-evaluation' })
+  const absent = await text()
+  assert.ok(!absent.includes('97.00') && absent.includes('Issue version 3'), 'the absence first appears at version 3')
 })
 
 test('PDF the pupil, a verified guardian and authorised staff may read it; no one else, and no bytes for them', async () => {
