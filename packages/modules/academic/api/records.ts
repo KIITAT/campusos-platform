@@ -128,6 +128,7 @@ export async function postCompletionWithin(
   actorId: string | null,
   result: CompletionPost,
   reason: string,
+  actorEmail: string | null = null,
 ): Promise<'created' | 'corrected' | 'unchanged'> {
   const [existing] = await tx
     .select()
@@ -143,7 +144,7 @@ export async function postCompletionWithin(
     )
 
   if (!existing) {
-    await tx.insert(courseCompletions).values({
+    const [created] = await tx.insert(courseCompletions).values({
       institutionId,
       studentId: result.studentId,
       courseId: result.courseId,
@@ -155,6 +156,25 @@ export async function postCompletionWithin(
       source: 'internal',
       note: result.note ?? null,
       recordedBy: actorId,
+    }).returning({ id: courseCompletions.id })
+    await audit(tx, {
+      institutionId,
+      actorId,
+      actorEmail,
+      moduleId: MODULE,
+      action: 'completion.posted',
+      entity: 'academic_course_completions',
+      entityId: created!.id,
+      reason: 'Posted first course completion',
+      detail: {
+        studentId: result.studentId,
+        courseId: result.courseId,
+        termId: result.termId,
+        credits: result.credits,
+        gradePoints: result.gradePoints,
+        gradeLabel: result.gradeLabel,
+        passed: result.passed,
+      },
     })
     return 'created'
   }
@@ -171,7 +191,7 @@ export async function postCompletionWithin(
   await audit(tx, {
     institutionId,
     actorId,
-    actorEmail: null,
+    actorEmail,
     moduleId: MODULE,
     action: 'completion.corrected',
     entity: 'academic_course_completions',
@@ -234,6 +254,7 @@ export async function correctCompletion(actor: Actor, input: unknown) {
         passed: data.passed ?? row.passed,
       },
       data.reason,
+      actor.email ?? null,
     )
   })
 }

@@ -167,6 +167,7 @@ export const feePayments = pgTable(
     recordedBy: text('recorded_by').references(() => users.id, { onDelete: 'set null' }),
     /** Human-readable receipt number, unique per institution. */
     receiptNo: text('receipt_no').notNull(),
+    receiptNoKey: text('receipt_no_key').generatedAlwaysAs(sql`lower(receipt_no)`),
     reconciledAt: timestamp('reconciled_at', { withTimezone: true }),
     reconciledBy: text('reconciled_by').references(() => users.id, { onDelete: 'set null' }),
     notes: text(),
@@ -200,6 +201,8 @@ export const feePayments = pgTable(
     uniqueIndex('fee_payments_cheque')
       .on(t.institutionId, t.drawerIfsc, t.drawerAccount, sql`upper(btrim(${t.reference}))`)
       .where(sql`method = 'cheque' AND drawer_ifsc IS NOT NULL AND reference IS NOT NULL AND btrim(reference) <> '' AND status = 'live'`),
+    // Record search (P1-09c, 0013): a receipt number found ignoring case, one tenant at a time.
+    index('fee_payments_receipt_key').on(t.institutionId, t.receiptNoKey),
     index('fee_payments_student').on(t.studentId),
     index('fee_payments_term').on(t.termId),
     check('fee_payments_amount', sql`amount_paise > 0`),

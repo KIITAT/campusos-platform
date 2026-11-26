@@ -18,6 +18,7 @@ import {
   type Actor,
   type Tx,
 } from './core'
+import { auditTimetable } from './structural-audit'
 
 /**
  * What the solver works from, beyond the academic core: the institution's
@@ -68,6 +69,13 @@ export async function updateSettings(actor: Actor, input: unknown) {
       .insert(settings)
       .values({ institutionId: tenant, ...next, updatedAt: new Date() })
       .onConflictDoUpdate({ target: settings.institutionId, set: { ...next, updatedAt: new Date() } })
+    await auditTimetable(tx, actor, tenant, 'settings.saved', 'timetable_settings', tenant, 'Saved timetable settings', {
+      maxPerDay: next.maxPerDay,
+      maxPerWeek: next.maxPerWeek,
+      maxConsecutive: next.maxConsecutive,
+      yearStartsMonth: next.yearStartsMonth,
+      timeLimitSeconds: next.timeLimitSeconds,
+    })
     return { ...next, notice: 'Settings saved.' }
   })
 }
@@ -146,10 +154,17 @@ export async function generatePeriods(actor: Actor, input: unknown) {
   return withTenant(tenant, (tx) =>
     named(async () => {
       if (data.termId) await termWithin(tx, data.termId)
-      await tx
+      const removed = await tx
         .delete(periods)
         .where(and(data.termId ? eq(periods.termId, data.termId) : isNull(periods.termId), inArray(periods.dayOfWeek, data.days)))
+        .returning({ id: periods.id })
       await tx.insert(periods).values(rows.map((r) => ({ institutionId: tenant, termId: data.termId ?? null, ...r })))
+      await auditTimetable(tx, actor, tenant, 'periods.generated', 'timetable_periods', data.termId ?? tenant, 'Generated timetable periods', {
+        termId: data.termId ?? null,
+        days: [...new Set(data.days)].sort((a, b) => a - b),
+        removed: removed.length,
+        added: rows.length,
+      })
       return { periods: rows.length, notice: `${rows.length} periods laid out.` }
     }),
   )
@@ -177,6 +192,13 @@ export async function addPeriod(actor: Actor, input: unknown) {
         .values({ institutionId: tenant, termId: data.termId ?? null, dayOfWeek: data.dayOfWeek, index: data.index, startsAt: data.startsAt, endsAt: data.endsAt, label: data.label ?? null })
         .returning()
       await assertOrdered(tx, data.termId ?? null, data.dayOfWeek)
+      await auditTimetable(tx, actor, tenant, 'period.added', 'timetable_periods', row!.id, 'Added timetable period', {
+        termId: row!.termId,
+        dayOfWeek: row!.dayOfWeek,
+        index: row!.index,
+        startsAt: row!.startsAt,
+        endsAt: row!.endsAt,
+      })
       return { ...row!, notice: 'Period added.' }
     }),
   )
@@ -186,7 +208,16 @@ export async function deletePeriod(actor: Actor, input: unknown) {
   const tenant = requireOffice(actor)
   const { periodId } = z.object({ periodId: uuid }).parse(input)
   return withTenant(tenant, async (tx) => {
-    await tx.delete(periods).where(eq(periods.id, periodId))
+    const [row] = await tx.delete(periods).where(eq(periods.id, periodId)).returning()
+    if (row) {
+      await auditTimetable(tx, actor, tenant, 'period.deleted', 'timetable_periods', row.id, 'Deleted timetable period', {
+        termId: row.termId,
+        dayOfWeek: row.dayOfWeek,
+        index: row.index,
+        startsAt: row.startsAt,
+        endsAt: row.endsAt,
+      })
+    }
     return { notice: 'Period removed.' }
   })
 }
@@ -251,6 +282,10 @@ export async function setRoom(actor: Actor, input: unknown) {
         .insert(roomKinds)
         .values({ institutionId: tenant, ...data })
         .onConflictDoUpdate({ target: roomKinds.roomId, set: { kind: data.kind, available: data.available } })
+      await auditTimetable(tx, actor, tenant, 'room.configured', 'timetable_rooms', data.roomId, 'Configured timetable room', {
+        kind: data.kind,
+        available: data.available,
+      })
       return { notice: data.available ? `Room is a ${data.kind}.` : 'Room taken out of timetabling.' }
     }),
   )
@@ -311,6 +346,7 @@ export async function setSection(actor: Actor, input: unknown) {
         .insert(sectionPlans)
         .values({ institutionId: tenant, sectionId: data.sectionId, ...values })
         .onConflictDoUpdate({ target: sectionPlans.sectionId, set: values })
+      await auditTimetable(tx, actor, tenant, 'section.configured', 'timetable_sections', data.sectionId, 'Configured timetable section', values)
       return { notice: 'Saved.' }
     }),
   )
@@ -389,6 +425,11 @@ export async function setTeacher(actor: Actor, input: unknown) {
         .insert(teacherLimits)
         .values({ institutionId: tenant, userId: data.userId, ...values })
         .onConflictDoUpdate({ target: teacherLimits.userId, set: values })
+      await auditTimetable(tx, actor, tenant, 'teacher.limits_set', 'timetable_teachers', data.userId, 'Set teacher timetable limits', {
+        maxPerDay: values.maxPerDay,
+        maxPerWeek: values.maxPerWeek,
+        maxConsecutive: values.maxConsecutive,
+      })
       return { notice: 'Limits saved.' }
     }),
   )
@@ -450,6 +491,15 @@ export const eligibilitySchema = z
   })
   .meta({ id: 'TimetableEligibility' })
 
+const eligibilityDetail = (row: typeof eligibility.$inferSelect) => ({
+  userId: row.userId,
+  courseId: row.courseId,
+  departmentId: row.departmentId,
+  programId: row.programId,
+  yearOfStudy: row.yearOfStudy,
+  preference: row.preference,
+})
+
 export async function addEligibility(actor: Actor, input: unknown) {
   const tenant = requireOffice(actor)
   const data = eligibilitySchema.parse(input)
@@ -468,6 +518,7 @@ export async function addEligibility(actor: Actor, input: unknown) {
           preference: data.preference,
         })
         .returning()
+      await auditTimetable(tx, actor, tenant, 'eligibility.added', 'timetable_eligibility', row!.id, 'Added teacher eligibility', eligibilityDetail(row!))
       return { ...row!, notice: 'Eligibility added.' }
     }),
   )
@@ -477,7 +528,8 @@ export async function deleteEligibility(actor: Actor, input: unknown) {
   const tenant = requireOffice(actor)
   const { id } = z.object({ id: uuid }).parse(input)
   return withTenant(tenant, async (tx) => {
-    await tx.delete(eligibility).where(eq(eligibility.id, id))
+    const [row] = await tx.delete(eligibility).where(eq(eligibility.id, id)).returning()
+    if (row) await auditTimetable(tx, actor, tenant, 'eligibility.deleted', 'timetable_eligibility', row.id, 'Deleted teacher eligibility', eligibilityDetail(row))
     return { notice: 'Removed.' }
   })
 }
@@ -541,6 +593,7 @@ export async function importEligibility(actor: Actor, input: unknown) {
           set: { preference: sql`excluded.preference` },
         })
         .returning({ id: eligibility.id })
+      await auditTimetable(tx, actor, tenant, 'eligibility.imported', 'timetable_eligibility', tenant, 'Imported teacher eligibility', { imported: written.length })
       return { imported: written.length, notice: `${written.length} row(s) of eligibility imported.` }
     }),
   )
@@ -585,6 +638,14 @@ export const unavailableSchema = z
   })
   .meta({ id: 'TimetableUnavailable' })
 
+const unavailableDetail = (row: typeof unavailable.$inferSelect) => ({
+  userId: row.userId,
+  roomId: row.roomId,
+  sectionId: row.sectionId,
+  dayOfWeek: row.dayOfWeek,
+  period: row.period,
+})
+
 /** The office marks anybody or anything; a teacher marks only themselves. */
 export async function addUnavailable(actor: Actor, input: unknown) {
   const tenant = tenantOf(actor)
@@ -611,6 +672,7 @@ export async function addUnavailable(actor: Actor, input: unknown) {
           reason: data.reason ?? null,
         })
         .returning()
+      await auditTimetable(tx, actor, tenant, 'unavailability.added', 'timetable_unavailable', row!.id, 'Added timetable unavailability', unavailableDetail(row!))
       return { ...row!, notice: 'Marked unavailable.' }
     }),
   )
@@ -624,7 +686,8 @@ export async function deleteUnavailable(actor: Actor, input: unknown) {
     const [row] = await tx.select().from(unavailable).where(eq(unavailable.id, id))
     if (!row) throw new TimetableError(404, 'not_found', 'no such entry')
     if (!office && row.userId !== actor.id) throw new TimetableError(403, 'forbidden', 'a teacher removes only their own')
-    await tx.delete(unavailable).where(eq(unavailable.id, id))
+    const [gone] = await tx.delete(unavailable).where(eq(unavailable.id, id)).returning()
+    if (gone) await auditTimetable(tx, actor, tenant, 'unavailability.deleted', 'timetable_unavailable', gone.id, 'Deleted timetable unavailability', unavailableDetail(gone))
     return { notice: 'Removed.' }
   })
 }

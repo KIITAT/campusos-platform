@@ -37,6 +37,7 @@ import {
   newSessionSecret,
   verifyToken,
 } from './token'
+import { auditAttendance } from './structural-audit'
 
 export interface Actor extends ViewerScope {
   id: string
@@ -146,6 +147,11 @@ export async function openSession(actor: Actor, input: unknown) {
           tokenWindowSeconds: sessionSettings.tokenWindowSeconds,
         })
         .returning({ id: sessions.id, openedAt: sessions.openedAt })
+      await auditAttendance(tx, actor, tenant, 'attendance.session-opened', 'attendance_sessions', row!.id, 'Opened attendance session', {
+        slotId,
+        offeringId: slot.offeringId,
+        openedAt: row!.openedAt.toISOString(),
+      })
       return row!
     } catch (e) {
       if ((e as { cause?: { code?: string } }).cause?.code === '23505') {
@@ -166,13 +172,17 @@ export async function closeSession(actor: Actor, input: unknown) {
   await withTenant(tenant, async (tx) => {
     const [session] = await tx.select({ openedBy: sessions.openedBy }).from(sessions).where(eq(sessions.id, sessionId)).for('update')
     if (session && !isAdmin(actor.role) && session.openedBy !== actor.id) throw new AttendanceError(403, 'not_your_class', 'that is not your session')
+    const closedAt = new Date()
     const [row] = await tx
       .update(sessions)
-      .set({ closedAt: new Date() })
+      .set({ closedAt })
       .where(and(eq(sessions.id, sessionId), isNull(sessions.closedAt)))
       .returning({ id: sessions.id })
     if (!row) throw new AttendanceError(404, 'no_open_session', 'no open session with that id')
     await tellAbsentees(tx, tenant, sessionId)
+    await auditAttendance(tx, actor, tenant, 'attendance.session-closed', 'attendance_sessions', row.id, 'Closed attendance session', {
+      closedAt: closedAt.toISOString(),
+    })
   })
 }
 
@@ -280,7 +290,14 @@ export async function registerDevice(actor: Actor, input: unknown) {
       .onConflictDoNothing({ target: [devices.userId, devices.deviceHash] })
       .returning({ id: devices.id, status: devices.status })
 
-    if (row) return row
+    if (row) {
+      await auditAttendance(tx, actor, tenant, 'attendance.device-registered', 'attendance_devices', row.id, 'Registered attendance device', {
+        studentId: actor.id,
+        status: row.status,
+        signed: false,
+      })
+      return row
+    }
     // Already known: report its current state rather than creating a duplicate.
     const [existing] = await tx
       .select({ id: devices.id, status: devices.status })
@@ -300,21 +317,36 @@ export async function approveDevice(actor: Actor, input: unknown) {
   const { deviceId } = approveDeviceSchema.parse(input)
 
   await withTenant(tenant, async (tx) => {
-    const [target] = await tx
-      .select({ userId: devices.userId })
+    const [owner] = await tx.select({ userId: devices.userId }).from(devices).where(eq(devices.id, deviceId))
+    if (!owner) throw new AttendanceError(404, 'no_such_device', 'no such device')
+    // Lock every device row of the student, in id order, so two approvals for one
+    // student run one after the other (neither can leave two devices active).
+    const mine = await tx
+      .select({ id: devices.id, status: devices.status })
       .from(devices)
-      .where(eq(devices.id, deviceId))
-    if (!target) throw new AttendanceError(404, 'no_such_device', 'no such device')
+      .where(eq(devices.userId, owner.userId))
+      .orderBy(devices.id)
+      .for('update')
+    const target = { userId: owner.userId, status: mine.find((r) => r.id === deviceId)?.status }
+    if (!target.status) throw new AttendanceError(404, 'no_such_device', 'no such device')
+    // A revoked device was retired by the office: it pairs again as a new device.
+    if (target.status === 'revoked') throw new AttendanceError(409, 'device_revoked', 'a revoked device must be paired again')
 
-    await tx
+    const revoked = await tx
       .update(devices)
       .set({ status: 'revoked' })
       .where(and(eq(devices.userId, target.userId), eq(devices.status, 'active')))
+      .returning({ id: devices.id })
 
     await tx
       .update(devices)
       .set({ status: 'active', approvedBy: actor.id, approvedAt: new Date() })
       .where(eq(devices.id, deviceId))
+    await auditAttendance(tx, actor, tenant, 'attendance.device-approved', 'attendance_devices', deviceId, 'Approved attendance device', {
+      studentId: target.userId,
+      status: 'active',
+      replacedDeviceIds: revoked.map((r) => r.id).filter((id) => id !== deviceId).sort(),
+    })
   })
 }
 
@@ -366,6 +398,10 @@ export async function setGeofence(actor: Actor, input: unknown) {
           radiusM: data.radiusM ?? null,
         },
       })
+    await auditAttendance(tx, actor, tenant, 'attendance.geofence-set', 'attendance_room_geofences', data.roomId, 'Set room geofence', {
+      roomId: data.roomId,
+      radiusM: data.radiusM ?? null,
+    })
   })
 }
 

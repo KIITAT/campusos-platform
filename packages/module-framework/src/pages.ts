@@ -151,6 +151,14 @@ export interface PluginField {
    */
   columns?: PluginField[]
   /**
+   * For a text field naming a student (or another record): search this
+   * module's own lookup route instead of choosing from a preloaded list
+   * (P1-09c). `path` is `/record-search` or `/student-choices`; `initialLabel`
+   * names the record already chosen. The field keeps its name and posted value,
+   * and an older host shows the plain text box.
+   */
+  lookup?: { path: string; initialLabel?: string }
+  /**
    * For lines: how many rows to offer. Default 6. The page can offer more by
    * linking to itself with a larger number -- the grid needs no script. For
    * lines, `value` names a data key holding rows already entered -- a draft

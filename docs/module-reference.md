@@ -7,33 +7,33 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 
 | Module | Version | Pages | API routes | Dependencies |
 |---|---|---:|---:|---|
-| [Academic Core](#academic) | 0.14.0 | 8 | 44 | None |
-| [Admissions](#admissions) | 0.11.0 | 3 | 9 | academic |
+| [Academic Core](#academic) | 0.16.0 | 8 | 45 | None |
+| [Admissions](#admissions) | 0.14.0 | 3 | 9 | academic |
 | [Alumni and events](#alumni) | 0.5.0 | 4 | 12 | None |
-| [Attendance & QR](#attendance) | 0.19.0 | 8 | 30 | academic, notices |
-| [Student Care](#care) | 0.13.0 | 7 | 24 | academic, notices |
-| [Ceremonies](#ceremonies) | 0.11.0 | 6 | 23 | academic |
-| [Sales CRM](#crm) | 0.10.0 | 4 | 32 | finance, notices |
+| [Attendance & QR](#attendance) | 0.21.0 | 8 | 30 | academic, notices |
+| [Student Care](#care) | 0.15.0 | 7 | 24 | academic, notices |
+| [Ceremonies](#ceremonies) | 0.13.0 | 6 | 23 | academic |
+| [Sales CRM](#crm) | 0.12.0 | 4 | 32 | finance, notices |
 | [Documents](#documents) | 0.1.0 | 1 | 8 | None |
 | [Enrollment](#enrollment) | 0.10.0 | 3 | 9 | academic |
-| [Examinations & Grading](#examinations) | 0.30.0 | 11 | 44 | academic, notices |
+| [Examinations & Grading](#examinations) | 0.33.0 | 11 | 44 | academic, notices |
 | [Feedback](#feedback) | 0.10.0 | 8 | 19 | academic |
-| [Fees & Finance](#fees) | 0.30.0 | 12 | 47 | academic, finance, notices |
+| [Fees & Finance](#fees) | 0.33.0 | 12 | 49 | academic, finance, notices |
 | [Finance & Books](#finance) | 0.22.0 | 92 | 208 | None |
 | [Helpdesk and grievance](#helpdesk) | 0.5.0 | 2 | 7 | None |
-| [Hostel](#hostel) | 0.15.0 | 5 | 20 | academic |
-| [HR & Payroll](#hr) | 0.27.0 | 18 | 134 | finance, notices |
-| [Library](#library) | 0.17.0 | 5 | 18 | academic |
-| [Mentoring](#mentoring) | 0.30.0 | 6 | 19 | academic, notices |
-| [Communication & Notices](#notices) | 0.16.0 | 4 | 13 | academic |
-| [Parent Portal](#parents) | 0.30.0 | 4 | 12 | academic |
-| [Placement](#placement) | 0.13.0 | 8 | 15 | academic, notices |
+| [Hostel](#hostel) | 0.17.0 | 5 | 20 | academic |
+| [HR & Payroll](#hr) | 0.29.0 | 18 | 134 | finance, notices |
+| [Library](#library) | 0.20.0 | 5 | 19 | academic |
+| [Mentoring](#mentoring) | 0.33.0 | 6 | 19 | academic, notices |
+| [Communication & Notices](#notices) | 0.18.0 | 4 | 14 | academic |
+| [Parent Portal](#parents) | 0.33.0 | 4 | 13 | academic |
+| [Placement](#placement) | 0.15.0 | 8 | 15 | academic, notices |
 | [Projects and timesheets](#projects) | 0.5.0 | 6 | 27 | finance |
 | [Quizzes](#quizzes) | 0.10.0 | 7 | 22 | academic |
-| [Reports](#reports) | 0.4.0 | 5 | 10 | notices |
+| [Reports](#reports) | 0.6.0 | 5 | 10 | notices |
 | [Skills](#skills) | 0.5.0 | 5 | 12 | None |
-| [Timetable](#timetable) | 0.11.0 | 12 | 42 | academic |
-| [Transport](#transport) | 0.6.0 | 4 | 14 | None |
+| [Timetable](#timetable) | 0.12.0 | 12 | 42 | academic |
+| [Transport](#transport) | 0.8.0 | 4 | 14 | None |
 
 <a id="academic"></a>
 ## Academic Core
@@ -94,6 +94,7 @@ Source: `campusos-platform/packages/modules/academic/`.
 | `POST /api/v1/modules/academic/classes/change/withdraw` | Withdraw a change: the class meets as usual | `changeId`, `reason` |
 | `GET /api/v1/modules/academic/week` | The week containing a date (date=YYYY-MM-DD), with changes applied, for the caller | See runtime OpenAPI schema |
 | `GET /api/v1/modules/academic/profile` | A student's roll and registration numbers, phone and address: their own, or any for staff (studentId) | See runtime OpenAPI schema |
+| `GET /api/v1/modules/academic/record-search` | Find a student by roll number, registration number or name (the office) | `q` (query) |
 | `GET /api/v1/modules/academic/consents` | A student's recorded choices (studentId): the privacy notice, counselling self-checks and the APAAR ID | See runtime OpenAPI schema |
 | `GET /api/v1/modules/academic/curricula` | Every curriculum, with its requirements | See runtime OpenAPI schema |
 | `GET /api/v1/modules/academic/gpa-policy` | The grade point average rules, oldest first | See runtime OpenAPI schema |
@@ -633,6 +634,8 @@ Source: `campusos-platform/packages/modules/fees/`.
 | `GET /api/v1/modules/fees/ledger` | One student’s charges, waivers and payments for a term | See runtime OpenAPI schema |
 | `GET /api/v1/modules/fees/reconciliation` | The student ledgers against the fees receivable account | See runtime OpenAPI schema |
 | `GET /api/v1/modules/fees/dues` | Balances for a term from the books, worst first, a page at a time | See runtime OpenAPI schema |
+| `GET /api/v1/modules/fees/record-search` | Find a fee receipt by its number, old or fiscal-year style (the accounts office) | `q` (query) |
+| `GET /api/v1/modules/fees/student-choices` | Find a student by roll, registration or name for a form (the accounts office) | `q` (query) |
 | `GET /api/v1/modules/fees/receipt.pdf` | A payment receipt as a PDF (binary response) | See runtime OpenAPI schema |
 
 ### Background jobs
@@ -1224,6 +1227,7 @@ Source: `campusos-platform/packages/modules/library/`.
 
 | Method and path | Operation | Body fields / query parameters |
 |---|---|---|
+| `GET /api/v1/modules/library/record-search` | Find a book by title, author or ISBN (the catalogue readers) | `q` (query) |
 | `GET /api/v1/modules/library/titles` | Search the catalogue by title, author or ISBN | See runtime OpenAPI schema |
 | `POST /api/v1/modules/library/titles` | Catalogue a new title | `isbn`, `title`, `author`, `publisher`, `year`, `category` |
 | `GET /api/v1/modules/library/copies` | The physical copies of one title, with who holds each | See runtime OpenAPI schema |
@@ -1317,8 +1321,9 @@ Source: `campusos-platform/packages/modules/notices/`.
 | `GET /api/v1/modules/notices/board/attachment` | A document on a notice, for whoever may read the notice (binary response) | `id` (query) |
 | `GET /api/v1/modules/notices/inbox` | This user’s notification centre | See runtime OpenAPI schema |
 | `POST /api/v1/modules/notices/inbox` | Mark one notification read, or the whole inbox | `notificationId` |
-| `GET /api/v1/modules/notices/preferences` | Your notification categories | See runtime OpenAPI schema |
+| `GET /api/v1/modules/notices/preferences` | Your notification preferences | See runtime OpenAPI schema |
 | `POST /api/v1/modules/notices/preferences` | Mute or unmute a category for yourself | `moduleId`, `muted` |
+| `POST /api/v1/modules/notices/preferences/email` | Turn notification email on or off for yourself | `optedOut` |
 | `POST /api/v1/modules/notices/preferences/mandatory` | Make a category mandatory, or optional again | `moduleId`, `mandatory`, `reason` |
 
 ### Background jobs
@@ -1353,6 +1358,7 @@ Source: `campusos-platform/packages/modules/parents/`.
 | `POST /api/v1/modules/parents/consents` | A parent or guardian gives, refuses or withdraws a consent for a child under 18. Audited. | `studentId`, `purpose`, `decision` |
 | `POST /api/v1/modules/parents/fee-claims` | Report a payment made for your child | `termId`, `accountId`, `mode`, `remitterBank`, `remitterBranch`, `remitterIfsc`, `drawerAccount`, `accountHolder`, `contactPhone`, `transferredOn`, `amount`, `studentId`, `utr`, `bankReference` |
 | `POST /api/v1/modules/parents/links/adult` | A student aged 18 or over keeps or ends a guardian’s access. Audited. | `linkId`, `keep` |
+| `GET /api/v1/modules/parents/student-choices` | Find a student by roll, registration or name for the guardian invitation (the administrators) | `q` (query) |
 | `GET /api/v1/modules/parents/guardians` | Guardian invitations: open, accepted, expired or withdrawn, and for which children | See runtime OpenAPI schema |
 | `POST /api/v1/modules/parents/guardians/invite` | Invite a guardian, at their own address, for a child | `email`, `studentId`, `relation`, `days` |
 | `POST /api/v1/modules/parents/guardians/withdraw` | Withdraw a guardian invitation, and the access it gave | `invitationId`, `reason` |

@@ -28,6 +28,7 @@ import {
   setTermCalendarSchema,
   type Timetable,
 } from './schemas'
+import { auditAcademic } from './structural-audit'
 
 /**
  * Every operation checks its own authorisation and runs inside withTenant(), so
@@ -37,6 +38,7 @@ import {
 
 export interface Actor extends ViewerScope {
   id: string
+  email?: string | null
   role: Role
   institutionId: string | null
 }
@@ -94,6 +96,7 @@ export async function createDepartment(actor: Actor, input: unknown) {
       .onConflictDoNothing()
       .returning()
     if (!row) throw new AcademicError(409, 'code_taken', `department ${data.code} exists`)
+    await auditAcademic(tx, actor, tenant, 'department.created', 'academic_departments', row.id, 'Created department', { code: row.code })
     return row
   })
 }
@@ -108,6 +111,12 @@ export async function createProgram(actor: Actor, input: unknown) {
       .onConflictDoNothing()
       .returning()
     if (!row) throw new AcademicError(409, 'code_taken', `programme ${data.code} exists`)
+    await auditAcademic(tx, actor, tenant, 'programme.created', 'academic_programs', row.id, 'Created programme', {
+      departmentId: row.departmentId,
+      code: row.code,
+      level: row.level,
+      durationTerms: row.durationTerms,
+    })
     return row
   }).catch((e) => rethrowConflict(e, 'invalid', 'programme rejected by a constraint'))
 }
@@ -122,6 +131,11 @@ export async function createCourse(actor: Actor, input: unknown) {
       .onConflictDoNothing()
       .returning()
     if (!row) throw new AcademicError(409, 'code_taken', `course ${data.code} exists`)
+    await auditAcademic(tx, actor, tenant, 'course.created', 'academic_courses', row.id, 'Created course', {
+      departmentId: row.departmentId,
+      code: row.code,
+      credits: row.credits,
+    })
     return row
   }).catch((e) => rethrowConflict(e, 'invalid', 'course rejected by a constraint'))
 }
@@ -141,6 +155,7 @@ export async function createRoom(actor: Actor, input: unknown) {
       .onConflictDoNothing()
       .returning()
     if (!row) throw new AcademicError(409, 'code_taken', `room ${data.code} exists`)
+    await auditAcademic(tx, actor, tenant, 'room.created', 'academic_rooms', row.id, 'Created room', { code: row.code, capacity: row.capacity })
     return row
   })
 }
@@ -157,6 +172,11 @@ export async function createTerm(actor: Actor, input: unknown) {
       .onConflictDoNothing()
       .returning()
     if (!row) throw new AcademicError(409, 'code_taken', `term ${data.code} exists`)
+    await auditAcademic(tx, actor, tenant, 'term.created', 'academic_terms', row.id, 'Created term', {
+      code: row.code,
+      startsOn: row.startsOn,
+      endsOn: row.endsOn,
+    })
     return row
   }).catch((e) => rethrowConflict(e, 'invalid', 'term rejected by a constraint'))
 }
@@ -170,13 +190,24 @@ export async function setCurrentTerm(actor: Actor, input: unknown) {
   const tenant = requireWriter(actor)
   const { termId } = setCurrentTermSchema.parse(input)
   return withTenant(tenant, async (tx) => {
-    await tx.update(terms).set({ isCurrent: false }).where(eq(terms.isCurrent, true))
+    const [previous] = await tx
+      .update(terms)
+      .set({ isCurrent: false })
+      .where(eq(terms.isCurrent, true))
+      .returning({ id: terms.id })
     const [row] = await tx
       .update(terms)
       .set({ isCurrent: true })
       .where(eq(terms.id, termId))
       .returning({ id: terms.id })
     if (!row) throw new AcademicError(404, 'no_such_term', 'no such term')
+    // Reselecting the term that was already current changes nothing.
+    if (previous?.id !== row.id) {
+      await auditAcademic(tx, actor, tenant, 'term.current_set', 'academic_terms', row.id, 'Set current term', {
+        previousTermId: previous?.id ?? null,
+        currentTermId: row.id,
+      })
+    }
   })
 }
 
@@ -200,6 +231,12 @@ export async function setTermCalendar(actor: Actor, input: unknown) {
       .where(eq(terms.id, termId))
       .returning()
     if (!row) throw new AcademicError(404, 'no_such_term', 'no such term')
+    await auditAcademic(tx, actor, tenant, 'term.calendar_set', 'academic_terms', row.id, 'Set term registration calendar', {
+      registrationOpensOn: row.registrationOpensOn,
+      registrationClosesOn: row.registrationClosesOn,
+      addDropEndsOn: row.addDropEndsOn,
+      withdrawEndsOn: row.withdrawEndsOn,
+    })
     return row
   }).catch((e) =>
     rethrowConflict(
@@ -222,6 +259,11 @@ export async function createSection(actor: Actor, input: unknown) {
       .onConflictDoNothing()
       .returning()
     if (!row) throw new AcademicError(409, 'exists', 'that cohort already exists')
+    await auditAcademic(tx, actor, tenant, 'section.created', 'academic_sections', row.id, 'Created section', {
+      programId: row.programId,
+      admissionYear: row.admissionYear,
+      label: row.label,
+    })
     return row
   }).catch((e) => rethrowConflict(e, 'invalid', 'cohort rejected by a constraint'))
 }
@@ -248,6 +290,7 @@ export async function setDepartmentHead(actor: Actor, input: unknown) {
     const head = data.email ? await staffByEmail(tx, tenant, data.email, ['hod']) : null
     const [row] = await tx.update(departments).set({ hodUserId: head }).where(eq(departments.id, data.departmentId)).returning()
     if (!row) throw new AcademicError(404, 'no_such_department', 'no such department')
+    await auditAcademic(tx, actor, tenant, 'department.head_set', 'academic_departments', row.id, 'Set department head', { hodUserId: row.hodUserId })
     return row
   })
 }
@@ -260,6 +303,7 @@ export async function setClassTeacher(actor: Actor, input: unknown) {
     const teacher = data.email ? await staffByEmail(tx, tenant, data.email, ['faculty', 'hod']) : null
     const [row] = await tx.update(sections).set({ classTeacherId: teacher }).where(eq(sections.id, data.sectionId)).returning()
     if (!row) throw new AcademicError(404, 'no_such_section', 'no such section')
+    await auditAcademic(tx, actor, tenant, 'section.teacher_set', 'academic_sections', row.id, 'Set class teacher', { classTeacherId: row.classTeacherId })
     return row
   })
 }
@@ -280,10 +324,21 @@ export async function addSectionMember(actor: Actor, input: unknown) {
       throw new AcademicError(400, 'not_a_student', 'only students join a cohort')
     }
 
-    await tx
+    // The section must be this institution's too: the membership's foreign key
+    // names the section by id alone (NEW-126), so the ordinary entry point checks.
+    const [section] = await tx.select({ id: sections.id }).from(sections).where(eq(sections.id, data.sectionId))
+    if (!section) throw new AcademicError(404, 'no_such_section', 'no such section')
+
+    const [added] = await tx
       .insert(sectionMembers)
       .values({ institutionId: tenant, sectionId: data.sectionId, userId: data.userId })
       .onConflictDoNothing({ target: [sectionMembers.sectionId, sectionMembers.userId] })
+      .returning({ userId: sectionMembers.userId })
+    if (added) {
+      await auditAcademic(tx, actor, tenant, 'section.member_added', 'academic_sections', data.sectionId, 'Added student to section', {
+        studentId: added.userId,
+      })
+    }
   }).catch((e) => {
     // Only the school roster rules are translated; the constraints are created in migration 0013.
     const constraint = ((e as { cause?: unknown }).cause ?? e) as { constraint?: string }
@@ -317,6 +372,12 @@ export async function createOffering(actor: Actor, input: unknown) {
     if (!row) {
       throw new AcademicError(409, 'exists', 'that course is already offered to that cohort')
     }
+    await auditAcademic(tx, actor, tenant, 'offering.created', 'academic_offerings', row.id, 'Created offering', {
+      termId: row.termId,
+      courseId: row.courseId,
+      sectionId: row.sectionId,
+      facultyUserId: row.facultyUserId,
+    })
     return row
   }).catch((e) => rethrowConflict(e, 'invalid', 'offering rejected by a constraint'))
 }
@@ -329,6 +390,13 @@ export async function createSlot(actor: Actor, input: unknown) {
       .insert(slots)
       .values({ institutionId: tenant, ...data })
       .returning()
+    await auditAcademic(tx, actor, tenant, 'slot.created', 'academic_slots', row!.id, 'Created timetable slot', {
+      offeringId: row!.offeringId,
+      roomId: row!.roomId,
+      dayOfWeek: row!.dayOfWeek,
+      startsAt: row!.startsAt,
+      endsAt: row!.endsAt,
+    })
     return row!
   }).catch((e) =>
     // The exclusion constraints named here are created in migration 0001.

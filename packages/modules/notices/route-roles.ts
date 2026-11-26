@@ -19,5 +19,6 @@ export const routeRoles: Record<string, readonly Role[]> = {
   'POST /inbox': MEMBERS,
   'GET /preferences': MEMBERS,
   'POST /preferences': MEMBERS,
+  'POST /preferences/email': MEMBERS,
   'POST /preferences/mandatory': ADMIN,
 }

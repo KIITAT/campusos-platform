@@ -1,7 +1,7 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { eq, like } from 'drizzle-orm'
-import { authDb, institutions, users, withTenant } from '@campusos/db'
+import { and, eq, gte, like, sql } from 'drizzle-orm'
+import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
 import {
   AcademicError,
   addEquivalence,
@@ -20,6 +20,7 @@ import {
   listPrerequisites,
   listStudentPrograms,
   listWaivers,
+  postCompletionWithin,
   recordCompletion,
   setTermCalendar,
   waivePrerequisite,
@@ -706,4 +707,78 @@ test('an unset window is closed, not open', async () => {
   assert.equal(t.registrationOpensOn, null)
   assert.equal(t.addDropEndsOn, null)
   assert.equal(t.kind, 'regular')
+})
+
+// --- structural audit (AUD-06) ----------------------------------------------
+
+const watermark = async () =>
+  new Date(Math.floor(Number((await authDb.execute<{ ms: string }>(sql`select extract(epoch from clock_timestamp()) * 1000 as ms`)).rows[0]!.ms)))
+const trailOf = (inst: string, since: Date) =>
+  withTenant(inst, (tx) =>
+    tx
+      .select()
+      .from(auditLog)
+      .where(and(eq(auditLog.moduleId, 'academic'), gte(auditLog.at, since)))
+      .orderBy(auditLog.at),
+  )
+const only = (rows: Awaited<ReturnType<typeof trailOf>>, action: string) => {
+  const hit = rows.filter((r) => r.action === action)
+  assert.equal(hit.length, 1, `${action} x${hit.length}`)
+  return hit[0]!
+}
+
+test('curriculum, prerequisites and first completions leave evidence', async () => {
+  const c = await campus()
+  const since = await watermark()
+  const note = 'private fixture note'
+  const cur = await createCurriculum(c.admin, { programId: c.programId, catalogYear: 2031, totalCredits: 150 })
+  const c1 = await course(c, 'Evidence One')
+  const c2 = await course(c, 'Evidence Two')
+  const c3 = await course(c, 'Evidence Three')
+  const req = await createRequirement(c.admin, { curriculumId: cur.id, code: 'CORE', title: 'Core', kind: 'core', minCredits: 4, courseIds: [c1.id, c2.id] })
+  const pre = await addPrerequisite(c.admin, { courseId: c2.id, requiresCourseId: c1.id })
+  await addEquivalence(c.admin, { courseId: c3.id, equivalentCourseId: c1.id, note })
+  await addEquivalence(c.admin, { courseId: c3.id, equivalentCourseId: c1.id, note })
+  const waiver = await waivePrerequisite(c.admin, { studentId: c.student.id, courseId: c2.id, requiresCourseId: c1.id, reason: note })
+  const p2 = await createProgram(c.admin, { departmentId: c.deptId, code: 'BTCS2', name: 'Second', level: 'undergraduate', durationTerms: 8 })
+  const first = await declareProgram(c.admin, { studentId: c.student.id, programId: c.programId, curriculumId: cur.id, isPrimary: true })
+  const second = await declareProgram(c.admin, { studentId: c.student.id, programId: p2.id, isPrimary: true })
+  await endStudentProgram(c.admin, { studentProgramId: second.id, status: 'withdrawn', endedOn: '2031-05-01' })
+  const transfer = await recordCompletion(c.admin, { studentId: c.student.id, courseId: c3.id, source: 'transfer', gradePoints: '8.00', gradeLabel: 'A', note })
+  const t0 = await term(c)
+  const post = { studentId: c.student.id, courseId: c1.id, termId: t0.id, credits: 4, gradePoints: '9.00', gradeLabel: 'O', passed: true, note }
+  const first1 = await withTenant(c.id, (tx) => postCompletionWithin(tx, c.id, c.admin.id, post, 'finalised', 'admin@example.test'))
+  const again = await withTenant(c.id, (tx) => postCompletionWithin(tx, c.id, c.admin.id, post, 'finalised'))
+  assert.equal(first1, 'created')
+  assert.equal(again, 'unchanged')
+
+  const t = await trailOf(c.id, since)
+  const actions = t.map((r) => r.action)
+  assert.deepEqual(actions.filter((a) => !a.startsWith('course.created') && !a.startsWith('programme.created') && !a.startsWith('term.created')), [
+    'curriculum.created', 'requirement.created', 'prerequisite.added', 'course.equivalence_added', 'prerequisite.waived',
+    'programme.declared', 'programme.declared', 'programme.ended', 'completion.recorded', 'completion.posted',
+  ])
+  assert.deepEqual(only(t, 'curriculum.created').detail, { programId: c.programId, catalogYear: 2031, totalCredits: 150 })
+  assert.equal(only(t, 'requirement.created').entityId, req.id)
+  assert.deepEqual(only(t, 'requirement.created').detail, { curriculumId: cur.id, code: 'CORE', kind: 'core', minCredits: 4, minCourses: 0, courseIds: [c1.id, c2.id] })
+  assert.equal(only(t, 'prerequisite.added').entityId, pre.id)
+  assert.deepEqual(only(t, 'prerequisite.added').detail, { courseId: c2.id, requiresCourseId: c1.id, kind: pre.kind, minGradePoints: null })
+  const eq1 = only(t, 'course.equivalence_added')
+  assert.equal(eq1.entityId, c3.id)
+  assert.deepEqual(eq1.detail, { equivalentCourseId: c1.id })
+  assert.equal(only(t, 'prerequisite.waived').entityId, waiver.id)
+  assert.deepEqual(only(t, 'prerequisite.waived').detail, { studentId: c.student.id, courseId: c2.id, requiresCourseId: c1.id })
+  const declared = t.filter((r) => r.action === 'programme.declared')
+  assert.equal(declared[0]!.entityId, first.id)
+  assert.equal((declared[0]!.detail as { previousPrimaryId: unknown }).previousPrimaryId, null)
+  assert.equal(declared[1]!.entityId, second.id)
+  assert.equal((declared[1]!.detail as { previousPrimaryId: unknown }).previousPrimaryId, first.id)
+  assert.deepEqual(only(t, 'programme.ended').detail, { studentId: c.student.id, programId: p2.id, status: 'withdrawn', endedOn: '2031-05-01' })
+  assert.equal(only(t, 'completion.recorded').entityId, transfer.id)
+  assert.deepEqual(only(t, 'completion.recorded').detail, { studentId: c.student.id, courseId: c3.id, termId: null, source: 'transfer', credits: transfer.credits, gradePoints: '8.00', gradeLabel: 'A', passed: true })
+  const posted = only(t, 'completion.posted')
+  assert.equal(posted.actorId, c.admin.id)
+  assert.equal(posted.actorEmail, 'admin@example.test')
+  assert.deepEqual(posted.detail, { studentId: c.student.id, courseId: c1.id, termId: t0.id, credits: 4, gradePoints: '9.00', gradeLabel: 'O', passed: true })
+  assert.ok(!JSON.stringify(t).includes(note), 'the note never reaches the trail')
 })

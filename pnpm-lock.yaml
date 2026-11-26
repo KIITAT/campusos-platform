@@ -690,6 +690,9 @@ importers:
       '@campusos/db':
         specifier: workspace:*
         version: link:../../db
+      '@campusos/module-academic':
+        specifier: workspace:*
+        version: link:../academic
       '@campusos/module-fees':
         specifier: workspace:*
         version: link:../fees

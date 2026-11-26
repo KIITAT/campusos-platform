@@ -13,7 +13,6 @@ import {
   qrSection,
   statementPage,
   statementView,
-  studentChoices,
   upiFor,
   type Actor,
   type UpiPay,
@@ -269,11 +268,10 @@ export const transferPages: PluginPage[] = [
     roles: [...OFFICE],
     async load(actor) {
       const a = actor as Actor
-      const [accounts, letters, settings, students, t] = await Promise.all([
+      const [accounts, letters, settings, t] = await Promise.all([
         listBankAccounts(a),
         listDemandLetters(a),
         letterSettingsOf(a),
-        studentChoices(a),
         termOptions(a),
       ])
       return {
@@ -281,7 +279,6 @@ export const transferPages: PluginPage[] = [
         liveOptions: accounts.filter((x) => x.state === 'active').map((x) => ({ value: x.id, label: `${x.label}: ${x.accountNumber}` })),
         letters: letters.map((l) => ({ ...l, issued: day(l.issuedAt), pdf: 'PDF' })),
         settings,
-        students,
         ...t,
       }
     },
@@ -364,7 +361,7 @@ export const transferPages: PluginPage[] = [
           submit: 'Issue',
           path: '/letters',
           fields: [
-            { name: 'studentId', label: 'Student', kind: 'select', options: 'students' },
+            { name: 'studentId', label: 'Student', hint: 'Search by roll number, registration number or name.', lookup: { path: '/student-choices' } },
             { name: 'termId', label: 'Term', kind: 'select', options: 'terms', value: String(data.current ?? '') },
             { name: 'addressee', label: 'Addressed to' },
             { name: 'purpose', label: 'For', kind: 'radio', options: PURPOSES, value: 'education_loan' },
@@ -394,12 +391,11 @@ export const transferPages: PluginPage[] = [
     roles: ['institution_admin', 'accounts_staff'],
     async load(actor, req) {
       const a = actor as Actor
-      const [view, students, t] = await Promise.all([statementView(a, statementPage(req, 'rows')), studentChoices(a), termOptions(a)])
+      const [view, t] = await Promise.all([statementView(a, statementPage(req, 'rows')), termOptions(a)])
       return {
         ...view,
         rows: 'rows' in view ? view.rows : [],
         rowsPage: 'rows' in view ? { total: view.total, next: view.next } : { total: 0, next: null },
-        students,
         ...t,
       }
     },
@@ -442,7 +438,7 @@ export const transferPages: PluginPage[] = [
           path: '/statement/receipt',
           fields: [
             { name: 'lineId', label: 'Statement line', kind: 'select', options: 'lineOptions' },
-            { name: 'studentId', label: 'Student', kind: 'select', options: 'students' },
+            { name: 'studentId', label: 'Student', hint: 'Search by roll number, registration number or name.', lookup: { path: '/student-choices' } },
             { name: 'termId', label: 'Term', kind: 'select', options: 'terms', value: String(data.current ?? '') },
             {
               name: 'method',

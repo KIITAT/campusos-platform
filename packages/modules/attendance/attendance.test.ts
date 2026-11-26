@@ -1,6 +1,6 @@
 import { after, before, beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { eq, gte, sql } from 'drizzle-orm'
+import { and, eq, gte, sql } from 'drizzle-orm'
 import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
 import {
@@ -488,7 +488,7 @@ test('an override writes a row in the shared audit log', async () => {
     studentId: ids.s2,
     reason: 'verified in person, handset left at home',
   })
-  const trail = await withTenant(inst, (tx) => tx.select().from(auditLog).where(gte(auditLog.at, since)))
+  const trail = await withTenant(inst, (tx) => tx.select().from(auditLog).where(and(gte(auditLog.at, since), eq(auditLog.action, 'attendance.override'))))
   assert.equal(trail.length, 1)
   assert.equal(trail[0]!.moduleId, 'attendance')
   assert.equal(trail[0]!.action, 'attendance.override')
@@ -653,4 +653,75 @@ test('falling below the minimum tells the student once', async () => {
     await closeSession(A({}), { sessionId: s.id })
     assert.equal(await low(), want)
   }
+})
+
+// --- structural audit (AUD-06) ----------------------------------------------
+
+const watermark = async () =>
+  withTenant(inst, async (tx) =>
+    new Date(Math.floor(Number((await tx.execute<{ ms: string }>(sql`select extract(epoch from clock_timestamp()) * 1000 as ms`)).rows[0]!.ms))),
+  )
+const trailSince = (mark: Date) =>
+  withTenant(inst, (tx) =>
+    tx.select().from(auditLog).where(and(eq(auditLog.moduleId, 'attendance'), gte(auditLog.at, mark))).orderBy(auditLog.at),
+  )
+
+test('online attendance controls are audited without device material', async () => {
+  const mark = await watermark()
+  const HASH_C = 'c'.repeat(40)
+  const HASH_D = 'd'.repeat(40)
+  const boss = A({ id: ids.adm, role: 'institution_admin', email: 'adm@att.test' })
+  const first = await registerDevice(student(ids.s3), { deviceHash: HASH_C, label: 'phone' })
+  const dup = await registerDevice(student(ids.s3), { deviceHash: HASH_C })
+  assert.equal(dup.id, first.id)
+  await approveDevice(boss, { deviceId: first.id })
+  const next = await registerDevice(student(ids.s3), { deviceHash: HASH_D })
+  await approveDevice(boss, { deviceId: next.id })
+  await assert.rejects(() => approveDevice(A({}), { deviceId: first.id }), (e: unknown) => code(e) === 'forbidden')
+  await setGeofence(boss, { ...ROOM, roomId: ids.room, radiusM: 150 })
+  const s = await openSession(A({ email: 'f@att.test' }), { slotId: ids.slot })
+  await closeSession(A({ email: 'f@att.test' }), { sessionId: s.id })
+  await assert.rejects(() => closeSession(A({}), { sessionId: s.id }), (e: unknown) => code(e) === 'no_open_session')
+
+  const t = await trailSince(mark)
+  assert.deepEqual(t.map((r) => r.action), [
+    'attendance.device-registered', 'attendance.device-approved', 'attendance.device-registered',
+    'attendance.device-approved', 'attendance.geofence-set', 'attendance.session-opened', 'attendance.session-closed',
+  ])
+  assert.deepEqual(t[0]!.detail, { studentId: ids.s3, status: first.status, signed: false })
+  assert.equal(t[0]!.entityId, first.id)
+  assert.equal(t[0]!.entity, 'attendance_devices')
+  assert.equal(t[0]!.actorId, ids.s3)
+  assert.deepEqual(t[1]!.detail, { studentId: ids.s3, status: 'active', replacedDeviceIds: [] })
+  assert.equal(t[1]!.actorEmail, 'adm@att.test')
+  assert.deepEqual(t[3]!.detail, { studentId: ids.s3, status: 'active', replacedDeviceIds: [first.id] })
+  assert.equal(t[3]!.entityId, next.id)
+  assert.deepEqual(t[4]!.detail, { roomId: ids.room, radiusM: 150 })
+  assert.equal(t[4]!.entityId, ids.room)
+  assert.equal(t[5]!.entityId, s.id)
+  assert.equal((t[5]!.detail as { slotId: string }).slotId, ids.slot)
+  assert.equal((t[5]!.detail as { openedAt: string }).openedAt, s.openedAt.toISOString())
+  assert.equal(t[6]!.entityId, s.id)
+  assert.equal(typeof (t[6]!.detail as { closedAt: string }).closedAt, 'string')
+  const text = JSON.stringify(t.map((r) => r.detail))
+  for (const secret of [HASH_C, HASH_D, '20.2961', '85.8245']) assert.ok(!text.includes(secret), secret)
+})
+
+test('a revoked device needs a new pairing, and two parallel approvals leave one active (NEW-163)', async () => {
+  const first = await registerDevice(student(ids.s1), { deviceHash: HASH_A })
+  await approveDevice(admin(), { deviceId: first.id })
+  const second = await registerDevice(student(ids.s1), { deviceHash: HASH_B })
+  await approveDevice(admin(), { deviceId: second.id })
+  // The first device is now revoked: approving it again would silently re-bind a handset the office retired.
+  await assert.rejects(approveDevice(admin(), { deviceId: first.id }), (e: unknown) => (e as AttendanceError).status === 409 && code(e) === 'device_revoked')
+  const states = async () => (await withTenant(inst, (tx) => tx.select({ id: devices.id, status: devices.status }).from(devices).where(eq(devices.userId, ids.s1)))).map((r) => `${r.id}:${r.status}`).sort()
+  assert.deepEqual(await states(), [`${first.id}:revoked`, `${second.id}:active`].sort())
+
+  // Two pending devices approved at once: one wins, the other replaces it; never two active.
+  const x = await registerDevice(student(ids.s2), { deviceHash: 'x'.repeat(40) })
+  const y = await registerDevice(student(ids.s2), { deviceHash: 'y'.repeat(40) })
+  const done = await Promise.allSettled([approveDevice(admin(), { deviceId: x.id }), approveDevice(admin(), { deviceId: y.id })])
+  assert.deepEqual(done.map((d) => d.status), ['fulfilled', 'fulfilled'])
+  const rows = await withTenant(inst, (tx) => tx.select({ status: devices.status }).from(devices).where(eq(devices.userId, ids.s2)))
+  assert.equal(rows.filter((r) => r.status === 'active').length, 1)
 })

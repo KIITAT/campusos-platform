@@ -5,13 +5,14 @@ import {
   index,
   integer,
   pgEnum,
+  pgPolicy,
   pgTable,
   primaryKey,
   text,
   timestamp,
   uuid,
 } from 'drizzle-orm/pg-core'
-import { institutions, roleEnum, tenantPolicy, users } from '@campusos/db'
+import { appRole, inCurrentTenant, institutions, roleEnum, tenantPolicy, users } from '@campusos/db'
 import { departments } from '@campusos/module-academic/schema'
 
 /**
@@ -96,7 +97,7 @@ export const notifications = pgTable(
     link: text(),
     noticeId: uuid('notice_id').references(() => notices.id, { onDelete: 'cascade' }),
     readAt: timestamp('read_at', { withTimezone: true }),
-    /** Unused since P1-02 (decision 280); kept so no data is dropped. */
+    /** Set by the worker when the SMTP relay accepts the email. */
     emailedAt: timestamp('emailed_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -156,6 +157,26 @@ export const notificationOptOuts = pgTable(
   },
   (t) => [primaryKey({ columns: [t.userId, t.moduleId] }), tenantPolicy('notification_opt_outs')],
 )
+
+/** A person who prefers to receive notifications only in their inbox. */
+export const notificationEmailOptOuts = pgTable(
+  'notification_email_opt_outs',
+  {
+    institutionId: tenantId(),
+    userId: text('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.institutionId, t.userId] }),
+    pgPolicy('notification_email_opt_outs_tenant_isolation', {
+      to: appRole,
+      using: inCurrentTenant(),
+      withCheck: sql`${inCurrentTenant()} AND EXISTS (
+        SELECT 1 FROM users u WHERE u.id = ${t.userId} AND u.institution_id = ${t.institutionId}
+      )`,
+    }),
+  ],
+).enableRLS()
 
 /** A category the institution has made mandatory: opt-outs for it are ignored. */
 export const notificationMandatory = pgTable(

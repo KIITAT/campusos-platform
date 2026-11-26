@@ -1,5 +1,5 @@
 import { flag, param, type PluginPage, type PluginSection } from '@campusos/module-framework'
-import { board, draftChoices, inbox, noticePage, noticeView, preferences, type Actor } from './api'
+import { board, departmentChoices, draftChoices, inbox, noticePage, noticeView, preferences, withdrawChoices, type Actor } from './api'
 
 const POSTERS = [
   'super_admin',
@@ -37,7 +37,8 @@ export const pages: PluginPage[] = [
           filesText: n.files ? String(n.files) : '',
         })),
         drafts: canPost ? await draftChoices(a) : [],
-        all: notices.map((n) => ({ value: n.id, label: n.title })),
+        departments: canPost ? await departmentChoices(a) : [],
+        all: canPost ? await withdrawChoices(a, notices.map((n) => n.id)) : [],
       }
     },
     sections: (data) => [
@@ -92,6 +93,14 @@ export const pages: PluginPage[] = [
                     { value: 'faculty', label: 'lecturers' },
                     { value: 'parent', label: 'parents' },
                   ],
+                },
+                {
+                  name: 'departmentId',
+                  label: 'Department',
+                  kind: 'select' as const,
+                  optional: true,
+                  hint: 'Leave blank for the whole institution.',
+                  options: 'departments',
                 },
                 {
                   name: 'attachment',
@@ -289,9 +298,10 @@ export const pages: PluginPage[] = [
     roles: [...READERS],
     async load(actor) {
       const a = actor as Actor
-      const { categories } = await preferences(a)
+      const { categories, emailOptedOut } = await preferences(a)
       return {
         canSet: a.role === 'institution_admin' || a.role === 'super_admin',
+        emailOptedOut,
         categories: categories.map((c) => ({
           ...c,
           state: c.muted ? 'muted' : 'on',
@@ -302,6 +312,15 @@ export const pages: PluginPage[] = [
       }
     },
     sections: (data) => [
+      {
+        kind: 'form',
+        title: 'Notification email',
+        note: 'This setting does not change in-app notifications or sign-in emails.',
+        submit: data.emailOptedOut ? 'Send notification emails' : 'Stop notification emails',
+        path: '/preferences/email',
+        placement: 'inline',
+        fields: [{ name: 'optedOut', label: 'Email opt-out', kind: 'hidden', value: data.emailOptedOut ? 'false' : 'true' }],
+      },
       {
         kind: 'note',
         text: 'Choose what reaches your inbox. Categories your institution has made mandatory always do.',

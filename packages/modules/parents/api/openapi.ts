@@ -20,6 +20,19 @@ const gated = {
 }
 
 export const paths = {
+  [`${base}/student-choices`]: {
+    get: {
+      summary: 'Find a student by roll, registration or name for the guardian invitation (the administrators)',
+      tags: ['parents'],
+      parameters: [{ name: 'q', in: 'query', required: true, description: 'One to 100 characters', schema: { type: 'string', minLength: 1, maxLength: 100 } }],
+      responses: {
+        '200': { description: 'At most 12 hits: id, title, detail and href (null)' },
+        '400': { description: 'invalid_search', content: json(err) },
+        ...gated,
+        '429': { description: 'Too many lookups (120 a minute); see Retry-After', content: json(err) },
+      },
+    },
+  },
   [`${base}/links`]: {
     get: {
       summary: 'Parent-student links, optionally only those awaiting a decision',

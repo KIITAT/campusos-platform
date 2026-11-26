@@ -70,6 +70,7 @@ const NEW_FILES = new Set([
   'hr/0017_documents_remittance.sql',
   'attendance/0004_retention.sql',
   'notices/0004_preferences.sql',
+  'notices/0005_notification_email_opt_outs.sql',
   'parents/0004_guardians_of.sql',
   'finance/0014_gratuity_provision.sql',
   'hr/0018_gratuity_provision.sql',
@@ -89,6 +90,9 @@ const NEW_FILES = new Set([
   'academic/0012_student_category.sql',
   'academic/0013_school_promotion.sql',
   'admissions/0003_applicant_and_roll_numbers.sql',
+  'academic/0014_record_search.sql',
+  'fees/0013_record_search.sql',
+  'library/0004_record_search.sql',
   'ceremonies/0001_transfer_certificates.sql',
   'documents/0000_document_store.sql',
 ])
@@ -399,5 +403,44 @@ test('finance 0011 applies as an upgrade: settings under RLS, two triggers, two 
           where proname in ('finance_single_officer', 'finance_doc_creator', 'finance_approval_not_by_creator',
                             'finance_submit_not_by_creator')) as functions`)
     assert.deepEqual(rows[0], { settings_rls: true, settings_policies: 1, triggers: 4, functions: 4 })
+  })
+})
+
+test('notices 0005 scopes email opt-outs to the tenant and cascades on removal (UX-02)', { skip: !url && 'MIGRATION_DATABASE_URL is not set' }, async () => {
+  await withClient(at(DB), async (c) => {
+    const { rows: [{ available }] } = await c.query("select to_regclass('notification_email_opt_outs') is not null as available")
+    assert.equal(available, true, 'the Notices upgrade installs the email opt-out table')
+    const { rows: [a, b] } = await c.query(`insert into institutions (slug, name)
+      values ('upgrade-email-a', 'Email A'), ('upgrade-email-b', 'Email B') returning id`)
+    const first = 'upgrade-email-first'
+    const second = 'upgrade-email-second'
+    await c.query(`insert into users (id, institution_id, email, role) values
+      ($1, $2, 'first@upgrade-email.example', 'student'), ($3, $4, 'second@upgrade-email.example', 'student')`, [first, a.id, second, b.id])
+    await c.query('grant select, insert, delete on notification_email_opt_outs to campusos_app')
+    await c.query('insert into notification_email_opt_outs (institution_id, user_id) values ($1, $2)', [b.id, second])
+    await c.query('begin')
+    try {
+      await c.query('set local role campusos_app')
+      await c.query("select set_config('app.institution_id', $1, true)", [a.id])
+      const grantPreference = (tenant, user) => c.query(`insert into notification_email_opt_outs (institution_id, user_id)
+        values ($1, $2) on conflict do nothing`, [tenant, user])
+      assert.equal((await c.query('select user_id from notification_email_opt_outs')).rowCount, 0)
+      assert.equal((await grantPreference(a.id, first)).rowCount, 1)
+      assert.equal((await grantPreference(a.id, first)).rowCount, 0)
+      assert.deepEqual((await c.query('select user_id from notification_email_opt_outs')).rows, [{ user_id: first }])
+      for (const [tenant, user] of [[b.id, second], [a.id, second]]) {
+        await c.query('savepoint cross_tenant')
+        await assert.rejects(grantPreference(tenant, user), { code: '42501' })
+        await c.query('rollback to savepoint cross_tenant')
+      }
+      assert.equal((await c.query('delete from notification_email_opt_outs where user_id = $1', [second])).rowCount, 0)
+      await c.query('commit')
+    } catch (error) {
+      await c.query('rollback')
+      throw error
+    }
+    await c.query('delete from users where id = $1', [first])
+    await c.query('delete from institutions where id = $1', [b.id])
+    assert.equal((await c.query('select user_id from notification_email_opt_outs where user_id in ($1, $2)', [first, second])).rowCount, 0)
   })
 })

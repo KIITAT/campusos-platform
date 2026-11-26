@@ -110,5 +110,6 @@ test('RATE_LIMITS is the table in the plan', () => {
     'console.signin.ip': { limit: 10, windowSeconds: 900 },
     'console.signin.user': { limit: 5, windowSeconds: 900 },
     'console.totp': { limit: 1, windowSeconds: 90 },
+    'search.lookup': { limit: 120, windowSeconds: 60 },
   })
 })

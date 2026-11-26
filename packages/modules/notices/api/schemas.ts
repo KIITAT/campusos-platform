@@ -19,7 +19,8 @@ export const createNoticeSchema = z
     kind: z.enum(noticeKindEnum.enumValues).default('announcement'),
     /** Empty means everybody in the institution. */
     audienceRoles: z.array(roleSchema).default([]),
-    departmentId: uuid.nullish(),
+    /** A department's notice reaches only its current members; blank or absent is the whole institution. */
+    departmentId: z.preprocess((v) => (v === '' ? undefined : v), uuid.nullish()),
     expiresAt: z.iso.datetime().nullish(),
     pinned: z.preprocess(ticked, z.boolean()).default(false),
     /** Publish straight away, or leave it as a draft that notifies nobody. */
@@ -64,6 +65,15 @@ export const preferenceSchema = z
   })
   .strict()
   .meta({ id: 'NotificationPreference' })
+
+export const emailPreferenceSchema = z
+  .strictObject({ optedOut: z.union([z.boolean(), z.enum(['true', 'false'])]) })
+  .meta({ id: 'NotificationEmailPreference' })
+
+export const preferencesSchema = z.object({
+  emailOptedOut: z.boolean(),
+  categories: z.array(z.object({ moduleId: z.string(), label: z.string(), muted: z.boolean(), mandatory: z.boolean() })),
+}).meta({ id: 'NotificationPreferences' })
 
 export const mandatorySchema = z
   .object({

@@ -11,6 +11,7 @@ import {
   listLinks,
   myChildren,
   revokeLink,
+  searchGuardianStudents,
   withdrawGuardian,
   type Actor,
 } from './api'
@@ -55,6 +56,8 @@ export const routes: PluginRoute[] = [
     handler: async (actor, req) => confirmAsAdult(actor as Actor, await jsonBody(req)),
   },
 
+  // The invitation form's student search (P1-09c).
+  { method: 'GET', path: '/student-choices', lookup: 'picker', handler: (actor, req) => searchGuardianStudents(actor as Actor, req) },
   { method: 'GET', path: '/guardians', handler: (actor) => listGuardianInvites(actor as Actor) },
   {
     method: 'POST',

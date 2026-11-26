@@ -9,6 +9,7 @@ import {
   requireModule,
 } from './entitlements'
 import { buildNav } from './nav'
+import { validatePlugin } from './plugin'
 import { validateRegistry } from './registry'
 import type { ModuleManifest } from './types'
 
@@ -170,4 +171,22 @@ test('an upload is checked against its bytes, not only its name and claim', asyn
   assert.equal(readUpload({ name: '../../etc/passwd', type: 'text/plain', size: 1, base64: 'QQ==' }).name, '.._.._etc_passwd')
   const windowsPath = ['..', '..', 'boot.ini'].join(String.fromCharCode(92))
   assert.equal(readUpload({ name: windowsPath, type: 'text/plain', size: 1, base64: 'QQ==' }).name, '.._.._boot.ini')
+})
+
+// --- record lookups (P1-09c) -----------------------------------------------
+
+test('a lookup route must be a plain GET at its own path, with roles', () => {
+  const m = manifest({ id: 'lk', routeRoles: true })
+  const ok = { method: 'GET' as const, path: '/record-search', lookup: 'global' as const, roles: ['institution_admin' as const], handler: async () => ({ hits: [] }) }
+  const plugin = (route: object) => ({ manifest: m, routes: [route as never], openapiPaths: {} })
+  validatePlugin(plugin(ok))
+  validatePlugin(plugin({ ...ok, path: '/student-choices', lookup: 'picker' }))
+  for (const bad of [
+    { ...ok, path: '/student-choices' },
+    { ...ok, lookup: 'picker' },
+    { ...ok, method: 'POST' },
+    { ...ok, raw: true },
+    { ...ok, roles: [] },
+  ])
+    assert.throws(() => validatePlugin(plugin(bad)), /lookup|roles/)
 })

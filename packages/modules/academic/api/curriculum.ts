@@ -34,6 +34,7 @@ import {
   waivePrerequisiteSchema,
   type Eligibility,
 } from './schemas'
+import { auditAcademic } from './structural-audit'
 
 /**
  * The half of the academic core a registrar works from: what a degree requires,
@@ -70,6 +71,11 @@ export async function createCurriculum(actor: Actor, input: unknown) {
         'that programme already has a curriculum for that catalogue year',
       )
     }
+    await auditAcademic(tx, actor, tenant, 'curriculum.created', 'academic_curricula', row.id, 'Created curriculum', {
+      programId: row.programId,
+      catalogYear: row.catalogYear,
+      totalCredits: row.totalCredits,
+    })
     return row
   }).catch((e) => rethrowConflict(e, 'invalid', 'curriculum rejected by a constraint'))
 }
@@ -109,6 +115,14 @@ export async function createRequirement(actor: Actor, input: unknown) {
         })),
       )
     }
+    await auditAcademic(tx, actor, tenant, 'requirement.created', 'academic_requirements', row.id, 'Created curriculum requirement', {
+      curriculumId: row.curriculumId,
+      code: row.code,
+      kind: row.kind,
+      minCredits: row.minCredits,
+      minCourses: row.minCourses,
+      courseIds: data.courseIds,
+    })
     return { ...row, courseIds: data.courseIds }
   }).catch((e) => rethrowConflict(e, 'invalid', 'requirement rejected by a constraint'))
 }
@@ -168,6 +182,12 @@ export async function addPrerequisite(actor: Actor, input: unknown) {
       .onConflictDoNothing()
       .returning()
     if (!row) throw new AcademicError(409, 'exists', 'that prerequisite is already recorded')
+    await auditAcademic(tx, actor, tenant, 'prerequisite.added', 'academic_prerequisites', row.id, 'Added prerequisite', {
+      courseId: row.courseId,
+      requiresCourseId: row.requiresCourseId,
+      kind: row.kind,
+      minGradePoints: row.minGradePoints,
+    })
     return row
   }).catch((e) =>
     // The cycle trigger raises 23514, which rethrowConflict turns into a 409.
@@ -179,10 +199,16 @@ export async function addEquivalence(actor: Actor, input: unknown) {
   const tenant = requireWriter(actor)
   const data = addEquivalenceSchema.parse(input)
   return withTenant(tenant, async (tx) => {
-    await tx
+    const [row] = await tx
       .insert(courseEquivalences)
       .values({ institutionId: tenant, ...data })
       .onConflictDoNothing()
+      .returning({ courseId: courseEquivalences.courseId, equivalentCourseId: courseEquivalences.equivalentCourseId })
+    if (row) {
+      await auditAcademic(tx, actor, tenant, 'course.equivalence_added', 'academic_course_equivalences', row.courseId, 'Added course equivalence', {
+        equivalentCourseId: row.equivalentCourseId,
+      })
+    }
   }).catch((e) => rethrowConflict(e, 'invalid', 'equivalence rejected by a constraint'))
 }
 
@@ -208,6 +234,11 @@ export async function waivePrerequisite(actor: Actor, input: unknown) {
       .onConflictDoNothing()
       .returning()
     if (!row) throw new AcademicError(409, 'exists', 'that waiver is already on file')
+    await auditAcademic(tx, actor, tenant, 'prerequisite.waived', 'academic_prerequisite_waivers', row.id, 'Approved prerequisite waiver', {
+      studentId: row.studentId,
+      courseId: row.courseId,
+      requiresCourseId: row.requiresCourseId,
+    })
     return row
   }).catch((e) => rethrowConflict(e, 'invalid', 'waiver rejected by a constraint'))
 }
@@ -230,16 +261,20 @@ export async function declareProgram(actor: Actor, input: unknown) {
     // A second degree is a second declaration, so which one leads has to be
     // settled here rather than by whichever insert lost the race to the
     // partial unique index.
+    let previousPrimaryId: string | null = null
     if (data.isPrimary) {
-      await tx
+      const [demoted] = await tx
         .update(studentPrograms)
         .set({ isPrimary: false })
         .where(
           and(
             eq(studentPrograms.studentId, data.studentId),
             eq(studentPrograms.status, 'active'),
+            eq(studentPrograms.isPrimary, true),
           ),
         )
+        .returning({ id: studentPrograms.id })
+      previousPrimaryId = demoted?.id ?? null
     }
 
     const [row] = await tx
@@ -257,6 +292,14 @@ export async function declareProgram(actor: Actor, input: unknown) {
     if (!row) {
       throw new AcademicError(409, 'exists', 'that student is already reading that programme')
     }
+    await auditAcademic(tx, actor, tenant, 'programme.declared', 'academic_student_programs', row.id, 'Declared student programme', {
+      studentId: row.studentId,
+      programId: row.programId,
+      curriculumId: row.curriculumId,
+      declaredOn: row.declaredOn,
+      isPrimary: row.isPrimary,
+      previousPrimaryId,
+    })
     return row
   }).catch((e) => rethrowConflict(e, 'invalid', 'declaration rejected by a constraint'))
 }
@@ -286,6 +329,12 @@ export async function endStudentProgram(actor: Actor, input: unknown) {
     if (!row) {
       throw new AcademicError(404, 'not_active', 'no live declaration with that id')
     }
+    await auditAcademic(tx, actor, tenant, 'programme.ended', 'academic_student_programs', row.id, 'Ended student programme', {
+      studentId: row.studentId,
+      programId: row.programId,
+      status: row.status,
+      endedOn: row.endedOn,
+    })
     return row
   }).catch((e) => rethrowConflict(e, 'invalid', 'rejected by a constraint'))
 }
@@ -366,6 +415,16 @@ export async function recordCompletion(actor: Actor, input: unknown) {
         'that attempt is already on the record for that term',
       )
     }
+    await auditAcademic(tx, actor, tenant, 'completion.recorded', 'academic_course_completions', row.id, 'Recorded course completion', {
+      studentId: row.studentId,
+      courseId: row.courseId,
+      termId: row.termId,
+      source: row.source,
+      credits: row.credits,
+      gradePoints: row.gradePoints,
+      gradeLabel: row.gradeLabel,
+      passed: row.passed,
+    })
     return row
   }).catch((e) => rethrowConflict(e, 'invalid', 'completion rejected by a constraint'))
 }

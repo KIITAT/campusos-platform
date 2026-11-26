@@ -13,7 +13,7 @@ import {
   withdrawInvitation,
 } from '@campusos/db'
 import { logSensitiveRead } from '@campusos/db/sensitive-reads'
-import { moduleEnabled, type Role } from '@campusos/module-framework'
+import { moduleEnabled, type LookupResult, type Role } from '@campusos/module-framework'
 import { manifest as academicManifest } from '@campusos/module-academic/manifest'
 import { manifest as attendanceManifest } from '@campusos/module-attendance/manifest'
 import { manifest as examinationsManifest } from '@campusos/module-examinations/manifest'
@@ -26,7 +26,7 @@ import { transcript } from '@campusos/module-examinations/api'
 import { claimTransfer, listBankAccounts, studentClaims, studentLedger, upiFor } from '@campusos/module-fees/api'
 import { borrowerStatus } from '@campusos/module-library/api'
 import { myHostel } from '@campusos/module-hostel/api'
-import { listStructure, recordStudentConsent, studentConsents } from '@campusos/module-academic/api'
+import { findStudentChoicesWithin, listStructure, lookupQuery, lookupTimeout, recordStudentConsent, studentConsents } from '@campusos/module-academic/api'
 import { guardianInvites, links } from '../schema'
 import {
   claimLinkSchema,
@@ -672,6 +672,21 @@ export async function studentChoices(actor: Actor) {
       .orderBy(asc(users.name))
       .limit(2000),
   )
+}
+
+/**
+ * The guardian invitation's student picker (P1-09c): a search, so a child past
+ * the old 2,000-name cap can be chosen. `studentChoices` stays for other callers.
+ */
+export async function searchGuardianStudents(actor: Actor, req: Request): Promise<LookupResult> {
+  const tenant = requireAdmin(actor)
+  const query = lookupQuery(req)
+  return {
+    hits: await withTenant(tenant, async (tx) => {
+      await lookupTimeout(tx)
+      return findStudentChoicesWithin(tx, tenant, query, true)
+    }),
+  }
 }
 
 // --- the lens --------------------------------------------------------------
