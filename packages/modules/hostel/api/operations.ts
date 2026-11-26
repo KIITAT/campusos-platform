@@ -69,7 +69,7 @@ export class HostelError extends Error {
 
 type Tx = Parameters<Parameters<typeof withTenant>[1]>[0]
 
-const tenantOf = (actor: Actor): string => {
+export const tenantOf = (actor: Actor): string => {
   if (!actor.institutionId) {
     throw new HostelError(400, 'no_institution', 'no institution for this session')
   }
@@ -80,7 +80,7 @@ const tenantOf = (actor: Actor): string => {
 const isWarden = (r: Role) =>
   r === 'hostel_staff' || r === 'institution_admin' || r === 'super_admin'
 
-const requireWarden = (actor: Actor) => {
+export const requireWarden = (actor: Actor) => {
   const tenant = tenantOf(actor)
   if (!isWarden(actor.role)) throw new HostelError(403, 'forbidden', 'not permitted')
   return tenant
@@ -91,7 +91,7 @@ const requireWarden = (actor: Actor) => {
  * (LOW-11, decision 579). Blocks, rooms and who sleeps where stay with the
  * warden's desk.
  */
-const requireAdmin = (actor: Actor) => {
+export const requireAdmin = (actor: Actor) => {
   const tenant = tenantOf(actor)
   if (actor.role !== 'institution_admin' && actor.role !== 'super_admin') {
     throw new HostelError(403, 'forbidden', 'only an administrator may set hostel fees or bill a term')

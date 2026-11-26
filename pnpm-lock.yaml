@@ -619,9 +619,18 @@ importers:
       '@campusos/module-fees':
         specifier: workspace:*
         version: link:../fees
+      '@campusos/module-finance':
+        specifier: workspace:*
+        version: link:../finance
       '@campusos/module-framework':
         specifier: workspace:*
         version: link:../../module-framework
+      '@campusos/module-library':
+        specifier: workspace:*
+        version: link:../library
+      '@campusos/module-notices':
+        specifier: workspace:*
+        version: link:../notices
       '@campusos/money':
         specifier: workspace:*
         version: link:../../money

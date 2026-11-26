@@ -7,10 +7,10 @@ export const manifest: ModuleManifest = {
     'Blocks and rooms, allocation with occupancy limits, nightly roll call, leave records and the visitor register. Uses the Attendance module for scan-based roll call when it is enabled, and a manual register when it is not.',
   version: '0.17.0',
   alwaysEnabled: false,
-  dependsOn: ['academic'],
+  dependsOn: ['academic', 'notices'],
   // Not a hard dependency: roll call degrades to a manual register without it.
   // fees, softly too: beds are charged to the fee account only where it runs.
-  softDependsOn: ['attendance', 'fees'],
+  softDependsOn: ['attendance', 'fees', 'library'],
   pricing: { model: 'not_priced_yet', priceINR: null },
 
   rolesWithAccess: [

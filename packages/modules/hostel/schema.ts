@@ -1,13 +1,17 @@
 import { sql } from 'drizzle-orm'
 import {
   bigint,
+  boolean,
   check,
   date,
   index,
+  jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   smallint,
   text,
+  time,
   timestamp,
   uniqueIndex,
   uuid,
@@ -61,11 +65,14 @@ export const blocks = pgTable(
     wardenUserId: text('warden_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),
+    /** Overrides the institution's curfew for this block (P2-22a); null uses the policy. */
+    curfewTime: time('curfew_time'),
     createdAt: createdAt(),
   },
   (t) => [
     uniqueIndex('hostel_blocks_code').on(t.institutionId, t.code),
     check('hostel_blocks_code_shape', sql`length(trim(code)) > 0`),
+    check('hostel_blocks_curfew', sql`curfew_time is null or curfew_time between '17:00' and '23:59'`),
     tenantPolicy('hostel_blocks'),
   ],
 )
@@ -224,6 +231,204 @@ export const visitors = pgTable(
     check('hostel_visitors_times', sql`exited_at is null or exited_at >= entered_at`),
     tenantPolicy('hostel_visitors'),
   ],
+)
+
+// --- presence and curfew (P2-22a) -------------------------------------------
+
+/** One row per institution, created on first write; reads fall back to code defaults (D1320). */
+export const policy = pgTable(
+  'hostel_policy',
+  {
+    institutionId: uuid('institution_id')
+      .primaryKey()
+      .references(() => institutions.id, { onDelete: 'cascade' }),
+    curfewTime: time('curfew_time').notNull().default('21:30'),
+    nudgeAfterMin: smallint('nudge_after_min').notNull().default(10),
+    wardenAfterMin: smallint('warden_after_min').notNull().default(30),
+    womensWardenAfterMin: smallint('womens_warden_after_min').notNull().default(15),
+    guardianAfterMin: smallint('guardian_after_min').notNull().default(60),
+    walkBackMin: smallint('walk_back_min').notNull().default(20),
+    caseWindowHours: smallint('case_window_hours').notNull().default(6),
+    latePassLatestTime: time('late_pass_latest_time').notNull().default('01:00'),
+    notifyWardenOnLibraryEntry: boolean('notify_warden_on_library_entry').notNull().default(false),
+    presenceRetentionDays: smallint('presence_retention_days').notNull().default(90),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  () => [
+    check(
+      'hostel_policy_ladder',
+      sql`nudge_after_min between 0 and 120 and womens_warden_after_min > nudge_after_min and warden_after_min > nudge_after_min and guardian_after_min > warden_after_min and guardian_after_min > womens_warden_after_min and guardian_after_min <= 360`,
+    ),
+    check('hostel_policy_curfew', sql`curfew_time between '17:00' and '23:59'`),
+    check('hostel_policy_walk_back', sql`walk_back_min between 0 and 90`),
+    check('hostel_policy_window', sql`case_window_hours between 1 and 12`),
+    check('hostel_policy_retention', sql`presence_retention_days between 30 and 730`),
+    check('hostel_policy_late_latest', sql`late_pass_latest_time <= '04:00'`),
+    tenantPolicy('hostel_policy'),
+  ],
+)
+
+/** Floor, block, chief and estate wardens are scope rows on the hostel_staff role (D1307, D1342). */
+export const wardenScopes = pgTable(
+  'hostel_warden_scopes',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    level: text().notNull(),
+    blockId: uuid('block_id').references(() => blocks.id, { onDelete: 'cascade' }),
+    floor: smallint(),
+    createdBy: text('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hostel_scopes_unique').on(
+      t.userId,
+      t.level,
+      sql`coalesce(block_id, '00000000-0000-0000-0000-000000000000'::uuid)`,
+      sql`coalesce(floor, -99)`,
+    ),
+    index('hostel_scopes_level_idx').on(t.institutionId, t.level),
+    check('hostel_scopes_level', sql`level in ('floor', 'block', 'chief', 'estate')`),
+    check(
+      'hostel_scopes_shape',
+      sql`(level = 'floor' and block_id is not null and floor is not null) or (level = 'block' and block_id is not null and floor is null) or (level in ('chief', 'estate') and block_id is null and floor is null)`,
+    ),
+    tenantPolicy('hostel_warden_scopes'),
+  ],
+)
+
+/** An exam-period extension: curfew moves to `until_time` for a block (or all) on these dates (D1336). */
+export const lateStayWindows = pgTable(
+  'hostel_late_stay_windows',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    blockId: uuid('block_id').references(() => blocks.id, { onDelete: 'cascade' }),
+    fromOn: date('from_on').notNull(),
+    toOn: date('to_on').notNull(),
+    untilTime: time('until_time').notNull(),
+    reason: text().notNull(),
+    createdBy: text('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+  },
+  (t) => [
+    index('hostel_windows_range').on(t.institutionId, t.fromOn, t.toOn),
+    check('hostel_windows_dates', sql`to_on >= from_on and to_on - from_on <= 60`),
+    check('hostel_windows_until', sql`until_time between '21:00' and '23:59'`),
+    check('hostel_windows_reason', sql`length(trim(reason)) between 5 and 200`),
+    tenantPolicy('hostel_late_stay_windows'),
+  ],
+)
+
+/** A resident's late-stay pass for one night; nothing is auto-approved (D1337). */
+export const latePasses = pgTable(
+  'hostel_late_passes',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    night: date().notNull(),
+    untilAt: timestamp('until_at', { withTimezone: true }).notNull(),
+    reason: text().notNull(),
+    status: text().notNull().default('requested'),
+    requestedBy: text('requested_by').references(() => users.id, { onDelete: 'set null' }),
+    decidedBy: text('decided_by').references(() => users.id, { onDelete: 'set null' }),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('hostel_late_passes_open')
+      .on(t.studentId, t.night)
+      .where(sql`status in ('requested', 'approved')`),
+    index('hostel_late_passes_night').on(t.institutionId, t.night),
+    check('hostel_passes_status', sql`status in ('requested', 'approved', 'refused', 'cancelled')`),
+    check('hostel_passes_reason', sql`length(trim(reason)) between 5 and 200`),
+    tenantPolicy('hostel_late_passes'),
+  ],
+)
+
+/** One case per resident per night once the nudge is due; the ladder is stamped on it (D1326, D1328). */
+export const curfewCases = pgTable(
+  'hostel_curfew_cases',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    blockId: uuid('block_id')
+      .notNull()
+      .references(() => blocks.id, { onDelete: 'cascade' }),
+    night: date().notNull(),
+    curfewAt: timestamp('curfew_at', { withTimezone: true }).notNull(),
+    openedAt: timestamp('opened_at', { withTimezone: true }).notNull().defaultNow(),
+    nudgeAt: timestamp('nudge_at', { withTimezone: true }),
+    wardenAt: timestamp('warden_at', { withTimezone: true }),
+    guardianAt: timestamp('guardian_at', { withTimezone: true }),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    resolution: text(),
+    resolvedBy: text('resolved_by').references(() => users.id, { onDelete: 'set null' }),
+    note: text(),
+  },
+  (t) => [
+    uniqueIndex('hostel_cases_once').on(t.studentId, t.night),
+    index('hostel_cases_open')
+      .on(t.institutionId)
+      .where(sql`resolved_at is null`),
+    index('hostel_cases_block_night').on(t.blockId, t.night),
+    check(
+      'hostel_cases_resolution',
+      sql`resolution is null or resolution in ('checked_in', 'leave', 'late_pass', 'library', 'library_exit', 'class', 'warden_verified', 'warden_closed')`,
+    ),
+    check('hostel_cases_resolved_together', sql`(resolved_at is null) = (resolution is null)`),
+    check('hostel_cases_note', sql`note is null or length(note) between 5 and 300`),
+    tenantPolicy('hostel_curfew_cases'),
+  ],
+)
+
+/** The timeline: what the hostel was told and what it did. Unique per source event, so a repeat is harmless (D1334). */
+export const presenceLog = pgTable(
+  'hostel_presence_log',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    at: timestamp({ withTimezone: true }).notNull(),
+    kind: text().notNull(),
+    source: text().notNull(),
+    sourceRef: text('source_ref'),
+    detail: jsonb().notNull().default({}),
+  },
+  (t) => [
+    uniqueIndex('hostel_log_source_once')
+      .on(t.institutionId, t.source, t.sourceRef, t.kind)
+      .where(sql`source_ref is not null`),
+    index('hostel_log_student').on(t.studentId, t.at.desc()),
+    check(
+      'hostel_log_kind',
+      sql`kind in ('library_entered', 'library_exited', 'library_unconfirmed', 'case_opened', 'student_nudged', 'warden_alerted', 'guardian_alerted', 'case_resolved', 'late_pass_decided')`,
+    ),
+    tenantPolicy('hostel_presence_log'),
+  ],
+)
+
+/** How far this institution's consumer has read each source's outbox. */
+export const eventCursors = pgTable(
+  'hostel_event_cursors',
+  {
+    institutionId: tenantId(),
+    source: text().notNull(),
+    lastId: bigint('last_id', { mode: 'number' }).notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.institutionId, t.source] }), tenantPolicy('hostel_event_cursors')],
 )
 
 export type Block = typeof blocks.$inferSelect
