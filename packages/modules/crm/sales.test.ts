@@ -259,3 +259,8 @@ test('NEW-263: a note keeps its lead out of the retention purge', async () => {
   const [row] = await withTenant(c.id, async tx => (await tx.execute(sql`select updated_at > now() - interval '1 day' as fresh from crm_leads where id = ${l.id}::uuid`)).rows as { fresh: boolean }[])
   assert.equal(row!.fresh, true)
 })
+
+test('a malformed report date is a 400, not a 500', async () => {
+  const c = await sales()
+  await assert.rejects(() => report(c.admin, { from: '2026-13-45' }), (e: unknown) => (e as { name?: string }).name === 'ZodError')
+})
