@@ -43,5 +43,6 @@ export const manifest: ModuleManifest = {
   // The desktop client (P2-23): the cross-module approvals feed, and the records
   // whose change history the host may serve to the accounts office.
   approvals: { route: '/approvals/feed', href: '/m/finance/approvals' },
-  auditEntities: ['finance_party', 'finance_item', 'finance_bank_account', 'finance_rfq', 'finance_supplier_quotation'].map((entity) => ({ entity, roles: OFFICE })),
+  // Only kinds that finance really writes to the audit log under its own id: master data (parties, items) is not audited yet.
+  auditEntities: ['finance_periods', 'finance_fiscal_years', 'finance_journal_entries'].map((entity) => ({ entity, roles: OFFICE })),
 }
