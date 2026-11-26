@@ -5,6 +5,7 @@ import {
   withdrawChange,
   setGpaPolicy,
   recordStudentConsent,
+  searchAcademicRecords,
   setStudentProfile,
   studentConsents,
   studentProfile,
@@ -18,6 +19,8 @@ import {
   createRoom,
   createSection,
   setClassTeacher,
+  setNextSchoolProgram,
+  promoteSection,
   setDepartmentHead,
   createCurriculum,
   createRequirement,
@@ -58,6 +61,8 @@ export const routes: PluginRoute[] = [
   post('/terms/current', setCurrentTerm),
   post('/sections', createSection),
   post('/sections/class-teacher', setClassTeacher),
+  post('/programs/next', setNextSchoolProgram),
+  post('/sections/promote', promoteSection),
   post('/departments/head', setDepartmentHead),
   post('/sections/members', addSectionMember),
   post('/offerings', createOffering),
@@ -89,6 +94,9 @@ export const routes: PluginRoute[] = [
     path: '/profile',
     handler: (actor, req) => studentProfile(actor as Actor, param(req, 'studentId') || (actor as Actor).id),
   },
+
+  // The portal's search for a student (P1-09c): roll, registration or name.
+  { method: 'GET', path: '/record-search', lookup: 'global', handler: (actor, req) => searchAcademicRecords(actor as Actor, req) },
 
   {
     method: 'GET',

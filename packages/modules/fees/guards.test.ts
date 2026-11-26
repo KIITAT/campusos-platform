@@ -107,6 +107,13 @@ test('a voided payment cannot be brought back', async () => {
   )
 })
 
+test('a person column clearing on a voided payment still goes through, with the generated receipt key beside it (P1-09c)', async () => {
+  const c = await campus()
+  const p = await paid(c)
+  await asOwner(sql`update fee_payments set status = 'voided', voided_at = now(), void_reason = 'test void' where id = ${p.id}`)
+  await asOwner(sql`update fee_payments set recorded_by = null, reconciled_by = null, voided_by = null where id = ${p.id}`)
+})
+
 test("a receipt's breakup never changes", async () => {
   const c = await campus()
   const p = await paid(c)

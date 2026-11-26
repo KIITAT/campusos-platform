@@ -23,7 +23,22 @@ const gated = {
   '403': { description: 'Forbidden, or the module is not enabled', content: json(err) },
 }
 
+const lookup = (summary: string) => ({
+  get: {
+    summary,
+    tags: ['library'],
+    parameters: [{ name: 'q', in: 'query', required: true, description: 'One to 100 characters', schema: { type: 'string', minLength: 1, maxLength: 100 } }],
+    responses: {
+      '200': { description: 'At most 12 hits: id, title, detail (the author) and href' },
+      '400': { description: 'invalid_search' },
+      '403': { description: 'Forbidden, or the module is not enabled' },
+      '429': { description: 'Too many lookups (120 a minute); see Retry-After' },
+    },
+  },
+})
+
 export const paths = {
+  [`${base}/record-search`]: lookup('Find a book by title, author or ISBN (the catalogue readers)'),
   [`${base}/titles`]: {
     get: {
       summary: 'Search the catalogue by title, author or ISBN',

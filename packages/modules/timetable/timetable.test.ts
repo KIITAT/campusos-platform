@@ -1,7 +1,7 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { eq, inArray, like, sql } from 'drizzle-orm'
-import { authDb, institutionModules, institutions, users, withTenant } from '@campusos/db'
+import { and, eq, gte, inArray, like, sql } from 'drizzle-orm'
+import { auditLog, authDb, institutionModules, institutions, users, withTenant } from '@campusos/db'
 import {
   addSectionMember,
   changeClass,
@@ -20,12 +20,18 @@ import { classChanges, offerings, slots } from '@campusos/module-academic/schema
 import {
   TimetableError,
   addEligibility,
+  addPeriod,
   addPin,
   addUnavailable,
   applyRun,
   cancelRun,
   checkTerm,
   defaultNeeds,
+  deleteEligibility,
+  deleteNeed,
+  deletePeriod,
+  deletePin,
+  deleteUnavailable,
   discardRun,
   finishSolve,
   generatePeriods,
@@ -471,4 +477,116 @@ test('declared pages load real timetable data and keep faculty views personal', 
   const eligibility = await loadPage('/eligibility', own, `userId=${collegeData.u.sen}`)
   assert.ok((eligibility.data.eligibility as { userId: string }[]).every(row => row.userId === own.id))
   assert.ok(!eligibility.sections.some(section => section.kind === 'form' && section.method !== 'GET'))
+})
+
+// --- structural audit (AUD-06) ----------------------------------------------
+
+test('timetable control operations leave an exact trail', async () => {
+  const k = await college()
+  const { admin, u, R, C, S, O, term } = k
+  const mark = new Date(Math.floor(Number((await withTenant(k.id, (tx) => tx.execute<{ ms: string }>(sql`select extract(epoch from clock_timestamp()) * 1000 as ms`))).rows[0]!.ms)))
+  const trail = () =>
+    withTenant(k.id, (tx) =>
+      tx.select().from(auditLog).where(and(eq(auditLog.moduleId, 'timetable'), gte(auditLog.at, mark))).orderBy(auditLog.at),
+    )
+  const some = async (action: string) => (await trail()).filter((r) => r.action === action)
+
+  await updateSettings(admin, { maxPerDay: '5' })
+  await generatePeriods(admin, { termId: term.id, days: ['1', '2', '3', '4', '5'], startsAt: '09:00', minutes: '50', count: '7', breaks: '2:10, 4:40' })
+  const sat = await addPeriod(admin, { termId: term.id, dayOfWeek: '6', index: '1', startsAt: '09:00', endsAt: '09:50' })
+  await deletePeriod(admin, { periodId: sat.id })
+  await deletePeriod(admin, { periodId: sat.id })
+  await setRoom(admin, { roomId: R.r1, kind: 'classroom' })
+  await setSection(admin, { sectionId: S.b, expectedSize: '55' })
+  await setTeacher(admin, { userId: u.sen, maxPerWeek: '20' })
+
+  await addEligibility(admin, { userId: u.rao, courseId: C.ds, yearOfStudy: '2', preference: '5' })
+  await addEligibility(admin, { userId: u.sen, departmentId: k.cse.id, preference: '3' })
+  await addEligibility(admin, { userId: u.das, departmentId: k.math.id, preference: '4' })
+  await addEligibility(admin, { userId: u.iyer, courseId: C.lab, preference: '5' })
+  await addEligibility(admin, { userId: u.kaur, programId: k.bt.id, yearOfStudy: '1', preference: '4' })
+  const extra = await addEligibility(admin, { userId: u.rao, departmentId: k.cse.id, preference: '2' })
+  await deleteEligibility(admin, { id: extra.id })
+  await deleteEligibility(admin, { id: extra.id })
+
+  const csv = (s: string) => ({ file: { name: 'who.csv', type: 'text/csv', size: s.length, base64: Buffer.from(s).toString('base64') } })
+  const tag = term.code.slice(1)
+  const [rao] = await authDb.select({ email: users.email }).from(users).where(eq(users.id, u.rao!))
+  const [sen] = await authDb.select({ email: users.email }).from(users).where(eq(users.id, u.sen!))
+  const head = 'email,course,department,programme,year,preference\n'
+  const imported = await importEligibility(admin, csv(`${head}${rao!.email},DS${tag},,,2,4\n${sen!.email},,CSE,,,3\n`))
+  assert.equal(imported.imported, 2)
+  await assert.rejects(() => importEligibility(admin, csv(`${head}nobody@x.test,DS${tag},,,2,4\n`)), (e: unknown) => e instanceof TimetableError && e.code === 'bad_rows')
+
+  const away = await addUnavailable(admin, { userId: u.das, dayOfWeek: '1', reason: 'private fixture note' })
+  const sens = await addUnavailable(admin, { userId: u.sen, dayOfWeek: '2' })
+  await assert.rejects(() => deleteUnavailable(k.faculty('rao'), { id: sens.id }), (e: unknown) => e instanceof TimetableError && e.status === 403)
+  await deleteUnavailable(admin, { id: away.id })
+  await assert.rejects(() => deleteUnavailable(admin, { id: away.id }), (e: unknown) => e instanceof TimetableError && e.code === 'not_found')
+
+  const lab = await setNeed(admin, { offeringId: O.a1Lab, kind: 'lab', periodsPerWeek: '2', blockLength: '2', roomKind: 'lab' })
+  await setNeed(admin, { offeringId: O.fM1, periodsPerWeek: '4', roomKind: 'hall' })
+  const filled = await defaultNeeds(admin, { termId: term.id })
+  await deleteNeed(admin, { needId: lab.id })
+  await deleteNeed(admin, { needId: lab.id })
+
+  await addPin(admin, { offeringId: O.bOs, facultyUserId: u.sen })
+  const swapped = await addPin(admin, { offeringId: O.bOs, facultyUserId: u.rao })
+  const timed = await addPin(admin, { offeringId: O.aDs, dayOfWeek: '2', period: '1', roomId: R.r1 })
+  await deletePin(admin, { pinId: timed.id })
+  await deletePin(admin, { pinId: timed.id })
+
+  const draft = await generateRun(admin, { termId: term.id, seed: '5', iterations: '300' })
+  await solveSettled(draft.id)
+  const [entry] = await withTenant(k.id, (tx) => tx.select().from(runEntries).where(eq(runEntries.runId, draft.id)).limit(1))
+  await pinEntry(admin, { entryId: entry!.id, keep: 'time' })
+  await discardRun(admin, { runId: draft.id })
+  await assert.rejects(() => discardRun(admin, { runId: draft.id }), (e: unknown) => e instanceof TimetableError && e.code === 'not_a_draft')
+
+  const t = await trail()
+  const counts: Record<string, number> = {}
+  for (const r of t) counts[r.action] = (counts[r.action] ?? 0) + 1
+  assert.deepEqual(counts, {
+    'settings.saved': 1, 'periods.generated': 1, 'period.added': 1, 'period.deleted': 1, 'room.configured': 1,
+    'section.configured': 1, 'teacher.limits_set': 1, 'eligibility.added': 6, 'eligibility.deleted': 1,
+    'eligibility.imported': 1, 'unavailability.added': 2, 'unavailability.deleted': 1, 'need.set': 2,
+    'needs.defaulted': 1, 'need.deleted': 1, 'pin.added': 3, 'pin.deleted': 1, 'pin.kept_from_draft': 1, 'run.discarded': 1,
+  })
+  for (const r of t) {
+    assert.equal(r.actorId, k.u.adm)
+    assert.equal(r.moduleId, 'timetable')
+  }
+  const one = async (a: string) => (await some(a))[0]!
+  const saved = await one('settings.saved')
+  assert.equal(saved.entityId, k.id)
+  assert.deepEqual(saved.detail, { maxPerDay: 5, maxPerWeek: 24, maxConsecutive: 3, yearStartsMonth: 7, timeLimitSeconds: 20 })
+  const gen = await one('periods.generated')
+  assert.equal(gen.entityId, term.id)
+  assert.deepEqual(gen.detail, { termId: term.id, days: [1, 2, 3, 4, 5], removed: 0, added: 35 })
+  assert.equal((await one('period.added')).entityId, sat.id)
+  assert.equal((await one('period.deleted')).entityId, sat.id)
+  assert.deepEqual((await one('room.configured')).detail, { kind: 'classroom', available: true })
+  assert.deepEqual((await one('section.configured')).detail, { expectedSize: 55, parentSectionId: null })
+  const limits = await one('teacher.limits_set')
+  assert.equal(limits.entityId, u.sen)
+  assert.deepEqual(limits.detail, { maxPerDay: null, maxPerWeek: 20, maxConsecutive: null })
+  const imp = await one('eligibility.imported')
+  assert.equal(imp.entityId, k.id)
+  assert.deepEqual(imp.detail, { imported: 2 })
+  assert.equal((await one('eligibility.deleted')).entityId, extra.id)
+  assert.ok(!JSON.stringify(t).includes('private fixture note'))
+  assert.equal((await one('needs.defaulted')).entityId, term.id)
+  assert.equal((await one('needs.defaulted')).entity, 'academic_terms')
+  assert.deepEqual((await one('needs.defaulted')).detail, { termId: term.id, kind: 'lecture', periodsPerCredit: 1, roomKind: 'classroom', added: filled.added })
+  assert.equal((await one('need.deleted')).entityId, lab.id)
+  const pins = await some('pin.added')
+  assert.deepEqual((pins[0]!.detail as { replacedTeacherPins: number }).replacedTeacherPins, 0)
+  assert.equal(pins[1]!.entityId, swapped.id)
+  assert.deepEqual((pins[1]!.detail as { replacedTeacherPins: number }).replacedTeacherPins, 1)
+  assert.equal((await one('pin.deleted')).entityId, timed.id)
+  const kept = await one('pin.kept_from_draft')
+  assert.equal((kept.detail as { entryId: string }).entryId, entry!.id)
+  const discarded = await one('run.discarded')
+  assert.equal(discarded.entityId, draft.id)
+  assert.deepEqual(discarded.detail, { termId: term.id })
 })

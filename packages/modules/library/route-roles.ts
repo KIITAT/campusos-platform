@@ -7,6 +7,7 @@ import { ADMIN, LIBRARY, TEACHING, type Role } from '@campusos/module-framework'
  * here fails at load (`withRouteRoles`).
  */
 export const routeRoles: Record<string, readonly Role[]> = {
+  'GET /record-search': [...ADMIN, 'library_staff', 'faculty', 'hod', 'student'],
   'GET /titles': [...TEACHING, 'library_staff', 'student'],
   'POST /titles': LIBRARY,
   'GET /copies': [...TEACHING, 'library_staff', 'student'],

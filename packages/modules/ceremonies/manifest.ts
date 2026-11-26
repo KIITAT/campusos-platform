@@ -4,8 +4,8 @@ export const manifest: ModuleManifest = {
   id: 'ceremonies',
   name: 'Ceremonies',
   description:
-    'Convocation: who may graduate, found by the degree audit rather than by a list somebody typed; replies and guests; office holds; check-in on the day; and degree certificates, issued only to a student the audit cleared, revoked with a reason and reissued under a new serial.',
-  version: '0.10.0',
+    'Convocation: who may graduate, found by the degree audit rather than by a list somebody typed; replies and guests; office holds; check-in on the day; and degree certificates, issued only to a student the audit cleared, revoked with a reason and reissued under a new serial; and numbered school transfer certificates (CBSE Annexure I), issued by the office once the pupil has left and the dues are clear.',
+  version: '0.13.0',
   alwaysEnabled: false,
   dependsOn: ['academic'],
   softDependsOn: ['fees', 'library'],
@@ -15,6 +15,7 @@ export const manifest: ModuleManifest = {
 
   navEntries: [
     { label: 'Ceremonies', href: '/m/ceremonies', roles: ['institution_admin', 'super_admin', 'hod'] },
+    { label: 'Transfer certificates', href: '/m/ceremonies/transfer-certificates', roles: ['institution_admin', 'super_admin'] },
     { label: 'Check-in', href: '/m/ceremonies/checkin', roles: ['institution_admin', 'super_admin', 'hod', 'faculty'] },
     { label: 'My graduation', href: '/m/ceremonies/me', roles: ['student'] },
   ],

@@ -1,7 +1,7 @@
 import { after, before, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { eq } from 'drizzle-orm'
-import { authDb, institutions, users, withTenant } from '@campusos/db'
+import { and, eq, gte, sql } from 'drizzle-orm'
+import { auditLog, authDb, institutions, users, withTenant, withTenantBatch } from '@campusos/db'
 import {
   AcademicError,
   addSectionMember,
@@ -15,17 +15,24 @@ import {
   createTerm,
   getTimetable,
   listStructure,
+  setClassTeacher,
   setCurrentTerm,
+  setDepartmentHead,
+  setTermCalendar,
   type Actor,
 } from './api'
-import { departments, offerings, sectionMembers } from './schema'
+import { departments, offerings, rooms, sectionMembers } from './schema'
 
 const SLUGS = ['acad-a', 'acad-b']
 let instA: string
 let instB: string
 
+// Real rows: the audit trail's actor is a foreign key to users.
+let adminA = ''
+let adminB = ''
 const admin = (institutionId = instA): Actor => ({
-  id: 'admin-user',
+  id: institutionId === instA ? adminA : adminB,
+  email: institutionId === instA ? 'adm@acad-a.test' : 'adm@acad-b.test',
   role: 'institution_admin',
   institutionId,
 })
@@ -65,12 +72,17 @@ before(async () => {
       { email: 's2@acad-a.test', institutionId: instA, role: 'student' },
       { email: 'f1@acad-a.test', institutionId: instA, role: 'faculty' },
       { email: 's9@acad-b.test', institutionId: instB, role: 'student' },
+      { email: 'adm@acad-a.test', institutionId: instA, role: 'institution_admin' },
+      { email: 'adm@acad-b.test', institutionId: instB, role: 'institution_admin' },
+      { email: 'hod@acad-a.test', institutionId: instA, role: 'hod' },
     ])
     .returning({ id: users.id, email: users.email })
   ids.student = people[0]!.id
   ids.otherStudent = people[3]!.id
   ids.faculty = people[2]!.id
   const secondStudent = people[1]!.id
+  adminA = people[4]!.id
+  adminB = people[5]!.id
 
   ids.dept = (await createDepartment(admin(), { code: 'cse', name: 'Computer Science' })).id
   ids.program = (
@@ -413,4 +425,111 @@ test('entries are ordered by day then time', async () => {
 test('no current term yields an empty timetable rather than an error', async () => {
   const t = await getTimetable(admin(instB))
   assert.deepEqual(t, { termCode: null, entries: [] })
+})
+
+// --- structural audit (AUD-06) ----------------------------------------------
+
+const watermark = async () =>
+  new Date(Math.floor(Number((await authDb.execute<{ ms: string }>(sql`select extract(epoch from clock_timestamp()) * 1000 as ms`)).rows[0]!.ms)))
+const trailOf = (inst: string, since: Date) =>
+  withTenant(inst, (tx) =>
+    tx
+      .select()
+      .from(auditLog)
+      .where(and(eq(auditLog.moduleId, 'academic'), gte(auditLog.at, since)))
+      .orderBy(auditLog.at),
+  )
+const only = (rows: Awaited<ReturnType<typeof trailOf>>, action: string) => {
+  const hit = rows.filter((r) => r.action === action)
+  assert.equal(hit.length, 1, `${action} x${hit.length}`)
+  return hit[0]!
+}
+
+test('academic structure and cohort mutations are audited', async () => {
+  const since = await watermark()
+  const a = admin()
+  const dept = await createDepartment(a, { code: 'ev-d', name: 'Evidence' })
+  const prog = await createProgram(a, { departmentId: dept.id, code: 'ev-p', name: 'EvP', level: 'undergraduate', durationTerms: 6 })
+  const course = await createCourse(a, { departmentId: dept.id, code: 'ev-c', title: 'EvC', credits: 2 })
+  const room = await createRoom(a, { code: 'ev-r', capacity: 30 })
+  const term = await createTerm(a, { code: 'ev-t', name: 'EvT', startsOn: '2027-01-01', endsOn: '2027-06-01' })
+  await setTermCalendar(a, { termId: term.id, registrationOpensOn: '2027-01-02', registrationClosesOn: '2027-01-20' })
+  await setCurrentTerm(a, { termId: term.id })
+  const section = await createSection(a, { programId: prog.id, label: 'ev', admissionYear: 2027 })
+  await setDepartmentHead(a, { departmentId: dept.id, email: 'hod@acad-a.test' })
+  await setDepartmentHead(a, { departmentId: dept.id })
+  await setClassTeacher(a, { sectionId: section.id, email: 'f1@acad-a.test' })
+  await setClassTeacher(a, { sectionId: section.id })
+  await addSectionMember(a, { sectionId: section.id, userId: ids.student })
+  await addSectionMember(a, { sectionId: section.id, userId: ids.student })
+  const offering = await createOffering(a, { termId: term.id, courseId: course.id, sectionId: section.id, facultyUserId: ids.faculty })
+  const slot = await createSlot(a, { offeringId: offering.id, roomId: room.id, dayOfWeek: 2, startsAt: '10:00', endsAt: '11:00' })
+
+  const t = await trailOf(instA, since)
+  assert.deepEqual(
+    t.map((r) => r.action),
+    [
+      'department.created', 'programme.created', 'course.created', 'room.created', 'term.created', 'term.calendar_set',
+      'term.current_set', 'section.created', 'department.head_set', 'department.head_set', 'section.teacher_set',
+      'section.teacher_set', 'section.member_added', 'offering.created', 'slot.created',
+    ],
+  )
+  for (const r of t) {
+    assert.equal(r.actorId, adminA)
+    assert.equal(r.actorEmail, 'adm@acad-a.test')
+  }
+  assert.deepEqual(only(t, 'department.created').detail, { code: 'EV-D' })
+  assert.equal(only(t, 'department.created').entityId, dept.id)
+  assert.equal(only(t, 'programme.created').entity, 'academic_programs')
+  assert.deepEqual(only(t, 'programme.created').detail, { departmentId: dept.id, code: 'EV-P', level: 'undergraduate', durationTerms: 6 })
+  assert.deepEqual(only(t, 'course.created').detail, { departmentId: dept.id, code: 'EV-C', credits: 2 })
+  assert.deepEqual(only(t, 'room.created').detail, { code: 'EV-R', capacity: 30 })
+  assert.deepEqual(only(t, 'term.created').detail, { code: 'EV-T', startsOn: '2027-01-01', endsOn: '2027-06-01' })
+  assert.equal(only(t, 'term.calendar_set').reason, 'Set term registration calendar')
+  assert.deepEqual(only(t, 'term.current_set').detail, { previousTermId: ids.term, currentTermId: term.id })
+  assert.deepEqual(only(t, 'section.created').detail, { programId: prog.id, admissionYear: 2027, label: 'EV' })
+  const heads = t.filter((r) => r.action === 'department.head_set').map((r) => (r.detail as { hodUserId: string | null }).hodUserId)
+  assert.equal(heads[0], (await authDb.select({ id: users.id }).from(users).where(eq(users.email, 'hod@acad-a.test')))[0]!.id)
+  assert.equal(heads[1], null)
+  const teachers = t.filter((r) => r.action === 'section.teacher_set').map((r) => (r.detail as { classTeacherId: string | null }).classTeacherId)
+  assert.deepEqual(teachers, [ids.faculty, null])
+  const member = only(t, 'section.member_added')
+  assert.equal(member.entityId, section.id)
+  assert.equal(member.entity, 'academic_sections')
+  assert.deepEqual(member.detail, { studentId: ids.student })
+  assert.deepEqual(only(t, 'offering.created').detail, { termId: term.id, courseId: course.id, sectionId: section.id, facultyUserId: ids.faculty })
+  assert.deepEqual(only(t, 'slot.created').detail, { offeringId: offering.id, roomId: room.id, dayOfWeek: 2, startsAt: '10:00:00', endsAt: '11:00:00' })
+  assert.equal(only(t, 'slot.created').entityId, slot.id)
+
+  // A student cannot create a department; nothing is written.
+  const before = (await trailOf(instA, since)).length
+  await assert.rejects(
+    () => createDepartment({ id: ids.student, role: 'student', institutionId: instA }, { code: 'nope', name: 'No' }),
+    (e: unknown) => e instanceof AcademicError && e.status === 403,
+  )
+  assert.equal((await trailOf(instA, since)).length, before)
+  assert.deepEqual(await withTenant(instA, (tx) => tx.select().from(departments).where(eq(departments.code, 'nope'))), [])
+
+  // B's section with A's student: refused, no row, no event.
+  const bDept = await createDepartment(admin(instB), { code: 'b-d', name: 'B' })
+  const bProg = await createProgram(admin(instB), { departmentId: bDept.id, code: 'b-p', name: 'BP', level: 'undergraduate', durationTerms: 4 })
+  const bSection = await createSection(admin(instB), { programId: bProg.id, label: 'b', admissionYear: 2027 })
+  const mark = await watermark()
+  await assert.rejects(
+    () => addSectionMember(admin(), { sectionId: bSection.id, userId: ids.student }),
+    (e: unknown) => e instanceof AcademicError && e.code === 'no_such_section',
+  )
+  assert.deepEqual(await trailOf(instA, mark), [])
+  assert.deepEqual(await withTenant(instB, (tx) => tx.select().from(sectionMembers).where(eq(sectionMembers.sectionId, bSection.id))), [])
+
+  // The event rolls back with its write.
+  const mark2 = await watermark()
+  await assert.rejects(() =>
+    withTenantBatch(instA, async (step) => {
+      await step(() => createRoom(admin(), { code: 'ev-rollback' }))
+      throw new Error('sentinel')
+    }),
+  )
+  assert.deepEqual(await withTenant(instA, (tx) => tx.select().from(rooms).where(eq(rooms.code, 'ev-rollback'))), [])
+  assert.deepEqual(await trailOf(instA, mark2), [])
 })

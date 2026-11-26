@@ -6,6 +6,7 @@ import { ticked } from '@campusos/module-framework'
 import { courses, offerings, sectionMembers, slots } from '@campusos/module-academic/schema'
 import { devices, offlineCredentials, records, roomGeofences, sessions, settings } from '../schema'
 import { AttendanceError, type Actor } from './operations'
+import { auditAttendance } from './structural-audit'
 import { decodeQr, distanceM, enrollmentMessage, newSessionSecret, verifyDeviceSignature, verifyToken } from './token'
 
 const base64url = z.string().min(1).max(12000).regex(/^[A-Za-z0-9_-]+$/)
@@ -90,9 +91,12 @@ export async function registerDeviceKey(actor: Actor, input: unknown) {
   return withTenant(tenant, async (tx) => {
     const [person] = await tx.select({ id: users.id }).from(users).where(and(eq(users.id, actor.id), eq(users.role, 'student')))
     if (!person) throw new AttendanceError(403, 'forbidden', 'no student account in this institution')
-    await tx.insert(devices).values({ institutionId: tenant, userId: actor.id, deviceHash: data.deviceHash, label: data.label, publicKey: data.publicKey }).onConflictDoNothing()
+    const [inserted] = await tx.insert(devices).values({ institutionId: tenant, userId: actor.id, deviceHash: data.deviceHash, label: data.label, publicKey: data.publicKey }).onConflictDoNothing().returning({ id: devices.id })
     const [device] = await tx.select().from(devices).where(and(eq(devices.userId, actor.id), eq(devices.deviceHash, data.deviceHash)))
     if (!device || device.publicKey !== data.publicKey) refuse('key_already_bound', 'register a new device identifier to replace an existing key; approval is required')
+    if (inserted) {
+      await auditAttendance(tx, actor, tenant, 'attendance.device-registered', 'attendance_devices', inserted.id, 'Registered attendance device', { studentId: actor.id, status: device.status, signed: true })
+    }
     return { id: device.id, status: device.status }
   })
 }
@@ -117,7 +121,9 @@ export async function revokeDevice(actor: Actor, input: unknown) {
     const [device] = await tx.select().from(devices).where(eq(devices.id, deviceId)).for('update')
     if (!device) throw new AttendanceError(404, 'no_such_device', 'no such device')
     if (!admin(actor) && device.userId !== actor.id) throw new AttendanceError(403, 'forbidden', 'not your device')
+    if (device.status === 'revoked') return { id: deviceId, status: 'revoked' as const }
     await tx.update(devices).set({ status: 'revoked' }).where(eq(devices.id, deviceId))
+    await auditAttendance(tx, actor, tenant, 'attendance.device-revoked', 'attendance_devices', deviceId, 'Revoked attendance device', { studentId: device.userId, previousStatus: device.status, status: 'revoked' })
     return { id: deviceId, status: 'revoked' as const }
   })
 }
@@ -164,6 +170,7 @@ export async function prepareSession(actor: Actor, input: unknown) {
       teacherId: actor.id, onDate: data.onDate, startsAt: meeting.starts_at, endsAt: meeting.ends_at,
       roomId: meeting.room_id, tokenSecret: newSessionSecret(), windowSeconds: policy.tokenWindowSeconds,
     }).returning()
+    await auditAttendance(tx, actor, tenant, 'attendance.credential-prepared', 'attendance_offline_credentials', created!.id, 'Prepared offline attendance credential', { slotId: data.slotId, offeringId: created!.offeringId, onDate: data.onDate })
     return credentialView(created!)
   })
 }
@@ -179,7 +186,9 @@ export async function revokeCredential(actor: Actor, input: unknown) {
     const [credential] = await tx.select().from(offlineCredentials).where(eq(offlineCredentials.id, sessionId)).for('update')
     if (!credential) throw new AttendanceError(404, 'no_such_session', 'no such offline credential')
     if (!admin(actor) && credential.teacherId !== actor.id) throw new AttendanceError(403, 'forbidden', 'not your session')
+    if (credential.revokedAt) return { sessionId, revoked: true }
     await tx.update(offlineCredentials).set({ revokedAt: new Date() }).where(eq(offlineCredentials.id, sessionId))
+    await auditAttendance(tx, actor, tenant, 'attendance.credential-revoked', 'attendance_offline_credentials', sessionId, 'Revoked offline attendance credential', { slotId: credential.slotId, offeringId: credential.offeringId, onDate: credential.onDate })
     return { sessionId, revoked: true }
   })
 }

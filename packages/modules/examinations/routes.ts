@@ -18,6 +18,11 @@ import {
   examStats,
   gradeReport,
   gradeReportPdf,
+  reportCard,
+  reportCardPdf,
+  setReportCardEntry,
+  setReportCardPublication,
+  setReportCardTemplate,
   listWindows,
   myExamCycle,
   papersFor,
@@ -192,6 +197,14 @@ export const routes: PluginRoute[] = [
     const studentId = param(req, 'studentId') || actor.id
     const g = await gradeReport(actor, studentId, termId)
     return { bytes: await gradeReportPdf(g), name: `grade-report-${g.term.code}-${g.student.rollNo ?? g.student.name}` }
+  }),
+  post('/report-card/template', setReportCardTemplate),
+  post('/report-card/entry', setReportCardEntry),
+  post('/report-card/publication', setReportCardPublication),
+  pdf('/report-card.pdf', async (actor, req) => {
+    // A guardian names the child; everyone else defaults to themselves.
+    const r = await reportCard(actor, param(req, 'studentId') || actor.id, requiredParam(req, 'termId'), requiredParam(req, 'sectionId'))
+    return { bytes: await reportCardPdf(r), name: `report-card-${r.term.code}-${r.rollNo ?? 'pupil'}` }
   }),
   post('/papers', uploadPaper),
   { method: 'GET', path: '/papers', handler: (actor, req) => papersFor(actor as Actor, requiredParam(req, 'examId')) },

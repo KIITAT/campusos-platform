@@ -1,5 +1,5 @@
 {
-  "id": "4a844d1d-163d-48d1-9fd8-d5daed34760b",
+  "id": "fe5ef682-4e38-45b4-968b-0a10e99eef10",
   "prevId": "3d1cd330-c145-4471-acb2-efdb02fa235f",
   "version": "7",
   "dialect": "postgresql",
@@ -571,9 +571,42 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "name_key": {
+          "name": "name_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "generated": {
+            "as": "lower(coalesce(name, ''))",
+            "type": "stored"
+          }
         }
       },
-      "indexes": {},
+      "indexes": {
+        "campusos_users_student_name_key": {
+          "name": "campusos_users_student_name_key",
+          "columns": [
+            {
+              "expression": "institution_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "name_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "role = 'student' and erased_at is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "users_institution_id_institutions_id_fk": {
           "name": "users_institution_id_institutions_id_fk",
@@ -1574,62 +1607,6 @@
             }
           ],
           "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "background_jobs_claim_other": {
-          "name": "background_jobs_claim_other",
-          "columns": [
-            {
-              "expression": "institution_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "run_after",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "kind <> 'notices.email' and status in ('queued', 'running')",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "background_jobs_claim_email": {
-          "name": "background_jobs_claim_email",
-          "columns": [
-            {
-              "expression": "institution_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "run_after",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "kind = 'notices.email' and status in ('queued', 'running')",
           "concurrently": false,
           "method": "btree",
           "with": {}

@@ -10,6 +10,7 @@ import {
   programChoices,
   type Actor,
 } from './api'
+import { transferPage } from './transfer-page'
 
 const OFFICE = ['institution_admin', 'super_admin'] as const
 const READERS = ['institution_admin', 'super_admin', 'hod'] as const
@@ -475,4 +476,5 @@ export const pages: PluginPage[] = [
       },
     ],
   },
+  transferPage,
 ]

@@ -69,7 +69,23 @@ const keyRefusals = {
   },
 }
 
+const lookup = (summary: string) => ({
+  get: {
+    summary,
+    tags: ['fees'],
+    parameters: [{ name: 'q', in: 'query', required: true, description: 'One to 100 characters', schema: { type: 'string', minLength: 1, maxLength: 100 } }],
+    responses: {
+      '200': { description: 'At most 12 hits: id, title, detail and href (null for a picker)' },
+      '400': { description: 'invalid_search' },
+      '403': { description: 'Forbidden, or the module is not enabled' },
+      '429': { description: 'Too many lookups (120 a minute); see Retry-After' },
+    },
+  },
+})
+
 export const paths = {
+  [`${base}/record-search`]: lookup('Find a fee receipt by its number, old or fiscal-year style (the accounts office)'),
+  [`${base}/student-choices`]: lookup('Find a student by roll, registration or name for a form (the accounts office)'),
   [`${base}/scholarships`]: {
     get: {
       summary: 'The scholarships this institution funds and defines',

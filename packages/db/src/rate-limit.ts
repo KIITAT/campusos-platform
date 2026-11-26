@@ -15,6 +15,8 @@ export const RATE_LIMITS = {
   'console.signin.ip': { limit: 10, windowSeconds: 900 },
   'console.signin.user': { limit: 5, windowSeconds: 900 },
   'console.totp': { limit: 1, windowSeconds: 90 },
+  // Record search and student pickers (P1-09c): shared by one user in one institution.
+  'search.lookup': { limit: 120, windowSeconds: 60 },
 } as const
 
 export type RateBucket = keyof typeof RATE_LIMITS

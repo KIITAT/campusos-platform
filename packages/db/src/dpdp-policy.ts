@@ -53,6 +53,8 @@ export const SAFE_COLUMNS: readonly string[] = [
   // The public half of the student's device key. The private half never
   // leaves the phone.
   'attendance_devices.public_key',
+  // The key of a preset remark in the class's report template ("steady"), not a credential.
+  'exam_report_card_entries.remark_key',
 ]
 
 /**
@@ -93,7 +95,7 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   academic_prerequisite_waivers: 'export',
   academic_section_members: 'export',
   academic_sections: 'export',
-  academic_student_profiles: 'export',
+  academic_student_profiles: { omit: ['roll_key', 'registration_key'] },
   academic_student_programs: 'export',
 
   admissions_applications: 'export',
@@ -126,6 +128,9 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   ceremony_certificates: 'export',
   ceremony_events: 'export',
   ceremony_holds: 'export',
+  // School transfer certificates (P1-13d): the header is about the pupil; the printable snapshot is erased with them.
+  ceremony_transfer_certificates: 'export',
+  ceremony_transfer_payloads: 'export',
 
   // crm (P2-16): a contact is not a user. A staff member's export shows that they owned or
   // worked a lead, never the contact's data (decision 405).
@@ -148,6 +153,7 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   exam_marks: 'export',
   exam_marks_history: 'export',
   exam_question_papers: 'export',
+  exam_report_card_entries: 'export',
   exam_windows: 'export',
   exams: 'export',
 
@@ -158,7 +164,7 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   // nothing the person said or did that the receipt does not already record.
   fee_idempotency_keys: 'exclude',
   fee_invoices: 'export',
-  fee_payments: 'export',
+  fee_payments: { omit: ['receipt_no_key'] },
   fee_refunds: 'export',
   fee_scholarship_awards: 'export',
   fee_student_charges: 'export',
@@ -189,6 +195,11 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   finance_receipts: 'export',
   finance_staff: 'export',
   finance_stock_entries: 'export',
+
+  // documents (P2-19): bytes and titles are disclosed only through the document routes; requests carry digests of codes
+  documents_files: { only: ['id', 'kind', 'scope', 'media_type', 'created_at', 'retention_basis', 'retain_until'] },
+  documents_sign_requests: 'exclude',
+  documents_signatures: { only: ['id', 'document_id', 'signed_at', 'method', 'intent_version', 'sha256'] },
 
   // helpdesk
   helpdesk_cases: 'export',
@@ -324,6 +335,9 @@ export function retentionBasis(table: string): string {
   }
   if (table.startsWith('hr_')) {
     return 'an employment and payroll record, kept for the period labour and tax law requires'
+  }
+  if (table.startsWith('documents_')) {
+    return 'signed file evidence retained to its documented purpose or legal-obligation deadline'
   }
   if (table.startsWith('reports_')) return 'a report definition the institution keeps; stored results are deleted after 90 days'
   if (table.startsWith('projects_')) {

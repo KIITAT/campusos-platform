@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNotNull, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm'
 import { audit, auditLog, users, withTenant } from '@campusos/db'
 import { notify } from '@campusos/module-notices/api'
 import { assertCanAccessStudent, type Role, type ViewerScope } from '@campusos/module-framework'
@@ -217,7 +217,8 @@ export async function setProgramScheme(actor: Actor, input: unknown) {
   const data = setProgramSchemeSchema.parse(input)
 
   return withTenant(tenant, async (tx) => {
-    const [scheme] = await tx.select().from(schemes).where(eq(schemes.id, data.schemeId))
+    // A school scheme belongs to the report card operations, not to a programme's scale (D808).
+    const [scheme] = await tx.select().from(schemes).where(and(eq(schemes.id, data.schemeId), ne(schemes.kind, 'school')))
     if (!scheme) throw new ExamError(404, 'no_such_scheme', 'no such grading scheme')
     const [program] = await tx.select().from(programs).where(eq(programs.id, data.programId))
     if (!program) throw new ExamError(404, 'no_such_program', 'no such programme')

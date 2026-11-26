@@ -260,3 +260,19 @@ test('a total never adds register days to period sessions', () => {
   assert.deepEqual(totalLines([l('daily', 20)]).map((x) => x.kind), ['daily'], 'a school student has only the register')
   assert.deepEqual(totalLines([]), [])
 })
+
+test('a promoted section is not a register from the day it is promoted', async () => {
+  const promoted = (at: string | null) =>
+    withTenant(inst, (tx) => tx.execute(sql`update academic_sections set school_promoted_at = ${at} where id = ${ids.section}`))
+  await promoted(new Date().toISOString())
+  try {
+    await assert.rejects(markDay(ct(), { sectionId: ids.section, onDate: today(), absent: [] }), (e) => code(e) === 'empty_section')
+    assert.deepEqual(await marks(), [])
+    assert.deepEqual((await dailySheet(admin(), ids.section, today())).students, [])
+    // The days before promotion stay open to correction.
+    await markDay(ct(), { sectionId: ids.section, onDate: daysAgo(2), absent: [] })
+    assert.equal((await dailySheet(admin(), ids.section, daysAgo(2))).students.length, 2)
+  } finally {
+    await promoted(null)
+  }
+})

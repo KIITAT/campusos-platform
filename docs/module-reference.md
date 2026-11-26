@@ -7,32 +7,33 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 
 | Module | Version | Pages | API routes | Dependencies |
 |---|---|---:|---:|---|
-| [Academic Core](#academic) | 0.13.0 | 7 | 42 | None |
-| [Admissions](#admissions) | 0.11.0 | 3 | 9 | academic |
+| [Academic Core](#academic) | 0.16.0 | 8 | 45 | None |
+| [Admissions](#admissions) | 0.14.0 | 3 | 9 | academic |
 | [Alumni and events](#alumni) | 0.5.0 | 4 | 12 | None |
-| [Attendance & QR](#attendance) | 0.19.0 | 8 | 30 | academic, notices |
-| [Student Care](#care) | 0.13.0 | 7 | 24 | academic, notices |
-| [Ceremonies](#ceremonies) | 0.10.0 | 5 | 18 | academic |
-| [Sales CRM](#crm) | 0.10.0 | 4 | 32 | finance, notices |
-| [Enrollment](#enrollment) | 0.9.0 | 3 | 9 | academic |
-| [Examinations & Grading](#examinations) | 0.28.0 | 9 | 40 | academic, notices |
-| [Feedback](#feedback) | 0.9.0 | 8 | 19 | academic |
-| [Fees & Finance](#fees) | 0.30.0 | 12 | 47 | academic, finance, notices |
+| [Attendance & QR](#attendance) | 0.21.0 | 8 | 30 | academic, notices |
+| [Student Care](#care) | 0.15.0 | 7 | 24 | academic, notices |
+| [Ceremonies](#ceremonies) | 0.13.0 | 6 | 23 | academic |
+| [Sales CRM](#crm) | 0.12.0 | 4 | 32 | finance, notices |
+| [Documents](#documents) | 0.1.0 | 1 | 8 | None |
+| [Enrollment](#enrollment) | 0.10.0 | 3 | 9 | academic |
+| [Examinations & Grading](#examinations) | 0.32.0 | 11 | 44 | academic, notices |
+| [Feedback](#feedback) | 0.10.0 | 8 | 19 | academic |
+| [Fees & Finance](#fees) | 0.33.0 | 12 | 49 | academic, finance, notices |
 | [Finance & Books](#finance) | 0.22.0 | 92 | 208 | None |
 | [Helpdesk and grievance](#helpdesk) | 0.5.0 | 2 | 7 | None |
-| [Hostel](#hostel) | 0.15.0 | 5 | 20 | academic |
-| [HR & Payroll](#hr) | 0.27.0 | 18 | 134 | finance, notices |
-| [Library](#library) | 0.17.0 | 5 | 18 | academic |
-| [Mentoring](#mentoring) | 0.28.0 | 6 | 19 | academic, notices |
-| [Communication & Notices](#notices) | 0.16.0 | 4 | 14 | academic |
-| [Parent Portal](#parents) | 0.28.0 | 4 | 12 | academic |
-| [Placement](#placement) | 0.13.0 | 8 | 15 | academic, notices |
+| [Hostel](#hostel) | 0.17.0 | 5 | 20 | academic |
+| [HR & Payroll](#hr) | 0.29.0 | 18 | 134 | finance, notices |
+| [Library](#library) | 0.20.0 | 5 | 19 | academic |
+| [Mentoring](#mentoring) | 0.32.0 | 6 | 19 | academic, notices |
+| [Communication & Notices](#notices) | 0.18.0 | 4 | 14 | academic |
+| [Parent Portal](#parents) | 0.32.0 | 4 | 13 | academic |
+| [Placement](#placement) | 0.15.0 | 8 | 15 | academic, notices |
 | [Projects and timesheets](#projects) | 0.5.0 | 6 | 27 | finance |
-| [Quizzes](#quizzes) | 0.9.0 | 7 | 22 | academic |
-| [Reports](#reports) | 0.4.0 | 5 | 10 | notices |
+| [Quizzes](#quizzes) | 0.10.0 | 7 | 22 | academic |
+| [Reports](#reports) | 0.6.0 | 5 | 10 | notices |
 | [Skills](#skills) | 0.5.0 | 5 | 12 | None |
-| [Timetable](#timetable) | 0.10.0 | 12 | 42 | academic |
-| [Transport](#transport) | 0.6.0 | 4 | 14 | None |
+| [Timetable](#timetable) | 0.12.0 | 12 | 42 | academic |
+| [Transport](#transport) | 0.8.0 | 4 | 14 | None |
 
 <a id="academic"></a>
 ## Academic Core
@@ -52,6 +53,7 @@ Source: `campusos-platform/packages/modules/academic/`.
 | `/m/academic/cohorts` | Cohorts | institution_admin, super_admin, hod |
 | `/m/academic/curriculum` | Curriculum | institution_admin, super_admin, hod |
 | `/m/academic/record` | Record | institution_admin, super_admin, hod, faculty, student |
+| `/m/academic/promotion` | School promotion | institution_admin, super_admin |
 | `/m/academic/import` | Import from CSV | institution_admin, super_admin |
 
 ### Operations
@@ -66,6 +68,8 @@ Source: `campusos-platform/packages/modules/academic/`.
 | `POST /api/v1/modules/academic/terms/current` | Mark a term as current | `termId` |
 | `POST /api/v1/modules/academic/sections` | Create a cohort | `programId`, `label`, `admissionYear` |
 | `POST /api/v1/modules/academic/sections/class-teacher` | Set or clear a cohort's class teacher, by email | `sectionId`, `email` |
+| `POST /api/v1/modules/academic/programs/next` | Set or clear a school class's next class, for the year-end promotion | `programId`, `nextProgramId` |
+| `POST /api/v1/modules/academic/sections/promote` | Promote and detain a school section at the end of the session, once | `sourceSectionId`, `sourceTermId`, `nextTermId`, `promotedSectionId`, `detainedSectionId`, `detainedStudentIds`, `rosterToken`, `reason` |
 | `POST /api/v1/modules/academic/departments/head` | Set or clear a department's head (a HoD), by email | `departmentId`, `email` |
 | `POST /api/v1/modules/academic/sections/members` | Add a student to a cohort | `sectionId`, `userId` |
 | `POST /api/v1/modules/academic/offerings` | Offer a course to a cohort in a term | `termId`, `courseId`, `sectionId`, `facultyUserId` |
@@ -90,6 +94,7 @@ Source: `campusos-platform/packages/modules/academic/`.
 | `POST /api/v1/modules/academic/classes/change/withdraw` | Withdraw a change: the class meets as usual | `changeId`, `reason` |
 | `GET /api/v1/modules/academic/week` | The week containing a date (date=YYYY-MM-DD), with changes applied, for the caller | See runtime OpenAPI schema |
 | `GET /api/v1/modules/academic/profile` | A student's roll and registration numbers, phone and address: their own, or any for staff (studentId) | See runtime OpenAPI schema |
+| `GET /api/v1/modules/academic/record-search` | Find a student by roll number, registration number or name (the office) | `q` (query) |
 | `GET /api/v1/modules/academic/consents` | A student's recorded choices (studentId): the privacy notice, counselling self-checks and the APAAR ID | See runtime OpenAPI schema |
 | `GET /api/v1/modules/academic/curricula` | Every curriculum, with its requirements | See runtime OpenAPI schema |
 | `GET /api/v1/modules/academic/gpa-policy` | The grade point average rules, oldest first | See runtime OpenAPI schema |
@@ -273,7 +278,7 @@ Source: `campusos-platform/packages/modules/care/`.
 <a id="ceremonies"></a>
 ## Ceremonies
 
-Convocation: who may graduate, found by the degree audit rather than by a list somebody typed; replies and guests; office holds; check-in on the day; and degree certificates, issued only to a student the audit cleared, revoked with a reason and reissued under a new serial.
+Convocation: who may graduate, found by the degree audit rather than by a list somebody typed; replies and guests; office holds; check-in on the day; and degree certificates, issued only to a student the audit cleared, revoked with a reason and reissued under a new serial; and numbered school transfer certificates (CBSE Annexure I), issued by the office once the pupil has left and the dues are clear.
 
 Module roles: `super_admin`, `institution_admin`, `hod`, `faculty`, `student`.
 Source: `campusos-platform/packages/modules/ceremonies/`.
@@ -287,6 +292,7 @@ Source: `campusos-platform/packages/modules/ceremonies/`.
 | `/m/ceremonies/certificate` | Certificate | institution_admin, super_admin, hod, student |
 | `/m/ceremonies/checkin` | Check-in | institution_admin, super_admin, hod, faculty |
 | `/m/ceremonies/me` | My graduation | student |
+| `/m/ceremonies/transfer-certificates` | Transfer certificates | institution_admin, super_admin |
 
 ### Operations
 
@@ -309,6 +315,11 @@ Source: `campusos-platform/packages/modules/ceremonies/`.
 | `POST /api/v1/modules/ceremonies/certificates/reissue` | Reissue a revoked certificate under a new serial | `certificateId` |
 | `GET /api/v1/modules/ceremonies/certificate` | One certificate; a student sees only their own | `certificateId` (query) |
 | `GET /api/v1/modules/ceremonies/certificate.pdf` | The certificate to print (binary response) | `certificateId` (query) |
+| `GET /api/v1/modules/ceremonies/transfer-certificates` | The confidential register of school transfer certificates: one pupil or one serial, newest 50 | `studentId` (query), `serial` (query) |
+| `POST /api/v1/modules/ceremonies/transfer-certificates/issue` | Issue a numbered school transfer certificate (CBSE Annexure I) | `studentProgramId`, `schoolAddress`, `affiliationNo`, `schoolCode`, `bookNo`, `admissionNo`, `motherName`, `fatherOrGuardianName`, `birthInWords`, `nationality`, `reservationCategory`, `firstAdmittedOn`, `firstClass`, `lastClassFigures`, `lastClassWords`, `lastExamResult`, `repeatCount`, `subjects`, `promotionEligible`, `promotionClassFigures`, `promotionClassWords`, `paidThroughMonth`, `feeConcession`, `workingDays`, `presentDays`, `activitiesUniformed`, `activitiesOther`, `conduct`, `appliedOn`, `leavingReason`, `remarks`, `checkedBy` |
+| `POST /api/v1/modules/ceremonies/transfer-certificates/revoke` | Revoke a transfer certificate, with a reason (no personal details) | `certificateId`, `reason` |
+| `POST /api/v1/modules/ceremonies/transfer-certificates/reissue` | Replace a revoked transfer certificate under a new serial | `certificateId`, `schoolAddress`, `affiliationNo`, `schoolCode`, `bookNo`, `admissionNo`, `motherName`, `fatherOrGuardianName`, `birthInWords`, `nationality`, `reservationCategory`, `firstAdmittedOn`, `firstClass`, `lastClassFigures`, `lastClassWords`, `lastExamResult`, `repeatCount`, `subjects`, `promotionEligible`, `promotionClassFigures`, `promotionClassWords`, `paidThroughMonth`, `feeConcession`, `workingDays`, `presentDays`, `activitiesUniformed`, `activitiesOther`, `conduct`, `appliedOn`, `leavingReason`, `remarks`, `checkedBy` |
+| `GET /api/v1/modules/ceremonies/transfer-certificate.pdf` | The school transfer certificate to print, from the saved snapshot (binary response) | `certificateId` (query) |
 | `GET /api/v1/modules/ceremonies/verify` | Check a certificate by the code printed on it | `code` (query) |
 
 ### Background jobs
@@ -373,6 +384,33 @@ Source: `campusos-platform/packages/modules/crm/`.
 
 - `crm.activity-reminders`: explicitly queued; roles institution_admin, accounts_staff, super_admin.
 
+<a id="documents"></a>
+## Documents
+
+Store institutional files and record electronic assent.
+
+Module roles: `institution_admin`, `super_admin`, `hod`, `faculty`, `accounts_staff`, `library_staff`, `hostel_staff`, `student`, `parent`.
+Source: `campusos-platform/packages/modules/documents/`.
+
+### Screens
+
+| Path | Page | Roles |
+|---|---|---|
+| `/m/documents` | Documents | institution_admin, super_admin, hod, faculty, accounts_staff, library_staff, hostel_staff, student, parent |
+
+### Operations
+
+| Method and path | Operation | Body fields / query parameters |
+|---|---|---|
+| `GET /api/v1/modules/documents/files` | List documents the caller may open | `studentId` (query) |
+| `GET /api/v1/modules/documents/file` | Download the exact stored file (binary response) | `id` (query) |
+| `GET /api/v1/modules/documents/receipt.pdf` | Download the assent record as a separate PDF (binary response) | `id` (query) |
+| `POST /api/v1/modules/documents/verify` | Verify a stored file, its evidence and optionally a copy by digest | `documentId`, `sha256` |
+| `POST /api/v1/modules/documents/upload` | File a document | `title`, `kind`, `scope`, `subjectUserId`, `retainUntil`, `retentionBasis`, `authorityRef`, `file` |
+| `POST /api/v1/modules/documents/request` | Ask the named member to record assent | `documentId`, `reason`, `approvedInternalUse` |
+| `POST /api/v1/modules/documents/sign` | Record assent with the mailbox code | `requestId`, `code`, `consent` |
+| `POST /api/v1/modules/documents/close` | Decline (the signer) or cancel (an administrator) a request | `requestId`, `decision`, `reason` |
+
 <a id="enrollment"></a>
 ## Enrollment
 
@@ -408,7 +446,7 @@ Source: `campusos-platform/packages/modules/enrollment/`.
 
 Exam scheduling, marks entry with publish-locking, configurable grade scales and transcripts; the examination cycle -- enrolment, admit cards, backlog booking, semester grade reports, sealed question papers -- and statistics.
 
-Module roles: `super_admin`, `institution_admin`, `hod`, `faculty`, `student`.
+Module roles: `super_admin`, `institution_admin`, `hod`, `faculty`, `student`, `parent`.
 Source: `campusos-platform/packages/modules/examinations/`.
 
 ### Screens
@@ -423,6 +461,8 @@ Source: `campusos-platform/packages/modules/examinations/`.
 | `/m/examinations/paper` | Question paper | institution_admin, super_admin, hod, faculty |
 | `/m/examinations/stats` | Exam statistics | institution_admin, super_admin, hod, faculty |
 | `/m/examinations/performance` | Performance | institution_admin, super_admin, hod, faculty, student |
+| `/m/examinations/report-cards` | School report cards | institution_admin, super_admin, hod, faculty |
+| `/m/examinations/my-report-cards` | School report cards | student, parent |
 | `/m/examinations/import` | Import from CSV | faculty, hod, institution_admin, super_admin |
 
 ### Operations
@@ -461,6 +501,10 @@ Source: `campusos-platform/packages/modules/examinations/`.
 | `POST /api/v1/modules/examinations/backlogs/cancel` | Cancel a backlog booking and its fee | `bookingId`, `reason` |
 | `GET /api/v1/modules/examinations/backlogs` | Backlog papers booked for a term | `termId` (query) |
 | `GET /api/v1/modules/examinations/grade-report.pdf` | A term’s grade report from the official record, with SGPA and CGPA (binary response) | `termId` (query), `studentId` (query) |
+| `POST /api/v1/modules/examinations/report-card/template` | Save a class’s school report template for a term (administrators) | `termId`, `programId`, `expectedRevision`, `template` |
+| `POST /api/v1/modules/examinations/report-card/entry` | Set one area’s grade, or the remark, on a pupil’s school report (the class teacher or an administrator) | `termId`, `sectionId`, `studentId`, `area`, `value` |
+| `POST /api/v1/modules/examinations/report-card/publication` | Publish or withdraw a pupil’s school report, with a reason (the class teacher or an administrator) | `termId`, `sectionId`, `studentId`, `published`, `reason` |
+| `GET /api/v1/modules/examinations/report-card.pdf` | A published school term report as a PDF, read live from the published marks (binary response) | `termId` (query), `sectionId` (query), `studentId` (query) |
 | `POST /api/v1/modules/examinations/papers` | Upload a question paper (PDF), sealed until shortly before the exam | `examId`, `paper` |
 | `GET /api/v1/modules/examinations/papers` | The sealed question papers for an exam, without their contents | `examId` (query) |
 | `GET /api/v1/modules/examinations/paper.pdf` | A question paper, for the examination cell, from its release time (binary response) | `paperId` (query) |
@@ -590,6 +634,8 @@ Source: `campusos-platform/packages/modules/fees/`.
 | `GET /api/v1/modules/fees/ledger` | One student’s charges, waivers and payments for a term | See runtime OpenAPI schema |
 | `GET /api/v1/modules/fees/reconciliation` | The student ledgers against the fees receivable account | See runtime OpenAPI schema |
 | `GET /api/v1/modules/fees/dues` | Balances for a term from the books, worst first, a page at a time | See runtime OpenAPI schema |
+| `GET /api/v1/modules/fees/record-search` | Find a fee receipt by its number, old or fiscal-year style (the accounts office) | `q` (query) |
+| `GET /api/v1/modules/fees/student-choices` | Find a student by roll, registration or name for a form (the accounts office) | `q` (query) |
 | `GET /api/v1/modules/fees/receipt.pdf` | A payment receipt as a PDF (binary response) | See runtime OpenAPI schema |
 
 ### Background jobs
@@ -1181,6 +1227,7 @@ Source: `campusos-platform/packages/modules/library/`.
 
 | Method and path | Operation | Body fields / query parameters |
 |---|---|---|
+| `GET /api/v1/modules/library/record-search` | Find a book by title, author or ISBN (the catalogue readers) | `q` (query) |
 | `GET /api/v1/modules/library/titles` | Search the catalogue by title, author or ISBN | See runtime OpenAPI schema |
 | `POST /api/v1/modules/library/titles` | Catalogue a new title | `isbn`, `title`, `author`, `publisher`, `year`, `category` |
 | `GET /api/v1/modules/library/copies` | The physical copies of one title, with who holds each | See runtime OpenAPI schema |
@@ -1311,6 +1358,7 @@ Source: `campusos-platform/packages/modules/parents/`.
 | `POST /api/v1/modules/parents/consents` | A parent or guardian gives, refuses or withdraws a consent for a child under 18. Audited. | `studentId`, `purpose`, `decision` |
 | `POST /api/v1/modules/parents/fee-claims` | Report a payment made for your child | `termId`, `accountId`, `mode`, `remitterBank`, `remitterBranch`, `remitterIfsc`, `drawerAccount`, `accountHolder`, `contactPhone`, `transferredOn`, `amount`, `studentId`, `utr`, `bankReference` |
 | `POST /api/v1/modules/parents/links/adult` | A student aged 18 or over keeps or ends a guardian’s access. Audited. | `linkId`, `keep` |
+| `GET /api/v1/modules/parents/student-choices` | Find a student by roll, registration or name for the guardian invitation (the administrators) | `q` (query) |
 | `GET /api/v1/modules/parents/guardians` | Guardian invitations: open, accepted, expired or withdrawn, and for which children | See runtime OpenAPI schema |
 | `POST /api/v1/modules/parents/guardians/invite` | Invite a guardian, at their own address, for a child | `email`, `studentId`, `relation`, `days` |
 | `POST /api/v1/modules/parents/guardians/withdraw` | Withdraw a guardian invitation, and the access it gave | `invitationId`, `reason` |

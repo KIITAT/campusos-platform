@@ -9,7 +9,6 @@ import {
   listLinks,
   myChildren,
   myGuardians,
-  studentChoices,
   type Actor,
 } from './api'
 
@@ -491,13 +490,9 @@ export const pages: PluginPage[] = [
     roles: [...ADMIN],
     async load(actor) {
       const a = actor as Actor
-      const [invites, students] = await Promise.all([listGuardianInvites(a), studentChoices(a)])
+      const invites = await listGuardianInvites(a)
       return {
         invites: invites.map((i) => ({ ...i, open: i.state === 'open' })),
-        studentOptions: students.map((s) => ({
-          value: s.id,
-          label: `${s.name ?? s.email} (${s.email})`,
-        })),
         liveOptions: invites
           .filter((i) => i.state === 'open' || i.state === 'accepted')
           .map((i) => ({ value: i.id, label: `${i.email} (${i.state}): ${i.children}` })),
@@ -521,7 +516,7 @@ export const pages: PluginPage[] = [
         path: '/guardians/invite',
         fields: [
           { name: 'email', label: 'Guardian’s email address' },
-          { name: 'studentId', label: 'Child', kind: 'select', options: 'studentOptions' },
+          { name: 'studentId', label: 'Child', hint: 'Search by roll number, registration number or name.', lookup: { path: '/student-choices' } },
           { name: 'relation', label: 'Relation', hint: 'mother, father, guardian...' },
           { name: 'days', label: 'Days to accept', kind: 'number', value: '7', hint: '1 to 30' },
         ],

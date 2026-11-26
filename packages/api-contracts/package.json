@@ -24,6 +24,7 @@
     "@campusos/module-attendance": "workspace:*",
     "@campusos/module-care": "workspace:*",
     "@campusos/module-ceremonies": "workspace:*",
+    "@campusos/module-documents": "workspace:*",
     "@campusos/module-enrollment": "workspace:*",
     "@campusos/module-examinations": "workspace:*",
     "@campusos/module-feedback": "workspace:*",
