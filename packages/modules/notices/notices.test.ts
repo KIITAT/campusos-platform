@@ -13,6 +13,7 @@ import {
   markRead,
   noticeView,
   notify,
+  preferences,
   publishNotice,
   preferences,
   readNotice,
@@ -589,4 +590,27 @@ test('readNotice opens a notice that is not on the first page (DATA-01)', async 
   const [row] = (await withTenant(inst, (tx) => tx.execute<{ id: string }>(sql`select id from notices where title = 'N205'`))).rows
   const one = await readNotice(student(ids.s1), row!.id)
   assert.equal(one.title, 'N205')
+})
+
+test('hostel, hostel_safety and library are valid categories', async () => {
+  for (const moduleId of ['hostel', 'hostel_safety', 'library']) {
+    const n = await withTenant(inst, (tx) => notify(tx, inst, { userIds: [ids.s1], moduleId, title: `t-${moduleId}`, body: 'b' }))
+    assert.equal(n, 1)
+  }
+})
+
+test('hostel_safety cannot be muted', async () => {
+  await assert.rejects(
+    () => setPreference(student(ids.s1), { moduleId: 'hostel_safety', muted: true }),
+    (e: unknown) => code(e) === 'category_mandatory' && status(e) === 409,
+  )
+  // A row inserted directly (an older mute, or a hand edit) does not stop delivery.
+  await withTenant(inst, (tx) => tx.insert(notificationOptOuts).values({ institutionId: inst, userId: ids.s1, moduleId: 'hostel_safety' }))
+  const n = await withTenant(inst, (tx) => notify(tx, inst, { userIds: [ids.s1], moduleId: 'hostel_safety', title: 'alert', body: 'b' }))
+  assert.equal(n, 1)
+  const listed = (await preferences(student(ids.s1))).categories.find((c) => c.moduleId === 'hostel_safety')
+  assert.equal(listed?.mandatory, true)
+  // An ordinary category with a mute is still muted.
+  await setPreference(student(ids.s1), { moduleId: 'library', muted: true })
+  assert.equal(await withTenant(inst, (tx) => notify(tx, inst, { userIds: [ids.s1], moduleId: 'library', title: 'x', body: 'b' })), 0)
 })

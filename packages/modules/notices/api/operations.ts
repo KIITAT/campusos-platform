@@ -104,7 +104,17 @@ export const NOTIFICATION_CATEGORIES: Record<string, string> = {
   care: 'Student care',
   crm: 'Sales CRM',
   reports: 'Scheduled reports',
+  hostel: 'Hostel',
+  hostel_safety: 'Hostel safety alerts',
+  library: 'Library',
 }
+
+/**
+ * Categories nobody can mute (P2-22a, D1339): a warden who muted curfew alerts
+ * would silently drop the ladder. They are listed as mandatory and delivered
+ * whatever an opt-out row says.
+ */
+export const ALWAYS_DELIVERED: ReadonlySet<string> = new Set(['hostel_safety'])
 
 const unknownCategory = () => new NoticeError(400, 'unknown_category', 'no such notification category')
 
@@ -169,6 +179,7 @@ const literal = (ids: string[]) => `{${ids.join(',')}}`
 
 /** Who of `userIds` has muted the category, unless the institution made it mandatory. */
 async function mutedAmong(tx: Tx, institutionId: string, moduleId: string, userIds: string[]): Promise<Set<string>> {
+  if (ALWAYS_DELIVERED.has(moduleId)) return new Set()
   const rows = (await tx.execute(sql`
     select o.user_id from notification_opt_outs o
      where o.module_id = ${moduleId}
@@ -243,7 +254,7 @@ export async function preferences(actor: Actor) {
         moduleId,
         label,
         muted: muted.has(moduleId),
-        mandatory: mandatory.has(moduleId),
+        mandatory: mandatory.has(moduleId) || ALWAYS_DELIVERED.has(moduleId),
       })),
     }
   })
@@ -276,7 +287,7 @@ export async function setPreference(actor: Actor, input: unknown) {
   return withTenant(tenant, async (tx) => {
     if (d.muted) {
       const [m] = await tx.select().from(notificationMandatory).where(eq(notificationMandatory.moduleId, d.moduleId))
-      if (m) throw new NoticeError(409, 'category_mandatory', 'the institution has made this category mandatory')
+      if (m || ALWAYS_DELIVERED.has(d.moduleId)) throw new NoticeError(409, 'category_mandatory', 'the institution has made this category mandatory')
       await tx.insert(notificationOptOuts).values({ institutionId: tenant, userId: actor.id, moduleId: d.moduleId }).onConflictDoNothing()
     } else {
       await tx.delete(notificationOptOuts).where(and(eq(notificationOptOuts.userId, actor.id), eq(notificationOptOuts.moduleId, d.moduleId)))
