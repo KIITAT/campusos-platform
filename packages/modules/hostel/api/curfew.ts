@@ -145,7 +145,7 @@ export async function curfewSweep(
 
   // --- 2. the ladder for open cases of tonight --------------------------------
   const cases = (await tx.execute(sql`
-    select c.id, c.student_id, c.block_id, c.curfew_at, c.nudge_at, c.warden_at, c.guardian_at
+    select c.id, c.student_id, c.block_id, c.curfew_at, c.nudge_at, c.warden_at, c.guardian_at, c.held_kind, c.held_until, c.ladder_from
       from hostel_curfew_cases c
      where c.institution_id = ${tenant} and c.night = ${night}::date and c.resolved_at is null
        -- A case opened at this very instant has nothing due yet (every later step is offset by minutes).
@@ -156,7 +156,7 @@ export async function curfewSweep(
 
   const facts = await loadFacts(tx, tenant, cases.map((c) => c.student_id), now, night)
   const resolve: { c: OpenCase; why: Evidence }[] = []
-  const hold: { c: OpenCase; until: Date }[] = []
+  const hold: { c: OpenCase; kind: 'late_pass' | 'library' | 'class'; end: Date; from: Date }[] = []
   const nudges: OpenCase[] = []
   const wardens: OpenCase[] = []
   const guardians: OpenCase[] = []
@@ -168,14 +168,17 @@ export async function curfewSweep(
       continue
     }
     if (evidence) {
-      // Evidence that will end: the ladder starts again where it ends (D1321), a pass at its own end time.
-      hold.push({ c, until: evidence === 'late_pass' ? f.lateUntil! : now })
+      // Evidence that will end: the ladder starts again where it ends (D1321), a pass at its own end time. The
+      // curfew itself is not moved: texts count their minutes from it and say what ended.
+      if (evidence === 'late_pass') hold.push({ c, kind: 'late_pass', end: f.lateUntil!, from: f.lateUntil! })
+      else if (evidence === 'class') hold.push({ c, kind: 'class', end: now, from: now })
+      else hold.push({ c, kind: 'library', end: evidence === 'library_exit' ? f.libraryLastExit! : now, from: now })
       continue
     }
     const block = blocks.get(c.block_id)
     const steps = ladderDue(
       {
-        curfewAt: new Date(c.curfew_at),
+        curfewAt: new Date(c.ladder_from ?? c.curfew_at),
         nudgeAt: c.nudge_at ? new Date(c.nudge_at) : null,
         wardenAt: c.warden_at ? new Date(c.warden_at) : null,
         guardianAt: c.guardian_at ? new Date(c.guardian_at) : null,
@@ -202,9 +205,18 @@ export async function curfewSweep(
   }
   if (hold.length > 0) {
     await tx.execute(sql`
-      update hostel_curfew_cases c set curfew_at = greatest(c.curfew_at, t.u), warden_at = null, guardian_at = null
-        from unnest(${literal(hold.map((h) => h.c.id))}::uuid[], ${literal(hold.map((h) => h.until.toISOString()))}::timestamptz[]) as t(id, u)
+      update hostel_curfew_cases c
+         set held_kind = t.k, held_until = t.e, ladder_from = greatest(coalesce(c.ladder_from, c.curfew_at), t.f), warden_at = null, guardian_at = null
+        from unnest(${literal(hold.map((h) => h.c.id))}::uuid[], ${literal(hold.map((h) => h.kind))}::text[], ${literal(hold.map((h) => h.end.toISOString()))}::timestamptz[], ${literal(hold.map((h) => h.from.toISOString()))}::timestamptz[]) as t(id, k, e, f)
        where c.id = t.id`)
+    // The first time a case is held by this kind of evidence, the timeline says why the stamps went (the warden reads it).
+    const fresh = hold.filter((h) => h.c.held_kind !== h.kind)
+    if (fresh.length > 0) {
+      await tx.execute(sql`
+        insert into hostel_presence_log (institution_id, student_id, at, kind, source, detail)
+        select ${tenant}, t.s, ${nowIso}::timestamptz, 'case_held', 'hostel', jsonb_build_object('caseId', t.c, 'kind', t.k, 'until', t.e)
+          from unnest(${literal(fresh.map((h) => h.c.student_id))}::text[], ${literal(fresh.map((h) => h.c.id))}::text[], ${literal(fresh.map((h) => h.kind))}::text[], ${literal(fresh.map((h) => h.end.toISOString()))}::text[]) as t(s, c, k, e)`)
+    }
   }
   if (nudges.length > 0) {
     await tx.execute(sql`update hostel_curfew_cases set nudge_at = ${nowIso}::timestamptz where id = any(${literal(nudges.map((c) => c.id))}::uuid[])`)
@@ -219,10 +231,37 @@ export async function curfewSweep(
     if (!cache.has(key)) cache.set(key, recipientsAt(tx, tenant, h, level))
     return cache.get(key)!
   }
-  const wardenText = (c: OpenCase, h: Home) => ({
-    title: 'Resident not checked in',
-    body: `${h.studentName} (${h.blockCode}-${h.room}) has not checked in, ${Math.max(0, Math.floor((now.getTime() - new Date(c.curfew_at).getTime()) / 60_000))} minutes after curfew.`,
-  })
+  // When the evidence that held a restarted case ended, as the wall clock of the institution shows it.
+  const ends = [...new Set([...wardens, ...guardians].filter((c) => c.held_until).map((c) => new Date(c.held_until!).toISOString()))]
+  const shown = new Map<string, string>()
+  if (ends.length > 0) {
+    const rows = (await tx.execute(sql`
+      select t.i, to_char(t.i::timestamptz at time zone ${zone}, 'HH24:MI') as hhmm from unnest(${literal(ends)}::text[]) as t(i)`)).rows as { i: string; hhmm: string }[]
+    for (const r of rows) shown.set(new Date(r.i).toISOString(), r.hhmm)
+  }
+  const endedAt = (c: OpenCase) => (c.held_until ? shown.get(new Date(c.held_until).toISOString()) : undefined)
+  const WARDEN_WORDS = { late_pass: 'late pass ended at', library: 'left the library at', class: 'class ended at' } as const
+  const wardenText = (c: OpenCase, h: Home) => {
+    const minutes = Math.max(0, Math.floor((now.getTime() - new Date(c.curfew_at).getTime()) / 60_000))
+    const ended = endedAt(c)
+    return {
+      title: 'Resident not checked in',
+      body: c.held_kind && ended
+        ? `${h.studentName} (${h.blockCode}-${h.room}) has not checked in: ${WARDEN_WORDS[c.held_kind as keyof typeof WARDEN_WORDS]} ${ended}, ${minutes} minutes after curfew.`
+        : `${h.studentName} (${h.blockCode}-${h.room}) has not checked in, ${minutes} minutes after curfew.`,
+    }
+  }
+  // A guardian told once already must be able to tell a repeat from news: the second message says what ended.
+  const guardianText = (c: OpenCase, h: Home) => {
+    const ended = endedAt(c)
+    const what = c.held_kind === 'late_pass' ? `${h.studentName}'s late-stay pass ended at ${ended} and they have`
+      : c.held_kind === 'library' ? `${h.studentName} left the library at ${ended} and has`
+      : c.held_kind === 'class' ? `${h.studentName}'s class ended at ${ended} and they have`
+      : null
+    return what && ended
+      ? `${what} not checked in at the hostel as of ${hhmm}. Please contact them or the hostel office.`
+      : `${h.studentName} has not checked in at the hostel as of ${hhmm}. Please contact them or the hostel office.`
+  }
 
   out.warded += await guarded(wardens, async (sp, xs) => {
     const items: { userId: string; title: string; body: string; link: string }[] = []
@@ -264,7 +303,7 @@ export async function curfewSweep(
           items.push({
             userId,
             title: 'Hostel check-in missing',
-            body: `${h.studentName} has not checked in at the hostel as of ${hhmm}. Please contact them or the hostel office.`,
+            body: guardianText(c, h),
             link: '/m/parents',
           })
         }
@@ -303,6 +342,9 @@ interface OpenCase {
   nudge_at: Date | string | null
   warden_at: Date | string | null
   guardian_at: Date | string | null
+  held_kind: string | null
+  held_until: Date | string | null
+  ladder_from: Date | string | null
   sharing?: boolean
 }
 

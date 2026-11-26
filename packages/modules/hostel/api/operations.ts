@@ -618,6 +618,7 @@ async function recordNight(
     if (!lives) {
       throw new HostelError(409, 'not_resident', `that student was not resident in this block on ${v.onNight}`)
     }
+    const [before] = await tx.select().from(checkIns).where(and(eq(checkIns.studentId, v.studentId), eq(checkIns.onNight, v.onNight)))
     const [row] = await tx
       .insert(checkIns)
       .values({ institutionId: tenant, ...fields, recordedAt: now })
@@ -639,6 +640,13 @@ async function recordNight(
       .returning()
     if (!row) {
       throw new HostelError(409, 'already_marked', 'that night is already recorded')
+    }
+    if (before && before.method === 'manual' && row.method === 'scan') {
+      // The warden's mark was the register's only record of a late return; keep it on the timeline (review NOTE).
+      await tx.execute(sql`
+        insert into hostel_presence_log (institution_id, student_id, at, kind, source, detail)
+        values (${tenant}, ${v.studentId}, ${now.toISOString()}::timestamptz, 'manual_mark_replaced', 'hostel',
+                ${JSON.stringify({ onNight: v.onNight, status: before.status, recordedAt: before.recordedAt, recordedBy: before.recordedBy })}::jsonb)`)
     }
     return row
   })

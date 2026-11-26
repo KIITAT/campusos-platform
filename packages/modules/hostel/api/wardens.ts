@@ -183,13 +183,15 @@ export async function recipientsAt(tx: Tx, tenant: string, home: Pick<Home, 'blo
       userIds = await scoped(sql`s.level = 'floor' and s.block_id = ${home.blockId} and s.floor = ${home.floor}`)
     }
     if (userIds.length === 0 && home.blockId) userIds = await scoped(sql`s.level = 'block' and s.block_id = ${home.blockId}`)
-    if (userIds.length === 0 && home.wardenUserId) userIds = [home.wardenUserId]
+    if (userIds.length === 0 && home.wardenUserId) {
+      userIds = ids((await tx.execute(sql`select id from users where id = ${home.wardenUserId} and erased_at is null`)).rows as { id: string }[])
+    }
     if (userIds.length === 0) {
-      userIds = ids((await tx.execute(sql`select id from users where institution_id = ${tenant} and role = 'hostel_staff'`)).rows as { id: string }[])
+      userIds = ids((await tx.execute(sql`select id from users where institution_id = ${tenant} and role = 'hostel_staff' and erased_at is null`)).rows as { id: string }[])
     }
   }
   if (userIds.length === 0) {
-    userIds = ids((await tx.execute(sql`select id from users where institution_id = ${tenant} and role = 'institution_admin'`)).rows as { id: string }[])
+    userIds = ids((await tx.execute(sql`select id from users where institution_id = ${tenant} and role = 'institution_admin' and erased_at is null`)).rows as { id: string }[])
   }
   return userIds
 }

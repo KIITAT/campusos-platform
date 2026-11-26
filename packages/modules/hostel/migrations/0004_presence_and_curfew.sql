@@ -99,11 +99,17 @@ CREATE TABLE hostel_curfew_cases (
   nudge_at timestamptz,
   warden_at timestamptz,
   guardian_at timestamptz,
+  -- What is holding the case (a pass, a library visit, a class), when that evidence ended, and where the ladder
+  -- counts from after it. curfew_at stays the real curfew, so every text counts its minutes from it.
+  held_kind text,
+  held_until timestamptz,
+  ladder_from timestamptz,
   resolved_at timestamptz,
   resolution text,
   resolved_by text REFERENCES users(id) ON DELETE SET NULL,
   note text,
   CONSTRAINT hostel_cases_resolution CHECK (resolution IS NULL OR resolution IN ('checked_in', 'leave', 'warden_verified', 'warden_closed', 'lapsed')),
+  CONSTRAINT hostel_cases_held CHECK (held_kind IS NULL OR held_kind IN ('late_pass', 'library', 'class')),
   CONSTRAINT hostel_cases_resolved_together CHECK ((resolved_at IS NULL) = (resolution IS NULL)),
   CONSTRAINT hostel_cases_note CHECK (note IS NULL OR length(note) BETWEEN 5 AND 300)
 );
@@ -123,7 +129,7 @@ CREATE TABLE hostel_presence_log (
   source text NOT NULL,
   source_ref text,
   detail jsonb NOT NULL DEFAULT '{}'::jsonb,
-  CONSTRAINT hostel_log_kind CHECK (kind IN ('library_entered', 'library_exited', 'library_unconfirmed', 'case_opened', 'student_nudged', 'warden_alerted', 'guardian_alerted', 'case_resolved', 'late_pass_decided'))
+  CONSTRAINT hostel_log_kind CHECK (kind IN ('library_entered', 'library_exited', 'library_unconfirmed', 'case_opened', 'student_nudged', 'warden_alerted', 'guardian_alerted', 'case_resolved', 'late_pass_decided', 'case_held', 'manual_mark_replaced'))
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX hostel_log_source_once ON hostel_presence_log (institution_id, source, source_ref, kind) WHERE source_ref IS NOT NULL;
