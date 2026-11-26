@@ -49,6 +49,7 @@ import {
   type OverdueReport,
 } from './schemas'
 import { postFineSettled } from './posting'
+import { presenceSettings, type PresenceSettings } from './clock'
 
 const MODULE = 'library'
 
@@ -134,9 +135,13 @@ async function rulesFor(tx: Tx, tenant: string): Promise<LoanRules> {
   }
 }
 
-export async function getSettings(actor: Actor): Promise<LoanRules> {
+/** Circulation rules plus the door hours and presence timings (P2-22a), times as HH:MM. */
+export async function getSettings(actor: Actor): Promise<LoanRules & PresenceSettings> {
   const tenant = requireReader(actor)
-  return withTenant(tenant, (tx) => rulesFor(tx, tenant))
+  return withTenant(tenant, async (tx) => {
+    const p = await presenceSettings(tx, tenant)
+    return { ...(await rulesFor(tx, tenant)), ...p, opensAt: p.opensAt.slice(0, 5), closesAt: p.closesAt.slice(0, 5) }
+  })
 }
 
 export async function setSettings(actor: Actor, input: unknown) {
@@ -145,6 +150,10 @@ export async function setSettings(actor: Actor, input: unknown) {
 
   return withTenant(tenant, async (tx) => {
     const from = await rulesFor(tx, tenant)
+    const held = await presenceSettings(tx, tenant)
+    const opens = d.opensAt ?? held.opensAt.slice(0, 5)
+    const closes = d.closesAt ?? held.closesAt.slice(0, 5)
+    if (closes <= opens) throw new LibraryError(400, 'bad_input', 'closing time must be after opening time')
     const values = {
       institutionId: tenant,
       loanDays: d.loanDays,
@@ -154,6 +163,12 @@ export async function setSettings(actor: Actor, input: unknown) {
       maxRenewals: d.maxRenewals,
       maxFinePaise: d.maxFine ?? null,
       blockAtOutstandingPaise: d.blockAtOutstanding,
+      // Left out, these keep what the library has (or the column default on a first write).
+      ...(d.opensAt !== undefined && { opensAt: d.opensAt }),
+      ...(d.closesAt !== undefined && { closesAt: d.closesAt }),
+      ...(d.closingReminderMin !== undefined && { closingReminderMin: d.closingReminderMin }),
+      ...(d.autoCloseAfterMin !== undefined && { autoCloseAfterMin: d.autoCloseAfterMin }),
+      ...(d.presenceRetentionDays !== undefined && { presenceRetentionDays: d.presenceRetentionDays }),
       updatedAt: new Date(),
     }
     const [row] = await tx

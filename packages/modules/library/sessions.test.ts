@@ -6,12 +6,12 @@ import {
   LibraryError,
   doorCode,
   doorScan,
-  encodeQr,
   enterSession,
   exitSession,
   setSettings,
   type Actor,
 } from './api'
+import { encodeQr } from '@campusos/module-attendance/api'
 import { events, sessions, settings } from './schema'
 
 const SLUG = 'libsess-test'

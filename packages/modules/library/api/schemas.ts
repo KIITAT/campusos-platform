@@ -92,6 +92,15 @@ export const settleFineSchema = z
   .object({ loanId: uuid, method: z.enum(settlementMethods).default('cash') })
   .meta({ id: 'LibraryFineSettle' })
 
+/** A local wall-clock time, HH:MM. */
+const clock = z.string().trim().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'a time as HH:MM')
+
+export const enterSchema = z.object({ studentId: z.string().min(1) }).meta({ id: 'LibraryEnter' })
+
+export const scanSchema = z
+  .object({ code: z.string().min(1).max(200), direction: z.enum(['in', 'out']) })
+  .meta({ id: 'LibraryDoorScan' })
+
 export const librarySettingsSchema = z
   .object({
     loanDays: z.coerce.number().int().min(1).max(365),
@@ -101,9 +110,16 @@ export const librarySettingsSchema = z
     maxRenewals: z.coerce.number().int().min(0).max(20),
     maxFine: rupees.nullish(),
     blockAtOutstanding: rupees,
+    /** Door hours and presence timings (P2-22a, D1332); left out, they stay as they are. */
+    opensAt: clock.optional(),
+    closesAt: clock.optional(),
+    closingReminderMin: z.coerce.number().int().min(5).max(120).optional(),
+    autoCloseAfterMin: z.coerce.number().int().min(0).max(240).optional(),
+    presenceRetentionDays: z.coerce.number().int().min(30).max(730).optional(),
     /** Why the rules change: on the audit trail (AUD-12). */
     reason: z.string().trim().min(5).max(500),
   })
+  .refine((d) => !d.opensAt || !d.closesAt || d.closesAt > d.opensAt, { message: 'closing time must be after opening time', path: ['closesAt'] })
   .meta({ id: 'LibrarySettings' })
 
 // --- reads -----------------------------------------------------------------

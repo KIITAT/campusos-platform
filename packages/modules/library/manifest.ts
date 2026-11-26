@@ -7,13 +7,13 @@ export const manifest: ModuleManifest = {
     'Catalogue of titles and physical copies, issue and return at the desk, overdue fines with configurable rules, and a borrowing status view for students.',
   version: '0.20.0',
   alwaysEnabled: false,
-  dependsOn: ['academic'],
+  dependsOn: ['academic', 'notices'],
   /**
    * finance, softly: a settled fine is posted when the institution keeps books
    * and simply taken when it does not. A library that refuses five rupees
    * because nobody bought the ledger is a library that has stopped working.
    */
-  softDependsOn: ['finance', 'fees'],
+  softDependsOn: ['finance', 'fees', 'attendance'],
   pricing: { model: 'not_priced_yet', priceINR: null },
 
   rolesWithAccess: [

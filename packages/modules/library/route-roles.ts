@@ -23,4 +23,11 @@ export const routeRoles: Record<string, readonly Role[]> = {
   'GET /overdue': LIBRARY,
   'GET /settings': LIBRARY,
   'PUT /settings': LIBRARY,
+  'GET /door/qr': LIBRARY,
+  'POST /door/scan': ['student'],
+  'POST /sessions/enter': LIBRARY,
+  'POST /sessions/exit': LIBRARY,
+  'GET /sessions': LIBRARY,
+  'GET /occupancy': LIBRARY,
+  'GET /sessions/mine': ['student'],
 }

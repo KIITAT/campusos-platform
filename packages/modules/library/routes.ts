@@ -5,6 +5,14 @@ import {
   borrowerStatus,
   catalogue,
   copiesOf,
+  doorCode,
+  doorScan,
+  enterSession,
+  exitSession,
+  mySessions,
+  occupancy,
+  openSessions,
+  sessionPage,
   createTitle,
   getSettings,
   issue,
@@ -57,6 +65,15 @@ export const routes: PluginRoute[] = [
     path: '/copies/status',
     handler: async (actor, req) => setCopyStatus(actor as Actor, await jsonBody(req)),
   },
+
+  // Who is inside the library (P2-22a): a door code the student scans, or the desk records it.
+  { method: 'GET', path: '/door/qr', handler: (actor) => doorCode(actor as Actor) },
+  { method: 'POST', path: '/door/scan', handler: async (actor, req) => doorScan(actor as Actor, await jsonBody(req)) },
+  { method: 'POST', path: '/sessions/enter', handler: async (actor, req) => enterSession(actor as Actor, await jsonBody(req)) },
+  { method: 'POST', path: '/sessions/exit', handler: async (actor, req) => exitSession(actor as Actor, await jsonBody(req)) },
+  { method: 'GET', path: '/sessions', handler: (actor, req) => openSessions(actor as Actor, sessionPage(req, '')) },
+  { method: 'GET', path: '/occupancy', handler: (actor) => occupancy(actor as Actor) },
+  { method: 'GET', path: '/sessions/mine', handler: (actor) => mySessions(actor as Actor) },
 
   { method: 'GET', path: '/loans', handler: (actor, req) => openLoans(actor as Actor, loanPage(req, '')) },
   {
