@@ -264,3 +264,12 @@ test('a malformed report date is a 400, not a 500', async () => {
   const c = await sales()
   await assert.rejects(() => report(c.admin, { from: '2026-13-45' }), (e: unknown) => (e as { name?: string }).name === 'ZodError')
 })
+
+test('the merge audit row names the removed lead', async () => {
+  const c = await sales()
+  const a = await createLead(c.rep, lead('Keep'))
+  const b = await createLead(c.rep, lead('Gone'))
+  await mergeLeads(c.rep, { keepId: a.id, mergeId: b.id })
+  const rows = await withTenant(c.id, async tx => (await tx.execute(sql`select reason from audit_log where action = 'lead.merged' and entity_id = ${a.id}`)).rows as { reason: string }[])
+  assert.ok(rows[0]!.reason.includes(b.id), rows[0]!.reason)
+})
