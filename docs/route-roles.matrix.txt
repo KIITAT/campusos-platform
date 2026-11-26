@@ -2,7 +2,7 @@
 # rewrite with UPDATE_MATRIX=1. Columns: S=super_admin I=institution_admin H=hod F=faculty A=accounts_staff L=library_staff O=hostel_staff s=student p=parent n=pending.
 # Last column: op = the operation also refuses every undeclared role; gate = the gate is its only role check.
 
-## academic 0.16.0
+## academic 0.17.0
 POST /api/v1/modules/academic/departments                                SI........ op
 POST /api/v1/modules/academic/programs                                   SI........ op
 POST /api/v1/modules/academic/courses                                    SI........ op
@@ -49,7 +49,7 @@ GET /api/v1/modules/academic/imports                                     SI.....
 GET /api/v1/modules/academic/imports/template                            SI........ gate
 POST /api/v1/modules/academic/imports/run                                SI........ gate
 
-## admissions 0.14.0
+## admissions 0.15.0
 GET /api/v1/modules/admissions/enquiries                                 SI........ op
 GET /api/v1/modules/admissions/applications                              SI........ op
 POST /api/v1/modules/admissions/enquiries                                SI........ op
@@ -74,7 +74,7 @@ GET /api/v1/modules/alumni/imports                                       SI.....
 GET /api/v1/modules/alumni/imports/template                              SI........ gate
 POST /api/v1/modules/alumni/imports/run                                  SI........ gate
 
-## attendance 0.21.0
+## attendance 0.22.0
 POST /api/v1/modules/attendance/scan/signed                              .......s.. op
 POST /api/v1/modules/attendance/devices/key                              .......s.. op
 GET /api/v1/modules/attendance/devices/mine                              .......s.. gate
@@ -106,7 +106,7 @@ POST /api/v1/modules/attendance/devices/approve                          SI.....
 POST /api/v1/modules/attendance/geofences                                SI........ op
 GET /api/v1/modules/attendance/me                                        .......s.. gate
 
-## care 0.15.0
+## care 0.16.0
 GET /api/v1/modules/care/home                                            .......s.. op
 GET /api/v1/modules/care/instruments                                     .......s.. gate
 GET /api/v1/modules/care/check                                           .......s.. gate
@@ -132,7 +132,7 @@ POST /api/v1/modules/care/counsellors/active                             SI.....
 POST /api/v1/modules/care/instruments                                    SI........ op
 POST /api/v1/modules/care/instruments/retire                             SI........ op
 
-## ceremonies 0.13.0
+## ceremonies 0.14.0
 GET /api/v1/modules/ceremonies/ceremonies                                SIH....... op
 POST /api/v1/modules/ceremonies/ceremonies                               SI........ op
 POST /api/v1/modules/ceremonies/ceremonies/status                        SI........ op
@@ -201,7 +201,7 @@ POST /api/v1/modules/documents/request                                   SI.....
 POST /api/v1/modules/documents/sign                                      SIHFALOsp. op
 POST /api/v1/modules/documents/close                                     SIHFALOsp. op
 
-## enrollment 0.10.0
+## enrollment 0.11.0
 POST /api/v1/modules/enrollment/register                                 SIH....s.. gate
 POST /api/v1/modules/enrollment/drop                                     SIH....s.. gate
 POST /api/v1/modules/enrollment/seats                                    SIH....... op
@@ -258,7 +258,7 @@ GET /api/v1/modules/examinations/imports                                 SIHF...
 GET /api/v1/modules/examinations/imports/template                        SIHF...... gate
 POST /api/v1/modules/examinations/imports/run                            SIHF...... gate
 
-## feedback 0.10.0
+## feedback 0.11.0
 GET /api/v1/modules/feedback/forms                                       SIH....... op
 POST /api/v1/modules/feedback/forms                                      SIH....... op
 GET /api/v1/modules/feedback/form                                        SIH....... gate
@@ -279,7 +279,7 @@ GET /api/v1/modules/feedback/give                                        .......
 POST /api/v1/modules/feedback/give                                       .......s.. op
 GET /api/v1/modules/feedback/completion                                  SIHF...s.. gate
 
-## fees 0.33.0
+## fees 0.34.0
 GET /api/v1/modules/fees/bank-accounts                                   SI..A..s.. gate
 POST /api/v1/modules/fees/bank-accounts                                  SI........ op
 POST /api/v1/modules/fees/bank-accounts/upi                              SI........ op
@@ -549,7 +549,7 @@ POST /api/v1/modules/helpdesk/cases/messages                             SIHFALO
 POST /api/v1/modules/helpdesk/cases/resolve                              SIHFALOs.. op
 POST /api/v1/modules/helpdesk/cases/reopen                               SIHFALOs.. op
 
-## hostel 0.17.0
+## hostel 0.18.0
 GET /api/v1/modules/hostel/blocks                                        SI....O... gate
 POST /api/v1/modules/hostel/blocks                                       SI....O... op
 GET /api/v1/modules/hostel/rooms                                         SI....O... op
@@ -566,12 +566,27 @@ POST /api/v1/modules/hostel/rollcall/mark                                SI....O
 GET /api/v1/modules/hostel/visitors                                      SI....O... op
 POST /api/v1/modules/hostel/visitors                                     SI....O... op
 POST /api/v1/modules/hostel/visitors/out                                 SI....O... op
+GET /api/v1/modules/hostel/presence/cases                                SI....O... op
+POST /api/v1/modules/hostel/presence/cases/resolve                       SI....O... op
+GET /api/v1/modules/hostel/presence/student                              SI....O... gate
+GET /api/v1/modules/hostel/late-stay/windows                             SI....O... op
+POST /api/v1/modules/hostel/late-stay/windows                            SI....O... op
+POST /api/v1/modules/hostel/late-stay/windows/cancel                     SI....O... op
+GET /api/v1/modules/hostel/late-stay/passes                              SI....Os.. op
+POST /api/v1/modules/hostel/late-stay/passes                             .......s.. op
+POST /api/v1/modules/hostel/late-stay/passes/decide                      SI....O... op
+GET /api/v1/modules/hostel/policy                                        SI....O... op
+PUT /api/v1/modules/hostel/policy                                        SI........ op
+POST /api/v1/modules/hostel/blocks/curfew                                SI........ op
+GET /api/v1/modules/hostel/scopes                                        SI........ op
+POST /api/v1/modules/hostel/scopes                                       SI........ op
+POST /api/v1/modules/hostel/scopes/remove                                SI........ op
 GET /api/v1/modules/hostel/me                                            SI....Os.. gate
 GET /api/v1/modules/hostel/imports                                       SI....O... gate
 GET /api/v1/modules/hostel/imports/template                              SI....O... gate
 POST /api/v1/modules/hostel/imports/run                                  SI....O... gate
 
-## hr 0.29.0
+## hr 0.30.0
 GET /api/v1/modules/hr/staff                                             SI..A..... op
 POST /api/v1/modules/hr/staff                                            SI........ op
 POST /api/v1/modules/hr/staff/end                                        SI........ op
@@ -707,13 +722,20 @@ GET /api/v1/modules/hr/imports                                           SI.....
 GET /api/v1/modules/hr/imports/template                                  SI........ gate
 POST /api/v1/modules/hr/imports/run                                      SI........ gate
 
-## library 0.20.0
+## library 0.21.0
 GET /api/v1/modules/library/record-search                                SIHF.L.s.. op
 GET /api/v1/modules/library/titles                                       SIHF.L.s.. gate
 POST /api/v1/modules/library/titles                                      SI...L.... op
 GET /api/v1/modules/library/copies                                       SIHF.L.s.. gate
 POST /api/v1/modules/library/copies                                      SI...L.... op
 POST /api/v1/modules/library/copies/status                               SI...L.... op
+GET /api/v1/modules/library/door/qr                                      SI...L.... op
+POST /api/v1/modules/library/door/scan                                   .......s.. op
+POST /api/v1/modules/library/sessions/enter                              SI...L.... op
+POST /api/v1/modules/library/sessions/exit                               SI...L.... op
+GET /api/v1/modules/library/sessions                                     SI...L.... op
+GET /api/v1/modules/library/occupancy                                    SI...L.... op
+GET /api/v1/modules/library/sessions/mine                                .......s.. op
 GET /api/v1/modules/library/loans                                        SI...L.... op
 POST /api/v1/modules/library/loans/issue                                 SI...L.... op
 POST /api/v1/modules/library/loans/return                                SI...L.... op
@@ -749,7 +771,7 @@ GET /api/v1/modules/mentoring/imports                                    SIH....
 GET /api/v1/modules/mentoring/imports/template                           SIH....... gate
 POST /api/v1/modules/mentoring/imports/run                               SIH....... gate
 
-## notices 0.18.0
+## notices 0.19.0
 GET /api/v1/modules/notices/board                                        SIHFALOsp. gate
 POST /api/v1/modules/notices/board                                       SIHFALO... op
 POST /api/v1/modules/notices/board/publish                               SIHFALO... op
@@ -780,7 +802,7 @@ POST /api/v1/modules/parents/guardians/withdraw                          SI.....
 GET /api/v1/modules/parents/children                                     SI......p. gate
 GET /api/v1/modules/parents/child                                        SI......p. gate
 
-## placement 0.15.0
+## placement 0.16.0
 GET /api/v1/modules/placement/workspace                                  SI.....s.. op
 GET /api/v1/modules/placement/statistics                                 SI........ op
 POST /api/v1/modules/placement/officers                                  SI........ op
@@ -826,7 +848,7 @@ POST /api/v1/modules/projects/costings                                   SI..A..
 POST /api/v1/modules/projects/costings/reverse                           SI..A..... op
 GET /api/v1/modules/projects/profitability                               SI..A..... op
 
-## quizzes 0.10.0
+## quizzes 0.11.0
 GET /api/v1/modules/quizzes/courses                                      SIHF...... op
 GET /api/v1/modules/quizzes/questions                                    SIHF...... gate
 POST /api/v1/modules/quizzes/questions                                   SIHF...... op
@@ -850,7 +872,7 @@ POST /api/v1/modules/quizzes/attempts/submit                             .......
 GET /api/v1/modules/quizzes/attempt                                      SIHF...s.. gate
 POST /api/v1/modules/quizzes/responses/override                          SIHF...... op
 
-## reports 0.6.0
+## reports 0.7.0
 GET /api/v1/modules/reports/datasets                                     SI........ op
 GET /api/v1/modules/reports/reports                                      SIHFALO... op
 GET /api/v1/modules/reports/reports/detail                               SIHFALO... op
@@ -876,7 +898,7 @@ POST /api/v1/modules/skills/assess                                       SIHF...
 POST /api/v1/modules/skills/self-assess                                  .......s.. op
 GET /api/v1/modules/skills/coverage                                      SIHF...... op
 
-## timetable 0.12.0
+## timetable 0.13.0
 GET /api/v1/modules/timetable/settings                                   SIHF...... op
 POST /api/v1/modules/timetable/settings                                  SI........ op
 GET /api/v1/modules/timetable/periods                                    SIHF...... op
