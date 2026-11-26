@@ -349,7 +349,10 @@ export async function noteOwed(tx: Tx, termId: string, studentIds: string[]) {
 /**
  * A waiver granted, revised or revoked moves one line of what the invoice asks
  * for: the line's due-date key falls by the amount newly posted (negative when
- * a waiver is taken back), and nothing else changes. Not read from the price
+ * a waiver is taken back), and nothing else changes. The key is not floored at
+ * zero: a waiver above what the invoice asks at that date (a corrected line not
+ * yet issued) leaves it negative, which is what the books say, so that a
+ * revoke restores it exactly (fix verification 5 HIGH 1). Not read from the price
  * list: a category or batch correction that has not been issued is not owed yet,
  * whatever a waiver on the corrected line does (fix verification 4 HIGH 1).
  */
@@ -359,7 +362,7 @@ async function noteWaiver(tx: Tx, studentId: string, feeItemId: string, deltaPai
     update fee_invoices i
        set owed_at = array_append(i.owed_at, now()),
            owed_dues = array_append(i.owed_dues, coalesce(i.owed_dues[cardinality(i.owed_dues)], '{}'::jsonb)
-             || jsonb_build_object(k.key, greatest(coalesce((i.owed_dues[cardinality(i.owed_dues)] ->> k.key)::bigint, 0) - ${deltaPaise}::bigint, 0)))
+             || jsonb_build_object(k.key, coalesce((i.owed_dues[cardinality(i.owed_dues)] ->> k.key)::bigint, 0) - ${deltaPaise}::bigint))
       from k
      where i.student_id = ${studentId} and i.voided_at is null
        and i.term_id = (select f.term_id from fee_items f where f.id = ${feeItemId}::uuid)`)

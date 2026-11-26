@@ -19,6 +19,8 @@
 -- counts at every instalment day (the key 'undated'): the most a late fee could
 -- be judged on (a rule never reaches back before the day it was made). The
 -- UPDATE reads each invoice's lines, so it runs with no statement timeout.
+-- That UPDATE holds the table's exclusive lock (taken by the ALTER above) for about
+-- 30 seconds at 30,000 invoices: run this upgrade in a quiet window.
 --
 -- Rollback (forward-only; decision 162): restore the pre-upgrade backup with
 -- the previous fees version. Otherwise a later migration that, after checking
@@ -68,6 +70,7 @@ ALTER TABLE "fee_invoices" ADD CONSTRAINT "fee_invoices_versions" CHECK (cardina
 -- instalment is the sum of the keys up to its day, plus 'undated'.
 ALTER TABLE "fee_invoices" ADD COLUMN "owed_at" timestamp with time zone[] NOT NULL DEFAULT '{}';--> statement-breakpoint
 ALTER TABLE "fee_invoices" ADD COLUMN "owed_dues" jsonb[] NOT NULL DEFAULT '{}';--> statement-breakpoint
+-- A voided invoice gets a second, empty entry at voided_at: it owes nothing from the day it was voided.
 -- One entry per invoice at issued_at, per due date: before this migration a fee line has no batch
 -- or category and is unique per programme, term and label, so what the invoice asked for is the
 -- student's declared programmes' lines for the term (the filter of priceListSql), each less the
@@ -95,7 +98,10 @@ WITH "calc" AS (SELECT i."id",
                            SELECT 'undated', c."amount_paise" FROM "fee_student_charges" c
                             WHERE c."student_id" = i."student_id" AND c."term_id" = i."term_id" AND c."cancelled_at" IS NULL) u
                     GROUP BY u."k") g) d)
-UPDATE "fee_invoices" i SET "owed_at" = ARRAY[i."issued_at"], "owed_dues" = ARRAY[calc."dues"] FROM "calc" WHERE calc."id" = i."id";--> statement-breakpoint
+UPDATE "fee_invoices" i SET
+  "owed_at" = CASE WHEN i."voided_at" IS NULL THEN ARRAY[i."issued_at"] ELSE ARRAY[i."issued_at", i."voided_at"] END,
+  "owed_dues" = CASE WHEN i."voided_at" IS NULL THEN ARRAY[calc."dues"] ELSE ARRAY[calc."dues", '{}'::jsonb] END
+  FROM "calc" WHERE calc."id" = i."id";--> statement-breakpoint
 ALTER TABLE "fee_invoices" ADD CONSTRAINT "fee_invoices_owed" CHECK (cardinality(owed_at) = cardinality(owed_dues));--> statement-breakpoint
 CREATE UNIQUE INDEX "fee_late_fees_slab" ON "fee_late_fees" USING btree ("term_id","after_days");--> statement-breakpoint
 CREATE POLICY "fee_late_fees_tenant_isolation" ON "fee_late_fees" AS PERMISSIVE FOR ALL TO "campusos_app" USING (institution_id = nullif(current_setting('app.institution_id', true), '')::uuid) WITH CHECK (institution_id = nullif(current_setting('app.institution_id', true), '')::uuid);
