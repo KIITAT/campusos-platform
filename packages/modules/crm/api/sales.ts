@@ -87,6 +87,8 @@ export function parseCsv(text: string): Record<string, string>[] {
  * was given a lead longest ago. No such team means the caller keeps the lead.
  */
 export async function nextOwner(tx: Tx, institutionId: string, teamId?: string): Promise<string | null> {
+  // One lock per institution, held to the end of the caller's transaction: parallel captures read each other's assignments.
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'crm.rr:' + institutionId}))`)
   const rows = (await tx.execute(sql`
     select m.user_id from crm_team_members m
       join crm_teams t on t.institution_id = m.institution_id and t.id = m.team_id
