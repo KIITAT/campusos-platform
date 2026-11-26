@@ -174,7 +174,7 @@ export async function forecast(actor: Actor) {
   })
 }
 
-export const reportSchema = z.object({ from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() })
+export const reportSchema = z.object({ from: z.iso.date().optional(), to: z.iso.date().optional() })
 /** Team performance: per owner, what is open, what was won and lost in the period, the win rate and the days a win took. Plus why deals were lost. */
 export async function report(actor: Actor, input: unknown = {}) {
   const institutionId = tenant(actor)
@@ -247,7 +247,7 @@ export async function mergeLeads(actor: Actor, input: unknown) {
       from crm_leads g where k.id = ${keep.id}::uuid and g.id = ${gone.id}::uuid`)
     await tx.delete(leads).where(and(eq(leads.id, gone.id), inArray(leads.status, ['open'])))
     await trail(tx, institutionId, keep.id, actor.id, 'Merged with a duplicate lead')
-    await log(tx, actor, 'lead.merged', keep.id, 'Duplicate lead merged')
+    await log(tx, actor, 'lead.merged', keep.id, `Duplicate lead ${gone.id} merged into this one`)
     return result(keep.id, 'Merged.')
   })
 }
