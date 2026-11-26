@@ -13,7 +13,6 @@ import {
   markRead,
   noticeView,
   notify,
-  preferences,
   publishNotice,
   preferences,
   readNotice,
