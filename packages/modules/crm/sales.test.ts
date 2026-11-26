@@ -229,3 +229,15 @@ test('NEW-260: parallel captures on a round-robin team spread over its members',
   assert.equal(owners.filter(o => o === c.rep.id).length, 2, owners.join())
   assert.equal(owners.filter(o => o === c.rep2.id).length, 2, owners.join())
 })
+
+test('NEW-261: the report counts a win by the institution day (IST), not the UTC day', async () => {
+  const c = await sales()
+  const l = await createLead(c.rep, lead('Late win', { kind: 'opportunity', expectedValue: '1000' }))
+  await markWon(c.rep, { leadId: l.id })
+  // 00:30 IST on 1 April 2026 is 19:00 UTC on 31 March.
+  await withTenant(c.id, tx => tx.execute(sql`update crm_leads set closed_at = '2026-03-31T19:00:00Z' where id = ${l.id}::uuid`))
+  const april = await report(c.admin, { from: '2026-04-01', to: '2026-04-30' })
+  const march = await report(c.admin, { from: '2026-03-01', to: '2026-03-31' })
+  assert.equal(april.won, 1)
+  assert.equal(march.won, 0)
+})
