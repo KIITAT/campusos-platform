@@ -134,11 +134,14 @@ export async function requestPass(actor: Actor, input: unknown, now = new Date()
     if (!home) throw new HostelError(400, 'not_housed', 'you do not have a bed in the hostel')
 
     const zone = await zoneIn(tx, tenant)
-    const night = await nightOf(tx, now, zone)
     const p = await loadPolicy(tx, tenant)
+    // The night still running, unless no pass can end in it any more: then the request is for the coming night.
+    let night = await nightOf(tx, now, zone)
+    if ((await localInstant(tx, await addDays(tx, night, 1), p.latePassLatestTime, zone)).getTime() <= now.getTime()) night = await addDays(tx, night, 1)
     const untilAt = await localInstant(tx, d.nextDay ? await addDays(tx, night, 1) : night, d.untilTime, zone)
     const latest = await localInstant(tx, await addDays(tx, night, 1), p.latePassLatestTime, zone)
     if (untilAt.getTime() > latest.getTime()) throw new HostelError(409, 'late_pass_too_late', 'that time is past the latest allowed')
+    if (untilAt.getTime() <= now.getTime()) throw new HostelError(400, 'pass_not_later', 'the pass must end in the future')
     if (untilAt.getTime() <= (await curfewOf(tx, tenant, home.block_id, night, zone)).getTime()) {
       throw new HostelError(400, 'pass_not_later', "the pass must end after tonight's curfew")
     }
@@ -149,7 +152,7 @@ export async function requestPass(actor: Actor, input: unknown, now = new Date()
       insert into hostel_late_passes (institution_id, student_id, night, until_at, reason, requested_by)
       values (${tenant}, ${actor.id}, ${night}::date, ${untilAt.toISOString()}::timestamptz, ${d.reason}, ${actor.id})
       on conflict (student_id, night) where status in ('requested', 'approved') do nothing
-      returning id, night::text as night, until_at as "untilAt", status`)).rows as { id: string; status: string }[]
+      returning id, night::text as night, until_at as "untilAt", status`)).rows as { id: string; night: string; untilAt: Date | string; status: string }[]
     if (!row) throw new HostelError(409, 'late_pass_exists', 'a late pass is already open for tonight')
     return row
   })
