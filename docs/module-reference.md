@@ -7,32 +7,32 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 
 | Module | Version | Pages | API routes | Dependencies |
 |---|---|---:|---:|---|
-| [Academic Core](#academic) | 0.16.0 | 8 | 45 | None |
-| [Admissions](#admissions) | 0.14.0 | 3 | 9 | academic |
+| [Academic Core](#academic) | 0.17.0 | 8 | 45 | None |
+| [Admissions](#admissions) | 0.15.0 | 3 | 9 | academic |
 | [Alumni and events](#alumni) | 0.5.0 | 4 | 12 | None |
-| [Attendance & QR](#attendance) | 0.21.0 | 8 | 30 | academic, notices |
-| [Student Care](#care) | 0.15.0 | 7 | 24 | academic, notices |
-| [Ceremonies](#ceremonies) | 0.13.0 | 6 | 23 | academic |
-| [Sales CRM](#crm) | 0.13.0 | 4 | 32 | finance, notices |
+| [Attendance & QR](#attendance) | 0.22.0 | 8 | 30 | academic, notices |
+| [Student Care](#care) | 0.16.0 | 7 | 24 | academic, notices |
+| [Ceremonies](#ceremonies) | 0.14.0 | 6 | 23 | academic |
+| [Sales CRM](#crm) | 0.14.0 | 4 | 32 | finance, notices |
 | [Documents](#documents) | 0.1.0 | 1 | 8 | None |
-| [Enrollment](#enrollment) | 0.10.0 | 3 | 9 | academic |
+| [Enrollment](#enrollment) | 0.11.0 | 3 | 9 | academic |
 | [Examinations & Grading](#examinations) | 0.34.0 | 11 | 44 | academic, notices |
-| [Feedback](#feedback) | 0.10.0 | 8 | 19 | academic |
-| [Fees & Finance](#fees) | 0.33.0 | 12 | 49 | academic, finance, notices |
+| [Feedback](#feedback) | 0.11.0 | 8 | 19 | academic |
+| [Fees & Finance](#fees) | 0.34.0 | 12 | 49 | academic, finance, notices |
 | [Finance & Books](#finance) | 0.22.0 | 92 | 208 | None |
 | [Helpdesk and grievance](#helpdesk) | 0.5.0 | 2 | 7 | None |
-| [Hostel](#hostel) | 0.17.0 | 5 | 20 | academic |
-| [HR & Payroll](#hr) | 0.29.0 | 18 | 134 | finance, notices |
-| [Library](#library) | 0.20.0 | 5 | 19 | academic |
+| [Hostel](#hostel) | 0.18.0 | 8 | 35 | academic, notices |
+| [HR & Payroll](#hr) | 0.30.0 | 18 | 134 | finance, notices |
+| [Library](#library) | 0.21.0 | 7 | 26 | academic, notices |
 | [Mentoring](#mentoring) | 0.34.0 | 6 | 19 | academic, notices |
-| [Communication & Notices](#notices) | 0.18.0 | 4 | 14 | academic |
+| [Communication & Notices](#notices) | 0.19.0 | 4 | 14 | academic |
 | [Parent Portal](#parents) | 0.34.0 | 4 | 13 | academic |
-| [Placement](#placement) | 0.15.0 | 8 | 15 | academic, notices |
+| [Placement](#placement) | 0.16.0 | 8 | 15 | academic, notices |
 | [Projects and timesheets](#projects) | 0.5.0 | 6 | 27 | finance |
-| [Quizzes](#quizzes) | 0.10.0 | 7 | 22 | academic |
-| [Reports](#reports) | 0.6.0 | 5 | 10 | notices |
+| [Quizzes](#quizzes) | 0.11.0 | 7 | 22 | academic |
+| [Reports](#reports) | 0.7.0 | 5 | 10 | notices |
 | [Skills](#skills) | 0.5.0 | 5 | 12 | None |
-| [Timetable](#timetable) | 0.12.0 | 12 | 42 | academic |
+| [Timetable](#timetable) | 0.13.0 | 12 | 42 | academic |
 | [Transport](#transport) | 0.8.0 | 4 | 14 | None |
 
 <a id="academic"></a>
@@ -503,8 +503,8 @@ Source: `campusos-platform/packages/modules/examinations/`.
 | `GET /api/v1/modules/examinations/grade-report.pdf` | A term’s grade report from the official record, with SGPA and CGPA (binary response) | `termId` (query), `studentId` (query) |
 | `POST /api/v1/modules/examinations/report-card/template` | Save a class’s school report template for a term (administrators) | `termId`, `programId`, `expectedRevision`, `template` |
 | `POST /api/v1/modules/examinations/report-card/entry` | Set one area’s grade, or the remark, on a pupil’s school report (the class teacher or an administrator) | `termId`, `sectionId`, `studentId`, `area`, `value` |
-| `POST /api/v1/modules/examinations/report-card/publication` | Publish, withdraw or reissue a pupil’s school report, with a reason (the class teacher or an administrator) | `termId`, `sectionId`, `studentId`, `published`, `reason`, `republish`, `expectedVersion` |
-| `GET /api/v1/modules/examinations/report-card.pdf` | The issued school term report as a PDF (binary response) | `termId` (query), `sectionId` (query), `studentId` (query) |
+| `POST /api/v1/modules/examinations/report-card/publication` | Publish or withdraw a pupil’s school report, with a reason (the class teacher or an administrator) | `termId`, `sectionId`, `studentId`, `published`, `reason` |
+| `GET /api/v1/modules/examinations/report-card.pdf` | A published school term report as a PDF, read live from the published marks (binary response) | `termId` (query), `sectionId` (query), `studentId` (query) |
 | `POST /api/v1/modules/examinations/papers` | Upload a question paper (PDF), sealed until shortly before the exam | `examId`, `paper` |
 | `GET /api/v1/modules/examinations/papers` | The sealed question papers for an exam, without their contents | `examId` (query) |
 | `GET /api/v1/modules/examinations/paper.pdf` | A question paper, for the examination cell, from its release time (binary response) | `paperId` (query) |
@@ -1007,6 +1007,9 @@ Source: `campusos-platform/packages/modules/hostel/`.
 | `/m/hostel` | Hostel | institution_admin, super_admin, hostel_staff |
 | `/m/hostel/rollcall` | Roll call | institution_admin, super_admin, hostel_staff |
 | `/m/hostel/visitors` | Visitors | institution_admin, super_admin, hostel_staff |
+| `/m/hostel/presence` | Curfew cases | institution_admin, super_admin, hostel_staff |
+| `/m/hostel/late-stay` | Late stay | institution_admin, super_admin, hostel_staff, student |
+| `/m/hostel/wardens` | Wardens and curfew | institution_admin, super_admin |
 | `/m/hostel/me` | My hostel | student |
 | `/m/hostel/import` | Import from CSV | hostel_staff, institution_admin, super_admin |
 
@@ -1030,10 +1033,30 @@ Source: `campusos-platform/packages/modules/hostel/`.
 | `GET /api/v1/modules/hostel/visitors` | The gate register, newest first, a page at a time | See runtime OpenAPI schema |
 | `POST /api/v1/modules/hostel/visitors` | Sign a visitor in | `blockId`, `studentId`, `name`, `phone`, `relation`, `purpose` |
 | `POST /api/v1/modules/hostel/visitors/out` | Sign a visitor out | `visitorId` |
+| `GET /api/v1/modules/hostel/presence/cases` | Curfew cases, open by default (?resolved=1 for resolved ones), newest first, a page at a time | See runtime OpenAPI schema |
+| `POST /api/v1/modules/hostel/presence/cases/resolve` | Resolve a case by hand: verified in person, or closed with a note. Audited. | `caseId`, `resolution`, `note` |
+| `GET /api/v1/modules/hostel/presence/student` | One resident's presence, recent cases and log, and emergency contact. Reading it is logged as a sensitive read. | See runtime OpenAPI schema |
+| `GET /api/v1/modules/hostel/late-stay/windows` | Late-stay windows | See runtime OpenAPI schema |
+| `POST /api/v1/modules/hostel/late-stay/windows` | Move curfew for a block or all blocks on given nights (administrators or a chief warden) | `blockId`, `fromOn`, `toOn`, `untilTime`, `reason` |
+| `POST /api/v1/modules/hostel/late-stay/windows/cancel` | Cancel a late-stay window | `windowId` |
+| `GET /api/v1/modules/hostel/late-stay/passes` | Late-stay passes (a resident sees their own) | See runtime OpenAPI schema |
+| `POST /api/v1/modules/hostel/late-stay/passes` | A resident asks for tonight's late-stay pass | `untilTime`, `nextDay`, `reason` |
+| `POST /api/v1/modules/hostel/late-stay/passes/decide` | Approve or refuse a late-stay pass; the resident is told | `passId`, `decision` |
+| `GET /api/v1/modules/hostel/policy` | The curfew and ladder policy, or the defaults | See runtime OpenAPI schema |
+| `PUT /api/v1/modules/hostel/policy` | Set the curfew and ladder policy (administrators). Reason mandatory and audited. | `curfewTime`, `nudgeAfterMin`, `wardenAfterMin`, `womensWardenAfterMin`, `guardianAfterMin`, `walkBackMin`, `caseWindowHours`, `latePassLatestTime`, `notifyWardenOnLibraryEntry`, `presenceRetentionDays`, `reason` |
+| `POST /api/v1/modules/hostel/blocks/curfew` | Set one block's own curfew, or null to follow the institution's (administrators) | `blockId`, `curfewTime` |
+| `GET /api/v1/modules/hostel/scopes` | Warden scopes (administrators) | See runtime OpenAPI schema |
+| `POST /api/v1/modules/hostel/scopes` | Give a hostel staff member a floor, block, chief or estate scope (administrators) | `userId`, `level`, `blockId`, `floor` |
+| `POST /api/v1/modules/hostel/scopes/remove` | Remove a warden scope (administrators) | `scopeId` |
 | `GET /api/v1/modules/hostel/me` | Where a student lives, who with, and their recent nights | See runtime OpenAPI schema |
 | `GET /api/v1/modules/hostel/imports` | What this module can import from CSV, with each file’s columns | See runtime OpenAPI schema |
 | `GET /api/v1/modules/hostel/imports/template` | A CSV template: the header and one example row (binary response) | `id` (query) |
 | `POST /api/v1/modules/hostel/imports/run` | Check a CSV file, or with apply import it: all rows or none | `importId`, `file`, `csv`, `apply` |
+
+### Background jobs
+
+- `hostel.consume-library-events`: explicitly queued; roles institution_admin, super_admin, hostel_staff.
+- `hostel.curfew-sweep`: explicitly queued; roles institution_admin, super_admin, hostel_staff.
 
 <a id="hr"></a>
 ## HR & Payroll
@@ -1220,6 +1243,8 @@ Source: `campusos-platform/packages/modules/library/`.
 | `/m/library` | Library desk | institution_admin, super_admin, library_staff |
 | `/m/library/catalogue` | Catalogue | institution_admin, super_admin, library_staff, faculty, student |
 | `/m/library/overdue` | Overdue | institution_admin, super_admin, library_staff |
+| `/m/library/door` | Door code | institution_admin, super_admin, library_staff |
+| `/m/library/inside` | Inside now | institution_admin, super_admin, library_staff |
 | `/m/library/me` | My library | student, faculty |
 | `/m/library/import` | Import from CSV | library_staff, institution_admin, super_admin |
 
@@ -1233,6 +1258,13 @@ Source: `campusos-platform/packages/modules/library/`.
 | `GET /api/v1/modules/library/copies` | The physical copies of one title, with who holds each | See runtime OpenAPI schema |
 | `POST /api/v1/modules/library/copies` | Add copies of a title, one accession number each | `titleId`, `accessionNos`, `shelf`, `replacement` |
 | `POST /api/v1/modules/library/copies/status` | Withdraw a copy, write it off as lost, or return it to service | `copyId`, `status`, `reason` |
+| `GET /api/v1/modules/library/door/qr` | The library door code for the screen at the door, rotating every 20 seconds (needs the Attendance module) | See runtime OpenAPI schema |
+| `POST /api/v1/modules/library/door/scan` | A student scans the door code to enter or leave. Outside opening hours (less 15 minutes before opening) the answer is library_closed. | `code`, `direction` |
+| `POST /api/v1/modules/library/sessions/enter` | Desk entry: record a student walking in, at any hour. Idempotent while they are inside. | `studentId` |
+| `POST /api/v1/modules/library/sessions/exit` | Desk exit: record a student leaving | `studentId` |
+| `GET /api/v1/modules/library/sessions` | Who is inside now, newest first, a page at a time | See runtime OpenAPI schema |
+| `GET /api/v1/modules/library/occupancy` | How many are inside now | See runtime OpenAPI schema |
+| `GET /api/v1/modules/library/sessions/mine` | A student's own recent visits and whether they are inside | See runtime OpenAPI schema |
 | `GET /api/v1/modules/library/loans` | Everything currently out, soonest due first, a page at a time | See runtime OpenAPI schema |
 | `POST /api/v1/modules/library/loans/issue` | Issue a copy to a borrower | `copyId`, `accessionNo`, `borrowerId` |
 | `POST /api/v1/modules/library/loans/return` | Take a copy back and settle the fine | `copyId`, `accessionNo`, `markLost` |
@@ -1241,11 +1273,15 @@ Source: `campusos-platform/packages/modules/library/`.
 | `POST /api/v1/modules/library/fines/settle` | Record how a fine was paid: cash, UPI, bank transfer, or moved to the student's fee account | `loanId`, `method` |
 | `GET /api/v1/modules/library/status` | One borrower's open loans, history, fines and whether they may borrow | See runtime OpenAPI schema |
 | `GET /api/v1/modules/library/overdue` | Loans past their due date, longest overdue first, a page at a time; the fine total covers all of them | See runtime OpenAPI schema |
-| `GET /api/v1/modules/library/settings` | Circulation rules in force, or the built-in defaults | See runtime OpenAPI schema |
-| `PUT /api/v1/modules/library/settings` | Set the circulation rules. Reason mandatory and audited. | `loanDays`, `graceDays`, `finePerDay`, `maxConcurrentLoans`, `maxRenewals`, `maxFine`, `blockAtOutstanding`, `reason` |
+| `GET /api/v1/modules/library/settings` | Circulation rules in force, or the built-in defaults, with door hours and presence timings | See runtime OpenAPI schema |
+| `PUT /api/v1/modules/library/settings` | Set the circulation rules. Reason mandatory and audited. | `loanDays`, `graceDays`, `finePerDay`, `maxConcurrentLoans`, `maxRenewals`, `maxFine`, `blockAtOutstanding`, `opensAt`, `closesAt`, `closingReminderMin`, `autoCloseAfterMin`, `presenceRetentionDays`, `reason` |
 | `GET /api/v1/modules/library/imports` | What this module can import from CSV, with each file’s columns | See runtime OpenAPI schema |
 | `GET /api/v1/modules/library/imports/template` | A CSV template: the header and one example row (binary response) | `id` (query) |
 | `POST /api/v1/modules/library/imports/run` | Check a CSV file, or with apply import it: all rows or none | `importId`, `file`, `csv`, `apply` |
+
+### Background jobs
+
+- `library.closing-sweep`: explicitly queued; roles institution_admin, super_admin, library_staff.
 
 <a id="mentoring"></a>
 ## Mentoring
