@@ -1,7 +1,7 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { like } from 'drizzle-orm'
-import { authDb, institutions, users } from '@campusos/db'
+import { and, eq, like } from 'drizzle-orm'
+import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
 import { authorizeRoute } from '@campusos/module-framework'
 import { closePeriod, createParty, saveOrder, setApprovalRule, setSingleOfficer, createItem, type Actor } from './api'
 import { plugin } from './plugin'
@@ -86,6 +86,26 @@ test('the approvals feed lists a waiting draft with its party and refuses a stud
 test('the manifest declares the feed, its screen and the records whose history may be served', () => {
   assert.deepEqual(plugin.manifest.approvals, { route: '/approvals/feed', href: '/m/finance/approvals' })
   const entities = plugin.manifest.auditEntities ?? []
-  assert.ok(entities.some((e) => e.entity === 'finance_party' && e.roles.includes('accounts_staff') && !e.roles.includes('student')))
+  assert.ok(entities.some((e) => e.entity === 'finance_periods' && e.roles.includes('accounts_staff') && !e.roles.includes('student')))
   assert.ok(entities.every((e) => !e.roles.includes('pending')))
+})
+
+test('a declared record kind is one finance really audits: change a period and read its trail back', async () => {
+  const b = await books()
+  const d = new Date()
+  d.setUTCDate(1)
+  d.setUTCMonth(d.getUTCMonth() - 1)
+  const period = await closePeriod(b.admin, { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 })
+  const declared = (plugin.manifest.auditEntities ?? []).map((e) => e.entity)
+  assert.ok(declared.length > 0)
+  // The host serves a trail by (entity, id) from audit_log: every declared kind must have rows there.
+  const rows = await withTenant(b.id, (tx) =>
+    tx.select({ action: auditLog.action }).from(auditLog).where(and(eq(auditLog.entity, 'finance_periods'), eq(auditLog.entityId, period.id), eq(auditLog.moduleId, 'finance'))),
+  )
+  assert.ok(declared.includes('finance_periods'))
+  assert.deepEqual(rows.map((r) => r.action), ['period.closed'])
+  // The old master-data kinds were never written anywhere, so none may be declared.
+  for (const dead of ['finance_party', 'finance_item', 'finance_bank_account', 'finance_rfq', 'finance_supplier_quotation']) {
+    assert.ok(!declared.includes(dead), dead)
+  }
 })
