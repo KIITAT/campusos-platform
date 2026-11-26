@@ -9,7 +9,7 @@ import { loadPolicy } from './policy'
 import { derivePresence, curfewEvidence, ladderDue, type Evidence, type Step } from './presence-rules'
 import { literal, loadFacts } from './presence'
 import { HostelError, requireWarden, type Actor } from './operations'
-import { homesOf, recipientsAt, recipientsFor, type Home } from './wardens'
+import { homesOf, recipientsAt, type Home } from './wardens'
 
 type Tx = Parameters<Parameters<typeof withTenant>[1]>[0]
 
