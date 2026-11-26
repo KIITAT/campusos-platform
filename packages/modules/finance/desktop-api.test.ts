@@ -2,6 +2,7 @@ import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { and, eq, like } from 'drizzle-orm'
 import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
+import { fiscalYears, periods } from './schema'
 import { authorizeRoute } from '@campusos/module-framework'
 import { closePeriod, createParty, saveOrder, setApprovalRule, setSingleOfficer, createItem, type Actor } from './api'
 import { plugin } from './plugin'
@@ -108,4 +109,17 @@ test('a declared record kind is one finance really audits: change a period and r
   for (const dead of ['finance_party', 'finance_item', 'finance_bank_account', 'finance_rfq', 'finance_supplier_quotation']) {
     assert.ok(!declared.includes(dead), dead)
   }
+})
+
+test('a month that is open but lies inside a closed fiscal year is reported as locked', async () => {
+  const b = await books()
+  await withTenant(b.id, async (tx) => {
+    await tx.insert(fiscalYears).values({ institutionId: b.id, label: '2020-21', startsOn: '2020-04-01', endsOn: '2021-03-31', status: 'closed', closedAt: new Date() })
+    await tx.insert(periods).values([
+      { institutionId: b.id, year: 2020, month: 6, status: 'open' },
+      { institutionId: b.id, year: 2022, month: 6, status: 'open' },
+    ])
+  })
+  const rows = (await route('/periods').handler(b.staff, new Request('http://x/periods'))) as { year: number; locked: boolean }[]
+  assert.deepEqual(rows.map((r) => [r.year, r.locked]), [[2020, true], [2022, false]])
 })

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { like } from 'drizzle-orm'
 import { authDb, institutions, users } from '@campusos/db'
 import { authorizeRoute } from '@campusos/module-framework'
-import { createTerm, setCurrentTerm, type Actor } from './api'
+import { createTerm, listYears, setCurrentTerm, type Actor } from './api'
 import { plugin } from './plugin'
 
 /** P2-23 (W5): the terms an institution keeps, as the desktop's year selector reads them. */
@@ -38,4 +38,10 @@ test('years lists terms newest first and marks the current one', async () => {
   assert.equal(authorizeRoute(plugin.manifest, route, 'student'), 'allow')
   assert.equal(authorizeRoute(plugin.manifest, route, 'parent'), 'deny')
   assert.deepEqual(plugin.manifest.academicYears, { route: '/years' })
+})
+
+test('listYears keeps its own role check for in-process callers', async () => {
+  const [i] = await authDb.insert(institutions).values({ slug: `${SLUG}b`, name: 'Years B', allowedEmailDomains: ['yearsb.test'] }).returning({ id: institutions.id })
+  const parent: Actor = { id: 'p', email: 'p@yearsb.test', role: 'parent', institutionId: i!.id }
+  await assert.rejects(() => listYears(parent), { status: 403 })
 })

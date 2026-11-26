@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { users, withTenant } from '@campusos/db'
-import type { Role, ViewerScope } from '@campusos/module-framework'
+import { ADMIN, TEACHING, type Role, type ViewerScope } from '@campusos/module-framework'
 import {
   courses,
   departments,
@@ -187,6 +187,7 @@ export async function createTerm(actor: Actor, input: unknown) {
  * the closest thing there is. Who may ask is the route's role table.
  */
 export async function listYears(actor: Actor) {
+  if (![...ADMIN, ...TEACHING, 'student'].includes(actor.role)) throw new AcademicError(403, 'forbidden', 'not permitted')
   if (!actor.institutionId) throw new AcademicError(400, 'no_institution', 'no institution for this session')
   const rows = await withTenant(actor.institutionId, (tx) =>
     tx.select({ id: terms.id, label: terms.name, current: terms.isCurrent }).from(terms).orderBy(desc(terms.startsOn), desc(terms.code)),
