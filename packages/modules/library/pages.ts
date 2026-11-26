@@ -3,8 +3,15 @@ import { param, type PluginPage } from '@campusos/module-framework'
 import {
   borrowerStatus,
   catalogue,
+  LibraryError,
   copiesOf,
+  doorCode,
+  encodeQr,
   getSettings,
+  mySessions,
+  occupancy,
+  openSessions,
+  sessionPage,
   loanPage,
   titlePage,
   openLoans,
@@ -292,6 +299,81 @@ export const pages: PluginPage[] = [
   },
 
   {
+    path: '/door',
+    title: 'Door code',
+    menu: 'Door code',
+    roles: [...DESK],
+    async load(actor) {
+      try {
+        const qr = await doorCode(actor as Actor)
+        return { available: true, code: encodeQr(qr), seconds: Math.max(1, Math.ceil(qr.expiresInMs / 1000)) }
+      } catch (e) {
+        if (e instanceof LibraryError && e.code === 'door_scan_unavailable') return { available: false, code: '', seconds: 0 }
+        throw e
+      }
+    },
+    sections: (data) => [
+      data.available
+        ? {
+            kind: 'qr' as const,
+            title: 'Library door',
+            value: String(data.code),
+            caption: 'Students scan this with the library page on their phone, choosing in or out. It changes every 20 seconds: reload this page for a fresh code.',
+          }
+        : {
+            kind: 'note' as const,
+            text: 'Door scan needs the Attendance module, which is not enabled here. Record entries and exits at the desk on the Inside now page.',
+          },
+    ],
+  },
+
+  {
+    path: '/inside',
+    title: 'Inside now',
+    menu: 'Inside now',
+    roles: [...DESK],
+    async load(actor, req) {
+      const a = actor as Actor
+      const [now, head] = await Promise.all([openSessions(a, sessionPage(req, 'inside')), occupancy(a)])
+      return {
+        inside: now.rows.map((r) => ({ ...r, enteredAt: r.enteredAt.toISOString(), who: r.name, how: r.entryMethod === 'door_qr' ? 'door code' : 'desk' })),
+        insidePage: { total: now.total, next: now.next },
+        count: head.inside,
+      }
+    },
+    sections: (data) => [
+      { kind: 'figures', figures: [{ label: 'Inside now', value: String(data.count) }] },
+      {
+        kind: 'table',
+        title: 'Inside',
+        rows: 'inside',
+        paging: { data: 'insidePage', sorts: ['entered'] },
+        empty: 'Nobody is recorded as inside.',
+        columns: [
+          { key: 'who', label: 'Student' },
+          { key: 'enteredAt', label: 'In', kind: 'when' },
+          { key: 'how', label: 'How' },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Record an entry',
+        note: 'For a student without a phone, or when the door code is not used. Allowed at any hour.',
+        submit: 'Enter',
+        path: '/sessions/enter',
+        fields: [{ name: 'studentId', label: 'Student', hint: 'Their id' }],
+      },
+      {
+        kind: 'form',
+        title: 'Record an exit',
+        submit: 'Exit',
+        path: '/sessions/exit',
+        fields: [{ name: 'studentId', label: 'Student', hint: 'Their id' }],
+      },
+    ],
+  },
+
+  {
     path: '/me',
     title: 'My library',
     menu: 'My library',
@@ -299,7 +381,11 @@ export const pages: PluginPage[] = [
     async load(actor) {
       const a = actor as Actor
       const s = await borrowerStatus(a, a.id)
+      const visit = a.role === 'student' ? await mySessions(a) : null
       return {
+        isStudent: a.role === 'student',
+        inside: visit?.inside ?? false,
+        visits: (visit?.rows ?? []).map((r) => ({ ...r, enteredAt: r.enteredAt.toISOString(), how: r.entryMethod === 'door_qr' ? 'door code' : 'desk', out: r.exitedAt ? r.exitedAt.toISOString() : null })),
         open: s.open.map(loanRow),
         history: s.history.map(loanRow),
         historyCut: s.historyTotal > s.history.length ? `Showing the 100 most recent of ${s.historyTotal}.` : null,
@@ -313,6 +399,33 @@ export const pages: PluginPage[] = [
       }
     },
     sections: (data) => [
+      ...(data.isStudent
+        ? [
+            { kind: 'note' as const, text: data.inside ? 'You are recorded as inside the library. Check out at the door or the desk before it closes.' : 'You are not recorded as inside the library.' },
+            {
+              kind: 'form' as const,
+              title: 'Check in or out',
+              note: 'Scan the code on the library door, or type it, and choose in or out.',
+              submit: 'Send',
+              path: '/door/scan',
+              fields: [
+                { name: 'code', label: 'Door code' },
+                { name: 'direction', label: 'In or out', kind: 'select' as const, options: [{ value: 'in', label: 'in' }, { value: 'out', label: 'out' }] },
+              ],
+            },
+            {
+              kind: 'table' as const,
+              title: 'Recent visits',
+              rows: 'visits',
+              empty: 'No visits recorded.',
+              columns: [
+                { key: 'enteredAt', label: 'In', kind: 'when' as const },
+                { key: 'out', label: 'Out', kind: 'when' as const },
+                { key: 'how', label: 'How' },
+              ],
+            },
+          ]
+        : []),
       {
         kind: 'figures',
         figures: [

@@ -1,9 +1,15 @@
 import { formatPaise } from '@campusos/money'
 import { param, type PluginPage } from '@campusos/module-framework'
 import {
+  casePage,
   feeChoices,
+  getPolicy,
   listBlocks,
+  listCases,
+  listPasses,
   listRooms,
+  listScopes,
+  listWindows,
   myHostel,
   rollCall,
   visitorLog,
@@ -381,6 +387,334 @@ export const pages: PluginPage[] = [
   },
 
   {
+    path: '/presence',
+    title: 'Curfew cases',
+    menu: 'Curfew cases',
+    roles: [...WARDEN],
+    async load(actor, req) {
+      const a = actor as Actor
+      const [open, closed] = await Promise.all([
+        listCases(a, { resolved: false }, casePage(req, 'open')),
+        listCases(a, { resolved: true }, casePage(req, 'done')),
+      ])
+      const row = (c: (typeof open.rows)[number]) => ({
+        ...c,
+        curfewAt: c.curfewAt.toISOString(),
+        openedAt: c.openedAt.toISOString(),
+        steps: [c.nudgeAt ? 'nudged' : '', c.wardenAt ? 'warden told' : '', c.guardianAt ? 'guardians told' : ''].filter(Boolean).join(', ') || '-',
+        resolvedAt: c.resolvedAt ? c.resolvedAt.toISOString() : null,
+        how: c.resolution ? c.resolution.replace(/_/g, ' ') : '',
+        open: !c.resolvedAt,
+      })
+      return {
+        open: open.rows.map(row),
+        openPage: { total: open.total, next: open.next },
+        done: closed.rows.map(row),
+        donePage: { total: closed.total, next: closed.next },
+        count: open.total,
+        caseOptions: open.rows.map((c) => ({ value: c.id, label: `${c.name} (${c.blockCode}), night ${c.night}` })),
+      }
+    },
+    sections: (data) => [
+      {
+        kind: 'note',
+        text:
+          'A case opens when a resident has not checked in after curfew and nothing accounts for them (a check-in, leave, a late-stay pass, or, with consent, the library or a class). ' +
+          'The resident is nudged first, then the floor warden, then guardians (with consent) and the block and chief wardens.',
+      },
+      { kind: 'figures', figures: [{ label: 'Open cases', value: String(data.count), tone: Number(data.count) > 0 ? 'due' : 'clear' }] },
+      {
+        kind: 'table',
+        title: 'Open',
+        rows: 'open',
+        paging: { data: 'openPage', sorts: ['opened'] },
+        empty: 'No open cases.',
+        columns: [
+          { key: 'name', label: 'Resident' },
+          { key: 'blockCode', label: 'Block', kind: 'code' },
+          { key: 'night', label: 'Night', kind: 'date' },
+          { key: 'curfewAt', label: 'Curfew', kind: 'when' },
+          { key: 'steps', label: 'So far', alertWhen: 'open' },
+        ],
+      },
+      {
+        kind: 'form',
+        title: 'Resolve a case',
+        note: 'Verified in person, or closed with a note. Audited.',
+        submit: 'Resolve',
+        path: '/presence/cases/resolve',
+        fields: [
+          { name: 'caseId', label: 'Case', kind: 'select', options: 'caseOptions' },
+          {
+            name: 'resolution',
+            label: 'Outcome',
+            kind: 'select',
+            options: [
+              { value: 'warden_verified', label: 'verified in person' },
+              { value: 'warden_closed', label: 'closed with a note' },
+            ],
+          },
+          { name: 'note', label: 'Note', optional: true, hint: 'Required when closing; 5 to 300 characters' },
+        ],
+      },
+      {
+        kind: 'table',
+        title: 'Resolved',
+        rows: 'done',
+        paging: { data: 'donePage', sorts: ['opened'] },
+        empty: 'Nothing resolved yet.',
+        columns: [
+          { key: 'name', label: 'Resident' },
+          { key: 'night', label: 'Night', kind: 'date' },
+          { key: 'how', label: 'Resolved by' },
+          { key: 'note', label: 'Note' },
+        ],
+      },
+    ],
+  },
+
+  {
+    path: '/late-stay',
+    title: 'Late stay',
+    menu: 'Late stay',
+    roles: [...WARDEN, 'student'],
+    async load(actor) {
+      const a = actor as Actor
+      const student = a.role === 'student'
+      const [passes, windows, blocks] = await Promise.all([
+        listPasses(a),
+        student ? Promise.resolve([]) : listWindows(a),
+        student ? Promise.resolve([]) : listBlocks(a),
+      ])
+      const rows = passes as { id: string; name: string; night: string; untilAt: Date | string; reason: string; status: string }[]
+      return {
+        student,
+        passes: rows.map((p) => ({ ...p, untilAt: new Date(p.untilAt).toISOString() })),
+        windows: windows as Record<string, unknown>[],
+        blockOptions: [{ value: '', label: 'all blocks' }, ...blocks.map((b) => ({ value: b.id, label: `${b.code} - ${b.name}` }))],
+        windowOptions: (windows as { id: string; fromOn: string; toOn: string; untilTime: string; cancelledAt: unknown }[])
+          .filter((w) => !w.cancelledAt)
+          .map((w) => ({ value: w.id, label: `${w.fromOn} to ${w.toOn}, until ${w.untilTime.slice(0, 5)}` })),
+        pendingOptions: rows
+          .filter((p) => p.status === 'requested')
+          .map((p) => ({ value: p.id, label: `${p.name}, night ${p.night}, until ${new Date(p.untilAt).toISOString().slice(11, 16)} UTC` })),
+      }
+    },
+    sections: (data) =>
+      data.student
+        ? [
+            {
+              kind: 'note',
+              text: 'Ask for a late-stay pass for tonight. A warden approves it; nothing is automatic. Your curfew alerts start from the end of an approved pass.',
+            },
+            {
+              kind: 'form',
+              title: 'Ask for a pass',
+              submit: 'Ask',
+              path: '/late-stay/passes',
+              fields: [
+                { name: 'untilTime', label: 'Back by (HH:MM)', hint: 'e.g. 23:30' },
+                { name: 'nextDay', label: 'That time is after midnight', kind: 'checkbox', optional: true },
+                { name: 'reason', label: 'Reason' },
+              ],
+            },
+            {
+              kind: 'table',
+              title: 'My passes',
+              rows: 'passes',
+              empty: 'None.',
+              columns: [
+                { key: 'night', label: 'Night', kind: 'date' },
+                { key: 'untilAt', label: 'Until', kind: 'when' },
+                { key: 'status', label: 'Status', kind: 'status' },
+                { key: 'reason', label: 'Reason' },
+              ],
+            },
+          ]
+        : [
+            {
+              kind: 'note',
+              text: 'A window moves curfew for a block, or all blocks, on given nights: exam week. Administrators and chief wardens set them. A resident asks for a pass for one night, and a warden decides.',
+            },
+            {
+              kind: 'table',
+              title: 'Windows',
+              rows: 'windows',
+              empty: 'None.',
+              columns: [
+                { key: 'blockCode', label: 'Block' },
+                { key: 'fromOn', label: 'From', kind: 'date' },
+                { key: 'toOn', label: 'To', kind: 'date' },
+                { key: 'untilTime', label: 'Curfew moves to' },
+                { key: 'reason', label: 'Reason' },
+              ],
+            },
+            {
+              kind: 'form',
+              title: 'Add a window',
+              submit: 'Add',
+              path: '/late-stay/windows',
+              fields: [
+                { name: 'blockId', label: 'Block', kind: 'select', options: 'blockOptions', optional: true },
+                { name: 'fromOn', label: 'From', kind: 'date' },
+                { name: 'toOn', label: 'To', kind: 'date', hint: 'Inclusive; at most 60 days' },
+                { name: 'untilTime', label: 'Curfew moves to (HH:MM)', hint: '21:00 to 23:59' },
+                { name: 'reason', label: 'Reason' },
+              ],
+            },
+            {
+              kind: 'form',
+              title: 'Cancel a window',
+              submit: 'Cancel',
+              path: '/late-stay/windows/cancel',
+              fields: [{ name: 'windowId', label: 'Window', kind: 'select', options: 'windowOptions' }],
+            },
+            {
+              kind: 'table',
+              title: 'Passes',
+              rows: 'passes',
+              empty: 'None.',
+              columns: [
+                { key: 'name', label: 'Resident' },
+                { key: 'night', label: 'Night', kind: 'date' },
+                { key: 'untilAt', label: 'Until', kind: 'when' },
+                { key: 'status', label: 'Status', kind: 'status' },
+                { key: 'reason', label: 'Reason' },
+              ],
+            },
+            {
+              kind: 'form',
+              title: 'Decide a pass',
+              submit: 'Decide',
+              path: '/late-stay/passes/decide',
+              fields: [
+                { name: 'passId', label: 'Pass', kind: 'select', options: 'pendingOptions' },
+                {
+                  name: 'decision',
+                  label: 'Decision',
+                  kind: 'select',
+                  options: [
+                    { value: 'approved', label: 'approve' },
+                    { value: 'refused', label: 'refuse' },
+                  ],
+                },
+              ],
+            },
+          ],
+  },
+
+  {
+    path: '/wardens',
+    title: 'Wardens and curfew',
+    menu: 'Wardens',
+    roles: [...ADMIN],
+    async load(actor) {
+      const a = actor as Actor
+      const [scopes, policy, blocks] = await Promise.all([listScopes(a), getPolicy(a), listBlocks(a)])
+      const t = (v: string) => v.slice(0, 5)
+      return {
+        scopes: scopes.map((s) => ({ ...s, where: s.blockCode ? (s.floor != null ? `${s.blockCode}, floor ${s.floor}` : s.blockCode) : 'all' })),
+        scopeOptions: scopes.map((s) => ({ value: s.id, label: `${s.name}: ${s.level}${s.blockCode ? ' ' + s.blockCode : ''}${s.floor != null ? ' floor ' + s.floor : ''}` })),
+        blockOptions: blocks.map((b) => ({ value: b.id, label: `${b.code} - ${b.name}` })),
+        blockCurfews: blocks.map((b) => ({ code: b.code, name: b.name })),
+        policy: {
+          curfewTime: t(policy.curfewTime),
+          nudgeAfterMin: String(policy.nudgeAfterMin),
+          wardenAfterMin: String(policy.wardenAfterMin),
+          womensWardenAfterMin: String(policy.womensWardenAfterMin),
+          guardianAfterMin: String(policy.guardianAfterMin),
+          walkBackMin: String(policy.walkBackMin),
+          caseWindowHours: String(policy.caseWindowHours),
+          latePassLatestTime: t(policy.latePassLatestTime),
+          presenceRetentionDays: String(policy.presenceRetentionDays),
+          notifyWardenOnLibraryEntry: policy.notifyWardenOnLibraryEntry ? 'true' : 'false',
+        },
+      }
+    },
+    sections: (data) => {
+      const p = data.policy as Record<string, string>
+      return [
+        {
+          kind: 'note',
+          text: 'Scopes name who is told about which residents. Until the warden portal arrives they decide only who receives alerts; they do not yet limit what a warden can see.',
+        },
+        {
+          kind: 'table',
+          title: 'Scopes',
+          rows: 'scopes',
+          empty: 'No scopes: every hostel staff member is told, then the administrators.',
+          columns: [
+            { key: 'name', label: 'Warden' },
+            { key: 'level', label: 'Level', kind: 'status' },
+            { key: 'where', label: 'Where' },
+          ],
+        },
+        {
+          kind: 'form',
+          title: 'Add a scope',
+          note: 'Floor needs a block and a floor; block needs a block; chief and estate need neither. The person must be hostel staff.',
+          submit: 'Add',
+          path: '/scopes',
+          fields: [
+            { name: 'userId', label: 'Warden', hint: 'Their user id' },
+            {
+              name: 'level',
+              label: 'Level',
+              kind: 'select',
+              options: [
+                { value: 'floor', label: 'floor' },
+                { value: 'block', label: 'block' },
+                { value: 'chief', label: 'chief' },
+                { value: 'estate', label: 'estate' },
+              ],
+            },
+            { name: 'blockId', label: 'Block', kind: 'select', options: 'blockOptions', optional: true },
+            { name: 'floor', label: 'Floor', kind: 'number', optional: true },
+          ],
+        },
+        {
+          kind: 'form',
+          title: 'Remove a scope',
+          submit: 'Remove',
+          path: '/scopes/remove',
+          fields: [{ name: 'scopeId', label: 'Scope', kind: 'select', options: 'scopeOptions' }],
+        },
+        {
+          kind: 'form',
+          title: 'Curfew and ladder',
+          note: 'Minutes count from the effective curfew. Library and class status counts only for residents whose hostel presence consent is given.',
+          submit: 'Save',
+          path: '/policy',
+          method: 'PUT',
+          fields: [
+            { name: 'curfewTime', label: 'Curfew (HH:MM)', value: p.curfewTime },
+            { name: 'nudgeAfterMin', label: 'Nudge the resident after (minutes)', kind: 'number', value: p.nudgeAfterMin },
+            { name: 'wardenAfterMin', label: 'Tell the floor warden after', kind: 'number', value: p.wardenAfterMin },
+            { name: 'womensWardenAfterMin', label: "Tell the floor warden in a women's block after", kind: 'number', value: p.womensWardenAfterMin },
+            { name: 'guardianAfterMin', label: 'Tell guardians and chief wardens after', kind: 'number', value: p.guardianAfterMin },
+            { name: 'walkBackMin', label: 'Library exit counts for (minutes)', kind: 'number', value: p.walkBackMin },
+            { name: 'caseWindowHours', label: 'Cases open for (hours after curfew)', kind: 'number', value: p.caseWindowHours },
+            { name: 'latePassLatestTime', label: 'Latest late pass (next day, HH:MM)', value: p.latePassLatestTime },
+            { name: 'presenceRetentionDays', label: 'Keep presence history (days)', kind: 'number', value: p.presenceRetentionDays },
+            { name: 'notifyWardenOnLibraryEntry', label: 'Tell the floor warden on every library entry', kind: 'select', options: [{ value: 'false', label: 'no' }, { value: 'true', label: 'yes' }], value: p.notifyWardenOnLibraryEntry },
+            { name: 'reason', label: 'Reason' },
+          ],
+        },
+        {
+          kind: 'form',
+          title: 'A block\'s own curfew',
+          submit: 'Set',
+          path: '/blocks/curfew',
+          fields: [
+            { name: 'blockId', label: 'Block', kind: 'select', options: 'blockOptions' },
+            { name: 'curfewTime', label: 'Curfew (HH:MM)' },
+          ],
+        },
+      ]
+    },
+  },
+
+  {
     path: '/me',
     title: 'My hostel',
     menu: 'My hostel',
@@ -396,6 +730,9 @@ export const pages: PluginPage[] = [
         roommates: s.roommates.map((r) => r.name).filter(Boolean).join(', '),
         nights: s.recentNights,
         leave: s.upcomingLeave,
+        presence: s.presence ? s.presence.label : '',
+        sharing: s.presence ? (s.presence.sharing ? 'on' : 'off') : '',
+        notice: s.policyNotice,
       }
     },
     sections: (data) =>
@@ -412,6 +749,16 @@ export const pages: PluginPage[] = [
             ...(data.roommates
               ? [{ kind: 'note' as const, text: `Sharing with ${String(data.roommates)}.` }]
               : []),
+            {
+              kind: 'figures' as const,
+              title: 'Presence',
+              figures: [
+                { label: 'Where the hostel thinks you are', value: String(data.presence || 'Unknown') },
+                { label: 'Library and class status shared', value: String(data.sharing || 'off') },
+              ],
+            },
+            { kind: 'note' as const, text: String(data.notice) },
+            { kind: 'links' as const, links: [{ label: 'Ask for a late-stay pass', href: '/m/hostel/late-stay' }] },
             {
               kind: 'table',
               title: 'Leave on record',

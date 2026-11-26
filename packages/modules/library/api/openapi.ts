@@ -5,12 +5,14 @@ import {
   borrowerStatusSchema,
   catalogueRowSchema,
   createTitleSchema,
+  enterSchema,
   issueSchema,
   librarySettingsSchema,
   loanRowSchema,
   overdueReportSchema,
   renewSchema,
   returnSchema,
+  scanSchema,
   setCopyStatusSchema,
   settleFineSchema,
   waiveFineSchema,
@@ -197,9 +199,53 @@ export const paths = {
       },
     },
   },
+  [`${base}/door/qr`]: {
+    get: {
+      summary: 'The library door code for the screen at the door, rotating every 20 seconds (needs the Attendance module)',
+      tags: ['library'],
+      responses: { '200': { description: 'OK' }, ...gated, '409': { description: 'door_scan_unavailable', content: json(err) } },
+    },
+  },
+  [`${base}/door/scan`]: {
+    post: {
+      summary: 'A student scans the door code to enter or leave. Outside opening hours (less 15 minutes before opening) the answer is library_closed.',
+      tags: ['library'],
+      requestBody: { content: json(scanSchema) },
+      responses: {
+        '200': { description: 'Session opened (idempotent) or closed' },
+        ...gated,
+        '409': { description: 'not_inside, library_closed, door_scan_unavailable, stale_code or invalid_code', content: json(err) },
+      },
+    },
+  },
+  [`${base}/sessions/enter`]: {
+    post: {
+      summary: 'Desk entry: record a student walking in, at any hour. Idempotent while they are inside.',
+      tags: ['library'],
+      requestBody: { content: json(enterSchema) },
+      responses: { '200': { description: 'Session' }, ...gated, '404': { description: 'no_such_student', content: json(err) } },
+    },
+  },
+  [`${base}/sessions/exit`]: {
+    post: {
+      summary: 'Desk exit: record a student leaving',
+      tags: ['library'],
+      requestBody: { content: json(enterSchema) },
+      responses: { '200': { description: 'Session closed' }, ...gated, '409': { description: 'not_inside', content: json(err) } },
+    },
+  },
+  [`${base}/sessions`]: {
+    get: { summary: 'Who is inside now, newest first, a page at a time', tags: ['library'], responses: { '200': { description: 'OK' }, ...gated } },
+  },
+  [`${base}/occupancy`]: {
+    get: { summary: 'How many are inside now', tags: ['library'], responses: { '200': { description: 'OK' }, ...gated } },
+  },
+  [`${base}/sessions/mine`]: {
+    get: { summary: 'A student\'s own recent visits and whether they are inside', tags: ['library'], responses: { '200': { description: 'OK' }, ...gated } },
+  },
   [`${base}/settings`]: {
     get: {
-      summary: 'Circulation rules in force, or the built-in defaults',
+      summary: 'Circulation rules in force, or the built-in defaults, with door hours and presence timings',
       tags: ['library'],
       responses: { '200': { description: 'OK' }, ...gated },
     },

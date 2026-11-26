@@ -10,7 +10,7 @@ import {
   readPage,
   type SortSpec,
 } from '@campusos/module-framework'
-import { currentQr, decodeQr, verifyToken } from '@campusos/module-attendance/api'
+import { currentQr, decodeQr, encodeQr, verifyToken } from '@campusos/module-attendance/api'
 import { manifest as attendanceManifest } from '@campusos/module-attendance/manifest'
 import { manifest as libraryManifest } from '../manifest'
 import { events, sessions } from '../schema'
@@ -238,3 +238,5 @@ export async function mySessions(actor: Actor) {
     return { inside: rows.some((r) => r.exitedAt === null), rows }
   })
 }
+
+export { encodeQr }

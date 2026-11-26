@@ -93,10 +93,12 @@ export async function curfewSweep(
         out.opened = opened.length
         out.nudged = opened.length
         if (opened.length > 0) {
+          // One row for the opening and the nudge that goes with it: at 5,000 residents a second row each cost
+          // about a third of the tick (D1345); a later nudge, if any, is logged on its own.
           await tx.execute(sql`
             insert into hostel_presence_log (institution_id, student_id, at, kind, source, detail)
-            select ${tenant}, s, ${nowIso}::timestamptz, k, 'hostel', '{}'::jsonb
-              from unnest(${literal(opened.map((o) => o.student_id))}::text[]) as t(s), unnest('{case_opened,student_nudged}'::text[]) as k(k)`)
+            select ${tenant}, s, ${nowIso}::timestamptz, 'case_opened', 'hostel', '{"nudged": true}'::jsonb
+              from unnest(${literal(opened.map((o) => o.student_id))}::text[]) as t(s)`)
           const byBlock = new Map<string, string[]>()
           for (const o of opened) byBlock.set(o.block_id, [...(byBlock.get(o.block_id) ?? []), o.student_id])
           for (const [blockId, students] of byBlock) {
@@ -118,6 +120,8 @@ export async function curfewSweep(
     select c.id, c.student_id, c.block_id, c.curfew_at, c.nudge_at, c.warden_at, c.guardian_at
       from hostel_curfew_cases c
      where c.institution_id = ${tenant} and c.night = ${night}::date and c.resolved_at is null
+       -- A case opened at this very instant has nothing due yet (every later step is offset by minutes).
+       and c.opened_at < ${nowIso}::timestamptz
      order by c.opened_at, c.id
        for update of c skip locked`)).rows as {
     id: string

@@ -23,6 +23,9 @@ export const manifest: ModuleManifest = {
   navEntries: [
     { label: 'Hostel', href: '/m/hostel', roles: ['institution_admin', 'hostel_staff'] },
     { label: 'Roll call', href: '/m/hostel/rollcall', roles: ['institution_admin', 'hostel_staff'] },
+    { label: 'Curfew cases', href: '/m/hostel/presence', roles: ['institution_admin', 'hostel_staff'] },
+    { label: 'Late stay', href: '/m/hostel/late-stay', roles: ['institution_admin', 'hostel_staff', 'student'] },
+    { label: 'Wardens', href: '/m/hostel/wardens', roles: ['institution_admin'] },
     { label: 'Visitors', href: '/m/hostel/visitors', roles: ['institution_admin', 'hostel_staff'] },
     { label: 'My hostel', href: '/m/hostel/me', roles: ['student'] },
   ],

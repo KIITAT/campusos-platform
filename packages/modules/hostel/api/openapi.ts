@@ -17,6 +17,10 @@ import {
   visitorOutSchema,
   visitorRowSchema,
 } from './schemas'
+import { setPolicySchema, setBlockCurfewSchema } from './policy'
+import { addScopeSchema, removeScopeSchema } from './wardens'
+import { resolveCaseSchema } from './curfew'
+import { cancelWindowSchema, createWindowSchema, decidePassSchema, requestPassSchema } from './late-stay'
 
 const base = manifest.apiBasePath
 const err = z.object({ error: z.string(), message: z.string() })
@@ -25,7 +29,111 @@ const gated = {
   '403': { description: 'Forbidden, or the module is not enabled', content: json(err) },
 }
 
+/** Presence, the curfew ladder, late stay and warden scopes (P2-22a). */
+const presencePaths = {
+  [`${base}/presence/cases`]: {
+    get: {
+      summary: 'Curfew cases, open by default (?resolved=1 for resolved ones), newest first, a page at a time',
+      tags: ['hostel'],
+      responses: { '200': { description: 'OK' }, ...gated },
+    },
+  },
+  [`${base}/presence/cases/resolve`]: {
+    post: {
+      summary: 'Resolve a case by hand: verified in person, or closed with a note. Audited.',
+      tags: ['hostel'],
+      requestBody: { content: json(resolveCaseSchema) },
+      responses: {
+        '200': { description: 'Resolved' },
+        ...gated,
+        '404': { description: 'No such case', content: json(err) },
+        '409': { description: 'Already resolved (case_closed)', content: json(err) },
+      },
+    },
+  },
+  [`${base}/presence/student`]: {
+    get: {
+      summary: 'One resident\'s presence, recent cases and log, and emergency contact. Reading it is logged as a sensitive read.',
+      tags: ['hostel'],
+      responses: { '200': { description: 'OK' }, ...gated, '404': { description: 'No such student', content: json(err) } },
+    },
+  },
+  [`${base}/policy`]: {
+    get: { summary: 'The curfew and ladder policy, or the defaults', tags: ['hostel'], responses: { '200': { description: 'OK' }, ...gated } },
+    put: {
+      summary: 'Set the curfew and ladder policy (administrators). Reason mandatory and audited.',
+      tags: ['hostel'],
+      requestBody: { content: json(setPolicySchema) },
+      responses: { '200': { description: 'Set' }, ...gated },
+    },
+  },
+  [`${base}/blocks/curfew`]: {
+    post: {
+      summary: 'Set one block\'s own curfew, or null to follow the institution\'s (administrators)',
+      tags: ['hostel'],
+      requestBody: { content: json(setBlockCurfewSchema) },
+      responses: { '200': { description: 'Set' }, ...gated, '404': { description: 'No such block', content: json(err) } },
+    },
+  },
+  [`${base}/scopes`]: {
+    get: { summary: 'Warden scopes (administrators)', tags: ['hostel'], responses: { '200': { description: 'OK' }, ...gated } },
+    post: {
+      summary: 'Give a hostel staff member a floor, block, chief or estate scope (administrators)',
+      tags: ['hostel'],
+      requestBody: { content: json(addScopeSchema) },
+      responses: { '200': { description: 'Added' }, ...gated, '400': { description: 'Not hostel staff', content: json(err) } },
+    },
+  },
+  [`${base}/scopes/remove`]: {
+    post: {
+      summary: 'Remove a warden scope (administrators)',
+      tags: ['hostel'],
+      requestBody: { content: json(removeScopeSchema) },
+      responses: { '200': { description: 'Removed' }, ...gated, '404': { description: 'No such scope', content: json(err) } },
+    },
+  },
+  [`${base}/late-stay/windows`]: {
+    get: { summary: 'Late-stay windows', tags: ['hostel'], responses: { '200': { description: 'OK' }, ...gated } },
+    post: {
+      summary: 'Move curfew for a block or all blocks on given nights (administrators or a chief warden)',
+      tags: ['hostel'],
+      requestBody: { content: json(createWindowSchema) },
+      responses: { '200': { description: 'Created' }, ...gated },
+    },
+  },
+  [`${base}/late-stay/windows/cancel`]: {
+    post: {
+      summary: 'Cancel a late-stay window',
+      tags: ['hostel'],
+      requestBody: { content: json(cancelWindowSchema) },
+      responses: { '200': { description: 'Cancelled' }, ...gated, '404': { description: 'No such window', content: json(err) } },
+    },
+  },
+  [`${base}/late-stay/passes`]: {
+    get: { summary: 'Late-stay passes (a resident sees their own)', tags: ['hostel'], responses: { '200': { description: 'OK' }, ...gated } },
+    post: {
+      summary: 'A resident asks for tonight\'s late-stay pass',
+      tags: ['hostel'],
+      requestBody: { content: json(requestPassSchema) },
+      responses: {
+        '200': { description: 'Requested' },
+        ...gated,
+        '409': { description: 'A pass is already open, or the time is past the latest allowed', content: json(err) },
+      },
+    },
+  },
+  [`${base}/late-stay/passes/decide`]: {
+    post: {
+      summary: 'Approve or refuse a late-stay pass; the resident is told',
+      tags: ['hostel'],
+      requestBody: { content: json(decidePassSchema) },
+      responses: { '200': { description: 'Decided' }, ...gated, '404': { description: 'No such pass', content: json(err) } },
+    },
+  },
+}
+
 export const paths = {
+  ...presencePaths,
   [`${base}/blocks`]: {
     get: {
       summary: 'Hostel blocks',

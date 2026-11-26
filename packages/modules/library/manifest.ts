@@ -28,6 +28,8 @@ export const manifest: ModuleManifest = {
   navEntries: [
     { label: 'Library desk', href: '/m/library', roles: ['institution_admin', 'library_staff'] },
     { label: 'Catalogue', href: '/m/library/catalogue', roles: ['institution_admin', 'library_staff', 'faculty', 'student'] },
+    { label: 'Door code', href: '/m/library/door', roles: ['institution_admin', 'library_staff'] },
+    { label: 'Inside now', href: '/m/library/inside', roles: ['institution_admin', 'library_staff'] },
     { label: 'Overdue', href: '/m/library/overdue', roles: ['institution_admin', 'library_staff'] },
     { label: 'My library', href: '/m/library/me', roles: ['student', 'faculty'] },
   ],
