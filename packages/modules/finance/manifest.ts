@@ -17,7 +17,7 @@ export const manifest: ModuleManifest = {
   name: 'Finance & Books',
   description:
     'Double-entry books for the whole institution: ledger, receivables and payables, GST and TDS, bank import and reconciliation, stock with batches and serials, purchasing and selling, fixed assets, funds and grants, and statements.',
-  version: '0.22.0',
+  version: '0.23.0',
   alwaysEnabled: false,
   dependsOn: [],
   pricing: { model: 'flat_monthly', priceINR: 2000 },
@@ -39,4 +39,9 @@ export const manifest: ModuleManifest = {
 
   routeRoles: true,
   apiBasePath: '/api/v1/modules/finance',
+
+  // The desktop client (P2-23): the cross-module approvals feed, and the records
+  // whose change history the host may serve to the accounts office.
+  approvals: { route: '/approvals/feed', href: '/m/finance/approvals' },
+  auditEntities: ['finance_party', 'finance_item', 'finance_bank_account', 'finance_rfq', 'finance_supplier_quotation'].map((entity) => ({ entity, roles: OFFICE })),
 }

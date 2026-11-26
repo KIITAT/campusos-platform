@@ -68,6 +68,17 @@ export async function listPeriods(actor: Actor, input: unknown = {}) {
   )
 }
 
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+/**
+ * A period row as the desktop client reads it (P2-23, W6): the row itself plus
+ * a label, the dates of the accounting month and whether it is locked.
+ */
+export function periodView<T extends { year: number; month: number; status: string }>(row: T) {
+  const from = `${row.year}-${String(row.month).padStart(2, '0')}-01`
+  return { ...row, label: `${MONTHS[row.month - 1]} ${row.year}`, from, to: monthEnd(from), locked: row.status === 'closed' }
+}
+
 export interface CloseCheck {
   key: 'month_over' | 'drafts' | 'bank' | 'depreciation' | 'subledgers' | 'gst_filed'
   label: string

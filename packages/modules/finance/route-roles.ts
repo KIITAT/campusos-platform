@@ -43,6 +43,7 @@ export const routeRoles: Record<string, readonly Role[]> = {
   'POST /approval-rules/remove': ADMIN,
   'POST /approvals/decide': STAFF,
   'GET /approvals/pending': STAFF,
+  'GET /approvals/feed': STAFF,
   'GET /sod': OFFICE,
   'POST /sod/single-officer': ADMIN,
   'GET /sod/uses': OFFICE,
