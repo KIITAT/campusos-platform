@@ -111,28 +111,31 @@ export interface Recipients {
   userIds: string[]
 }
 
+/** Where a resident sleeps, as the ladder needs it. */
+export interface Home {
+  studentName: string
+  blockId: string | null
+  blockCode: string
+  blockKind: string | null
+  wardenUserId: string | null
+  room: string
+  floor: number | null
+}
+
 const ids = (rows: { id: string }[]) => rows.map((r) => r.id)
 
-/**
- * Who should be told about a resident (D1327). Never a silent no-op and never
- * an empty list: floor scope rows, else block scope rows, else the block's
- * warden, else every hostel_staff user, else every administrator. Chief
- * recipients are the chief-level scope rows, else the administrators.
- */
-export async function recipientsFor(
-  tx: Tx,
-  tenant: string,
-  studentId: string,
-  level: 'floor' | 'block' | 'chief',
-): Promise<Recipients> {
-  const [home] = (await tx.execute(sql`
-    select u.name as student_name, b.id as block_id, b.code as block_code, b.kind::text as block_kind,
+/** The homes of many residents in one query; a person without a bed has an empty home. */
+export async function homesOf(tx: Tx, studentIds: string[]): Promise<Map<string, Home>> {
+  if (studentIds.length === 0) return new Map()
+  const rows = (await tx.execute(sql`
+    select u.id, u.name as student_name, b.id as block_id, b.code as block_code, b.kind::text as block_kind,
            b.warden_user_id, r.number as room, r.floor
       from users u
       left join hostel_allocations a on a.student_id = u.id and a.vacated_on is null
       left join hostel_rooms r on r.id = a.room_id
       left join hostel_blocks b on b.id = r.block_id
-     where u.id = ${studentId}`)).rows as {
+     where u.id = any(${`{${studentIds.join(',')}}`}::text[])`)).rows as {
+    id: string
     student_name: string | null
     block_id: string | null
     block_code: string | null
@@ -141,21 +144,46 @@ export async function recipientsFor(
     room: string | null
     floor: number | null
   }[]
+  return new Map(
+    rows.map((h) => [
+      h.id,
+      {
+        studentName: h.student_name ?? '',
+        blockId: h.block_id,
+        blockCode: h.block_code ?? '',
+        blockKind: h.block_kind,
+        wardenUserId: h.warden_user_id,
+        room: h.room ?? '',
+        floor: h.floor,
+      },
+    ]),
+  )
+}
 
+/**
+ * Who should be told about a resident living at `home` (D1327). Never a silent no-op and never an empty list:
+ * floor scope rows, else block scope rows, else the block's warden, else every hostel_staff user, else every
+ * administrator. Chief recipients are the chief-level scope rows, else the administrators. A scope row counts only
+ * while its holder is still hostel staff and not erased (a role change must not keep routing alerts to them).
+ */
+export async function recipientsAt(tx: Tx, tenant: string, home: Pick<Home, 'blockId' | 'floor' | 'wardenUserId'>, level: 'floor' | 'block' | 'chief'): Promise<string[]> {
   const scoped = async (cond: ReturnType<typeof sql>) =>
     ids(
-      (await tx.execute(sql`select distinct s.user_id as id from hostel_warden_scopes s where s.institution_id = ${tenant} and ${cond}`)).rows as { id: string }[],
+      (await tx.execute(sql`
+        select distinct s.user_id as id from hostel_warden_scopes s
+          join users u on u.id = s.user_id and u.role = 'hostel_staff' and u.erased_at is null
+         where s.institution_id = ${tenant} and ${cond}`)).rows as { id: string }[],
     )
 
   let userIds: string[] = []
   if (level === 'chief') {
     userIds = await scoped(sql`s.level = 'chief'`)
   } else {
-    if (level === 'floor' && home?.block_id && home.floor != null) {
-      userIds = await scoped(sql`s.level = 'floor' and s.block_id = ${home.block_id} and s.floor = ${home.floor}`)
+    if (level === 'floor' && home.blockId && home.floor != null) {
+      userIds = await scoped(sql`s.level = 'floor' and s.block_id = ${home.blockId} and s.floor = ${home.floor}`)
     }
-    if (userIds.length === 0 && home?.block_id) userIds = await scoped(sql`s.level = 'block' and s.block_id = ${home.block_id}`)
-    if (userIds.length === 0 && home?.warden_user_id) userIds = [home.warden_user_id]
+    if (userIds.length === 0 && home.blockId) userIds = await scoped(sql`s.level = 'block' and s.block_id = ${home.blockId}`)
+    if (userIds.length === 0 && home.wardenUserId) userIds = [home.wardenUserId]
     if (userIds.length === 0) {
       userIds = ids((await tx.execute(sql`select id from users where institution_id = ${tenant} and role = 'hostel_staff'`)).rows as { id: string }[])
     }
@@ -163,14 +191,17 @@ export async function recipientsFor(
   if (userIds.length === 0) {
     userIds = ids((await tx.execute(sql`select id from users where institution_id = ${tenant} and role = 'institution_admin'`)).rows as { id: string }[])
   }
-
-  return {
-    studentName: home?.student_name ?? '',
-    blockCode: home?.block_code ?? '',
-    room: home?.room ?? '',
-    floor: home?.floor ?? null,
-    blockKind: home?.block_kind ?? null,
-    userIds,
-  }
+  return userIds
 }
 
+/** One resident's recipients; the ladder uses `homesOf` and `recipientsAt` so it asks once per floor, not once per case. */
+export async function recipientsFor(
+  tx: Tx,
+  tenant: string,
+  studentId: string,
+  level: 'floor' | 'block' | 'chief',
+): Promise<Recipients> {
+  const home = (await homesOf(tx, [studentId])).get(studentId)
+  const h: Home = home ?? { studentName: '', blockId: null, blockCode: '', blockKind: null, wardenUserId: null, room: '', floor: null }
+  return { studentName: h.studentName, blockCode: h.blockCode, room: h.room, floor: h.floor, blockKind: h.blockKind, userIds: await recipientsAt(tx, tenant, h, level) }
+}

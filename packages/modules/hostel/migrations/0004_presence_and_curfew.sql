@@ -80,7 +80,7 @@ CREATE TABLE hostel_late_passes (
   decided_by text REFERENCES users(id) ON DELETE SET NULL,
   decided_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT hostel_passes_status CHECK (status IN ('requested', 'approved', 'refused', 'cancelled')),
+  CONSTRAINT hostel_passes_status CHECK (status IN ('requested', 'approved', 'refused', 'cancelled', 'lapsed')),
   CONSTRAINT hostel_passes_reason CHECK (length(trim(reason)) BETWEEN 5 AND 200)
 );
 --> statement-breakpoint
@@ -103,7 +103,7 @@ CREATE TABLE hostel_curfew_cases (
   resolution text,
   resolved_by text REFERENCES users(id) ON DELETE SET NULL,
   note text,
-  CONSTRAINT hostel_cases_resolution CHECK (resolution IS NULL OR resolution IN ('checked_in', 'leave', 'late_pass', 'library', 'library_exit', 'class', 'warden_verified', 'warden_closed')),
+  CONSTRAINT hostel_cases_resolution CHECK (resolution IS NULL OR resolution IN ('checked_in', 'leave', 'warden_verified', 'warden_closed', 'lapsed')),
   CONSTRAINT hostel_cases_resolved_together CHECK ((resolved_at IS NULL) = (resolution IS NULL)),
   CONSTRAINT hostel_cases_note CHECK (note IS NULL OR length(note) BETWEEN 5 AND 300)
 );
@@ -236,9 +236,10 @@ DECLARE
 BEGIN
   DELETE FROM hostel_presence_log WHERE institution_id = inst AND at < now() - keep;
   GET DIAGNOSTICS n_log = ROW_COUNT;
-  DELETE FROM hostel_curfew_cases WHERE institution_id = inst AND resolved_at IS NOT NULL AND resolved_at < now() - keep;
+  -- Whatever its state: a case nobody resolved keeps a minor's name and times for no reason once its night is long over.
+  DELETE FROM hostel_curfew_cases WHERE institution_id = inst AND ((resolved_at IS NOT NULL AND resolved_at < now() - keep) OR night < (current_date - keep)::date);
   GET DIAGNOSTICS n_cases = ROW_COUNT;
-  DELETE FROM hostel_late_passes WHERE institution_id = inst AND status <> 'requested' AND created_at < now() - keep;
+  DELETE FROM hostel_late_passes WHERE institution_id = inst AND ((status <> 'requested' AND created_at < now() - keep) OR night < (current_date - keep)::date);
   GET DIAGNOSTICS n_passes = ROW_COUNT;
   RETURN jsonb_build_object('hostel_presence_log', n_log, 'hostel_curfew_cases', n_cases, 'hostel_late_passes', n_passes);
 END

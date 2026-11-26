@@ -3,13 +3,13 @@ import * as z from 'zod'
 import { audit, withTenant } from '@campusos/db'
 import { logSensitiveRead } from '@campusos/db/sensitive-reads'
 import { cursorColumn, finishPage, keyset, orderKeys, readPage, type SortSpec } from '@campusos/module-framework'
-import { notify } from '@campusos/module-notices/api'
+import { notify, notifyEach } from '@campusos/module-notices/api'
 import { entitled, localParts, nightOf, zoneIn } from './clock'
 import { loadPolicy } from './policy'
 import { derivePresence, curfewEvidence, ladderDue, type Evidence, type Step } from './presence-rules'
 import { literal, loadFacts } from './presence'
 import { HostelError, requireWarden, type Actor } from './operations'
-import { recipientsFor } from './wardens'
+import { homesOf, recipientsAt, recipientsFor, type Home } from './wardens'
 
 type Tx = Parameters<Parameters<typeof withTenant>[1]>[0]
 
@@ -34,6 +34,13 @@ interface BlockCurfew {
  * Safe under two workers: a case is unique per resident and night, only rows the
  * insert returned are announced, and open cases are taken `FOR UPDATE SKIP LOCKED`.
  * A pass holder's ladder starts at the end of the pass (D1321).
+ *
+ * A case is resolved only by lasting evidence (a check-in, leave) or by a warden. A pass, an open library session
+ * or a class running now only holds it: the ladder is restarted at the end of that evidence, so nobody is left
+ * unwatched once it lapses (review BLOCKER 1). When the night is over, a case nobody resolved lapses and an
+ * undecided pass expires (review HIGH 4). The ladder works a step at a time over every due case: one set-based
+ * write per step, not a handful of statements per case (review HIGH 3), inside a savepoint that falls back to one
+ * savepoint per case, so a single resident's failure never rolls back the tick (review BLOCKER 2).
  */
 export async function curfewSweep(
   tx: Tx,
@@ -58,12 +65,32 @@ export async function curfewSweep(
       from hostel_blocks b where b.institution_id = ${tenant}`)).rows as { id: string; code: string; kind: string; curfew_at: Date | string }[]
   const blocks = new Map<string, BlockCurfew>(blockRows.map((b) => [b.id, { id: b.id, code: b.code, kind: b.kind, curfewAt: new Date(b.curfew_at) }]))
 
+  // --- 0. close the nights that are over -----------------------------------------
+  const lapsed = (await tx.execute(sql`
+    update hostel_curfew_cases set resolved_at = ${nowIso}::timestamptz, resolution = 'lapsed'
+     where institution_id = ${tenant} and night < ${night}::date and resolved_at is null
+    returning id, student_id`)).rows as { id: string; student_id: string }[]
+  if (lapsed.length > 0) {
+    await tx.execute(sql`
+      insert into hostel_presence_log (institution_id, student_id, at, kind, source, detail)
+      select ${tenant}, t.s, ${nowIso}::timestamptz, 'case_resolved', 'hostel', jsonb_build_object('resolution', 'lapsed', 'caseId', t.c)
+        from unnest(${literal(lapsed.map((l) => l.student_id))}::text[], ${literal(lapsed.map((l) => l.id))}::text[]) as t(s, c)`)
+  }
+  await tx.execute(sql`
+    update hostel_late_passes set status = 'lapsed'
+     where institution_id = ${tenant} and night < ${night}::date and status = 'requested'`)
+
   // --- 1. open cases for residents nobody can account for ---------------------
-  const active = [...blocks.values()].filter(
-    (b) =>
-      now.getTime() >= b.curfewAt.getTime() + p.nudgeAfterMin * 60_000 &&
-      now.getTime() < b.curfewAt.getTime() + p.caseWindowHours * 3_600_000,
-  )
+  // The window is measured from the personal curfew, so a pass that ends late still gets its case; the block
+  // filter looks as far as the latest approved pass tonight, the per-resident check below is exact.
+  const [latest] = (await tx.execute(sql`
+    select max(until_at) as t from hostel_late_passes where institution_id = ${tenant} and night = ${night}::date and status = 'approved'`)).rows as { t: Date | string | null }[]
+  const latestPass = latest?.t ? new Date(latest.t) : null
+  const windowMs = p.caseWindowHours * 3_600_000
+  const active = [...blocks.values()].filter((b) => {
+    const from = latestPass && latestPass > b.curfewAt ? latestPass : b.curfewAt
+    return now.getTime() >= b.curfewAt.getTime() + p.nudgeAfterMin * 60_000 && now.getTime() < from.getTime() + windowMs
+  })
   if (active.length > 0) {
     const residents = (await tx.execute(sql`
       select a.student_id, r.block_id
@@ -80,6 +107,7 @@ export async function curfewSweep(
         // A resident with an approved pass is counted from the end of the pass.
         const personal = f.lateUntil && f.lateUntil > block.curfewAt ? f.lateUntil : block.curfewAt
         if (now.getTime() < personal.getTime() + p.nudgeAfterMin * 60_000) continue
+        if (now.getTime() >= personal.getTime() + windowMs) continue
         if (curfewEvidence({ ...f, pastCurfew: true }, now, p.walkBackMin) !== null) continue
         due.push({ studentId: r.student_id, blockId: r.block_id, curfewAt: personal })
       }
@@ -123,26 +151,25 @@ export async function curfewSweep(
        -- A case opened at this very instant has nothing due yet (every later step is offset by minutes).
        and c.opened_at < ${nowIso}::timestamptz
      order by c.opened_at, c.id
-       for update of c skip locked`)).rows as {
-    id: string
-    student_id: string
-    block_id: string
-    curfew_at: Date | string
-    nudge_at: Date | string | null
-    warden_at: Date | string | null
-    guardian_at: Date | string | null
-  }[]
+       for update of c skip locked`)).rows as unknown as OpenCase[]
   if (cases.length === 0) return out
 
   const facts = await loadFacts(tx, tenant, cases.map((c) => c.student_id), now, night)
-  const hhmm = (await localParts(tx, now, zone)).time.slice(0, 5)
+  const resolve: { c: OpenCase; why: Evidence }[] = []
+  const hold: { c: OpenCase; until: Date }[] = []
+  const nudges: OpenCase[] = []
+  const wardens: OpenCase[] = []
+  const guardians: OpenCase[] = []
   for (const c of cases) {
     const f = facts.get(c.student_id)!
     const evidence = curfewEvidence({ ...f, pastCurfew: true }, now, p.walkBackMin)
+    if (evidence === 'checked_in' || evidence === 'leave') {
+      resolve.push({ c, why: evidence })
+      continue
+    }
     if (evidence) {
-      await tx.execute(sql`update hostel_curfew_cases set resolved_at = ${nowIso}::timestamptz, resolution = ${evidence} where id = ${c.id}`)
-      await logRow(tx, tenant, c.student_id, now, 'case_resolved', { resolution: evidence, caseId: c.id })
-      out.resolved++
+      // Evidence that will end: the ladder starts again where it ends (D1321), a pass at its own end time.
+      hold.push({ c, until: evidence === 'late_pass' ? f.lateUntil! : now })
       continue
     }
     const block = blocks.get(c.block_id)
@@ -156,57 +183,152 @@ export async function curfewSweep(
       now,
       { nudge: p.nudgeAfterMin, warden: block?.kind === 'womens' ? p.womensWardenAfterMin : p.wardenAfterMin, guardian: p.guardianAfterMin },
     )
-    for (const step of steps) {
-      if (step === 'nudge') {
-        await tx.execute(sql`update hostel_curfew_cases set nudge_at = ${nowIso}::timestamptz where id = ${c.id}`)
-        continue
-      }
-      const floorTeam = await recipientsFor(tx, tenant, c.student_id, 'floor')
-      const where = `${floorTeam.studentName} (${floorTeam.blockCode}-${floorTeam.room})`
-      const wardenText = {
-        title: 'Resident not checked in',
-        body: `${where} has not checked in, ${Math.max(0, Math.floor((now.getTime() - new Date(c.curfew_at).getTime()) / 60_000))} minutes after curfew.`,
-      }
-      if (step === 'warden') {
-        await notify(tx, tenant, { userIds: floorTeam.userIds, moduleId: 'hostel_safety', ...wardenText, link: LINK })
-        await tx.execute(sql`update hostel_curfew_cases set warden_at = ${nowIso}::timestamptz where id = ${c.id}`)
-        await logRow(tx, tenant, c.student_id, now, 'warden_alerted', { caseId: c.id, recipients: floorTeam.userIds.length })
-        out.warded++
-        continue
-      }
-      // guardian step
-      const blockTeam = await recipientsFor(tx, tenant, c.student_id, 'block')
-      const chiefTeam = await recipientsFor(tx, tenant, c.student_id, 'chief')
-      const staff = [...new Set([...blockTeam.userIds, ...chiefTeam.userIds])]
-      if (f.sharing) {
-        const guardians = (await tx.execute(sql`select distinct guardian_id from public.campusos_guardians_of(array[${c.student_id}]::text[])`)).rows as { guardian_id: string }[]
-        const gIds = guardians.map((g) => g.guardian_id).filter((g) => g !== c.student_id)
-        if (gIds.length > 0) {
-          await notify(tx, tenant, {
-            userIds: gIds,
-            moduleId: 'hostel_safety',
+    c.sharing = f.sharing
+    if (steps.includes('nudge')) nudges.push(c)
+    if (steps.includes('warden')) wardens.push(c)
+    if (steps.includes('guardian')) guardians.push(c)
+  }
+
+  if (resolve.length > 0) {
+    await tx.execute(sql`
+      update hostel_curfew_cases c set resolved_at = ${nowIso}::timestamptz, resolution = t.r
+        from unnest(${literal(resolve.map((r) => r.c.id))}::uuid[], ${literal(resolve.map((r) => r.why))}::text[]) as t(id, r)
+       where c.id = t.id`)
+    await tx.execute(sql`
+      insert into hostel_presence_log (institution_id, student_id, at, kind, source, detail)
+      select ${tenant}, t.s, ${nowIso}::timestamptz, 'case_resolved', 'hostel', jsonb_build_object('resolution', t.r, 'caseId', t.c)
+        from unnest(${literal(resolve.map((r) => r.c.student_id))}::text[], ${literal(resolve.map((r) => r.why))}::text[], ${literal(resolve.map((r) => r.c.id))}::text[]) as t(s, r, c)`)
+    out.resolved += resolve.length
+  }
+  if (hold.length > 0) {
+    await tx.execute(sql`
+      update hostel_curfew_cases c set curfew_at = greatest(c.curfew_at, t.u), warden_at = null, guardian_at = null
+        from unnest(${literal(hold.map((h) => h.c.id))}::uuid[], ${literal(hold.map((h) => h.until.toISOString()))}::timestamptz[]) as t(id, u)
+       where c.id = t.id`)
+  }
+  if (nudges.length > 0) {
+    await tx.execute(sql`update hostel_curfew_cases set nudge_at = ${nowIso}::timestamptz where id = any(${literal(nudges.map((c) => c.id))}::uuid[])`)
+  }
+  if (wardens.length === 0 && guardians.length === 0) return out
+
+  const homes = await homesOf(tx, [...new Set([...wardens, ...guardians].map((c) => c.student_id))])
+  const hhmm = (await localParts(tx, now, zone)).time.slice(0, 5)
+  const cache = new Map<string, Promise<string[]>>()
+  const team = (level: 'floor' | 'block' | 'chief', h: Home) => {
+    const key = `${level}|${level === 'chief' ? '' : h.blockId}|${level === 'floor' ? h.floor : ''}|${level === 'chief' ? '' : h.wardenUserId}`
+    if (!cache.has(key)) cache.set(key, recipientsAt(tx, tenant, h, level))
+    return cache.get(key)!
+  }
+  const wardenText = (c: OpenCase, h: Home) => ({
+    title: 'Resident not checked in',
+    body: `${h.studentName} (${h.blockCode}-${h.room}) has not checked in, ${Math.max(0, Math.floor((now.getTime() - new Date(c.curfew_at).getTime()) / 60_000))} minutes after curfew.`,
+  })
+
+  out.warded += await guarded(wardens, async (sp, xs) => {
+    const items: { userId: string; title: string; body: string; link: string }[] = []
+    const counts: number[] = []
+    for (const c of xs) {
+      const h = homes.get(c.student_id)!
+      const to = await team('floor', h)
+      counts.push(to.length)
+      for (const userId of to) items.push({ userId, ...wardenText(c, h), link: LINK })
+    }
+    await notifyEach(sp, tenant, 'hostel_safety', items)
+    await sp.execute(sql`update hostel_curfew_cases set warden_at = ${nowIso}::timestamptz where id = any(${literal(xs.map((c) => c.id))}::uuid[])`)
+    await sp.execute(sql`
+      insert into hostel_presence_log (institution_id, student_id, at, kind, source, detail)
+      select ${tenant}, t.s, ${nowIso}::timestamptz, 'warden_alerted', 'hostel', jsonb_build_object('caseId', t.c, 'recipients', t.n)
+        from unnest(${literal(xs.map((c) => c.student_id))}::text[], ${literal(xs.map((c) => c.id))}::text[], ${literal(counts.map(String))}::int[]) as t(s, c, n)`)
+    return xs.length
+  }, tx, 'warden')
+
+  out.guardians += await guarded(guardians, async (sp, xs) => {
+    // The parents module owns the guardian function; without it nobody is a guardian (the notices module does the same).
+    const [fn] = (await sp.execute(sql`select to_regprocedure('public.campusos_guardians_of(text[])') is not null as ok`)).rows as { ok: boolean }[]
+    const sharing = xs.filter((c) => c.sharing)
+    const guardianOf = new Map<string, string[]>()
+    if (fn?.ok && sharing.length > 0) {
+      const rows = (await sp.execute(sql`
+        select distinct student_id, guardian_id from public.campusos_guardians_of(${literal(sharing.map((c) => c.student_id))}::text[])`)).rows as { student_id: string; guardian_id: string }[]
+      for (const r of rows) if (r.guardian_id !== r.student_id) guardianOf.set(r.student_id, [...(guardianOf.get(r.student_id) ?? []), r.guardian_id])
+    }
+    const items: { userId: string; title: string; body: string; link: string }[] = []
+    const detail: Record<string, unknown>[] = []
+    for (const c of xs) {
+      const h = homes.get(c.student_id)!
+      const staff = [...new Set([...(await team('block', h)), ...(await team('chief', h))])]
+      const gIds = guardianOf.get(c.student_id) ?? []
+      const where = `${h.studentName} (${h.blockCode}-${h.room})`
+      if (gIds.length > 0) {
+        for (const userId of gIds) {
+          items.push({
+            userId,
             title: 'Hostel check-in missing',
-            body: `${floorTeam.studentName} has not checked in at the hostel as of ${hhmm}. Please contact them or the hostel office.`,
+            body: `${h.studentName} has not checked in at the hostel as of ${hhmm}. Please contact them or the hostel office.`,
             link: '/m/parents',
           })
         }
-        await notify(tx, tenant, { userIds: staff, moduleId: 'hostel_safety', ...wardenText, link: LINK })
-        await logRow(tx, tenant, c.student_id, now, 'guardian_alerted', { caseId: c.id, sent: true, count: gIds.length })
+        for (const userId of staff) items.push({ userId, ...wardenText(c, h), link: LINK })
+        detail.push({ caseId: c.id, sent: true, count: gIds.length })
       } else {
-        await notify(tx, tenant, {
-          userIds: staff,
-          moduleId: 'hostel_safety',
-          title: "Call a resident's guardian",
-          body: `${where} is still not checked in. Guardian alerts are off for this student. Open the case for the emergency contact.`,
-          link: LINK,
-        })
-        await logRow(tx, tenant, c.student_id, now, 'guardian_alerted', { caseId: c.id, sent: false, reason: 'no_consent' })
+        // No consent, or consent and nobody to tell: the wardens make the call themselves.
+        for (const userId of staff) {
+          items.push({
+            userId,
+            title: "Call a resident's guardian",
+            body: `${where} is still not checked in. Guardian alerts are off for this student. Open the case for the emergency contact.`,
+            link: LINK,
+          })
+        }
+        detail.push({ caseId: c.id, sent: false, reason: c.sharing ? "no_guardians" : "no_consent" })
       }
-      await tx.execute(sql`update hostel_curfew_cases set guardian_at = ${nowIso}::timestamptz where id = ${c.id}`)
-      out.guardians++
     }
-  }
+    await notifyEach(sp, tenant, 'hostel_safety', items)
+    await sp.execute(sql`update hostel_curfew_cases set guardian_at = ${nowIso}::timestamptz where id = any(${literal(xs.map((c) => c.id))}::uuid[])`)
+    await sp.execute(sql`
+      insert into hostel_presence_log (institution_id, student_id, at, kind, source, detail)
+      select ${tenant}, a.s, ${nowIso}::timestamptz, 'guardian_alerted', 'hostel', b.d
+        from unnest(${literal(xs.map((c) => c.student_id))}::text[]) with ordinality as a(s, o)
+        join jsonb_array_elements(${JSON.stringify(detail)}::jsonb) with ordinality as b(d, o) on b.o = a.o`)
+    return xs.length
+  }, tx, 'guardian')
   return out
+}
+
+interface OpenCase {
+  id: string
+  student_id: string
+  block_id: string
+  curfew_at: Date | string
+  nudge_at: Date | string | null
+  warden_at: Date | string | null
+  guardian_at: Date | string | null
+  sharing?: boolean
+}
+
+/**
+ * Run one ladder step for a set of cases in a savepoint. If the set fails, take the cases one at a time, each in
+ * its own savepoint, so one resident's failure costs only that case (it is retried on the next tick).
+ */
+async function guarded(items: OpenCase[], run: (sp: Tx, xs: OpenCase[]) => Promise<number>, tx: Tx, step: string): Promise<number> {
+  if (items.length === 0) return 0
+  try {
+    return await tx.transaction((sp) => run(sp, items))
+  } catch (e) {
+    if (items.length > 1) {
+      let n = 0
+      for (const one of items) {
+        try {
+          n += await tx.transaction((sp) => run(sp, [one]))
+        } catch (e2) {
+          console.warn(JSON.stringify({ event: 'hostel.ladder_case_failed', step, caseId: one.id, error: (e2 as Error).message }))
+        }
+      }
+      return n
+    }
+    console.warn(JSON.stringify({ event: 'hostel.ladder_case_failed', step, caseId: items[0]!.id, error: (e as Error).message }))
+    return 0
+  }
 }
 
 async function logRow(tx: Tx, tenant: string, studentId: string, at: Date, kind: string, detail: Record<string, unknown>) {

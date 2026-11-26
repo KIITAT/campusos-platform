@@ -347,7 +347,7 @@ export const latePasses = pgTable(
       .on(t.studentId, t.night)
       .where(sql`status in ('requested', 'approved')`),
     index('hostel_late_passes_night').on(t.institutionId, t.night),
-    check('hostel_passes_status', sql`status in ('requested', 'approved', 'refused', 'cancelled')`),
+    check('hostel_passes_status', sql`status in ('requested', 'approved', 'refused', 'cancelled', 'lapsed')`),
     check('hostel_passes_reason', sql`length(trim(reason)) between 5 and 200`),
     tenantPolicy('hostel_late_passes'),
   ],
@@ -384,7 +384,7 @@ export const curfewCases = pgTable(
     index('hostel_cases_block_night').on(t.blockId, t.night),
     check(
       'hostel_cases_resolution',
-      sql`resolution is null or resolution in ('checked_in', 'leave', 'late_pass', 'library', 'library_exit', 'class', 'warden_verified', 'warden_closed')`,
+      sql`resolution is null or resolution in ('checked_in', 'leave', 'warden_verified', 'warden_closed', 'lapsed')`,
     ),
     check('hostel_cases_resolved_together', sql`(resolved_at is null) = (resolution is null)`),
     check('hostel_cases_note', sql`note is null or length(note) between 5 and 300`),

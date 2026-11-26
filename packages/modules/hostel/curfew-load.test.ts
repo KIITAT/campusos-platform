@@ -112,5 +112,7 @@ test('the warden tick and the guardian tick over 5,000 open cases stay inside 10
   assert.ok(wardenMs < 10_000, `warden tick took ${wardenMs} ms`)
   const guardianMs = await best('guardian', at('22:31'), `update hostel_curfew_cases set guardian_at = null where institution_id = '${inst}'`, 'guardians')
   assert.ok(guardianMs < 10_000, `guardian tick took ${guardianMs} ms`)
+  const told = (await authDb.execute(sql`select count(*)::int as n from notifications where institution_id = ${inst} and title = 'Hostel check-in missing'`)).rows[0] as { n: number }
+  assert.equal(told.n, 1000, 'every consenting resident with a guardian reached the guardian')
   console.log(`curfew load: warden ${wardenMs} ms, guardian ${guardianMs} ms`)
 })
