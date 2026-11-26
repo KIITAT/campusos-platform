@@ -241,3 +241,12 @@ test('NEW-261: the report counts a win by the institution day (IST), not the UTC
   assert.equal(april.won, 1)
   assert.equal(march.won, 0)
 })
+
+test('NEW-262: a stage that still holds open deals cannot be archived, so the forecast halves agree', async () => {
+  const c = await sales()
+  await createLead(c.rep, lead('Held', { kind: 'opportunity', expectedValue: '1000', expectedClose: '2026-12-10' }))
+  const [first] = (await settings(c.admin)).stages
+  await assert.rejects(() => updateStage(c.admin, { stageId: first!.id, archived: true }), refused(409, 'stage_in_use'))
+  const f = await forecast(c.admin)
+  assert.equal(f.totalPaise, f.months.reduce((a, m) => a + m.totalPaise, 0))
+})
