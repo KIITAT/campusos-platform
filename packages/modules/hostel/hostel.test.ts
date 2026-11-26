@@ -587,3 +587,26 @@ test('a warden of another institution cannot reach into this one', async () => {
 test('a session with no tenant set reads nothing rather than erroring', async () => {
   assert.equal((await db.select().from(blocks)).length, 0)
 })
+
+test('a manual mark after midnight does not stop the evening scan of the night it is stamped on (P2-22a review HIGH 2)', async () => {
+  await setAttendance(true)
+  await allocate(warden(), { roomId: roomA, studentId: ids.s1 })
+  // The warden's 00:20 mark is stamped on today's date (NEW-231); the sweep counts it for the night before.
+  await withTenant(inst, (tx) =>
+    tx.execute(sql`
+      insert into hostel_check_ins (institution_id, block_id, student_id, on_night, status, method, recorded_by, recorded_at)
+      values (${inst}, ${blockId}, ${ids.s1}, ${today()}::date, 'present', 'manual', ${ids.warden}, ((${today()}::date + time '00:20') at time zone 'Asia/Kolkata'))`),
+  )
+  const qr = await rollCallCode(warden(), blockId, SECRET)
+  const evening = new Date(`${today()}T20:30:00+05:30`)
+  const row = await scanCheckIn(student(ids.s1), { code: encodeQr(qr), blockId }, SECRET, evening)
+  assert.equal(row.method, 'scan', 'the evening scan replaces the pre-noon mark')
+  assert.equal(row.recordedAt.getTime(), evening.getTime())
+
+  // A warden's mark taken after noon is still the record of last resort.
+  await mark(warden(), { blockId, studentId: ids.s1, status: 'absent', note: 'bed empty at the evening round' })
+  await assert.rejects(
+    () => scanCheckIn(student(ids.s1), { code: encodeQr(qr), blockId }, SECRET, new Date(`${today()}T20:40:00+05:30`)),
+    (e: unknown) => code(e) === 'already_marked',
+  )
+})

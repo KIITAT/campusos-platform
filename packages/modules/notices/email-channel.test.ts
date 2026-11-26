@@ -223,3 +223,22 @@ test('an enqueue that really fails never fails the producer transaction (review 
   assert.equal((await emailJobs()).length, queuedBefore, 'no queue row for the failed enqueue')
   assert.deepEqual(warnings.map((line) => JSON.parse(line)), [{ event: 'notices.email_enqueue_skipped' }])
 }))
+
+test('a hostel_safety notification is e-mailed even when the member has switched notification e-mail off', () => withEmailEnabled(async () => {
+  const preference = plugin.routes.find((route) => route.method === 'POST' && route.path === '/preferences/email')!
+  const setOptOut = (optedOut: boolean) => preference.handler(student(), new Request('http://localhost/preferences/email', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ optedOut }),
+  }))
+  const deliver = (moduleId: string, title: string) => withTenant(tenant, (tx) =>
+    notify(tx, tenant, { userIds: [studentId], moduleId, title, body: 'Example safety text' }))
+  await setOptOut(true)
+  try {
+    const before = (await emailJobs()).length
+    await deliver('fees', 'Opted out fee mail')
+    assert.equal((await emailJobs()).length, before, 'an ordinary category stays silent')
+    await deliver('hostel_safety', 'Safety mail past an opt-out')
+    assert.equal((await emailJobs()).length, before + 1, 'a hostel_safety alert is still queued for e-mail')
+  } finally {
+    await setOptOut(false)
+  }
+}))

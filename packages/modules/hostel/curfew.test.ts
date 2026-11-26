@@ -3,9 +3,10 @@ import assert from 'node:assert/strict'
 import { and, eq, sql } from 'drizzle-orm'
 import { authDb, institutionModules, institutions, recordGuardianConsent, users, withTenant } from '@campusos/db'
 import { enterSession, exitSession, type Actor as LibActor } from '@campusos/module-library/api'
+import { registerNotificationChannel } from '@campusos/module-notices/api'
 import { notificationOptOuts, notifications } from '@campusos/module-notices/schema'
 import {
-  HostelError, addRooms, addScope, allocate, createBlock, curfewSweep, grantLeave, listCases, resolveCase, studentPresence,
+  HostelError, addRooms, addScope, allocate, createBlock, curfewSweep, grantLeave, listCases, resolveCase, setPolicy, studentPresence,
   type Actor,
 } from './api'
 import {
@@ -325,4 +326,141 @@ test('hostel_safety cannot be muted: a floor warden with an opt-out row still ge
   await sweep(at('21:40'))
   await sweep(at('22:00'))
   assert.equal((await notes(ids.w1, 'Resident not checked in')).length, 2)
+})
+
+// --- P2-22a review (Opus, 2026-11-26) ----------------------------------------
+
+const wardenLines = async (userId: string, who = 'One Student') =>
+  (await notes(userId, 'Resident not checked in')).filter((n) => n.body.startsWith(who))
+
+test('BLOCKER 1: a pass approved after the case opened holds it, and the ladder restarts when the pass ends', async () => {
+  await sweep(at('21:40'))
+  await pass(ids.s1, at('23:00'))
+  assert.equal((await sweep(at('21:45'))).resolved, 0, 'a pass is not lasting evidence')
+  assert.equal((await caseOf(ids.s1)).resolvedAt, null)
+  await sweep(at('22:30'))
+  assert.equal((await wardenLines(ids.w1)).length, 0, 'nobody is alerted while the pass holds')
+  await sweep(at('23:15'))
+  assert.equal((await wardenLines(ids.w1)).length, 0, 'the warden step is at pass end + 30')
+  await sweep(at('23:31'))
+  const w = await wardenLines(ids.w1)
+  assert.equal(w.length, 1)
+  assert.equal(w[0]!.body, 'One Student (a-101) has not checked in, 31 minutes after curfew.')
+  await sweep(at('00:01', '27'))
+  assert.ok((await caseOf(ids.s1)).guardianAt, 'the guardian step is at pass end + 60')
+})
+
+test('BLOCKER 1: a library visit holds the case; the ladder restarts after the walk back', async () => {
+  await consent(ids.s1)
+  await sweep(at('21:40'))
+  await enterSession(librarian(), { studentId: ids.s1 }, at('21:50'))
+  assert.equal((await sweep(at('21:55'))).resolved, 0)
+  await exitSession(librarian(), { studentId: ids.s1 }, at('22:00'))
+  await sweep(at('22:20'))
+  await sweep(at('22:21'))
+  await sweep(at('22:49'))
+  assert.equal((await wardenLines(ids.w1)).length, 0)
+  await sweep(at('22:51'))
+  assert.equal((await wardenLines(ids.w1)).length, 1)
+})
+
+test('BLOCKER 1: a check-in still resolves a held case', async () => {
+  await sweep(at('21:40'))
+  await pass(ids.s1, at('23:00'))
+  await sweep(at('21:45'))
+  await checkIn(ids.s1, NIGHT, at('22:00'))
+  assert.equal((await sweep(at('22:01'))).resolved, 1)
+  assert.equal((await caseOf(ids.s1)).resolution, 'checked_in')
+})
+
+const withoutParents = async (run: () => Promise<void>) => {
+  await authDb.execute(sql`alter function public.campusos_guardians_of(text[]) rename to campusos_guardians_of_test_hidden`)
+  try {
+    await run()
+  } finally {
+    await authDb.execute(sql`alter function public.campusos_guardians_of_test_hidden(text[]) rename to campusos_guardians_of`)
+  }
+}
+
+test('BLOCKER 2: a hub without the parents module still alerts the block and chief wardens at +60', async () => {
+  await consent(ids.s1)
+  await sweep(at('21:40'))
+  await sweep(at('22:00'))
+  await withoutParents(async () => {
+    const r = await sweep(at('22:30'))
+    assert.equal(r.guardians, 2)
+  })
+  const c = await caseOf(ids.s1)
+  assert.ok(c.guardianAt && c.wardenAt)
+  assert.equal((await notes(ids.chief, "Call a resident's guardian")).filter((n) => n.body.startsWith('One Student')).length, 1)
+  const log = await withTenant(inst, (tx) => tx.select().from(presenceLog).where(and(eq(presenceLog.kind, 'guardian_alerted'), eq(presenceLog.studentId, ids.s1))))
+  assert.deepEqual(log[0]!.detail, { caseId: c.id, sent: false, reason: 'no_guardians' })
+})
+
+test('BLOCKER 2: one resident whose alert fails does not roll back the others, and is retried', async () => {
+  await consent(ids.s1)
+  await linkParent()
+  await sweep(at('21:40'))
+  await sweep(at('22:00'))
+  const off = registerNotificationChannel({
+    id: 'curfew-test-boom',
+    async deliver(_tx, deliveries) {
+      if (deliveries.some((d) => d.userId === ids.par)) throw new Error('the relay refused one guardian')
+    },
+  })
+  try {
+    const r = await sweep(at('22:30'))
+    assert.equal(r.guardians, 1, 'the other resident was still taken up the ladder')
+  } finally {
+    off()
+  }
+  assert.equal((await caseOf(ids.s1)).guardianAt, null)
+  assert.ok((await caseOf(ids.s2)).guardianAt)
+  assert.equal((await notes(ids.par)).length, 0)
+  await sweep(at('22:31'))
+  assert.ok((await caseOf(ids.s1)).guardianAt)
+  assert.equal((await notes(ids.par)).length, 1)
+})
+
+test('HIGH 4: when the night is over open cases lapse and undecided passes expire', async () => {
+  await sweep(at('21:40'))
+  await pass(ids.s1, at('23:00'), 'requested')
+  await sweep(at('11:59', '27'))
+  assert.equal((await cases()).filter((c) => c.resolvedAt === null).length, 2)
+  await sweep(at('12:00', '27'))
+  const all = await cases()
+  assert.ok(all.every((c) => c.resolution === 'lapsed' && c.resolvedAt !== null))
+  assert.equal((await withTenant(inst, (tx) => tx.select().from(latePasses)))[0]!.status, 'lapsed')
+  assert.equal((await listCases(warden())).rows.length, 0, 'the warden list of open cases is empty')
+})
+
+test('NOTE: an open library session after the library closed is not evidence', async () => {
+  await consent(ids.s1)
+  await enterSession(librarian(), { studentId: ids.s1 }, at('20:00'))
+  await withTenant(inst, (tx) => tx.execute(sql`update library_sessions set unconfirmed_reported_at = ${at('20:30').toISOString()}::timestamptz`))
+  assert.equal((await sweep(at('21:40'))).opened, 2)
+})
+
+test('NOTE: the case window is measured from the end of a pass', async () => {
+  await setPolicy(admin(), {
+    curfewTime: '21:30', nudgeAfterMin: 10, wardenAfterMin: 30, womensWardenAfterMin: 15, guardianAfterMin: 60,
+    walkBackMin: 20, caseWindowHours: 1, latePassLatestTime: '01:00', notifyWardenOnLibraryEntry: false,
+    presenceRetentionDays: 90, reason: 'a short window',
+  })
+  await pass(ids.s1, at('01:00', '27'))
+  const r = await sweep(at('01:10', '27'))
+  assert.equal(r.opened, 1)
+  assert.equal((await cases())[0]!.studentId, ids.s1)
+})
+
+test('NOTE: a warden scope does not outlive the role', async () => {
+  await authDb.execute(sql`update users set role = 'faculty' where id = ${ids.w1}`)
+  try {
+    await sweep(at('21:40'))
+    await sweep(at('22:00'))
+  } finally {
+    await authDb.execute(sql`update users set role = 'hostel_staff' where id = ${ids.w1}`)
+  }
+  assert.equal((await notes(ids.w1, 'Resident not checked in')).length, 0)
+  assert.equal((await notes(ids.w2, 'Resident not checked in')).length, 2, 'the block warden took over')
 })

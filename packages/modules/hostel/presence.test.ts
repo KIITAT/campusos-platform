@@ -221,6 +221,18 @@ test('an unconfirmed event notifies the floor warden with the closing text', asy
   assert.ok((await logRows()).some((x) => x.kind === 'library_unconfirmed'))
 })
 
+test('re-enabling the module does not replay an old backlog to the wardens (P2-22a review NOTE)', async () => {
+  await consent(ids.s1)
+  const s = await enterSession(librarian(), { studentId: ids.s1 })
+  await withTenant(inst, (tx) =>
+    tx.execute(sql`insert into library_events (institution_id, kind, student_id, session_id, at) values (${inst}, 'session_unconfirmed', ${ids.s1}, ${s.id}, now())`),
+  )
+  await withTenant(inst, (tx) => tx.execute(sql`update library_events set at = now() - interval '3 hours', created_at = now() - interval '3 hours'`))
+  const r = await consume()
+  assert.equal(r.notified, 0, 'nobody is told about last night')
+  assert.ok((await logRows()).some((x) => x.kind === 'library_unconfirmed'), 'the timeline still records it')
+})
+
 test('notify_warden_on_library_entry false: entry notifies nobody; true: the floor warden is told', async () => {
   await consent(ids.s1)
   await enterSession(librarian(), { studentId: ids.s1 })
@@ -282,9 +294,17 @@ test('purge deletes history older than presence_retention_days and keeps newer; 
     await authDb.execute(sql`insert into hostel_presence_log (institution_id, student_id, at, kind, source) values (${o!.id}, ${os!.id}, now() - interval '200 days', 'case_opened', 'hostel')`)
     await seedHistory(ids.s1, 100)
     await seedHistory(ids.s2, 10)
+    // A case nobody resolved and a pass nobody decided, long after their night (P2-22a review HIGH 4).
+    await authDb.execute(sql`
+      insert into hostel_curfew_cases (institution_id, student_id, block_id, night, curfew_at, opened_at)
+      values (${inst}, ${ids.s3}, ${blockId}, (current_date - 100), now() - interval '100 days', now() - interval '100 days')`)
+    await authDb.execute(sql`
+      insert into hostel_late_passes (institution_id, student_id, night, until_at, reason, status, created_at)
+      values (${inst}, ${ids.s3}, (current_date - 100), now() - interval '100 days', 'practical examination', 'requested', now() - interval '100 days')`)
     const r = (await authDb.execute(sql`select dpdp_retention.purge_hostel(${inst}::uuid) as r`)).rows[0] as { r: Record<string, number> }
-    assert.deepEqual(r.r, { hostel_presence_log: 1, hostel_curfew_cases: 1, hostel_late_passes: 1 })
+    assert.deepEqual(r.r, { hostel_presence_log: 1, hostel_curfew_cases: 2, hostel_late_passes: 2 })
     assert.deepEqual(await counts(ids.s1), { log: 0, cases: 0, passes: 0 })
+    assert.deepEqual(await counts(ids.s3), { log: 0, cases: 0, passes: 0 })
     assert.deepEqual(await counts(ids.s2), { log: 1, cases: 1, passes: 1 })
     assert.equal((await counts(os!.id)).log, 1)
   } finally {

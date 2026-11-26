@@ -156,3 +156,17 @@ test('a cancelled window no longer extends', async () => {
   assert.equal((await sweep(at('21:45'))).opened, 2)
   await assert.rejects(() => cancelWindow(admin(), { windowId: w.id }), (e: unknown) => code(e) === 'no_such_window')
 })
+
+test('a request before noon is for the coming night, and a pass that ends in the past is refused (P2-22a review HIGH 1)', async () => {
+  const r = await request(ids.s1, { untilTime: '23:00' }, at('10:00', '27'))
+  assert.equal(r.night, '2026-11-27')
+  assert.equal(new Date(r.untilAt).getTime(), at('23:00', '27').getTime())
+  assert.equal(r.status, 'requested')
+  // At 00:30 the night that began yesterday is still running: its pass belongs to it, but not one already over.
+  await assert.rejects(
+    () => request(ids.s2, { untilTime: '00:10', nextDay: true }, at('00:30', '27')),
+    (e: unknown) => code(e) === 'pass_not_later',
+  )
+  const late = await request(ids.s2, { untilTime: '00:50', nextDay: true }, at('00:30', '27'))
+  assert.equal(late.night, '2026-11-26')
+})
