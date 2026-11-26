@@ -18,6 +18,8 @@ export async function addNote(actor: Actor, input: unknown) {
     const { lead } = await visibleLead(tx, actor, data.leadId)
     assertNotErased(lead)
     const [row] = await tx.insert(notes).values({ institutionId, leadId: lead.id, kind: 'note', body: data.body, authorId: actor.id }).returning({ id: notes.id })
+    // The retention purge goes by updated_at: a lead worked through its history is in use.
+    await tx.update(leads).set({ updatedAt: new Date() }).where(eq(leads.id, lead.id))
     await log(tx, actor, 'note.added', row!.id, 'Note added to a lead')
     return result(lead.id)
   })
