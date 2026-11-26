@@ -1,12 +1,12 @@
 import * as z from 'zod'
-import { sql } from 'drizzle-orm'
+import { and, desc, eq, isNull, sql } from 'drizzle-orm'
 import { audit, withTenant } from '@campusos/db'
 import { assertCanAccessStudent } from '@campusos/module-framework'
-import { reportCardEntries } from '../schema'
-import { schoolSubject, type SchoolExam, type SchoolSubject } from './grading'
+import { reportCardEntries, reportCardVersions } from '../schema'
+import { sections, users } from './joins'
 import { ExamError, type Actor } from './operations'
-import { isAdmin, lockReportCard, NOTICES, readTemplate, reportCardRefusal, tenantOf, type Tx } from './report-card-store'
-import { classNumberOf, defaultSchoolTemplate, type SchoolTemplate } from './school-policy'
+import { freezeDefaultWithin, isAdmin, lockReportCard, NOTICES, reportCardRefusal, tenantOf, type Tx } from './report-card-store'
+import { assemble, issuePayload, snapshot, templateOf, type CardAttendance, type IssuePayload, type ReportCard, type Snapshot } from './report-card-input'
 
 /**
  * A school pupil's term report (FUNC-03, P1-13b): the entry and publication
@@ -15,130 +15,49 @@ import { classNumberOf, defaultSchoolTemplate, type SchoolTemplate } from './sch
  * remark and publication: the marks are never copied.
  */
 
-export type ReportCard = {
-  institution: string
-  term: { code: string; name: string }
-  classNumber: number
-  sectionLabel: string
-  name: string
-  rollNo: string | null
-  templateName: string
-  mode: SchoolTemplate['mode']
-  subjects: ({ courseCode: string; title: string } & SchoolSubject)[]
-  areas: { key: string; label: string; group: 'scholastic' | 'co_scholastic'; grade: string | null }[]
-  remark: string | null
-  legend: { grade: string; floor: number }[]
-}
+export type { CardAttendance, IssuePayload, ReportCard } from './report-card-input'
 
-/** Everything one report reads, taken in a single statement so it is one snapshot. */
-type Snapshot = {
-  cand: { section_id: string; section_label: string; class_teacher_id: string | null; program_id: string; program_code: string; term_code: string; term_name: string; pupil_name: string | null; roll_no: string | null; institution_name: string } | null
-  template: { revision: number; template: unknown } | null
-  entry: { grades: Record<string, string>; remark_key: string | null; published_at: string | null } | null
-  offerings: { id: string; code: string; title: string; exams: { id: string; name: string; kind: SchoolExam['kind']; max_marks: number; weight_percent: number; published: boolean; obtained: number | null; absent: boolean | null }[] }[]
-}
-
-async function snapshot(tx: Tx, termId: string, sectionId: string, studentId: string): Promise<Snapshot> {
-  const { rows } = await tx.execute(sql`
-    with cand as (
-      select s.id as section_id, s.label as section_label, s.class_teacher_id, p.id as program_id, p.code as program_code,
-             t.id as term_id, t.code as term_code, t.name as term_name, u.id as student_id, u.name as pupil_name,
-             sp.roll_no, i.name as institution_name
-        from academic_sections s
-        join academic_programs p on p.id = s.program_id and p.level = 'school'
-        join academic_terms t on t.id = ${termId}::uuid
-        join academic_section_members m on m.section_id = s.id and m.user_id = ${studentId}
-        join users u on u.id = m.user_id and u.role = 'student' and u.erased_at is null
-        join institutions i on i.id = s.institution_id
-        left join academic_student_profiles sp on sp.student_id = u.id
-       where s.id = ${sectionId}::uuid
-         and exists (select 1 from academic_offerings o where o.section_id = s.id and o.term_id = t.id)
-    )
-    select
-      (select to_jsonb(cand) - 'term_id' - 'student_id' from cand) as cand,
-      (select jsonb_build_object('revision', r.revision, 'template', r.template)
-         from exam_report_card_templates r where r.term_id = ${termId}::uuid and r.program_id = (select program_id from cand)) as template,
-      (select jsonb_build_object('grades', e.grades, 'remark_key', e.remark_key, 'published_at', e.published_at)
-         from exam_report_card_entries e
-        where e.term_id = ${termId}::uuid and e.section_id = ${sectionId}::uuid and e.student_id = ${studentId}) as entry,
-      coalesce((
-        select jsonb_agg(jsonb_build_object(
-                 'id', o.id, 'code', c.code, 'title', c.title,
-                 'exams', coalesce((
-                   select jsonb_agg(jsonb_build_object(
-                            'id', x.id, 'name', x.name, 'kind', x.kind, 'max_marks', x.max_marks, 'weight_percent', x.weight_percent,
-                            'published', x.published_at is not null, 'obtained', k.obtained, 'absent', k.absent) order by x.created_at, x.id)
-                     from exams x left join exam_marks k on k.exam_id = x.id and k.student_id = ${studentId}
-                    where x.offering_id = o.id), '[]'::jsonb)
-               ) order by c.code, o.id)
-          from academic_offerings o join academic_courses c on c.id = o.course_id
-         where o.section_id = ${sectionId}::uuid and o.term_id = ${termId}::uuid and exists (select 1 from cand)), '[]'::jsonb) as offerings`)
-  return rows[0] as unknown as Snapshot
-}
-
-const templateOf = (s: Snapshot): SchoolTemplate | null => {
-  if (s.template) return readTemplate(s.template.template)
-  const n = s.cand ? classNumberOf(s.cand.program_code) : null
-  return n === null ? null : defaultSchoolTemplate(n)
-}
-
-/** The report as the snapshot stands, and whether it is complete enough to publish. */
-function assemble(s: Snapshot, t: SchoolTemplate): { report: ReportCard; complete: boolean } {
-  const c = s.cand!
-  const subjects =
-    t.mode === 'marks'
-      ? s.offerings.map((o) => ({
-          courseCode: o.code,
-          title: o.title,
-          ...schoolSubject(
-            t,
-            o.code,
-            o.exams.map((e) => ({ examId: e.id, name: e.name, kind: e.kind, maxMarks: Number(e.max_marks), weightPercent: Number(e.weight_percent), published: e.published, obtained: e.obtained === null ? null : Number(e.obtained), absent: e.absent === true })),
-          ),
-        }))
-      : []
-  const grades = s.entry?.grades ?? {}
-  const areas = t.areas.map((a) => ({ key: a.key, label: a.label, group: a.group, grade: a.grades.find((g) => g.key === grades[a.key])?.label ?? null }))
-  const complete = t.mode === 'marks' ? subjects.every((x) => x.total !== null) : areas.filter((a) => a.group === 'scholastic').every((a) => a.grade !== null)
-  return {
-    complete,
-    report: {
-      institution: c.institution_name,
-      term: { code: c.term_code, name: c.term_name },
-      classNumber: t.classNumber,
-      sectionLabel: c.section_label,
-      name: c.pupil_name?.trim() || 'Student',
-      rollNo: c.roll_no,
-      templateName: t.name,
-      mode: t.mode,
-      subjects,
-      areas,
-      remark: t.remarks.find((r) => r.key === s.entry?.remark_key)?.label ?? null,
-      legend: [...t.bands].sort((a, b) => b.floor - a.floor).map((b) => ({ grade: b.grade, floor: b.floor })),
-    },
-  }
-}
+/** An issued card as served: what was printed, the version and when it was issued. */
+export type IssuedReportCard = ReportCard & { attendance: CardAttendance; version: number; issuedAt: string }
 
 /**
- * The published report of a pupil in a section and term. The caller must be
- * able to read the pupil's academic record (the pupil, a verified guardian, or
- * staff related to the pupil); enforced even where the module is report-only.
- * Refusals in order: no such pupil, no template, not published, incomplete.
+ * The issued report of a pupil in a section and term (decision 1195): the
+ * highest stored version while the card is published. The caller must be able
+ * to read the pupil's academic record (the pupil, a verified guardian, or staff
+ * related to the pupil); enforced even where the module is report-only.
+ *
+ * An issued card needs neither the pupil's current section, an offering, the
+ * template nor any mark: it is served from what was stored, and never rebuilt.
+ * With no issue stored the refusals are, in order: no such pupil, no template,
+ * not published, and a legacy publication with no stored issue (decision 1196).
  */
-export async function reportCard(actor: Actor, studentId: string, termId: string, sectionId: string): Promise<ReportCard> {
+export async function reportCard(actor: Actor, studentId: string, termId: string, sectionId: string): Promise<IssuedReportCard> {
   const tenant = tenantOf(actor)
   await withTenant(tenant, (tx) => assertCanAccessStudent(tx, { ...actor, authzReportOnly: false }, studentId, 'academic_record'))
   const ids = z.object({ t: z.uuid(), s: z.uuid() }).safeParse({ t: termId, s: sectionId })
   if (!ids.success) throw reportCardRefusal('no_such_school_pupil')
+  const d = { termId, sectionId, studentId }
   return withTenant(tenant, async (tx) => {
+    const [pupil] = await tx.select({ id: users.id }).from(users).where(and(eq(users.id, studentId), eq(users.role, 'student'), isNull(users.erasedAt)))
+    if (!pupil) throw reportCardRefusal('no_such_school_pupil')
+    const [entry] = await tx.select({ publishedAt: reportCardEntries.publishedAt }).from(reportCardEntries).where(entryKey(d))
+    const [issue] = await tx
+      .select({ version: reportCardVersions.version, issuedAt: sql<string>`to_char(${reportCardVersions.issuedAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`, payload: reportCardVersions.payload })
+      .from(reportCardVersions)
+      .where(identityKey(d))
+      .orderBy(desc(reportCardVersions.version))
+      .limit(1)
+    if (issue) {
+      if (!entry?.publishedAt) throw reportCardRefusal('report_card_unpublished')
+      const p = issue.payload as IssuePayload | null
+      if (!p || p.format !== 1 || !p.report || typeof p.report !== 'object') throw new Error('The stored report card cannot be read (integrity error).')
+      return { ...p.report, version: issue.version, issuedAt: issue.issuedAt }
+    }
     const snap = await snapshot(tx, termId, sectionId, studentId)
     if (!snap.cand) throw reportCardRefusal('no_such_school_pupil')
-    const t = templateOf(snap)
-    if (!t) throw reportCardRefusal('no_report_card_template')
+    if (!templateOf(snap)) throw reportCardRefusal('no_report_card_template')
     if (!snap.entry?.published_at) throw reportCardRefusal('report_card_unpublished')
-    const { report, complete } = assemble(snap, t)
-    if (!complete) throw reportCardRefusal('report_card_incomplete')
-    return report
+    throw reportCardRefusal('report_card_legacy_unversioned')
   })
 }
 
@@ -149,7 +68,6 @@ const entrySchema = z.object({ ...identity, area: z.string().trim().max(100), va
 
 /** A form's checkbox: true, 'true', 'on', '1'; anything else, including absence, is false. */
 const checkbox = z.preprocess((v) => (typeof v === 'string' ? ['true', 'on', '1'].includes(v.trim().toLowerCase()) : v), z.boolean())
-const publicationSchema = z.object({ ...identity, published: checkbox, reason: z.string().trim().min(10).max(240) })
 
 /**
  * Who may write a pupil's report: the office, or the class teacher of the
@@ -216,6 +134,7 @@ export async function setReportCardEntry(actor: Actor, input: unknown): Promise<
       else grades[d.area] = after
     }
     if (before === after) return { changed: false, notice: NOTICES.entry }
+    if (!snap.template) await freezeDefaultWithin(tx, actor, d.termId, snap.cand!.program_id, tenant, t)
     await tx
       .insert(reportCardEntries)
       .values({ institutionId: tenant, termId: d.termId, sectionId: d.sectionId, studentId: d.studentId, grades, remarkKey })
@@ -225,37 +144,149 @@ export async function setReportCardEntry(actor: Actor, input: unknown): Promise<
   })
 }
 
+const publicationBase = z.object({ ...identity, published: checkbox, reason: z.string().trim().min(10).max(240) })
+const invalidRepublication = () => reportCardRefusal('invalid_report_card_republication')
+
+/** The optional correction controls. An omitted control is not an invalid one. */
+function correctionControls(input: unknown): { republish: boolean; expectedVersion: number | undefined } {
+  const raw = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
+  const blank = (v: unknown) => v === undefined || v === null || v === ''
+  let republish = false
+  if (!blank(raw.republish)) {
+    const v = typeof raw.republish === 'string' ? raw.republish.trim().toLowerCase() : raw.republish
+    if (v === true || v === 'true' || v === 'on' || v === '1') republish = true
+    else if (v === false || v === 'false' || v === 'off' || v === '0') republish = false
+    else throw invalidRepublication()
+  }
+  let expectedVersion: number | undefined
+  if (!blank(raw.expectedVersion)) {
+    const v = raw.expectedVersion
+    const n = typeof v === 'number' ? v : typeof v === 'string' && /^\d{1,10}$/.test(v.trim()) ? Number(v.trim()) : NaN
+    if (!Number.isInteger(n) || n < 0 || n > 2_147_483_646) throw invalidRepublication()
+    expectedVersion = n
+  }
+  return { republish, expectedVersion }
+}
+
+type Identity = { termId: string; sectionId: string; studentId: string }
+const identityKey = (d: Identity) =>
+  and(eq(reportCardVersions.termId, d.termId), eq(reportCardVersions.sectionId, d.sectionId), eq(reportCardVersions.studentId, d.studentId))
+const entryKey = (d: Identity) =>
+  and(eq(reportCardEntries.termId, d.termId), eq(reportCardEntries.sectionId, d.sectionId), eq(reportCardEntries.studentId, d.studentId))
+
+async function latestVersion(tx: Tx, d: Identity): Promise<number> {
+  const [row] = await tx.select({ v: reportCardVersions.version }).from(reportCardVersions).where(identityKey(d)).orderBy(desc(reportCardVersions.version)).limit(1)
+  return row?.v ?? 0
+}
+
+const isoOf = (v: unknown) => new Date(v as string).toISOString()
+
 /**
- * Publish or withdraw a pupil's report, with a reason. Publishing needs every
- * subject's result, or every scholastic area's rating, to be complete; withdrawing
- * reopens the ratings for editing.
+ * The cohort lock, the section and pupil rows shared to the end of the
+ * transaction, then the inputs read once under them (decision 1194). A section
+ * moved to another programme between the first read and the lock is retried
+ * under the lock of its new programme before anything is written.
+ */
+async function underIssueLock(tx: Tx, actor: Actor, tenant: string, d: Identity, first: Snapshot) {
+  let programId = first.cand!.program_id
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await lockReportCard(tx, tenant, d.termId, programId)
+    await tx.execute(sql`select 1 from academic_sections where id = ${d.sectionId}::uuid for share`)
+    await tx.execute(sql`select 1 from users where id = ${d.studentId} for share`)
+    const snap = await snapshot(tx, d.termId, d.sectionId, d.studentId)
+    if (!snap.cand) throw reportCardRefusal('no_such_school_pupil')
+    assertMayWrite(actor, snap.cand.class_teacher_id)
+    if (snap.cand.program_id === programId) {
+      const t = templateOf(snap)
+      if (!t) throw reportCardRefusal('no_report_card_template')
+      return { snap, t }
+    }
+    programId = snap.cand.program_id
+  }
+  throw reportCardRefusal('report_card_stale')
+}
+
+/**
+ * An office withdrawal of a visible entry whose pupil has left the section (or
+ * whose class lost its offerings): nothing can be read for it, but it must be
+ * possible to hide it. It only ever hides; it never creates an issue.
+ */
+async function withdrawStranded(tx: Tx, actor: Actor, tenant: string, d: Identity & { reason: string }, expectedVersion: number | undefined) {
+  const [section] = await tx.select({ programId: sections.programId }).from(sections).where(eq(sections.id, d.sectionId))
+  if (!section || !isAdmin(actor.role)) throw reportCardRefusal('no_such_school_pupil')
+  await lockReportCard(tx, tenant, d.termId, section.programId)
+  const [entry] = await tx.select({ publishedAt: reportCardEntries.publishedAt }).from(reportCardEntries).where(entryKey(d))
+  if (!entry) throw reportCardRefusal('no_such_school_pupil')
+  if (!entry.publishedAt) return { changed: false, notice: NOTICES.unpublished }
+  const last = await latestVersion(tx, d)
+  if (expectedVersion !== undefined && expectedVersion !== last) throw reportCardRefusal('report_card_version_stale')
+  await tx.update(reportCardEntries).set({ publishedAt: null }).where(entryKey(d))
+  const legacy = last === 0 ? { legacyPublishedAt: entry.publishedAt.toISOString() } : {}
+  await audit(tx, auditEntry(actor, tenant, d, 'report_card.unpublished', d.reason, { termId: d.termId, sectionId: d.sectionId, studentId: d.studentId, published: false, previousVersion: last, version: last, ...legacy }))
+  return { changed: true, notice: NOTICES.unpublished }
+}
+
+/**
+ * Publish, withdraw or correct a pupil's report, with a reason, in one
+ * transaction (decisions 1190 to 1198). Publishing, and a reasoned reissue
+ * (`republish` with the `expectedVersion` the form showed), each append one
+ * immutable issue holding everything printed; a card is never rebuilt from
+ * today's marks. Withdrawing hides the card and reopens the ratings.
  */
 export async function setReportCardPublication(actor: Actor, input: unknown): Promise<{ changed: boolean; notice: string }> {
   const tenant = tenantOf(actor)
   writerRole(actor)
-  const d = publicationSchema.parse(input)
+  const { republish, expectedVersion } = correctionControls(input)
+  let d: z.infer<typeof publicationBase>
+  if (republish) {
+    const parsed = publicationBase.safeParse(input)
+    if (!parsed.success || !parsed.data.published || expectedVersion === undefined) throw invalidRepublication()
+    d = parsed.data
+  } else d = publicationBase.parse(input)
+
   return withTenant(tenant, async (tx) => {
-    const { snap, t } = await underLock(tx, actor, tenant, d)
+    const first = await snapshot(tx, d.termId, d.sectionId, d.studentId)
+    if (!first.cand) {
+      if (!d.published) return withdrawStranded(tx, actor, tenant, d, expectedVersion)
+      throw reportCardRefusal('no_such_school_pupil')
+    }
+    assertMayWrite(actor, first.cand.class_teacher_id)
+    const { snap, t } = await underIssueLock(tx, actor, tenant, d, first)
+    const last = await latestVersion(tx, d)
     const live = Boolean(snap.entry?.published_at)
-    const notice = d.published ? NOTICES.published : NOTICES.unpublished
-    if (live === d.published) return { changed: false, notice }
-    if (d.published && !assemble(snap, t).complete) throw reportCardRefusal('report_card_incomplete')
+    if (expectedVersion !== undefined && expectedVersion !== last) throw reportCardRefusal('report_card_version_stale')
+    if (republish && !live) throw reportCardRefusal('report_card_version_stale')
+    // A card published before issues existed is reissued as version 1 by the office only (decision 1196).
+    if (republish && last === 0 && !isAdmin(actor.role)) throw new ExamError(403, 'forbidden', 'not permitted')
+    const notice = republish ? NOTICES.republished : d.published ? NOTICES.published : NOTICES.unpublished
+    const detail = { termId: d.termId, sectionId: d.sectionId, studentId: d.studentId }
+
+    if (!d.published) {
+      if (!live) return { changed: false, notice }
+      const legacy = last === 0 ? { legacyPublishedAt: isoOf(snap.entry!.published_at) } : {}
+      await tx.update(reportCardEntries).set({ publishedAt: null }).where(entryKey(d))
+      await audit(tx, auditEntry(actor, tenant, d, 'report_card.unpublished', d.reason, { ...detail, published: false, previousVersion: last, version: last, ...legacy }))
+      return { changed: true, notice }
+    }
+    if (live && !republish) return { changed: false, notice }
+    if (!assemble(snap, t).complete) throw reportCardRefusal('report_card_incomplete')
+
+    if (!snap.template) await freezeDefaultWithin(tx, actor, d.termId, snap.cand!.program_id, tenant, t)
+    const version = last + 1
+    const payload = issuePayload(snap, t, snap.template?.revision ?? 1)
+    // One database timestamp, in microseconds, for the issue and for the visibility.
+    const at = ((await tx.execute(sql`select to_char(clock_timestamp() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as at`)).rows as { at: string }[])[0]!.at
+    const stamp = sql`${at}::timestamptz`
     await tx
       .insert(reportCardEntries)
-      .values({ institutionId: tenant, termId: d.termId, sectionId: d.sectionId, studentId: d.studentId, publishedAt: sql`now()` })
+      .values({ institutionId: tenant, termId: d.termId, sectionId: d.sectionId, studentId: d.studentId, publishedAt: stamp as never })
       .onConflictDoUpdate({
         target: [reportCardEntries.institutionId, reportCardEntries.termId, reportCardEntries.sectionId, reportCardEntries.studentId],
-        set: { publishedAt: d.published ? sql`now()` : null },
+        set: { publishedAt: stamp as never },
       })
-    await audit(
-      tx,
-      auditEntry(actor, tenant, d, d.published ? 'report_card.published' : 'report_card.unpublished', d.reason, {
-        termId: d.termId,
-        sectionId: d.sectionId,
-        studentId: d.studentId,
-        published: d.published,
-      }),
-    )
+    await tx.insert(reportCardVersions).values({ institutionId: tenant, termId: d.termId, sectionId: d.sectionId, studentId: d.studentId, version, issuedAt: stamp as never, payload: payload as never })
+    const legacy = republish && last === 0 ? { legacyPublishedAt: isoOf(snap.entry!.published_at) } : {}
+    await audit(tx, auditEntry(actor, tenant, d, republish || last > 0 ? 'report_card.republished' : 'report_card.published', d.reason, { ...detail, published: true, previousVersion: last, version, ...legacy }))
     return { changed: true, notice }
   })
 }
@@ -272,11 +303,13 @@ export async function reportCardWorkspace(actor: Actor, termId: string, sectionI
     const snap = await snapshot(tx, termId, sectionId, studentId)
     if (!snap.cand) return null
     assertMayWrite(actor, snap.cand.class_teacher_id)
+    const version = await latestVersion(tx, { termId, sectionId, studentId })
     return {
       programId: snap.cand.program_id,
       template: templateOf(snap),
       revision: snap.template?.revision ?? 0,
       published: Boolean(snap.entry?.published_at),
+      version,
       grades: snap.entry?.grades ?? {},
       remarkKey: snap.entry?.remark_key ?? null,
     }

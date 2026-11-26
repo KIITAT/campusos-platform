@@ -71,6 +71,10 @@ export async function updateStage(actor: Actor, input: unknown) {
   return withTenant(institutionId, tx => run(async () => {
     const [row] = await tx.select().from(stages).where(eq(stages.id, data.stageId)).for('update')
     if (!row) throw new CrmError(404, 'not_found', 'No such stage.')
+    if (data.archived) {
+      const [open] = await tx.select({ id: leads.id }).from(leads).where(and(eq(leads.stageId, row.id), eq(leads.status, 'open'))).limit(1)
+      if (open) throw new CrmError(409, 'stage_in_use', 'Open leads or deals are still in this stage. Move them first.')
+    }
     await tx.update(stages).set({ ...(data.name ? { name: data.name } : {}), ...(data.seq ? { seq: data.seq } : {}), ...(data.probability === undefined ? {} : { probability: data.probability }), ...(data.archived === undefined ? {} : { archivedAt: data.archived ? new Date() : null }) }).where(eq(stages.id, row.id))
     await log(tx, actor, 'stage.updated', row.id, 'Pipeline stage changed')
     return { id: row.id, notice: 'Saved.' }

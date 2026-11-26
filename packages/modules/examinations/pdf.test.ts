@@ -6,7 +6,7 @@ import { admitCardPdf, gradeReportPdf } from './api/cycle-pdf'
 import type { Transcript } from './api/schemas'
 import type { AdmitCard, GradeReport } from './api/cycle'
 import { reportCardPdf } from './api/report-card-pdf'
-import type { ReportCard } from './api/report-card'
+import type { IssuedReportCard } from './api/report-card'
 
 const NAME = 'অভিষেক চট্টোপাধ্যায়'
 
@@ -63,7 +63,7 @@ test('an admit card prints a Bengali name (UX-01)', async () => {
 })
 
 test('a school term report prints a Bengali name (UX-01)', async () => {
-  const r: ReportCard = {
+  const r: IssuedReportCard = {
     institution: 'Plain School',
     term: { code: 'T1', name: 'Term 1' },
     classNumber: 2,
@@ -76,6 +76,13 @@ test('a school term report prints a Bengali name (UX-01)', async () => {
     areas: [{ key: 'language', label: 'Language and literacy', group: 'scholastic', grade: 'Proficient' }],
     remark: null,
     legend: [],
+    attendance: { state: 'recorded', present: 40, held: 42 },
+    version: 2,
+    issuedAt: '2026-10-02T04:30:00.000000Z',
   }
-  assert.ok((await printedText(await reportCardPdf(r))).includes(NAME))
+  const text = (await printedText(await reportCardPdf(r))).join(' | ')
+  assert.ok(text.includes(NAME))
+  assert.ok(text.includes('Issue version 2') && text.includes('Daily attendance: 40 present out of 42 recorded days'))
+  for (const [attendance, line] of [[{ state: 'recorded', present: 0, held: 0 }, 'Daily attendance: No register entries'], [{ state: 'unavailable' }, 'Daily attendance: Unavailable']] as const)
+    assert.ok((await printedText(await reportCardPdf({ ...r, attendance }))).join(' | ').includes(line), line)
 })

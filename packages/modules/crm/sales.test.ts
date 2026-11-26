@@ -216,3 +216,60 @@ test('a pasted spreadsheet imports like rows do: quotes, commas and blank lines 
   await assert.rejects(() => importLeads(c.admin, { csv, rows: [lead('x')] }))
   await assert.rejects(() => importLeads(c.admin, { csv: 'Title,Source' }), refused(400, 'empty_import'))
 })
+
+
+// --- NEW-83 follow-ups (NEW-260 to NEW-264) -----------------------------------
+
+test('NEW-260: parallel captures on a round-robin team spread over its members', async () => {
+  const c = await college()
+  const t = await team(c.admin, 'Team RR', c.manager.id, [c.rep.id, c.rep2.id])
+  await setAutoAssign(c.admin, { teamId: t, autoAssign: 'on' })
+  const got = await Promise.all([1, 2, 3, 4].map(i => captureLead(c.admin, { title: 'Web ' + i, source: 'website' })))
+  const owners = got.map(g => g.ownerId)
+  assert.equal(owners.filter(o => o === c.rep.id).length, 2, owners.join())
+  assert.equal(owners.filter(o => o === c.rep2.id).length, 2, owners.join())
+})
+
+test('NEW-261: the report counts a win by the institution day (IST), not the UTC day', async () => {
+  const c = await sales()
+  const l = await createLead(c.rep, lead('Late win', { kind: 'opportunity', expectedValue: '1000' }))
+  await markWon(c.rep, { leadId: l.id })
+  // 00:30 IST on 1 April 2026 is 19:00 UTC on 31 March.
+  await withTenant(c.id, tx => tx.execute(sql`update crm_leads set closed_at = '2026-03-31T19:00:00Z' where id = ${l.id}::uuid`))
+  const april = await report(c.admin, { from: '2026-04-01', to: '2026-04-30' })
+  const march = await report(c.admin, { from: '2026-03-01', to: '2026-03-31' })
+  assert.equal(april.won, 1)
+  assert.equal(march.won, 0)
+})
+
+test('NEW-262: a stage that still holds open deals cannot be archived, so the forecast halves agree', async () => {
+  const c = await sales()
+  await createLead(c.rep, lead('Held', { kind: 'opportunity', expectedValue: '1000', expectedClose: '2026-12-10' }))
+  const [first] = (await settings(c.admin)).stages
+  await assert.rejects(() => updateStage(c.admin, { stageId: first!.id, archived: true }), refused(409, 'stage_in_use'))
+  const f = await forecast(c.admin)
+  assert.equal(f.totalPaise, f.months.reduce((a, m) => a + m.totalPaise, 0))
+})
+
+test('NEW-263: a note keeps its lead out of the retention purge', async () => {
+  const c = await sales()
+  const l = await createLead(c.rep, lead('Worked by notes'))
+  await withTenant(c.id, tx => tx.execute(sql`update crm_leads set updated_at = now() - interval '800 days' where id = ${l.id}::uuid`))
+  await addNote(c.rep, { leadId: l.id, body: 'Called, will ring back' })
+  const [row] = await withTenant(c.id, async tx => (await tx.execute(sql`select updated_at > now() - interval '1 day' as fresh from crm_leads where id = ${l.id}::uuid`)).rows as { fresh: boolean }[])
+  assert.equal(row!.fresh, true)
+})
+
+test('a malformed report date is a 400, not a 500', async () => {
+  const c = await sales()
+  await assert.rejects(() => report(c.admin, { from: '2026-13-45' }), (e: unknown) => (e as { name?: string }).name === 'ZodError')
+})
+
+test('the merge audit row names the removed lead', async () => {
+  const c = await sales()
+  const a = await createLead(c.rep, lead('Keep'))
+  const b = await createLead(c.rep, lead('Gone'))
+  await mergeLeads(c.rep, { keepId: a.id, mergeId: b.id })
+  const rows = await withTenant(c.id, async tx => (await tx.execute(sql`select reason from audit_log where action = 'lead.merged' and entity_id = ${a.id}`)).rows as { reason: string }[])
+  assert.ok(rows[0]!.reason.includes(b.id), rows[0]!.reason)
+})

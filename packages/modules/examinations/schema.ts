@@ -564,3 +564,29 @@ export const reportCardEntries = pgTable(
     tenantPolicy('exam_report_card_entries'),
   ],
 )
+
+/**
+ * What the school issued for a pupil's term report (P1-13b.3): one immutable row
+ * per version, holding the resolved template and every printed figure. A row is
+ * never updated; only subject erasure empties its payload. Mirrors migration 0008.
+ */
+export const reportCardVersions = pgTable(
+  'exam_report_card_versions',
+  {
+    institutionId: tenantId(),
+    termId: uuid('term_id').notNull(),
+    sectionId: uuid('section_id').notNull(),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    version: integer().notNull(),
+    issuedAt: timestamp('issued_at', { withTimezone: true }).notNull(),
+    payload: jsonb().$type<Record<string, unknown>>(),
+  },
+  (t) => [
+    primaryKey({ name: 'exam_report_card_versions_pkey', columns: [t.institutionId, t.termId, t.sectionId, t.studentId, t.version] }),
+    check('exam_report_card_versions_version', sql`version > 0`),
+    index('exam_report_card_versions_student').on(t.studentId, t.institutionId),
+    tenantPolicy('exam_report_card_versions'),
+  ],
+)

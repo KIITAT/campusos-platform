@@ -36,13 +36,26 @@ const reportCardTemplateBody = z
   .meta({ id: 'ExamReportCardTemplate' })
 const reportCardEntryBody = z.object({ ...identity, area: z.string(), value: z.string() }).meta({ id: 'ExamReportCardEntry' })
 const reportCardPublicationBody = z
-  .object({ ...identity, published: z.boolean(), reason: z.string().min(10).max(240) })
+  .object({
+    ...identity,
+    published: z.boolean(),
+    reason: z.string().min(10).max(240),
+    republish: z.boolean().optional().meta({ description: 'With published: true, issue a corrected version of a visible card. Needs expectedVersion.' }),
+    expectedVersion: z
+      .union([z.number().int().min(0).max(2147483646), z.string().regex(/^\d{1,10}$/)])
+      .optional()
+      .meta({ description: 'The issue version the caller last saw (0 for a visible legacy card with no stored issue). A different current version gives report_card_version_stale.' }),
+  })
   .meta({ id: 'ExamReportCardPublication' })
 const reportCardErrors = {
-  '400': { description: 'invalid_report_card_template or unknown_report_card_value', content: json(err) },
+  '400': {
+    description: 'invalid_report_card_template, invalid_report_card_exclusion (offerings must be in the class and term and have no exams), unknown_report_card_value or invalid_report_card_republication',
+    content: json(err),
+  },
   '404': { description: 'no_such_school_pupil', content: json(err) },
   '409': {
-    description: 'report_card_stale, report_card_template_locked, report_card_published, report_card_incomplete, report_card_unpublished or no_report_card_template',
+    description:
+      'report_card_stale, report_card_template_locked, report_card_published, report_card_incomplete, report_card_unpublished, report_card_version_stale, report_card_legacy_unversioned (a published card with no stored issue) or no_report_card_template',
     content: json(err),
   },
 }
@@ -343,8 +356,9 @@ function cycle() {
     },
     [`${base}/report-card/publication`]: {
       post: {
-        summary: 'Publish or withdraw a pupil’s school report, with a reason (the class teacher or an administrator)',
-        description: 'Publishing needs every subject’s result, or every scholastic area’s rating, to be complete.',
+        summary: 'Publish, withdraw or reissue a pupil’s school report, with a reason (the class teacher or an administrator)',
+        description:
+          'Publishing issues an immutable version holding everything printed, and needs every assessed subject’s result, or every scholastic area’s rating, to be complete. Subjects with no exams that the class template excludes print Not assessed. Withdrawing hides the card and keeps its versions. A correction sends published: true, republish: true and the expectedVersion it saw; it appends the next version, or refuses with report_card_version_stale, and an incomplete card is refused with the current issue left in place. An ordinary publish of a visible card is a no-op.',
         tags: ['examinations'],
         requestBody: { content: json(reportCardPublicationBody) },
         responses: { '200': { description: 'OK', content: json(z.object({ changed: z.boolean(), notice: z.string() })) }, ...gated, ...reportCardErrors },
@@ -352,8 +366,9 @@ function cycle() {
     },
     [`${base}/report-card.pdf`]: {
       get: {
-        summary: 'A published school term report as a PDF, read live from the published marks',
-        description: 'The pupil, a verified guardian (who names studentId) and staff related to the pupil. The pupil’s name, class, section, term and roll number only.',
+        summary: 'The issued school term report as a PDF',
+        description:
+          'The highest stored issue version while the card is published, printed from what was issued: later marks, exams, roster or attendance changes do not alter it. The filename ends -vN. The pupil, a verified guardian (who names studentId) and staff related to the pupil. The pupil’s name, class, section, term and roll number only. A published card with no stored issue is refused with report_card_legacy_unversioned.',
         tags: ['examinations'],
         parameters: ['termId', 'sectionId', 'studentId?'].map((name) => ({ name: name.replace('?', ''), in: 'query', required: !name.endsWith('?'), schema: { type: 'string' } })),
         responses: { '200': { description: 'OK', content: { 'application/pdf': {} } }, ...gated, ...reportCardErrors },

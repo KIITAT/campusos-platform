@@ -1,6 +1,6 @@
 import { PDFDocument, rgb, type PDFPage } from 'pdf-lib'
 import { pdfText, type PdfText, type Weight } from '@campusos/module-framework/pdf'
-import type { ReportCard } from './report-card'
+import type { IssuedReportCard } from './report-card'
 
 /**
  * A school term report on A4 portrait, laid out by hand with pdf-lib like the
@@ -46,11 +46,25 @@ function wrap(t: PdfText, text: string, size: number, width: number): string[] {
   return cur ? [...lines, cur] : lines
 }
 
-export async function reportCardPdf(r: ReportCard): Promise<Uint8Array> {
+/** The register line printed on an issued card (decision 1192). */
+const attendanceLine = (a: IssuedReportCard['attendance']) =>
+  a.state === 'unavailable' ? 'Daily attendance: Unavailable' : a.held > 0 ? `Daily attendance: ${a.present} present out of ${a.held} recorded days` : 'Daily attendance: No register entries'
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+/** The calendar date in India (UTC+5:30, no daylight saving) of an instant. */
+const istDate = (d: Date) => {
+  const ist = new Date(d.getTime() + 330 * 60_000)
+  return `${ist.getUTCDate()} ${MONTHS[ist.getUTCMonth()]} ${ist.getUTCFullYear()}`
+}
+
+export async function reportCardPdf(r: IssuedReportCard): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
   doc.setTitle('School term report')
   doc.setProducer('CampusOS')
-  doc.setCreationDate(new Date())
+  // The time the school issued it, not the time it was printed again.
+  const issued = new Date(r.issuedAt)
+  doc.setCreationDate(issued)
+  doc.setModificationDate(issued)
   const t = await pdfText(doc, JSON.stringify(r))
   const pages: PDFPage[] = []
   let page!: PDFPage
@@ -97,6 +111,8 @@ export async function reportCardPdf(r: ReportCard): Promise<Uint8Array> {
   para(`Class ${r.classNumber} · Section ${r.sectionLabel}`)
   para(r.name, { size: 12, weight: 'bold' })
   para([r.rollNo ? `Roll number ${r.rollNo}` : null, r.templateName].filter(Boolean).join('   '), { color: faint })
+  para(`Issue version ${r.version}  ·  Issued on ${istDate(issued)}`, { color: faint })
+  para(attendanceLine(r.attendance), { color: faint })
   gap(6)
   hr()
 
@@ -107,6 +123,10 @@ export async function reportCardPdf(r: ReportCard): Promise<Uint8Array> {
       gap(4)
       // The heading never sits alone at the foot of a page: it keeps one line with it.
       para(`${s.courseCode}  ${s.title}`, { weight: 'bold', keep: 14 })
+      if (s.notAssessed) {
+        para('Not assessed', { x: M + 12 })
+        continue
+      }
       for (const c of s.components) para(`${c.label}: ${c.absent ? 'Absent' : c.value === null ? 'Pending' : c.value.toFixed(2)} / ${c.max}`, { x: M + 12 })
       para(`Total: ${s.total === null ? 'Pending' : `${s.total.toFixed(2)} / 100`}`, { x: M + 12, weight: 'bold' })
       para(`Grade: ${grade(s.grade)}`, { x: M + 12, weight: 'bold' })

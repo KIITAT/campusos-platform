@@ -18,6 +18,8 @@ export async function addNote(actor: Actor, input: unknown) {
     const { lead } = await visibleLead(tx, actor, data.leadId)
     assertNotErased(lead)
     const [row] = await tx.insert(notes).values({ institutionId, leadId: lead.id, kind: 'note', body: data.body, authorId: actor.id }).returning({ id: notes.id })
+    // The retention purge goes by updated_at: a lead worked through its history is in use.
+    await tx.update(leads).set({ updatedAt: new Date() }).where(eq(leads.id, lead.id))
     await log(tx, actor, 'note.added', row!.id, 'Note added to a lead')
     return result(lead.id)
   })
@@ -87,6 +89,8 @@ export function parseCsv(text: string): Record<string, string>[] {
  * was given a lead longest ago. No such team means the caller keeps the lead.
  */
 export async function nextOwner(tx: Tx, institutionId: string, teamId?: string): Promise<string | null> {
+  // One lock per institution, held to the end of the caller's transaction: parallel captures read each other's assignments.
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${'crm.rr:' + institutionId}))`)
   const rows = (await tx.execute(sql`
     select m.user_id from crm_team_members m
       join crm_teams t on t.institution_id = m.institution_id and t.id = m.team_id
@@ -170,7 +174,7 @@ export async function forecast(actor: Actor) {
   })
 }
 
-export const reportSchema = z.object({ from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() })
+export const reportSchema = z.object({ from: z.iso.date().optional(), to: z.iso.date().optional() })
 /** Team performance: per owner, what is open, what was won and lost in the period, the win rate and the days a win took. Plus why deals were lost. */
 export async function report(actor: Actor, input: unknown = {}) {
   const institutionId = tenant(actor)
@@ -183,15 +187,15 @@ export async function report(actor: Actor, input: unknown = {}) {
       select l.owner_id, u.name,
              count(*) filter (where l.status = 'open')::int as open_count,
              coalesce(sum(l.expected_value_paise) filter (where l.status = 'open'), 0)::bigint as open_value,
-             count(*) filter (where l.status = 'won' and l.closed_at::date between ${from}::date and ${to}::date)::int as won_count,
-             coalesce(sum(l.expected_value_paise) filter (where l.status = 'won' and l.closed_at::date between ${from}::date and ${to}::date), 0)::bigint as won_value,
-             count(*) filter (where l.status = 'lost' and l.closed_at::date between ${from}::date and ${to}::date)::int as lost_count,
-             coalesce(round(avg(extract(epoch from (l.closed_at - l.created_at)) / 86400) filter (where l.status = 'won' and l.closed_at::date between ${from}::date and ${to}::date))::int, 0) as days_to_win
+             count(*) filter (where l.status = 'won' and (l.closed_at at time zone 'Asia/Kolkata')::date between ${from}::date and ${to}::date)::int as won_count,
+             coalesce(sum(l.expected_value_paise) filter (where l.status = 'won' and (l.closed_at at time zone 'Asia/Kolkata')::date between ${from}::date and ${to}::date), 0)::bigint as won_value,
+             count(*) filter (where l.status = 'lost' and (l.closed_at at time zone 'Asia/Kolkata')::date between ${from}::date and ${to}::date)::int as lost_count,
+             coalesce(round(avg(extract(epoch from (l.closed_at - l.created_at)) / 86400) filter (where l.status = 'won' and (l.closed_at at time zone 'Asia/Kolkata')::date between ${from}::date and ${to}::date))::int, 0) as days_to_win
         from crm_leads l join users u on u.id = l.owner_id
        where true ${scope} group by l.owner_id, u.name order by u.name`)).rows as { owner_id: string; name: string; open_count: number; open_value: string; won_count: number; won_value: string; lost_count: number; days_to_win: number }[]
     const lost = (await tx.execute(sql`
       select r.name, count(*)::int as count from crm_leads l join crm_lost_reasons r on r.institution_id = l.institution_id and r.id = l.lost_reason_id
-       where l.status = 'lost' and l.closed_at::date between ${from}::date and ${to}::date ${scope} group by r.name order by count(*) desc, r.name`)).rows as { name: string; count: number }[]
+       where l.status = 'lost' and (l.closed_at at time zone 'Asia/Kolkata')::date between ${from}::date and ${to}::date ${scope} group by r.name order by count(*) desc, r.name`)).rows as { name: string; count: number }[]
     const bySource = (await tx.execute(sql`
       select l.source, count(*)::int as leads, count(*) filter (where l.status = 'won')::int as won from crm_leads l where true ${scope} group by l.source order by l.source`)).rows as { source: string; leads: number; won: number }[]
     const rate = (w: number, l: number) => (w + l === 0 ? null : Math.round((w * 100) / (w + l)))
@@ -243,7 +247,7 @@ export async function mergeLeads(actor: Actor, input: unknown) {
       from crm_leads g where k.id = ${keep.id}::uuid and g.id = ${gone.id}::uuid`)
     await tx.delete(leads).where(and(eq(leads.id, gone.id), inArray(leads.status, ['open'])))
     await trail(tx, institutionId, keep.id, actor.id, 'Merged with a duplicate lead')
-    await log(tx, actor, 'lead.merged', keep.id, 'Duplicate lead merged')
+    await log(tx, actor, 'lead.merged', keep.id, `Duplicate lead ${gone.id} merged into this one`)
     return result(keep.id, 'Merged.')
   })
 }

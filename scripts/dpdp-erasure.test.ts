@@ -180,6 +180,15 @@ before(async () => {
     [I, S, uid(), K],
   )
 
+  // issued school report cards (P1-13b.3): two versions for S carrying the printed name, one for O
+  const card = (name: string) => JSON.stringify({ format: 1, template: {}, templateRevision: 1, report: { name, attendance: { state: 'unavailable' } } })
+  const [term, section] = [uid(), uid()]
+  for (const [who, version, name] of [[S, 1, X], [S, 2, X], [O, 1, XO]] as const)
+    await q(
+      `insert into exam_report_card_versions (institution_id, term_id, section_id, student_id, version, issued_at, payload) values ($1, $2, $3, $4, $5, now(), $6)`,
+      [I, term, section, who, version, card(name)],
+    )
+
   // a staff member's own HR row
   const staff = uid()
   await q(
@@ -217,6 +226,14 @@ test('the export carries rows about the person and has no cap (AUD-03)', async (
   assert.equal((bundle.records['about.care_about.care_notes']?.[0] as { body: string }).body, X)
   assert.ok(bundle.records['about.helpdesk_about.helpdesk_messages']?.some((m) => (m as { author_id: string }).author_id === id.A))
   assert.equal(bundle.records['about.placement_about.placement_results']?.length, 1)
+})
+
+test('issued versions are exported to the pupil only, with their printed figures (P1-13b.3)', async () => {
+  const own = (await exportSubject(inst, id.S)).records['exam_report_card_versions.student_id'] as { version: number; payload: { report: { name: string } } }[]
+  assert.deepEqual(own?.map((r) => r.version).sort(), [1, 2])
+  assert.ok(own.every((r) => r.payload.report.name === X))
+  const staff = (await exportSubject(inst, id.M)).records
+  assert.deepEqual(Object.keys(staff).filter((k) => k.startsWith('exam_report_card_versions')), [], 'a teacher cannot enumerate pupils’ cards')
 })
 
 test('a staff member’s export carries their own HR rows (AUD-03)', async () => {
@@ -284,6 +301,15 @@ test('erasure keeps the institution’s record and other people’s data (AUD-03
   }
   assert.equal(await count('care_results', 'student_id = $1', id.S), 0)
   assert.equal(await count('notifications', 'user_id = $1', id.S), 0)
+})
+
+test('erasing a pupil removes all printable issues and keeps the version ledger (P1-13b.3)', async () => {
+  assert.equal(receipt.redacted.exam_report_card_versions, 2)
+  assert.equal(await count('exam_report_card_versions', 'student_id = $1', id.S), 2, 'the ledger rows stay')
+  assert.equal(await count('exam_report_card_versions', 'student_id = $1 and payload is null', id.S), 2)
+  assert.equal(await count('exam_report_card_versions x', `student_id = $1 and x::text like '%' || $2 || '%'`, id.S, X), 0, 'no printable name remains')
+  assert.equal(await count('exam_report_card_versions', 'student_id = $1 and payload is not null', id.O), 1, 'another pupil is intact')
+  await rejectsWith(() => q('update exam_report_card_versions set payload = $2::jsonb where student_id = $1', [id.S, '{"format":1}']), /immutable/)
 })
 
 test('the receipt says what was overwritten and why the rest was kept (AUD-03)', () => {

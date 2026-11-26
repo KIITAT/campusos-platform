@@ -204,7 +204,7 @@ export const routes: PluginRoute[] = [
   pdf('/report-card.pdf', async (actor, req) => {
     // A guardian names the child; everyone else defaults to themselves.
     const r = await reportCard(actor, param(req, 'studentId') || actor.id, requiredParam(req, 'termId'), requiredParam(req, 'sectionId'))
-    return { bytes: await reportCardPdf(r), name: `report-card-${r.term.code}-${r.rollNo ?? 'pupil'}` }
+    return { bytes: await reportCardPdf(r), name: `report-card-${r.term.code}-${r.rollNo ?? 'pupil'}-v${r.version}` }
   }),
   post('/papers', uploadPaper),
   { method: 'GET', path: '/papers', handler: (actor, req) => papersFor(actor as Actor, requiredParam(req, 'examId')) },

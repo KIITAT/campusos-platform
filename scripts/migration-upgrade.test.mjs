@@ -95,6 +95,7 @@ const NEW_FILES = new Set([
   'library/0004_record_search.sql',
   'ceremonies/0001_transfer_certificates.sql',
   'documents/0000_document_store.sql',
+  'examinations/0008_issued_report_cards.sql',
 ])
 const NEW_CORE_FROM = 5
 
@@ -442,5 +443,50 @@ test('notices 0005 scopes email opt-outs to the tenant and cascades on removal (
     await c.query('delete from users where id = $1', [first])
     await c.query('delete from institutions where id = $1', [b.id])
     assert.equal((await c.query('select user_id from notification_email_opt_outs where user_id in ($1, $2)', [first, second])).rowCount, 0)
+  })
+})
+
+test('examinations 0008 applies as an upgrade: issued versions survive grant replay, stay immutable and isolated (P1-13b.3)', { skip: !url && 'MIGRATION_DATABASE_URL is not set' }, async () => {
+  await withClient(at(DB), async (c) => {
+    // The host replays its broad grants on every start; the row guard must still hold.
+    await c.query('grant select, insert, update, delete on all tables in schema public to campusos_app')
+    const [{ a, b }] = (await c.query(`
+      with i as (insert into institutions (slug, name) values ('rcv-a', 'A'), ('rcv-b', 'B') returning id, slug)
+      select (select id from i where slug = 'rcv-a') as a, (select id from i where slug = 'rcv-b') as b`)).rows
+    const [{ id: student }] = (await c.query(
+      "insert into users (id, email, institution_id, role, name) values (gen_random_uuid()::text, 'rcv@rcv-a.test', $1, 'student', 'Pupil') returning id", [a])).rows
+    const term = '00000000-0000-4000-8000-000000000001'
+    const section = '00000000-0000-4000-8000-000000000002'
+    const payload = JSON.stringify({ format: 1, template: {}, templateRevision: 1, report: { attendance: { state: 'unavailable' } } })
+    const insert = (inst, version, p = payload) => [
+      'insert into exam_report_card_versions (institution_id, term_id, section_id, student_id, version, issued_at, payload) values ($1, $2, $3, $4, $5, now(), $6)',
+      [inst, term, section, student, version, p],
+    ]
+    /** Run as the application role inside one institution; always rolled back unless asked. */
+    const as = async (inst, fn, keep = false) => {
+      await c.query('begin')
+      try {
+        await c.query('set local role campusos_app')
+        await c.query("select set_config('app.institution_id', $1, true)", [inst])
+        return await fn()
+      } finally {
+        await c.query(keep ? 'commit' : 'rollback')
+      }
+    }
+    await as(a, () => c.query(...insert(a, 1)), true)
+    assert.equal((await as(a, () => c.query('select count(*)::int as n from exam_report_card_versions'))).rows[0].n, 1)
+    assert.equal((await as(b, () => c.query('select count(*)::int as n from exam_report_card_versions'))).rows[0].n, 0, 'another tenant sees nothing')
+    await assert.rejects(as(b, () => c.query(...insert(a, 2))), /row-level security|immutable/)
+    await assert.rejects(as(a, () => c.query(...insert(a, 1))), /duplicate key/)
+    await assert.rejects(as(a, () => c.query(...insert(a, 2, null))), /immutable/, 'an issue carries its payload')
+    await assert.rejects(as(a, () => c.query("update exam_report_card_versions set issued_at = now()")), /immutable/)
+    await assert.rejects(as(a, () => c.query("update exam_report_card_versions set payload = null")), /immutable/, 'only the erasure of the pupil empties a payload')
+    await assert.rejects(as(a, () => c.query('delete from exam_report_card_versions')), /immutable/)
+    await assert.rejects(as(a, () => c.query('truncate exam_report_card_versions')), /permission denied/)
+    assert.equal((await as(a, () => c.query('select count(*)::int as n from exam_report_card_versions'))).rows[0].n, 1)
+    // A normal tenant teardown still works: the cascade is the one delete the guard lets through.
+    await c.query('delete from institutions where id = $1', [a])
+    assert.equal((await c.query('select count(*)::int as n from exam_report_card_versions')).rows[0].n, 0)
+    await c.query('delete from institutions where id = $1', [b])
   })
 })
