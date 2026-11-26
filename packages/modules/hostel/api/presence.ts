@@ -44,7 +44,7 @@ export async function loadFacts(
     ((await tx.execute(sql`
       select distinct student_id from hostel_check_ins
        where student_id = any(${ids}::text[]) and status in ('present', 'on_leave')
-         and (on_night = ${night}::date
+         and ((on_night = ${night}::date and recorded_at >= ((${night}::date + time '12:00') at time zone ${zone}))
               or (on_night = ${next}::date and recorded_at < ((${next}::date + time '12:00') at time zone ${zone})))`)).rows as { student_id: string }[]).map((r) => r.student_id),
   )
 

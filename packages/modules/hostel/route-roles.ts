@@ -24,4 +24,13 @@ export const routeRoles: Record<string, readonly Role[]> = {
   'POST /visitors': HOSTEL,
   'POST /visitors/out': HOSTEL,
   'GET /me': [...HOSTEL, 'student'],
+  'GET /presence/cases': HOSTEL,
+  'POST /presence/cases/resolve': HOSTEL,
+  'GET /presence/student': HOSTEL,
+  'GET /policy': HOSTEL,
+  'PUT /policy': ADMIN,
+  'POST /blocks/curfew': ADMIN,
+  'GET /scopes': ADMIN,
+  'POST /scopes': ADMIN,
+  'POST /scopes/remove': ADMIN,
 }

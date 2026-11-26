@@ -21,6 +21,9 @@ import {
 import { manifest as attendanceManifest } from '@campusos/module-attendance/manifest'
 import { manifest as hostelManifest } from '../manifest'
 import { allocations, blocks, checkIns, leaves, rooms, visitors } from '../schema'
+import { localParts, nightOf, zoneIn } from './clock'
+import { derivePresence } from './presence-rules'
+import { loadFacts } from './presence'
 import {
   ROLL_CALL_WINDOW_SECONDS,
   decodeQr,
@@ -858,6 +861,8 @@ export async function myHostel(actor: Actor, studentId?: string): Promise<MyHost
         allocatedOn: null,
         recentNights: nights,
         upcomingLeave: upcoming,
+        presence: null,
+        policyNotice: PRESENCE_NOTICE,
       }
     }
 
@@ -883,8 +888,26 @@ export async function myHostel(actor: Actor, studentId?: string): Promise<MyHost
       allocatedOn: mine.allocatedOn,
       recentNights: nights,
       upcomingLeave: upcoming,
+      presence: await presenceOf(tx, tenant, target),
+      policyNotice: PRESENCE_NOTICE,
     }
   })
+}
+
+/** What a resident is told about the link between library, class and hostel (NEW-236: counsel to confirm the wording). */
+export const PRESENCE_NOTICE =
+  'Library and class status is used to avoid false alarms and to tell your guardian when you have not checked in. A parent or guardian, or you if you are 18 or over, can switch this on or off in Consents.'
+
+/** The resident's own status line: consent, and what the hostel currently shows. */
+async function presenceOf(tx: Tx, tenant: string, studentId: string): Promise<{ sharing: boolean; status: string; label: string }> {
+  const now = new Date()
+  const zone = await zoneIn(tx, tenant)
+  const night = await nightOf(tx, now, zone)
+  const f = (await loadFacts(tx, tenant, [studentId], now, night)).get(studentId)!
+  const { time } = await localParts(tx, now, zone)
+  const [pol] = (await tx.execute(sql`select curfew_time::text as t from hostel_policy where institution_id = ${tenant}`)).rows as { t: string }[]
+  const shown = derivePresence({ ...f, pastCurfew: time >= (pol?.t ?? '21:30:00') })
+  return { sharing: f.sharing, status: shown.status, label: shown.label }
 }
 
 export type { Tx }

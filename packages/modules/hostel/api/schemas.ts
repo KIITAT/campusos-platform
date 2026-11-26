@@ -182,6 +182,9 @@ export const myHostelSchema = z
     upcomingLeave: z.array(
       z.object({ fromOn: z.string(), toOn: z.string(), reason: z.string() }),
     ),
+    /** Where the hostel believes the resident is, and whether library and class status are shared (P2-22a). */
+    presence: z.object({ sharing: z.boolean(), status: z.string(), label: z.string() }).nullable(),
+    policyNotice: z.string(),
   })
   .meta({ id: 'HostelMyStatus' })
 
