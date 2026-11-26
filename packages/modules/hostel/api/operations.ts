@@ -567,7 +567,7 @@ export async function scanCheckIn(actor: Actor, input: unknown, secret?: string,
 }
 
 /** The manual register: a warden ticking names off a list. */
-export async function mark(actor: Actor, input: unknown) {
+export async function mark(actor: Actor, input: unknown, now = new Date()) {
   const tenant = requireWarden(actor)
   const d = markSchema.parse(input)
   return recordNight(tenant, {
@@ -578,7 +578,7 @@ export async function mark(actor: Actor, input: unknown) {
     method: 'manual',
     note: d.note ?? null,
     recordedBy: actor.id,
-    now: new Date(),
+    now,
   })
 }
 

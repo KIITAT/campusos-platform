@@ -606,7 +606,7 @@ test('a manual mark after midnight does not stop the evening scan of the night i
   assert.equal(kept.rows.length, 1, 'the replaced mark stays on record in the presence log')
 
   // A warden's mark taken after noon is still the record of last resort.
-  await mark(warden(), { blockId, studentId: ids.s1, status: 'absent', note: 'bed empty at the evening round' })
+  await mark(warden(), { blockId, studentId: ids.s1, status: 'absent', note: 'bed empty at the evening round' }, new Date(`${today()}T20:35:00+05:30`))
   await assert.rejects(
     () => scanCheckIn(student(ids.s1), { code: encodeQr(qr), blockId }, SECRET, new Date(`${today()}T20:40:00+05:30`)),
     (e: unknown) => code(e) === 'already_marked',
