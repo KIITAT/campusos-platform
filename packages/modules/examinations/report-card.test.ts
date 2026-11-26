@@ -1,6 +1,7 @@
 import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { and, eq, like, sql } from 'drizzle-orm'
+import { createRequire } from 'node:module'
+import { and, asc, eq, like, sql } from 'drizzle-orm'
 import { PDFDocument } from 'pdf-lib'
 import { auditLog, authDb, institutionModules, institutions, users, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
@@ -10,7 +11,7 @@ import { lockReportCard } from './api/report-card-store'
 import { snapshot } from './api/report-card-input'
 import { defaultSchoolTemplate } from './api/school-policy'
 import { reportCardPages } from './report-card-pages'
-import { reportCardEntries, reportCardTemplates } from './schema'
+import { reportCardEntries, reportCardTemplates, reportCardVersions } from './schema'
 import { routes } from './routes'
 import { routeRoles } from './route-roles'
 
@@ -23,6 +24,7 @@ import { routeRoles } from './route-roles'
 
 /** The text of every draw, joined: printedText gives one entry per draw call. */
 const printed = async (bytes: Uint8Array) => (await printedText(bytes)).join(' | ')
+const pg = createRequire(import.meta.url)('../../db/node_modules/pg') as { Client: new (o: { connectionString?: string }) => { connect(): Promise<void>; query(q: string): Promise<unknown>; end(): Promise<void> } }
 const SLUG = 'exam-rc-'
 let n = 0
 const NAME = 'অভিষেক চট্টোপাধ্যায়'
@@ -744,4 +746,191 @@ test('first effective write preserves the default', async () => {
   const [row] = await withTenant(o.id, (tx) => tx.select().from(reportCardTemplates))
   assert.equal(row!.revision, 1)
   assert.deepEqual(row!.template, defaultSchoolTemplate(2))
+})
+
+// --- issue, withdraw and correct (P1-13b.3) ----------------------------------------
+
+const versionsOf = (c: C, studentId = c.pupil.id) =>
+  withTenant(c.id, (tx) => tx.select().from(reportCardVersions).where(and(eq(reportCardVersions.studentId, studentId), eq(reportCardVersions.termId, c.termId))).orderBy(asc(reportCardVersions.version)))
+const republishAs = (c: C, expectedVersion: number, who: A = c.classTeacher, reason = 'Marks corrected after re-evaluation') =>
+  publication(c, { republish: true, expectedVersion, reason }, who)
+
+/** A card with published marks, rated, and issued as version 1. */
+async function issued(opts: Parameters<typeof campus>[0] = {}) {
+  const c = await campus(opts)
+  await publishMarks(c)
+  await saveEntry(c, 'art', 'a')
+  await publication(c)
+  return c
+}
+
+/** Approve a revision of the term mark so a correction would print different figures. */
+async function approveRevision(c: C, obtained = 80) {
+  const p = await api.reviseMark(c.teacher, { examId: c.exams.term, studentId: c.pupil.id, obtained, expectedRevision: 0, reason: 'Re-evaluated answer script' })
+  await api.decideMarkReview(c.admin, { requestId: p.requestId, decision: 'approve', reason: 'checked against the script' })
+}
+
+async function waitingOn(kind: 'advisory' | 'row') {
+  return withTenant((await authDb.select({ id: institutions.id }).from(institutions).limit(1))[0]!.id, async (tx) =>
+    Number((await tx.execute(sql`select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and wait_event = ${kind === 'advisory' ? 'advisory' : 'transactionid'}`)).rows[0]!.n))
+}
+
+test('publication outcomes: first issue, retry, withdrawal, reissue and refusals', async () => {
+  const c = await issued()
+  assert.deepEqual((await versionsOf(c)).map((v) => v.version), [1])
+  assert.equal((await publication(c)).changed, false, 'a repeat of the first issue is a no-op')
+  assert.equal((await versionsOf(c)).length, 1)
+  assert.equal(await audits(c, 'report_card.published'), 1)
+
+  for (const bad of [{ expectedVersion: -1 }, { expectedVersion: 'abc' }, { expectedVersion: 1.5 }, { expectedVersion: 2_147_483_647 }, { expectedVersion: undefined }, { published: false }, { reason: 'short' }, { republish: 'maybe' }])
+    await assert.rejects(publication(c, { republish: true, expectedVersion: 1, reason: 'Marks corrected after re-evaluation', ...bad }), (e) => code(e) === 'invalid_report_card_republication' && status(e) === 400, JSON.stringify(bad))
+  await assert.rejects(publication(c, { expectedVersion: 5 }), (e) => code(e) === 'report_card_version_stale', 'an ordinary publish with a version is compared too')
+  await assert.rejects(publication(c, { published: false, expectedVersion: 5, reason: 'Withdrawn for a rating correction' }), (e) => code(e) === 'report_card_version_stale')
+  assert.equal((await publication(c, { expectedVersion: '1' })).changed, false, 'a decimal string is a version')
+
+  for (const who of [c.teacher, c.otherTeacher, c.pupil, c.guardian]) await assert.rejects(republishAs(c, 1, who), (e) => code(e) === 'forbidden', who.role)
+  const other = await campus()
+  await assert.rejects(republishAs(c, 1, other.admin), (e) => code(e) === 'no_such_school_pupil')
+  assert.deepEqual((await versionsOf(c)).map((v) => v.version), [1], 'every refusal above changed nothing')
+  assert.equal((await republishAs(c, 1)).notice, 'Report card republished.')
+  assert.deepEqual((await versionsOf(c)).map((v) => v.version), [1, 2])
+  assert.equal(await audits(c, 'report_card.republished'), 1)
+
+  // Withdraw keeps the history; publishing again appends the next version and is a reissue.
+  const done = await publication(c, { published: false, reason: 'Correction needed to the art grade' })
+  assert.equal(done.notice, 'Report card unpublished.')
+  assert.deepEqual((await versionsOf(c)).map((v) => v.version), [1, 2])
+  await saveEntry(c, 'art', 'b')
+  const back = await publication(c, { reason: 'Art grade corrected and checked' })
+  assert.deepEqual([back.changed, back.notice], [true, 'Report card published.'])
+  assert.deepEqual((await versionsOf(c)).map((v) => v.version), [1, 2, 3])
+  const [log] = await withTenant(c.id, (tx) => tx.select().from(auditLog).where(and(eq(auditLog.action, 'report_card.republished'), sql`${auditLog.detail}->>'version' = '3'`)))
+  assert.deepEqual([(log!.detail as { previousVersion: number }).previousVersion, log!.reason], [2, 'Art grade corrected and checked'])
+  assert.equal(await audits(c, 'report_card.unpublished'), 1)
+})
+
+test('corrections serialize by expected version', async () => {
+  const c = await issued()
+  await approveRevision(c)
+  const h = holder(c, async () => {})
+  await h.ready
+  const a = republishAs(c, 1).then(() => null, (e: unknown) => e)
+  const b = republishAs(c, 1, c.admin, 'The same correction, sent twice').then(() => null, (e: unknown) => e)
+  try {
+    await until(async () => (await advisoryWaiters(c.id)) >= 2)
+  } finally {
+    h.release()
+  }
+  await h.done
+  const results = await Promise.all([a, b])
+  assert.equal(results.filter((r) => r === null).length, 1, 'exactly one correction succeeds')
+  assert.equal(results.filter((r) => r !== null && code(r) === 'report_card_version_stale' && status(r) === 409).length, 1)
+  assert.deepEqual((await versionsOf(c)).map((v) => v.version), [1, 2])
+  assert.equal(await audits(c, 'report_card.republished'), 1)
+})
+
+test('issue uses the report it validated', async () => {
+  const c = await issued()
+  await approveRevision(c)
+  // Pause the publication after it has read its inputs, on the entry row it must write.
+  let release!: () => void
+  let locked!: () => void
+  const gate = new Promise<void>((r) => (release = r))
+  const ready = new Promise<void>((r) => (locked = r))
+  const held = withTenant(c.id, async (tx) => {
+    await tx.execute(sql`select 1 from exam_report_card_entries where student_id = ${c.pupil.id} and term_id = ${c.termId}::uuid for update`)
+    locked()
+    await gate
+  })
+  await ready
+  const attempt = republishAs(c, 1).then(() => null, (e: unknown) => e)
+  try {
+    await until(async () => (await waitingOn('row')) >= 1)
+    await api.unpublishExam(c.admin, { examId: c.exams.term, reason: 'Withdrawn while the card is being issued' })
+  } finally {
+    release()
+  }
+  await held
+  assert.equal(await attempt, null, 'the issue completes with the inputs it validated')
+  const [v2] = (await versionsOf(c)).slice(1)
+  const subject = (v2!.payload as { report: { subjects: { total: number }[] } }).report.subjects[0]!
+  assert.equal(subject.total, 97)
+  await assert.rejects(republishAs(c, 2), (e) => code(e) === 'report_card_incomplete', 'the next correction sees the withdrawn exam')
+  assert.equal((await versionsOf(c)).length, 2)
+
+  // Withdrawn before the inputs are read: no issue at all.
+  const d = await issued()
+  await approveRevision(d)
+  const h = holder(d, async () => {})
+  await h.ready
+  const second = republishAs(d, 1).then(() => null, (e: unknown) => e)
+  try {
+    await until(async () => (await advisoryWaiters(d.id)) >= 1)
+    await api.unpublishExam(d.admin, { examId: d.exams.term, reason: 'Withdrawn before the card is issued' })
+  } finally {
+    h.release()
+  }
+  await h.done
+  assert.equal(code(await second), 'report_card_incomplete')
+  assert.equal((await versionsOf(d)).length, 1)
+})
+
+test('failed audit preserves current issue', async () => {
+  const c = await issued()
+  await approveRevision(c)
+  const before = await entryOf(c)
+  const owner = new pg.Client({ connectionString: process.env.MIGRATION_DATABASE_URL })
+  await owner.connect()
+  const fn = `rc_fail_audit_${n}_${Date.now()}`
+  try {
+    await owner.query(`create function ${fn}() returns trigger language plpgsql as $$ begin if new.action = 'report_card.republished' and new.institution_id = '${c.id}' then raise exception 'audit refused'; end if; return new; end $$`)
+    await owner.query(`create trigger ${fn} before insert on audit_log for each row execute function ${fn}()`)
+    await assert.rejects(republishAs(c, 1), (e) => /audit refused/.test(`${(e as Error).message} ${((e as Error).cause as Error | undefined)?.message ?? ''}`))
+  } finally {
+    await owner.query(`drop trigger if exists ${fn} on audit_log`)
+    await owner.query(`drop function if exists ${fn}()`)
+    await owner.end()
+  }
+  assert.deepEqual((await versionsOf(c)).map((v) => v.version), [1])
+  assert.equal((await entryOf(c))!.publishedAt!.getTime(), before!.publishedAt!.getTime())
+  assert.equal(await audits(c, 'report_card.republished'), 0)
+  assert.equal((await republishAs(c, 1)).changed, true, 'the correction works once the fault is gone')
+})
+
+test('an office withdrawal of a stranded legacy entry hides it and keeps the old timestamp', async () => {
+  const c = await campus()
+  const legacy = new Date('2026-05-05T10:20:30.123Z')
+  await withTenant(c.id, (tx) => tx.insert(reportCardEntries).values({ institutionId: c.id, termId: c.termId, sectionId: c.sectionId, studentId: c.pupil.id, publishedAt: legacy }))
+  await withTenant(c.id, (tx) => tx.execute(sql`delete from academic_section_members where user_id = ${c.pupil.id} and section_id = ${c.sectionId}::uuid`))
+  const withdraw = (who: A) => publication(c, { published: false, reason: 'Withdrawn after the pupil moved' }, who)
+  await assert.rejects(withdraw(c.classTeacher), (e) => code(e) === 'no_such_school_pupil')
+  await assert.rejects(withdraw(c.otherTeacher), (e) => code(e) === 'no_such_school_pupil')
+  const other = await campus()
+  await assert.rejects(withdraw(other.admin), (e) => code(e) === 'no_such_school_pupil')
+  assert.ok((await entryOf(c))!.publishedAt, 'refusals change nothing')
+  assert.equal((await withdraw(c.admin)).changed, true)
+  assert.equal((await entryOf(c))!.publishedAt, null)
+  const [log] = await withTenant(c.id, (tx) => tx.select().from(auditLog).where(eq(auditLog.action, 'report_card.unpublished')))
+  assert.equal((log!.detail as { legacyPublishedAt: string }).legacyPublishedAt, legacy.toISOString())
+  assert.equal((await withdraw(c.admin)).changed, false)
+  // Hiding is all it may do: publishing for a pupil outside the section creates nothing.
+  await assert.rejects(publication(c, {}, c.admin), (e) => code(e) === 'no_such_school_pupil')
+  assert.equal((await versionsOf(c)).length, 0)
+})
+
+test('a visible legacy card is reissued as version 1, once, with the old timestamp in the audit', async () => {
+  const c = await campus()
+  await publishMarks(c)
+  await saveEntry(c, 'art', 'a')
+  const legacy = new Date('2026-05-05T10:20:30.123Z')
+  await withTenant(c.id, (tx) => tx.update(reportCardEntries).set({ publishedAt: legacy }).where(eq(reportCardEntries.studentId, c.pupil.id)))
+  assert.equal((await publication(c)).changed, false, 'an ordinary publish leaves a legacy row alone')
+  assert.equal((await versionsOf(c)).length, 0)
+  await assert.rejects(republishAs(c, 1), (e) => code(e) === 'report_card_version_stale')
+  assert.equal((await republishAs(c, 0, c.admin, 'Reviewed against the school copy')).notice, 'Report card republished.')
+  assert.deepEqual((await versionsOf(c)).map((v) => v.version), [1])
+  assert.equal((await entryOf(c))!.publishedAt!.getTime(), (await versionsOf(c))[0]!.issuedAt.getTime(), 'one timestamp for the issue and its visibility')
+  const [log] = await withTenant(c.id, (tx) => tx.select().from(auditLog).where(eq(auditLog.action, 'report_card.republished')))
+  assert.deepEqual([(log!.detail as { previousVersion: number }).previousVersion, (log!.detail as { legacyPublishedAt: string }).legacyPublishedAt], [0, legacy.toISOString()])
+  await assert.rejects(republishAs(c, 0), (e) => code(e) === 'report_card_version_stale')
 })

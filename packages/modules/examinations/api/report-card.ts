@@ -1,11 +1,12 @@
 import * as z from 'zod'
-import { sql } from 'drizzle-orm'
+import { and, desc, eq, sql } from 'drizzle-orm'
 import { audit, withTenant } from '@campusos/db'
 import { assertCanAccessStudent } from '@campusos/module-framework'
-import { reportCardEntries } from '../schema'
+import { reportCardEntries, reportCardVersions } from '../schema'
+import { sections } from './joins'
 import { ExamError, type Actor } from './operations'
 import { freezeDefaultWithin, isAdmin, lockReportCard, NOTICES, reportCardRefusal, tenantOf, type Tx } from './report-card-store'
-import { assemble, snapshot, templateOf, type ReportCard } from './report-card-input'
+import { assemble, issuePayload, snapshot, templateOf, type ReportCard, type Snapshot } from './report-card-input'
 
 /**
  * A school pupil's term report (FUNC-03, P1-13b): the entry and publication
@@ -46,7 +47,6 @@ const entrySchema = z.object({ ...identity, area: z.string().trim().max(100), va
 
 /** A form's checkbox: true, 'true', 'on', '1'; anything else, including absence, is false. */
 const checkbox = z.preprocess((v) => (typeof v === 'string' ? ['true', 'on', '1'].includes(v.trim().toLowerCase()) : v), z.boolean())
-const publicationSchema = z.object({ ...identity, published: checkbox, reason: z.string().trim().min(10).max(240) })
 
 /**
  * Who may write a pupil's report: the office, or the class teacher of the
@@ -123,37 +123,147 @@ export async function setReportCardEntry(actor: Actor, input: unknown): Promise<
   })
 }
 
+const publicationBase = z.object({ ...identity, published: checkbox, reason: z.string().trim().min(10).max(240) })
+const invalidRepublication = () => reportCardRefusal('invalid_report_card_republication')
+
+/** The optional correction controls. An omitted control is not an invalid one. */
+function correctionControls(input: unknown): { republish: boolean; expectedVersion: number | undefined } {
+  const raw = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>
+  const blank = (v: unknown) => v === undefined || v === null || v === ''
+  let republish = false
+  if (!blank(raw.republish)) {
+    const v = typeof raw.republish === 'string' ? raw.republish.trim().toLowerCase() : raw.republish
+    if (v === true || v === 'true' || v === 'on' || v === '1') republish = true
+    else if (v === false || v === 'false' || v === 'off' || v === '0') republish = false
+    else throw invalidRepublication()
+  }
+  let expectedVersion: number | undefined
+  if (!blank(raw.expectedVersion)) {
+    const v = raw.expectedVersion
+    const n = typeof v === 'number' ? v : typeof v === 'string' && /^\d{1,10}$/.test(v.trim()) ? Number(v.trim()) : NaN
+    if (!Number.isInteger(n) || n < 0 || n > 2_147_483_646) throw invalidRepublication()
+    expectedVersion = n
+  }
+  return { republish, expectedVersion }
+}
+
+type Identity = { termId: string; sectionId: string; studentId: string }
+const identityKey = (d: Identity) =>
+  and(eq(reportCardVersions.termId, d.termId), eq(reportCardVersions.sectionId, d.sectionId), eq(reportCardVersions.studentId, d.studentId))
+const entryKey = (d: Identity) =>
+  and(eq(reportCardEntries.termId, d.termId), eq(reportCardEntries.sectionId, d.sectionId), eq(reportCardEntries.studentId, d.studentId))
+
+async function latestVersion(tx: Tx, d: Identity): Promise<number> {
+  const [row] = await tx.select({ v: reportCardVersions.version }).from(reportCardVersions).where(identityKey(d)).orderBy(desc(reportCardVersions.version)).limit(1)
+  return row?.v ?? 0
+}
+
+const isoOf = (v: unknown) => new Date(v as string).toISOString()
+
 /**
- * Publish or withdraw a pupil's report, with a reason. Publishing needs every
- * assessed result, or every scholastic area's rating, to be complete; withdrawing
- * reopens the ratings for editing.
+ * The cohort lock, the section and pupil rows shared to the end of the
+ * transaction, then the inputs read once under them (decision 1194). A section
+ * moved to another programme between the first read and the lock is retried
+ * under the lock of its new programme before anything is written.
+ */
+async function underIssueLock(tx: Tx, actor: Actor, tenant: string, d: Identity, first: Snapshot) {
+  let programId = first.cand!.program_id
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await lockReportCard(tx, tenant, d.termId, programId)
+    await tx.execute(sql`select 1 from academic_sections where id = ${d.sectionId}::uuid for share`)
+    await tx.execute(sql`select 1 from users where id = ${d.studentId} for share`)
+    const snap = await snapshot(tx, d.termId, d.sectionId, d.studentId)
+    if (!snap.cand) throw reportCardRefusal('no_such_school_pupil')
+    assertMayWrite(actor, snap.cand.class_teacher_id)
+    if (snap.cand.program_id === programId) {
+      const t = templateOf(snap)
+      if (!t) throw reportCardRefusal('no_report_card_template')
+      return { snap, t }
+    }
+    programId = snap.cand.program_id
+  }
+  throw reportCardRefusal('report_card_stale')
+}
+
+/**
+ * An office withdrawal of a visible entry whose pupil has left the section (or
+ * whose class lost its offerings): nothing can be read for it, but it must be
+ * possible to hide it. It only ever hides; it never creates an issue.
+ */
+async function withdrawStranded(tx: Tx, actor: Actor, tenant: string, d: Identity & { reason: string }, expectedVersion: number | undefined) {
+  const [section] = await tx.select({ programId: sections.programId }).from(sections).where(eq(sections.id, d.sectionId))
+  if (!section || !isAdmin(actor.role)) throw reportCardRefusal('no_such_school_pupil')
+  await lockReportCard(tx, tenant, d.termId, section.programId)
+  const [entry] = await tx.select({ publishedAt: reportCardEntries.publishedAt }).from(reportCardEntries).where(entryKey(d))
+  if (!entry) throw reportCardRefusal('no_such_school_pupil')
+  if (!entry.publishedAt) return { changed: false, notice: NOTICES.unpublished }
+  const last = await latestVersion(tx, d)
+  if (expectedVersion !== undefined && expectedVersion !== last) throw reportCardRefusal('report_card_version_stale')
+  await tx.update(reportCardEntries).set({ publishedAt: null }).where(entryKey(d))
+  const legacy = last === 0 ? { legacyPublishedAt: entry.publishedAt.toISOString() } : {}
+  await audit(tx, auditEntry(actor, tenant, d, 'report_card.unpublished', d.reason, { termId: d.termId, sectionId: d.sectionId, studentId: d.studentId, published: false, previousVersion: last, version: last, ...legacy }))
+  return { changed: true, notice: NOTICES.unpublished }
+}
+
+/**
+ * Publish, withdraw or correct a pupil's report, with a reason, in one
+ * transaction (decisions 1190 to 1198). Publishing, and a reasoned reissue
+ * (`republish` with the `expectedVersion` the form showed), each append one
+ * immutable issue holding everything printed; a card is never rebuilt from
+ * today's marks. Withdrawing hides the card and reopens the ratings.
  */
 export async function setReportCardPublication(actor: Actor, input: unknown): Promise<{ changed: boolean; notice: string }> {
   const tenant = tenantOf(actor)
   writerRole(actor)
-  const d = publicationSchema.parse(input)
+  const { republish, expectedVersion } = correctionControls(input)
+  let d: z.infer<typeof publicationBase>
+  if (republish) {
+    const parsed = publicationBase.safeParse(input)
+    if (!parsed.success || !parsed.data.published || expectedVersion === undefined) throw invalidRepublication()
+    d = parsed.data
+  } else d = publicationBase.parse(input)
+
   return withTenant(tenant, async (tx) => {
-    const { snap, t } = await underLock(tx, actor, tenant, d)
+    const first = await snapshot(tx, d.termId, d.sectionId, d.studentId)
+    if (!first.cand) {
+      if (!d.published) return withdrawStranded(tx, actor, tenant, d, expectedVersion)
+      throw reportCardRefusal('no_such_school_pupil')
+    }
+    assertMayWrite(actor, first.cand.class_teacher_id)
+    const { snap, t } = await underIssueLock(tx, actor, tenant, d, first)
+    const last = await latestVersion(tx, d)
     const live = Boolean(snap.entry?.published_at)
-    const notice = d.published ? NOTICES.published : NOTICES.unpublished
-    if (live === d.published) return { changed: false, notice }
-    if (d.published && !assemble(snap, t).complete) throw reportCardRefusal('report_card_incomplete')
+    if (expectedVersion !== undefined && expectedVersion !== last) throw reportCardRefusal('report_card_version_stale')
+    if (republish && !live) throw reportCardRefusal('report_card_version_stale')
+    const notice = republish ? NOTICES.republished : d.published ? NOTICES.published : NOTICES.unpublished
+    const detail = { termId: d.termId, sectionId: d.sectionId, studentId: d.studentId }
+
+    if (!d.published) {
+      if (!live) return { changed: false, notice }
+      const legacy = last === 0 ? { legacyPublishedAt: isoOf(snap.entry!.published_at) } : {}
+      await tx.update(reportCardEntries).set({ publishedAt: null }).where(entryKey(d))
+      await audit(tx, auditEntry(actor, tenant, d, 'report_card.unpublished', d.reason, { ...detail, published: false, previousVersion: last, version: last, ...legacy }))
+      return { changed: true, notice }
+    }
+    if (live && !republish) return { changed: false, notice }
+    if (!assemble(snap, t).complete) throw reportCardRefusal('report_card_incomplete')
+
+    if (!snap.template) await freezeDefaultWithin(tx, actor, d.termId, snap.cand!.program_id, tenant, t)
+    const version = last + 1
+    const payload = issuePayload(snap, t, snap.template?.revision ?? 1)
+    // One database timestamp, in microseconds, for the issue and for the visibility.
+    const at = ((await tx.execute(sql`select to_char(clock_timestamp() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as at`)).rows as { at: string }[])[0]!.at
+    const stamp = sql`${at}::timestamptz`
     await tx
       .insert(reportCardEntries)
-      .values({ institutionId: tenant, termId: d.termId, sectionId: d.sectionId, studentId: d.studentId, publishedAt: sql`now()` })
+      .values({ institutionId: tenant, termId: d.termId, sectionId: d.sectionId, studentId: d.studentId, publishedAt: stamp as never })
       .onConflictDoUpdate({
         target: [reportCardEntries.institutionId, reportCardEntries.termId, reportCardEntries.sectionId, reportCardEntries.studentId],
-        set: { publishedAt: d.published ? sql`now()` : null },
+        set: { publishedAt: stamp as never },
       })
-    await audit(
-      tx,
-      auditEntry(actor, tenant, d, d.published ? 'report_card.published' : 'report_card.unpublished', d.reason, {
-        termId: d.termId,
-        sectionId: d.sectionId,
-        studentId: d.studentId,
-        published: d.published,
-      }),
-    )
+    await tx.insert(reportCardVersions).values({ institutionId: tenant, termId: d.termId, sectionId: d.sectionId, studentId: d.studentId, version, issuedAt: stamp as never, payload: payload as never })
+    const legacy = republish && last === 0 ? { legacyPublishedAt: isoOf(snap.entry!.published_at) } : {}
+    await audit(tx, auditEntry(actor, tenant, d, republish || last > 0 ? 'report_card.republished' : 'report_card.published', d.reason, { ...detail, published: true, previousVersion: last, version, ...legacy }))
     return { changed: true, notice }
   })
 }

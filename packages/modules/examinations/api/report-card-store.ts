@@ -42,6 +42,9 @@ const REFUSALS = {
   report_card_unpublished: [409, 'This report card has not been published.'],
   report_card_incomplete: [409, 'This report card has incomplete results.'],
   report_card_published: [409, 'Unpublish this report card before editing.'],
+  report_card_version_stale: [409, 'The report card version changed. Reload before republishing.'],
+  invalid_report_card_republication: [400, 'Enter the current issue version and a publication reason.'],
+  report_card_legacy_unversioned: [409, 'This report has no stored issue. The school office must review it.'],
 } as const
 export const reportCardRefusal = (c: keyof typeof REFUSALS) => new ExamError(REFUSALS[c][0], c, REFUSALS[c][1])
 
@@ -50,6 +53,7 @@ export const NOTICES = {
   entry: 'Report card entry saved.',
   published: 'Report card published.',
   unpublished: 'Report card unpublished.',
+  republished: 'Report card republished.',
 } as const
 
 export const tenantOf = (actor: Actor): string => {
