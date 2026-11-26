@@ -18,6 +18,8 @@ const KIND = {
 /** Events younger than this may still be followed by one with a lower id that has not committed (D1334). */
 const SETTLE_SECONDS = 5
 const BATCH = 500
+/** A warden is not told about an event older than this: after the module was off for a while the backlog is history, not news. */
+const STALE_MINUTES = 60
 
 /**
  * Library outbox to hostel timeline (P2-22a, D1334, D1335).
@@ -30,6 +32,7 @@ const BATCH = 500
 export async function consumeLibraryEvents(
   tx: Tx,
   tenant: string,
+  now = new Date(),
 ): Promise<{ read: number; logged: number; notified: number }> {
   const none = { read: 0, logged: 0, notified: 0 }
   if (!(await entitled(tx, tenant, 'hostel')) || !(await entitled(tx, tenant, 'library'))) return none
@@ -71,6 +74,7 @@ export async function consumeLibraryEvents(
     if (inserted.length === 0) continue
     logged++
 
+    if (now.getTime() - e.at.getTime() > STALE_MINUTES * 60_000) continue
     const unconfirmed = e.kind === 'session_unconfirmed'
     if (!unconfirmed && !(e.kind === 'session_started' && policy.notifyWardenOnLibraryEntry)) continue
     const r = await recipientsFor(tx, tenant, e.studentId, 'floor')

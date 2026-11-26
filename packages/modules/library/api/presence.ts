@@ -24,7 +24,8 @@ export async function openSessionsAmong(tx: Tx, studentIds: string[]): Promise<M
   if (studentIds.length === 0) return new Map()
   const rows = (await tx.execute(sql`
     select student_id, entered_at from library_sessions
-     where exited_at is null and student_id = any(${literal(studentIds)}::text[])`)).rows as { student_id: string; entered_at: Date | string }[]
+     -- A session still open after the library closed (the closing sweep reported it) is no evidence of presence.
+     where exited_at is null and unconfirmed_reported_at is null and student_id = any(${literal(studentIds)}::text[])`)).rows as { student_id: string; entered_at: Date | string }[]
   return new Map(rows.map((r) => [r.student_id, new Date(r.entered_at)]))
 }
 
