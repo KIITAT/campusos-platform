@@ -34,6 +34,8 @@ before(async () => {
       from (select id, row_number() over (order by email) as rn from users where institution_id = ${inst} and role = 'student') u
       join (select id, row_number() over (order by block_id, number) as rn from hostel_rooms where institution_id = ${inst}) r
         on r.rn = ((u.rn - 1) / 20) + 1`)
+  // Bulk-loaded tables have no statistics until autovacuum looks; a real hub is long past that.
+  for (const t of ['hostel_blocks', 'hostel_rooms', 'hostel_allocations', 'hostel_curfew_cases', 'users']) await authDb.execute(sql.raw(`analyze ${t}`))
 })
 
 after(async () => {
@@ -55,6 +57,7 @@ test('a sweep for 5,000 unaccounted residents stays inside the budget', async ()
     await authDb.execute(sql`delete from hostel_curfew_cases where institution_id = ${inst}`)
     await authDb.execute(sql`delete from hostel_presence_log where institution_id = ${inst}`)
     await authDb.execute(sql`delete from notifications where institution_id = ${inst}`)
+    await authDb.execute(sql`analyze hostel_curfew_cases`)
     const t0 = Date.now()
     const r = await sweep(at('21:41'))
     firstMs = Math.min(firstMs, Date.now() - t0)
@@ -62,6 +65,7 @@ test('a sweep for 5,000 unaccounted residents stays inside the budget', async ()
   }
   assert.ok(firstMs < 2000, `first tick took ${firstMs} ms`)
 
+  await authDb.execute(sql`analyze hostel_curfew_cases`)
   const t1 = Date.now()
   const again = await sweep(at('21:41'))
   const againMs = Date.now() - t1
