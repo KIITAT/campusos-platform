@@ -1,6 +1,6 @@
 import { PDFDocument, rgb, type PDFPage } from 'pdf-lib'
 import { pdfText, type PdfText, type Weight } from '@campusos/module-framework/pdf'
-import type { ReportCard } from './report-card'
+import type { IssuedReportCard } from './report-card'
 
 /**
  * A school term report on A4 portrait, laid out by hand with pdf-lib like the
@@ -46,11 +46,18 @@ function wrap(t: PdfText, text: string, size: number, width: number): string[] {
   return cur ? [...lines, cur] : lines
 }
 
-export async function reportCardPdf(r: ReportCard): Promise<Uint8Array> {
+/** The register line printed on an issued card (decision 1192). */
+const attendanceLine = (a: IssuedReportCard['attendance']) =>
+  a.state === 'unavailable' ? 'Daily attendance: Unavailable' : a.held > 0 ? `Daily attendance: ${a.present} present out of ${a.held} recorded days` : 'Daily attendance: No register entries'
+
+export async function reportCardPdf(r: IssuedReportCard): Promise<Uint8Array> {
   const doc = await PDFDocument.create()
   doc.setTitle('School term report')
   doc.setProducer('CampusOS')
-  doc.setCreationDate(new Date())
+  // The time the school issued it, not the time it was printed again.
+  const issued = new Date(r.issuedAt)
+  doc.setCreationDate(issued)
+  doc.setModificationDate(issued)
   const t = await pdfText(doc, JSON.stringify(r))
   const pages: PDFPage[] = []
   let page!: PDFPage
@@ -97,6 +104,8 @@ export async function reportCardPdf(r: ReportCard): Promise<Uint8Array> {
   para(`Class ${r.classNumber} · Section ${r.sectionLabel}`)
   para(r.name, { size: 12, weight: 'bold' })
   para([r.rollNo ? `Roll number ${r.rollNo}` : null, r.templateName].filter(Boolean).join('   '), { color: faint })
+  para(`Issue version ${r.version}`, { color: faint })
+  para(attendanceLine(r.attendance), { color: faint })
   gap(6)
   hr()
 

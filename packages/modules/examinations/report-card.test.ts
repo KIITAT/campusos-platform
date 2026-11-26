@@ -934,3 +934,66 @@ test('a visible legacy card is reissued as version 1, once, with the old timesta
   assert.deepEqual([(log!.detail as { previousVersion: number }).previousVersion, (log!.detail as { legacyPublishedAt: string }).legacyPublishedAt], [0, legacy.toISOString()])
   await assert.rejects(republishAs(c, 0), (e) => code(e) === 'report_card_version_stale')
 })
+
+// --- serving the issued card (P1-13b.3) --------------------------------------------
+
+test('an issued observation card keeps its labels', async () => {
+  const c = await campus({ programCode: 'CLASS-2' })
+  const t = defaultSchoolTemplate(2)!
+  await enableAttendance(c)
+  for (const day of ['2026-04-01', '2026-04-02']) await mark(c, c.sectionId, c.pupil.id, day, true)
+  await mark(c, c.sectionId, c.pupil.id, '2026-04-03', false)
+  for (const a of t.areas.filter((x) => x.group === 'scholastic')) await saveEntry(c, a.key, 'proficient')
+  await publication(c)
+  const text = async () => {
+    const res = await download(c, c.pupil)
+    assert.equal(res.status, 200)
+    assert.match(res.headers.get('content-disposition')!, /-v1\.pdf"$/)
+    return printed(new Uint8Array(await res.arrayBuffer()))
+  }
+  const original = await text()
+  for (const want of [NAME, 'Language and literacy', 'Proficient', 'Issue version 1', 'Daily attendance: 2 present out of 3 recorded days']) assert.ok(original.includes(want), want)
+
+  // Everything the card was built from changes; the issued card does not.
+  await authDb.update(users).set({ name: 'Renamed Later' }).where(eq(users.id, c.pupil.id))
+  await mark(c, c.sectionId, c.pupil.id, '2026-04-04', true)
+  await withTenant(c.id, (tx) => tx.update(reportCardTemplates).set({ template: { ...t, name: 'A different template', areas: [] } }).where(eq(reportCardTemplates.termId, c.termId)))
+  await withTenant(c.id, (tx) => tx.execute(sql`delete from academic_section_members where user_id = ${c.pupil.id} and section_id = ${c.sectionId}::uuid`))
+  const before = await audits(c)
+  assert.equal(await text(), original)
+  const issuedReport = (await versionsOf(c))[0]!.payload as { report: Record<string, unknown> }
+  const { version, issuedAt, ...served } = await reportOf(c, c.pupil)
+  assert.deepEqual(served, issuedReport.report)
+  assert.deepEqual([version, issuedAt.length > 20], [1, true])
+  assert.equal(await audits(c), before, 'reprinting writes no audit event')
+
+  const quiet = console.error
+  console.error = () => {}
+  try {
+    await assert.rejects(download(c, c.otherPupil, c.pupil.id), (e) => status(e) === 403)
+    await assert.rejects(download(c, c.stranger, c.pupil.id), (e) => status(e) === 403)
+    const other = await campus()
+    await assert.rejects(download(c, other.admin, c.pupil.id), (e) => status(e) === 404)
+  } finally {
+    console.error = quiet
+  }
+  assert.equal((await download(c, c.guardian, c.pupil.id)).status, 200)
+
+  // Withdrawal hides it at once; an erased pupil has no card.
+  await publication(c, { published: false, reason: 'Withdrawn to correct a rating' }, c.admin)
+  await assert.rejects(download(c, c.pupil), (e) => code(e) === 'report_card_unpublished' && status(e) === 409)
+  await assert.rejects(publication(c, { reason: 'Reissued after the rating was corrected' }, c.admin), (e) => code(e) === 'no_such_school_pupil', 'the pupil left the section: no new issue')
+  await authDb.update(users).set({ erasedAt: new Date() }).where(eq(users.id, c.pupil.id))
+  await assert.rejects(reportOf(c, c.admin), (e) => code(e) === 'no_such_school_pupil' && status(e) === 404)
+})
+
+test('a published legacy entry with no issue is not rendered from live data', async () => {
+  const c = await campus()
+  await publishMarks(c)
+  await saveEntry(c, 'art', 'a')
+  await assert.rejects(reportOf(c, c.admin), (e) => code(e) === 'report_card_unpublished')
+  await withTenant(c.id, (tx) => tx.update(reportCardEntries).set({ publishedAt: new Date('2026-05-05T00:00:00Z') }).where(eq(reportCardEntries.studentId, c.pupil.id)))
+  for (const who of [c.admin, c.pupil, c.guardian])
+    await assert.rejects(reportOf(c, who), (e) => code(e) === 'report_card_legacy_unversioned' && status(e) === 409 && (e as Error).message === 'This report has no stored issue. The school office must review it.', who.role)
+  await assert.rejects(download(c, c.pupil), (e) => code(e) === 'report_card_legacy_unversioned')
+})

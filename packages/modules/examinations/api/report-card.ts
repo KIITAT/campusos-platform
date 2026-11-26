@@ -1,12 +1,12 @@
 import * as z from 'zod'
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, isNull, sql } from 'drizzle-orm'
 import { audit, withTenant } from '@campusos/db'
 import { assertCanAccessStudent } from '@campusos/module-framework'
 import { reportCardEntries, reportCardVersions } from '../schema'
-import { sections } from './joins'
+import { sections, users } from './joins'
 import { ExamError, type Actor } from './operations'
 import { freezeDefaultWithin, isAdmin, lockReportCard, NOTICES, reportCardRefusal, tenantOf, type Tx } from './report-card-store'
-import { assemble, issuePayload, snapshot, templateOf, type ReportCard, type Snapshot } from './report-card-input'
+import { assemble, issuePayload, snapshot, templateOf, type CardAttendance, type IssuePayload, type ReportCard, type Snapshot } from './report-card-input'
 
 /**
  * A school pupil's term report (FUNC-03, P1-13b): the entry and publication
@@ -17,26 +17,47 @@ import { assemble, issuePayload, snapshot, templateOf, type ReportCard, type Sna
 
 export type { CardAttendance, IssuePayload, ReportCard } from './report-card-input'
 
+/** An issued card as served: what was printed, the version and when it was issued. */
+export type IssuedReportCard = ReportCard & { attendance: CardAttendance; version: number; issuedAt: string }
+
 /**
- * The published report of a pupil in a section and term. The caller must be
- * able to read the pupil's academic record (the pupil, a verified guardian, or
- * staff related to the pupil); enforced even where the module is report-only.
- * Refusals in order: no such pupil, no template, not published, incomplete.
+ * The issued report of a pupil in a section and term (decision 1195): the
+ * highest stored version while the card is published. The caller must be able
+ * to read the pupil's academic record (the pupil, a verified guardian, or staff
+ * related to the pupil); enforced even where the module is report-only.
+ *
+ * An issued card needs neither the pupil's current section, an offering, the
+ * template nor any mark: it is served from what was stored, and never rebuilt.
+ * With no issue stored the refusals are, in order: no such pupil, no template,
+ * not published, and a legacy publication with no stored issue (decision 1196).
  */
-export async function reportCard(actor: Actor, studentId: string, termId: string, sectionId: string): Promise<ReportCard> {
+export async function reportCard(actor: Actor, studentId: string, termId: string, sectionId: string): Promise<IssuedReportCard> {
   const tenant = tenantOf(actor)
   await withTenant(tenant, (tx) => assertCanAccessStudent(tx, { ...actor, authzReportOnly: false }, studentId, 'academic_record'))
   const ids = z.object({ t: z.uuid(), s: z.uuid() }).safeParse({ t: termId, s: sectionId })
   if (!ids.success) throw reportCardRefusal('no_such_school_pupil')
+  const d = { termId, sectionId, studentId }
   return withTenant(tenant, async (tx) => {
+    const [pupil] = await tx.select({ id: users.id }).from(users).where(and(eq(users.id, studentId), eq(users.role, 'student'), isNull(users.erasedAt)))
+    if (!pupil) throw reportCardRefusal('no_such_school_pupil')
+    const [entry] = await tx.select({ publishedAt: reportCardEntries.publishedAt }).from(reportCardEntries).where(entryKey(d))
+    const [issue] = await tx
+      .select({ version: reportCardVersions.version, issuedAt: sql<string>`to_char(${reportCardVersions.issuedAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`, payload: reportCardVersions.payload })
+      .from(reportCardVersions)
+      .where(identityKey(d))
+      .orderBy(desc(reportCardVersions.version))
+      .limit(1)
+    if (issue) {
+      if (!entry?.publishedAt) throw reportCardRefusal('report_card_unpublished')
+      const p = issue.payload as IssuePayload | null
+      if (!p || p.format !== 1 || !p.report || typeof p.report !== 'object') throw new Error('The stored report card cannot be read (integrity error).')
+      return { ...p.report, version: issue.version, issuedAt: issue.issuedAt }
+    }
     const snap = await snapshot(tx, termId, sectionId, studentId)
     if (!snap.cand) throw reportCardRefusal('no_such_school_pupil')
-    const t = templateOf(snap)
-    if (!t) throw reportCardRefusal('no_report_card_template')
+    if (!templateOf(snap)) throw reportCardRefusal('no_report_card_template')
     if (!snap.entry?.published_at) throw reportCardRefusal('report_card_unpublished')
-    const { report, complete } = assemble(snap, t)
-    if (!complete) throw reportCardRefusal('report_card_incomplete')
-    return report
+    throw reportCardRefusal('report_card_legacy_unversioned')
   })
 }
 
