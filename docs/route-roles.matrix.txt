@@ -157,7 +157,7 @@ POST /api/v1/modules/ceremonies/transfer-certificates/reissue            SI.....
 GET /api/v1/modules/ceremonies/transfer-certificate.pdf                  SI........ gate
 GET /api/v1/modules/ceremonies/verify                                    SIHF...... gate
 
-## crm 0.12.0
+## crm 0.13.0
 GET /api/v1/modules/crm/settings                                         SIHFALO... op
 GET /api/v1/modules/crm/pipeline                                         SIHFALO... op
 GET /api/v1/modules/crm/leads/detail                                     SIHFALO... op
