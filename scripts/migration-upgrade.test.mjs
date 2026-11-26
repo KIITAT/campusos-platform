@@ -186,6 +186,30 @@ before(async () => {
           ('upgrade-one', 'legacy.3', '3', null, 'same instant', '{"b": 1, "a": 1.50}', '2026-01-01T10:00:01Z'),
           ('upgrade-two', 'legacy.4', '4', 'b@example.in', 'other tenant', null, '2026-01-02T00:00:00Z')
         ) as v(slug, action, n, email, reason, detail, at) on v.slug = i.slug`)
+    // Fees at the previous level (P1-03d): invoices issued before 0011 add what each asks for per due date.
+    // u1: two instalments and an undated line, a student charge and a posted waiver; u2: an invoice issued
+    // before a second line was added (the price list no longer matches it).
+    const fee = await c.query(`insert into institutions (slug, name) values ('upgrade-fees', 'Fees') returning id`)
+    const inst = fee.rows[0].id
+    await c.query(`insert into users (id, institution_id, email, role, name) values
+      ('upgrade-fees-u1', $1, 'u1@upgrade-fees.example', 'student', 'U1'), ('upgrade-fees-u2', $1, 'u2@upgrade-fees.example', 'student', 'U2')`, [inst])
+    const dept = (await c.query(`insert into academic_departments (institution_id, code, name) values ($1, 'cse', 'CSE') returning id`, [inst])).rows[0].id
+    const prog = (await c.query(`insert into academic_programs (institution_id, department_id, code, name, level, duration_terms)
+      values ($1, $2, 'btech', 'BTech', 'undergraduate', 8) returning id`, [inst, dept])).rows[0].id
+    const term = (await c.query(`insert into academic_terms (institution_id, code, name, starts_on, ends_on)
+      values ($1, 't1', 'Sem 1', '2026-07-01', '2027-02-28') returning id`, [inst])).rows[0].id
+    await c.query(`insert into academic_student_programs (institution_id, student_id, program_id, declared_on)
+      values ($1, 'upgrade-fees-u1', $2, '2026-06-01'), ($1, 'upgrade-fees-u2', $2, '2026-06-01')`, [inst, prog])
+    const items = (await c.query(`insert into fee_items (institution_id, program_id, term_id, label, amount_paise, due_on) values
+      ($1, $2, $3, 'Tuition I', 5000000, '2026-10-01T00:00:00Z'), ($1, $2, $3, 'Tuition II', 5000000, '2026-12-01T00:00:00Z'),
+      ($1, $2, $3, 'Registration', 100000, null) returning id, label`, [inst, prog, term])).rows
+    const t2 = items.find((r) => r.label === 'Tuition II').id
+    await c.query(`insert into fee_student_charges (institution_id, student_id, term_id, label, amount_paise)
+      values ($1, 'upgrade-fees-u1', $2, 'Fine', 20000)`, [inst, term])
+    await c.query(`insert into fee_waivers (institution_id, student_id, fee_item_id, amount_paise, reason, posted_paise, postings)
+      values ($1, 'upgrade-fees-u1', $2, 100000, 'hardship case', 100000, 1)`, [inst, t2])
+    await c.query(`insert into fee_invoices (institution_id, student_id, term_id, charged_paise, issued_at) values
+      ($1, 'upgrade-fees-u1', $2, 10120000, '2026-09-01T00:00:00Z'), ($1, 'upgrade-fees-u2', $2, 5000000, '2026-09-01T00:00:00Z')`, [inst, term])
     // ...then the upgrade, in the order an installation runs it.
     await migrateCore(c, Number.MAX_SAFE_INTEGER)
     await applyModules(c, (f) => NEW_FILES.has(f))
@@ -254,6 +278,17 @@ test('the upgrade seals the existing trail per institution, in (at, id) order, a
       select c.seq::int, a.salt is not null as salted from audit_chain c join audit_log a on a.id = c.audit_id
        where a.action = 'after.upgrade'`)
     assert.deepEqual(next.rows, [{ seq: 4, salted: true }])
+  })
+})
+
+test('fees 0011 dates the invoices issued before it per instalment, or as one figure when the price list has moved (P1-03d)', { skip: !url && 'MIGRATION_DATABASE_URL is not set' }, async () => {
+  await withClient(at(DB), async (c) => {
+    const { rows } = await c.query(`select student_id, cardinality(owed_at)::int as n, owed_at[1] = issued_at as at_issue, owed_dues[1] as dues
+      from fee_invoices where student_id like 'upgrade-fees-%' order by student_id`)
+    assert.deepEqual(rows, [
+      { student_id: 'upgrade-fees-u1', n: 1, at_issue: true, dues: { '2026-10-01': 5000000, '2026-12-01': 4900000, undated: 120000 } },
+      { student_id: 'upgrade-fees-u2', n: 1, at_issue: true, dues: { undated: 5000000 } },
+    ])
   })
 })
 
