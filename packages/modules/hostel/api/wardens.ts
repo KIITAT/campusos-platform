@@ -2,7 +2,7 @@ import { eq, sql } from 'drizzle-orm'
 import * as z from 'zod'
 import { audit, users, withTenant } from '@campusos/db'
 import { blocks, wardenScopes } from '../schema'
-import { HostelError, requireAdmin, requireWarden, type Actor } from './operations'
+import { HostelError, requireAdmin, type Actor } from './operations'
 
 type Tx = Parameters<Parameters<typeof withTenant>[1]>[0]
 
