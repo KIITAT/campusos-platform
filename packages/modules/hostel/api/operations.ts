@@ -525,7 +525,7 @@ export async function rollCallCode(actor: Actor, blockId: string, secret?: strin
   return rollCallQr(secret ?? rollCallSecret(tenant), blockId, await dayOf(tenant))
 }
 
-export async function scanCheckIn(actor: Actor, input: unknown, secret?: string) {
+export async function scanCheckIn(actor: Actor, input: unknown, secret?: string, now = new Date()) {
   const tenant = tenantOf(actor)
   const d = scanSchema.parse(input)
   const night = d.onNight ?? (await dayOf(tenant))
@@ -562,6 +562,7 @@ export async function scanCheckIn(actor: Actor, input: unknown, secret?: string)
     method: 'scan',
     note: null,
     recordedBy: actor.id,
+    now,
   })
 }
 
@@ -577,6 +578,7 @@ export async function mark(actor: Actor, input: unknown) {
     method: 'manual',
     note: d.note ?? null,
     recordedBy: actor.id,
+    now: new Date(),
   })
 }
 
@@ -590,9 +592,14 @@ async function recordNight(
     method: 'scan' | 'manual'
     note: string | null
     recordedBy: string
+    now: Date
   },
 ) {
+  const { now, ...fields } = v
   return withTenant(tenant, async (tx) => {
+    const zone = await zoneIn(tx, tenant)
+    // Noon of the night's own date: a mark stamped on a date before noon belongs to the night before (NEW-231).
+    const noon = sql`((${checkIns.onNight} + time '12:00') at time zone ${zone})`
     // The trigger refuses this too; asking first answers a scan with a reason
     // rather than a server error (NEW-20, decision 580).
     const [lives] = await tx
@@ -613,7 +620,7 @@ async function recordNight(
     }
     const [row] = await tx
       .insert(checkIns)
-      .values({ institutionId: tenant, ...v })
+      .values({ institutionId: tenant, ...fields, recordedAt: now })
       .onConflictDoUpdate({
         target: [checkIns.studentId, checkIns.onNight],
         // A scan cannot overwrite a warden's manual decision: the register is
@@ -623,9 +630,11 @@ async function recordNight(
           method: v.method,
           note: v.note,
           recordedBy: v.recordedBy,
-          recordedAt: new Date(),
+          recordedAt: now,
         },
-        setWhere: sql`${checkIns.method} <> 'manual' or excluded.method = 'manual'`,
+        // A scan after noon also replaces a warden's mark from before noon: that mark was the late return of the
+        // night before, stamped on this date, and must not shut the new night's check-in (review HIGH 2).
+        setWhere: sql`${checkIns.method} <> 'manual' or excluded.method = 'manual' or (${checkIns.recordedAt} < ${noon} and excluded.recorded_at >= ${noon})`,
       })
       .returning()
     if (!row) {
