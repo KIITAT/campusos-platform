@@ -14,10 +14,11 @@
 -- is filled for every existing invoice: version 1 at issued_at, any later
 -- version at the time of this upgrade (the day it was really issued is not
 -- kept in fees; later is the side that never raises a late fee early).
--- fee_invoices.owed_at and owed_dues are filled with one entry at issued_at:
--- the charged total today less the waivers posted today, as one figure that
+-- fee_invoices.owed_at and owed_dues are filled with one entry at issued_at, per
+-- due date where the lines can be told (see the UPDATE), else as one figure that
 -- counts at every instalment day (the key 'undated'): the most a late fee could
--- be judged on (a rule never reaches back before the day it was made).
+-- be judged on (a rule never reaches back before the day it was made). The
+-- UPDATE reads each invoice's lines, so it runs with no statement timeout.
 --
 -- Rollback (forward-only; decision 162): restore the pre-upgrade backup with
 -- the previous fees version. Otherwise a later migration that, after checking
@@ -67,9 +68,34 @@ ALTER TABLE "fee_invoices" ADD CONSTRAINT "fee_invoices_versions" CHECK (cardina
 -- instalment is the sum of the keys up to its day, plus 'undated'.
 ALTER TABLE "fee_invoices" ADD COLUMN "owed_at" timestamp with time zone[] NOT NULL DEFAULT '{}';--> statement-breakpoint
 ALTER TABLE "fee_invoices" ADD COLUMN "owed_dues" jsonb[] NOT NULL DEFAULT '{}';--> statement-breakpoint
-UPDATE "fee_invoices" i SET "owed_at" = ARRAY[i."issued_at"],
-  "owed_dues" = ARRAY[jsonb_build_object('undated', i."charged_paise" - coalesce((SELECT sum(w."posted_paise") FROM "fee_waivers" w JOIN "fee_items" f ON f."id" = w."fee_item_id"
-                                              WHERE w."student_id" = i."student_id" AND f."term_id" = i."term_id"), 0))];--> statement-breakpoint
+-- One entry per invoice at issued_at, per due date: before this migration a fee line has no batch
+-- or category and is unique per programme, term and label, so what the invoice asked for is the
+-- student's declared programmes' lines for the term (the filter of priceListSql), each less the
+-- waiver posted against it, plus the student's own charges as 'undated'. Where that does not add
+-- up to the invoice's total less the waivers posted (a line added or corrected since it was issued,
+-- or a student invoiced under a section roster), the invoice has no dates to give and asks for
+-- its whole total at every instalment day: the most a late fee could be judged on.
+SET LOCAL statement_timeout = 0;--> statement-breakpoint
+WITH "calc" AS (SELECT i."id",
+  CASE WHEN d."total" = i."charged_paise" - p."posted" THEN d."dues"
+       ELSE jsonb_build_object('undated', i."charged_paise" - p."posted") END AS "dues"
+  FROM "fee_invoices" i JOIN "academic_terms" t ON t."id" = i."term_id",
+  LATERAL (SELECT coalesce(sum(w."posted_paise"), 0)::bigint AS "posted" FROM "fee_waivers" w JOIN "fee_items" f ON f."id" = w."fee_item_id"
+            WHERE w."student_id" = i."student_id" AND f."term_id" = i."term_id") p,
+  LATERAL (SELECT jsonb_object_agg(g."k", g."net") AS "dues", sum(g."net")::bigint AS "total"
+             FROM (SELECT u."k", sum(u."net")::bigint AS "net"
+                     FROM (SELECT coalesce((f."due_on" AT TIME ZONE 'UTC')::date::text, 'undated') AS "k", f."amount_paise" - coalesce(w."posted_paise", 0) AS "net"
+                             FROM (SELECT DISTINCT sp."program_id" FROM "academic_student_programs" sp
+                                    WHERE sp."student_id" = i."student_id" AND sp."declared_on" <= t."ends_on"
+                                      AND (sp."ended_on" IS NULL OR sp."ended_on" > t."starts_on")
+                                      AND (sp."ended_on" IS NULL OR sp."ended_on" > sp."declared_on")) e
+                             JOIN "fee_items" f ON f."program_id" = e."program_id" AND f."term_id" = i."term_id"
+                             LEFT JOIN "fee_waivers" w ON w."fee_item_id" = f."id" AND w."student_id" = i."student_id"
+                           UNION ALL
+                           SELECT 'undated', c."amount_paise" FROM "fee_student_charges" c
+                            WHERE c."student_id" = i."student_id" AND c."term_id" = i."term_id" AND c."cancelled_at" IS NULL) u
+                    GROUP BY u."k") g) d)
+UPDATE "fee_invoices" i SET "owed_at" = ARRAY[i."issued_at"], "owed_dues" = ARRAY[calc."dues"] FROM "calc" WHERE calc."id" = i."id";--> statement-breakpoint
 ALTER TABLE "fee_invoices" ADD CONSTRAINT "fee_invoices_owed" CHECK (cardinality(owed_at) = cardinality(owed_dues));--> statement-breakpoint
 CREATE UNIQUE INDEX "fee_late_fees_slab" ON "fee_late_fees" USING btree ("term_id","after_days");--> statement-breakpoint
 CREATE POLICY "fee_late_fees_tenant_isolation" ON "fee_late_fees" AS PERMISSIVE FOR ALL TO "campusos_app" USING (institution_id = nullif(current_setting('app.institution_id', true), '')::uuid) WITH CHECK (institution_id = nullif(current_setting('app.institution_id', true), '')::uuid);
