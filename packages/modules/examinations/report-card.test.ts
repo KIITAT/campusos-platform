@@ -997,3 +997,88 @@ test('a published legacy entry with no issue is not rendered from live data', as
     await assert.rejects(reportOf(c, who), (e) => code(e) === 'report_card_legacy_unversioned' && status(e) === 409 && (e as Error).message === 'This report has no stored issue. The school office must review it.', who.role)
   await assert.rejects(download(c, c.pupil), (e) => code(e) === 'report_card_legacy_unversioned')
 })
+
+// --- the staff form and the family list (P1-13b.3) ----------------------------------
+
+type FormSection = { kind: string; title?: string; path?: string; submit?: string; fields?: { name: string; value?: string }[] }
+const postRoute = routes.find((r) => r.method === 'POST' && r.path === '/report-card/publication')!
+/** Submit a rendered form exactly as the portal would: its fields, plus what the person typed. */
+const submitForm = (c: C, form: FormSection, typed: Record<string, string>, who: A) => {
+  const body = Object.fromEntries((form.fields ?? []).map((f) => [f.name, f.value ?? ''])) as Record<string, string>
+  return postRoute.handler(who as never, new Request('http://t.test/report-card/publication', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...body, ...typed }) }))
+}
+const staffView = async (c: C, who: A = c.classTeacher) => {
+  const p = page('/report-cards')
+  const data = await p.load(who as never, req(`termId=${c.termId}&sectionId=${c.sectionId}&studentId=${c.pupil.id}`))
+  const sections = p.sections(data) as unknown as FormSection[]
+  return { sections, text: JSON.stringify(sections), form: (title: string) => sections.find((s) => s.kind === 'form' && s.title === title) }
+}
+const familyRows = async (c: C, who: A = c.pupil) => (await page('/my-report-cards').load(who as never, req(''))).rows as { name: string; term: string; section: string; href: string }[]
+
+test('the correction form and family list agree with issued state', async () => {
+  const c = await campus({ extraOffering: true })
+  const template = defaultSchoolTemplate(6)!
+  const subjectOverrides = [{ courseCode: 'CRAFT', components: [{ key: 'paper', label: 'Craft exam', weight: 100, selectors: [{ kind: 'final' }] }] }]
+  await publishMarks(c)
+  await saveTemplate(c, { template: { ...template, subjectOverrides, excludedOfferingIds: [c.craftAId!] } })
+  await saveEntry(c, 'art', 'a')
+
+  // Draft: no correction form, no download, nothing listed.
+  let view = await staffView(c)
+  assert.ok(!view.form('Republish report card') && !view.text.includes('report-card.pdf'))
+  assert.deepEqual(await familyRows(c), [])
+
+  // Visible v1: the correction form, the version and the link.
+  await publication(c)
+  view = await staffView(c)
+  const form = view.form('Republish report card')!
+  assert.deepEqual(form.fields!.filter((f) => f.name !== 'reason').map((f) => [f.name, f.value]).filter(([n]) => ['published', 'republish', 'expectedVersion'].includes(n!)), [['published', 'true'], ['republish', 'true'], ['expectedVersion', '1']])
+  assert.ok(view.text.includes('issue version 1') && view.text.includes('report-card.pdf'))
+  assert.equal((await familyRows(c)).length, 1)
+
+  // Parent and unrelated faculty cannot post the form; the office and class teacher can.
+  for (const who of [c.guardian, c.otherTeacher, c.pupil]) await assert.rejects(submitForm(c, form, { reason: 'Marks corrected after re-evaluation' }, who), (e) => code(e) === 'forbidden', who.role)
+
+  // An exam added to the excluded offering makes a correction incomplete; v1 stays visible and listed.
+  const exam = await api.createExam(c.teacher, { offeringId: c.craftAId!, name: 'Craft final', kind: 'final', maxMarks: 100, weightPercent: 100 })
+  await assert.rejects(submitForm(c, form, { reason: 'Craft examination now assessed' }, c.classTeacher), (e) => code(e) === 'report_card_incomplete')
+  assert.equal((await familyRows(c)).length, 1, 'a changed offering never removes the link')
+  assert.ok((await staffView(c)).text.includes('issue version 1'))
+  await api.enterMarks(c.teacher, { examId: exam.id, marks: [{ studentId: c.pupil.id, obtained: 80 }] })
+  await api.publishExam(c.teacher, { examId: exam.id })
+  const done = (await submitForm(c, form, { reason: 'Craft examination now assessed' }, c.classTeacher)) as { notice: string }
+  assert.equal(done.notice, 'Report card republished.')
+  view = await staffView(c)
+  assert.ok(view.text.includes('issue version 2') && view.form('Republish report card')!.fields!.some((f) => f.name === 'expectedVersion' && f.value === '2'))
+  assert.equal((await familyRows(c)).length, 1, 'one card, at the same link')
+  // The old form, still open in another tab, is stale.
+  await assert.rejects(submitForm(c, form, { reason: 'Craft examination now assessed' }, c.admin), (e) => code(e) === 'report_card_version_stale')
+  // An assessment withdrawn later does not remove the link either.
+  await api.unpublishExam(c.admin, { examId: exam.id, reason: 'Withdrawn for a recheck of the paper' })
+  assert.equal((await familyRows(c)).length, 1)
+  assert.ok((await staffView(c)).text.includes('report-card.pdf'))
+
+  // Withdrawn: no link, no correction form, the ratings are editable again.
+  await publication(c, { published: false, reason: 'Withdrawn to correct a rating' })
+  view = await staffView(c)
+  assert.ok(!view.text.includes('report-card.pdf') && !view.form('Republish report card'))
+  assert.deepEqual(await familyRows(c), [])
+})
+
+test('a timestamp-only legacy card shows the office-review message and an office-only action', async () => {
+  const c = await campus()
+  await publishMarks(c)
+  await saveEntry(c, 'art', 'a')
+  await withTenant(c.id, (tx) => tx.update(reportCardEntries).set({ publishedAt: new Date('2026-05-05T00:00:00Z') }).where(eq(reportCardEntries.studentId, c.pupil.id)))
+  const message = 'This report has no stored issue. The school office must review it.'
+  const office = await staffView(c, c.admin)
+  assert.ok(office.text.includes(message) && !office.text.includes('report-card.pdf'))
+  const legacy = office.form('Issue legacy report card')!
+  assert.equal(legacy.submit, 'Issue legacy report card')
+  const teacher = await staffView(c)
+  assert.ok(teacher.text.includes(message) && !teacher.form('Issue legacy report card') && !teacher.text.includes('report-card.pdf'))
+  assert.deepEqual(await familyRows(c), [], 'no link is advertised for a card with no issue')
+  assert.equal(((await submitForm(c, legacy, { reason: 'Reviewed against the school copy' }, c.admin)) as { notice: string }).notice, 'Report card republished.')
+  assert.equal((await familyRows(c)).length, 1)
+  assert.ok((await staffView(c, c.admin)).text.includes('issue version 1'))
+})

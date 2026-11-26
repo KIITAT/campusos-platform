@@ -301,11 +301,13 @@ export async function reportCardWorkspace(actor: Actor, termId: string, sectionI
     const snap = await snapshot(tx, termId, sectionId, studentId)
     if (!snap.cand) return null
     assertMayWrite(actor, snap.cand.class_teacher_id)
+    const version = await latestVersion(tx, { termId, sectionId, studentId })
     return {
       programId: snap.cand.program_id,
       template: templateOf(snap),
       revision: snap.template?.revision ?? 0,
       published: Boolean(snap.entry?.published_at),
+      version,
       grades: snap.entry?.grades ?? {},
       remarkKey: snap.entry?.remark_key ?? null,
     }

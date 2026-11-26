@@ -5,7 +5,6 @@ import { studentProfiles } from '@campusos/module-academic/schema'
 import { listUnassessedOfferings, reportCardRefusal } from './api/report-card-store'
 import { reportCardWorkspace } from './api/report-card'
 import { offerings, programs, sectionMembers, sections, terms, users } from './api/joins'
-import { reportCardEntries } from './schema'
 import type { Actor } from './api'
 
 /**
@@ -123,7 +122,7 @@ export const reportCardPages: PluginPage[] = [
         { name: 'sectionId', label: '', kind: 'hidden' as const, value: sectionId },
         { name: 'studentId', label: '', kind: 'hidden' as const, value: studentId },
       ]
-      out.push({ kind: 'prose', title: data.pupilName as string, text: work.template ? `${work.template.name}. ${work.published ? 'Published.' : 'Not published.'}` : '' })
+      out.push({ kind: 'prose', title: data.pupilName as string, text: work.template ? `${work.template.name}. ${work.published ? (work.version > 0 ? `Published, issue version ${work.version}.` : 'Published, with no stored issue.') : 'Not published.'}` : '' })
 
       if (data.office) {
         out.push({
@@ -203,7 +202,44 @@ export const reportCardPages: PluginPage[] = [
           { name: 'reason', label: 'Reason', kind: 'textarea', rows: 2, hint: '10 to 240 characters. Leave out medical and personal details.' },
         ],
       })
-      if (work.published) out.push({ kind: 'links', title: 'Report card', links: [{ label: 'Download report card', href: href(termId, sectionId, studentId) }] })
+      if (work.published && work.version > 0) {
+        out.push(
+          {
+            kind: 'form',
+            title: 'Republish report card',
+            note: `Issues a corrected version after version ${work.version}. The family sees the new version at the same link; earlier versions stay on record.`,
+            path: '/report-card/publication',
+            placement: 'inline',
+            submit: 'Republish report card',
+            fields: [
+              ...ids,
+              { name: 'published', label: '', kind: 'hidden', value: 'true' },
+              { name: 'republish', label: '', kind: 'hidden', value: 'true' },
+              { name: 'expectedVersion', label: '', kind: 'hidden', value: String(work.version) },
+              { name: 'reason', label: 'Reason', kind: 'textarea', rows: 2, hint: '10 to 240 characters. Leave out medical and personal details.' },
+            ],
+          },
+          { kind: 'links', title: `Report card, issue version ${work.version}`, links: [{ label: 'Download report card', href: href(termId, sectionId, studentId) }] },
+        )
+      } else if (work.published) {
+        out.push({ kind: 'note', tone: 'warn', text: reportCardRefusal('report_card_legacy_unversioned').message })
+        if (data.office)
+          out.push({
+            kind: 'form',
+            title: 'Issue legacy report card',
+            note: 'Reviews the figures against the school’s own copy and issues them as version 1 today. The original publication date is kept in the audit trail.',
+            path: '/report-card/publication',
+            placement: 'inline',
+            submit: 'Issue legacy report card',
+            fields: [
+              ...ids,
+              { name: 'published', label: '', kind: 'hidden', value: 'true' },
+              { name: 'republish', label: '', kind: 'hidden', value: 'true' },
+              { name: 'expectedVersion', label: '', kind: 'hidden', value: '0' },
+              { name: 'reason', label: 'Reason', kind: 'textarea', rows: 2, hint: '10 to 240 characters.' },
+            ],
+          })
+      }
       return out
     },
   },
@@ -221,17 +257,25 @@ export const reportCardPages: PluginPage[] = [
         const allowed: string[] = []
         for (const id of wanted) if (await canAccessStudent(tx, { ...a, authzReportOnly: false }, id, 'academic_record')) allowed.push(id)
         if (!allowed.length) return []
-        const found = await tx
-          .select({ termId: reportCardEntries.termId, sectionId: reportCardEntries.sectionId, studentId: reportCardEntries.studentId, term: terms.code, termName: terms.name, startsOn: terms.startsOn, section: sections.label, name: users.name })
-          .from(reportCardEntries)
-          .innerJoin(terms, eq(terms.id, reportCardEntries.termId))
-          .innerJoin(sections, eq(sections.id, reportCardEntries.sectionId))
-          .innerJoin(programs, and(eq(programs.id, sections.programId), eq(programs.level, 'school')))
-          .innerJoin(users, and(eq(users.id, reportCardEntries.studentId), isNull(users.erasedAt)))
-          .where(and(sql`${reportCardEntries.publishedAt} is not null`, sql`${reportCardEntries.studentId} in (${sql.join(allowed.map((i) => sql`${i}`), sql`, `)})`))
+        // The latest issue of each visible card, with the labels it was printed with: a later
+        // change to an offering, a mark or the roster must never remove the link.
+        const found = (
+          await tx.execute(sql`
+            select distinct on (v.term_id, v.section_id, v.student_id)
+                   v.term_id as "termId", v.section_id as "sectionId", v.student_id as "studentId",
+                   v.payload->'report' as report, t.starts_on as "startsOn"
+              from exam_report_card_versions v
+              join exam_report_card_entries e on e.institution_id = v.institution_id and e.term_id = v.term_id
+                   and e.section_id = v.section_id and e.student_id = v.student_id and e.published_at is not null
+              join users u on u.id = v.student_id and u.erased_at is null
+              join academic_terms t on t.id = v.term_id
+             where v.payload is not null and v.student_id in (${sql.join(allowed.map((i) => sql`${i}`), sql`, `)})
+             order by v.term_id, v.section_id, v.student_id, v.version desc`)
+        ).rows as unknown as { termId: string; sectionId: string; studentId: string; report: { term: { code: string; name: string }; sectionLabel: string; name: string }; startsOn: string }[]
         return found
-          .sort((x, y) => (x.startsOn < y.startsOn ? 1 : x.startsOn > y.startsOn ? -1 : 0) || x.section.localeCompare(y.section) || (x.name ?? '').localeCompare(y.name ?? '') || (x.studentId < y.studentId ? -1 : 1))
-          .map((r) => ({ ...r, term: `${r.term} ${r.termName}`, name: r.name ?? 'Student', link: 'Download report card', href: href(r.termId, r.sectionId, r.studentId) }))
+          .map((r) => ({ ...r, term: `${r.report.term.code} ${r.report.term.name}`, section: r.report.sectionLabel, name: r.report.name || 'Student' }))
+          .sort((x, y) => (x.startsOn < y.startsOn ? 1 : x.startsOn > y.startsOn ? -1 : 0) || x.section.localeCompare(y.section) || x.name.localeCompare(y.name) || (x.studentId < y.studentId ? -1 : 1))
+          .map((r) => ({ termId: r.termId, sectionId: r.sectionId, studentId: r.studentId, term: r.term, section: r.section, name: r.name, link: 'Download report card', href: href(r.termId, r.sectionId, r.studentId) }))
       })
       return { rows }
     },
