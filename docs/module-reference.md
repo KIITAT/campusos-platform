@@ -16,7 +16,7 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | [Sales CRM](#crm) | 0.14.0 | 4 | 32 | finance, notices |
 | [Documents](#documents) | 0.1.0 | 1 | 8 | None |
 | [Enrollment](#enrollment) | 0.11.0 | 3 | 9 | academic |
-| [Examinations & Grading](#examinations) | 0.34.0 | 11 | 44 | academic, notices |
+| [Examinations & Grading](#examinations) | 0.35.0 | 11 | 44 | academic, notices |
 | [Feedback](#feedback) | 0.11.0 | 8 | 19 | academic |
 | [Fees & Finance](#fees) | 0.34.0 | 12 | 49 | academic, finance, notices |
 | [Finance & Books](#finance) | 0.22.0 | 92 | 208 | None |
@@ -24,9 +24,9 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | [Hostel](#hostel) | 0.18.0 | 8 | 35 | academic, notices |
 | [HR & Payroll](#hr) | 0.30.0 | 18 | 134 | finance, notices |
 | [Library](#library) | 0.21.0 | 7 | 26 | academic, notices |
-| [Mentoring](#mentoring) | 0.34.0 | 6 | 19 | academic, notices |
+| [Mentoring](#mentoring) | 0.35.0 | 6 | 19 | academic, notices |
 | [Communication & Notices](#notices) | 0.19.0 | 4 | 14 | academic |
-| [Parent Portal](#parents) | 0.34.0 | 4 | 13 | academic |
+| [Parent Portal](#parents) | 0.35.0 | 4 | 13 | academic |
 | [Placement](#placement) | 0.16.0 | 8 | 15 | academic, notices |
 | [Projects and timesheets](#projects) | 0.5.0 | 6 | 27 | finance |
 | [Quizzes](#quizzes) | 0.11.0 | 7 | 22 | academic |
@@ -503,8 +503,8 @@ Source: `campusos-platform/packages/modules/examinations/`.
 | `GET /api/v1/modules/examinations/grade-report.pdf` | A term’s grade report from the official record, with SGPA and CGPA (binary response) | `termId` (query), `studentId` (query) |
 | `POST /api/v1/modules/examinations/report-card/template` | Save a class’s school report template for a term (administrators) | `termId`, `programId`, `expectedRevision`, `template` |
 | `POST /api/v1/modules/examinations/report-card/entry` | Set one area’s grade, or the remark, on a pupil’s school report (the class teacher or an administrator) | `termId`, `sectionId`, `studentId`, `area`, `value` |
-| `POST /api/v1/modules/examinations/report-card/publication` | Publish or withdraw a pupil’s school report, with a reason (the class teacher or an administrator) | `termId`, `sectionId`, `studentId`, `published`, `reason` |
-| `GET /api/v1/modules/examinations/report-card.pdf` | A published school term report as a PDF, read live from the published marks (binary response) | `termId` (query), `sectionId` (query), `studentId` (query) |
+| `POST /api/v1/modules/examinations/report-card/publication` | Publish, withdraw or reissue a pupil’s school report, with a reason (the class teacher or an administrator) | `termId`, `sectionId`, `studentId`, `published`, `reason`, `republish`, `expectedVersion` |
+| `GET /api/v1/modules/examinations/report-card.pdf` | The issued school term report as a PDF (binary response) | `termId` (query), `sectionId` (query), `studentId` (query) |
 | `POST /api/v1/modules/examinations/papers` | Upload a question paper (PDF), sealed until shortly before the exam | `examId`, `paper` |
 | `GET /api/v1/modules/examinations/papers` | The sealed question papers for an exam, without their contents | `examId` (query) |
 | `GET /api/v1/modules/examinations/paper.pdf` | A question paper, for the examination cell, from its release time (binary response) | `paperId` (query) |
