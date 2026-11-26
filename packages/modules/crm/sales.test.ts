@@ -250,3 +250,12 @@ test('NEW-262: a stage that still holds open deals cannot be archived, so the fo
   const f = await forecast(c.admin)
   assert.equal(f.totalPaise, f.months.reduce((a, m) => a + m.totalPaise, 0))
 })
+
+test('NEW-263: a note keeps its lead out of the retention purge', async () => {
+  const c = await sales()
+  const l = await createLead(c.rep, lead('Worked by notes'))
+  await withTenant(c.id, tx => tx.execute(sql`update crm_leads set updated_at = now() - interval '800 days' where id = ${l.id}::uuid`))
+  await addNote(c.rep, { leadId: l.id, body: 'Called, will ring back' })
+  const [row] = await withTenant(c.id, async tx => (await tx.execute(sql`select updated_at > now() - interval '1 day' as fresh from crm_leads where id = ${l.id}::uuid`)).rows as { fresh: boolean }[])
+  assert.equal(row!.fresh, true)
+})
