@@ -2,11 +2,12 @@ import { after, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { and, eq, like, sql } from 'drizzle-orm'
 import { PDFDocument } from 'pdf-lib'
-import { auditLog, authDb, institutions, users, withTenant } from '@campusos/db'
+import { auditLog, authDb, institutionModules, institutions, users, withTenant } from '@campusos/db'
 import * as academic from '@campusos/module-academic/api'
 import { printedText } from '@campusos/module-framework/pdf'
 import * as api from './api'
 import { lockReportCard } from './api/report-card-store'
+import { snapshot } from './api/report-card-input'
 import { defaultSchoolTemplate } from './api/school-policy'
 import { reportCardPages } from './report-card-pages'
 import { reportCardEntries, reportCardTemplates } from './schema'
@@ -298,9 +299,10 @@ test('template: another tenant reads nothing and cannot write a row into this on
 test('template: frozen once any pupil entry exists in that class and term, open in another term', async () => {
   const c = await campus()
   await saveEntry(c, 'art', 'a')
-  await assert.rejects(saveTemplate(c), (e) => code(e) === 'report_card_template_locked' && status(e) === 409)
+  await assert.rejects(saveTemplate(c), (e) => code(e) === 'report_card_stale', 'the entry fixed the default as revision 1')
+  await assert.rejects(saveTemplate(c, { expectedRevision: 1, template: { ...defaultSchoolTemplate(6)!, name: 'Changed' } }), (e) => code(e) === 'report_card_template_locked' && status(e) === 409)
   await saveTemplate(c, { termId: c.otherTermId })
-  assert.equal(await revisionOf(c), 0)
+  assert.equal(await revisionOf(c), 1, 'the first entry fixed the built-in default as revision 1')
 })
 
 // --- entries and publication ---------------------------------------------------
@@ -681,4 +683,65 @@ test('the cohort lock is one lock whatever the case of the ids (NEW-212)', async
     release()
   }
   await done
+})
+
+// --- what an issue captures (P1-13b.3) -------------------------------------------
+
+const enableAttendance = (c: C, enabled = true) =>
+  authDb.insert(institutionModules).values({ institutionId: c.id, moduleId: 'attendance', enabled }).onConflictDoUpdate({ target: [institutionModules.institutionId, institutionModules.moduleId], set: { enabled } })
+const mark = (c: C, sectionId: string, studentId: string, on: string, present: boolean) =>
+  withTenant(c.id, (tx) => tx.execute(sql`insert into attendance_daily_marks (institution_id, section_id, on_date, student_id, present) values (${c.id}, ${sectionId}, ${on}, ${studentId}, ${present})`))
+const inputs = (c: C, studentId = c.pupil.id, register?: boolean) => withTenant(c.id, (tx) => snapshot(tx, c.termId, c.sectionId, studentId, register))
+
+test('issue inputs include only recorded section days', async () => {
+  const c = await campus()
+  await enableAttendance(c)
+  // Two present and one absent inside the term (both boundaries count); everything else is noise.
+  await mark(c, c.sectionId, c.pupil.id, '2026-04-01', true)
+  await mark(c, c.sectionId, c.pupil.id, '2026-06-10', false)
+  await mark(c, c.sectionId, c.pupil.id, '2026-09-30', true)
+  await mark(c, c.sectionId, c.pupil.id, '2026-03-31', true)
+  await mark(c, c.sectionId, c.pupil.id, '2026-10-01', true)
+  await mark(c, c.sectionBId, c.pupil.id, '2026-05-05', true)
+  await mark(c, c.sectionId, c.pupil2.id, '2026-05-05', true)
+  assert.deepEqual((await inputs(c)).attendance, { present: 2, held: 3 })
+  assert.deepEqual((await inputs(c, c.pupil2.id)).attendance, { present: 1, held: 1 })
+  const none = await campus()
+  await enableAttendance(none)
+  assert.deepEqual((await inputs(none)).attendance, { present: 0, held: 0 }, 'no register entries is zero, not unavailable')
+  await enableAttendance(c, false)
+  assert.equal((await inputs(c)).attendance, null, 'a disabled module is unavailable')
+  assert.equal((await inputs(none, none.pupil.id, false)).attendance, null, 'a missing register table is unavailable')
+  const cardOf = async (k: C) => (await import('./api/report-card-input')).attendanceOf(await inputs(k))
+  assert.deepEqual(await cardOf(none), { state: 'recorded', present: 0, held: 0 })
+  assert.deepEqual(await cardOf(c), { state: 'unavailable' })
+})
+
+test('first effective write preserves the default', async () => {
+  const c = await campus()
+  const rows = () => withTenant(c.id, (tx) => tx.select().from(reportCardTemplates))
+  // A no-op, a refusal and a read create nothing.
+  assert.equal((await saveEntry(c, 'health', '__clear')).changed, false)
+  await assert.rejects(saveEntry(c, 'art', 'zzz'), (e) => code(e) === 'unknown_report_card_value')
+  assert.equal((await rows()).length, 0)
+  assert.equal(await audits(c, 'report_card.template_saved'), 0)
+  await saveEntry(c, 'art', 'a')
+  assert.deepEqual((await rows()).map((r) => [r.revision, r.template]), [[1, defaultSchoolTemplate(6)]])
+  await saveEntry(c, 'art', 'b')
+  assert.equal((await rows()).length, 1)
+  assert.equal(await audits(c, 'report_card.template_saved'), 1)
+  const [log] = await withTenant(c.id, (tx) => tx.select().from(auditLog).where(eq(auditLog.action, 'report_card.template_saved')))
+  assert.equal(log!.reason, 'Built-in report card template fixed at first use')
+  assert.equal(log!.actorId, c.classTeacher.id)
+  assert.equal(log!.entityId, `${c.termId}:${c.programId}`)
+  await assert.rejects(saveTemplate(c, { expectedRevision: 1, template: { ...defaultSchoolTemplate(6)!, name: 'Changed later' } }), (e) => code(e) === 'report_card_template_locked')
+
+  // An observation class keeps the labels it started with.
+  const o = await campus({ programCode: 'CLASS-2' })
+  await saveEntry(o, 'language', 'proficient').catch(() => null)
+  const key = defaultSchoolTemplate(2)!.areas[0]!
+  await saveEntry(o, key.key, key.grades[0]!.key)
+  const [row] = await withTenant(o.id, (tx) => tx.select().from(reportCardTemplates))
+  assert.equal(row!.revision, 1)
+  assert.deepEqual(row!.template, defaultSchoolTemplate(2))
 })

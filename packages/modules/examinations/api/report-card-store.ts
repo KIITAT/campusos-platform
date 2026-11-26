@@ -67,6 +67,33 @@ export async function lockReportCard(tx: Tx, tenant: string, termId: string, pro
   await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`examinations.report-card:${tenant}:${termId}:${programId}`.toLowerCase()}, 0))`)
 }
 
+const templateSavedAudit = (actor: Actor, tenant: string, termId: string, programId: string, revision: number, template: SchoolTemplate, reason: string) => ({
+  institutionId: tenant,
+  actorId: actor.id,
+  actorEmail: actor.email ?? null,
+  moduleId: 'examinations',
+  action: 'report_card.template_saved',
+  entity: 'exam_report_card_templates',
+  entityId: `${termId}:${programId}`,
+  reason,
+  detail: { termId, programId, revision, classNumber: template.classNumber, excludedOfferingCount: template.excludedOfferingIds?.length ?? 0 },
+})
+
+/**
+ * Fix the built-in default as revision 1 on the first effective entry or issue
+ * of a class and term, so a later release of the default cannot reinterpret
+ * cards already written (decision 1191). Call under the cohort lock, with the
+ * template currently in force; a saved row is left alone.
+ */
+export async function freezeDefaultWithin(tx: Tx, actor: Actor, termId: string, programId: string, tenant: string, template: SchoolTemplate): Promise<void> {
+  const [row] = await tx
+    .insert(reportCardTemplates)
+    .values({ institutionId: tenant, termId, programId, revision: 1, template })
+    .onConflictDoNothing()
+    .returning({ revision: reportCardTemplates.revision })
+  if (row) await audit(tx, templateSavedAudit(actor, tenant, termId, programId, 1, template, 'Built-in report card template fixed at first use'))
+}
+
 /** A template as stored, checked again on the way out: a row edited by hand must not be trusted. */
 export const readTemplate = (raw: unknown): SchoolTemplate => {
   const r = schoolTemplateSchema.safeParse(raw)
@@ -143,17 +170,7 @@ export async function setReportCardTemplate(actor: Actor, input: unknown): Promi
       .insert(reportCardTemplates)
       .values({ institutionId: tenant, termId, programId, revision, template })
       .onConflictDoUpdate({ target: [reportCardTemplates.institutionId, reportCardTemplates.termId, reportCardTemplates.programId], set: { revision, template } })
-    await audit(tx, {
-      institutionId: tenant,
-      actorId: actor.id,
-      actorEmail: actor.email ?? null,
-      moduleId: 'examinations',
-      action: 'report_card.template_saved',
-      entity: 'exam_report_card_templates',
-      entityId: `${termId}:${programId}`,
-      reason: 'school report template saved',
-      detail: { termId, programId, revision, classNumber: template.classNumber, excludedOfferingCount: excluded.length },
-    })
+    await audit(tx, templateSavedAudit(actor, tenant, termId, programId, revision, template, 'school report template saved'))
     return { revision, notice: NOTICES.template }
   })
 }
