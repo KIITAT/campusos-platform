@@ -377,6 +377,15 @@ test('approved marks require a new issue', async () => {
   assert.ok(!absent.includes('97.00') && absent.includes('Issue version 3'), 'the absence first appears at version 3')
 })
 
+test('an issued card prints the IST date it was issued on', async () => {
+  const c = await issued()
+  const r = await reportOf(c, c.pupil)
+  const day = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(r.issuedAt)).replace('Sept', 'Sep')
+  assert.ok((await printed(await api.reportCardPdf(r))).includes(`Issued on ${day}`), day)
+  // 2026-05-05T20:00Z is already 6 May in India.
+  assert.ok((await printed(await api.reportCardPdf({ ...r, issuedAt: '2026-05-05T20:00:00.000000Z' }))).includes('Issued on 6 May 2026'))
+})
+
 test('PDF the pupil, a verified guardian and authorised staff may read it; no one else, and no bytes for them', async () => {
   const c = await campus()
   await publishMarks(c)
@@ -927,6 +936,8 @@ test('a visible legacy card is reissued as version 1, once, with the old timesta
   assert.equal((await publication(c)).changed, false, 'an ordinary publish leaves a legacy row alone')
   assert.equal((await versionsOf(c)).length, 0)
   await assert.rejects(republishAs(c, 1), (e) => code(e) === 'report_card_version_stale')
+  await assert.rejects(republishAs(c, 0), (e) => code(e) === 'forbidden' && status(e) === 403, 'the class teacher may not reissue a legacy card (decision 1196)')
+  assert.equal((await versionsOf(c)).length, 0)
   assert.equal((await republishAs(c, 0, c.admin, 'Reviewed against the school copy')).notice, 'Report card republished.')
   assert.deepEqual((await versionsOf(c)).map((v) => v.version), [1])
   assert.equal((await entryOf(c))!.publishedAt!.getTime(), (await versionsOf(c))[0]!.issuedAt.getTime(), 'one timestamp for the issue and its visibility')
