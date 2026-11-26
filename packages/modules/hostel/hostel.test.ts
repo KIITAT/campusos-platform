@@ -602,6 +602,8 @@ test('a manual mark after midnight does not stop the evening scan of the night i
   const row = await scanCheckIn(student(ids.s1), { code: encodeQr(qr), blockId }, SECRET, evening)
   assert.equal(row.method, 'scan', 'the evening scan replaces the pre-noon mark')
   assert.equal(row.recordedAt.getTime(), evening.getTime())
+  const kept = await withTenant(inst, (tx) => tx.execute(sql`select detail from hostel_presence_log where student_id = ${ids.s1} and kind = 'manual_mark_replaced'`))
+  assert.equal(kept.rows.length, 1, 'the replaced mark stays on record in the presence log')
 
   // A warden's mark taken after noon is still the record of last resort.
   await mark(warden(), { blockId, studentId: ids.s1, status: 'absent', note: 'bed empty at the evening round' })

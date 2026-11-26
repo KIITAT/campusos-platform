@@ -345,7 +345,7 @@ test('BLOCKER 1: a pass approved after the case opened holds it, and the ladder 
   await sweep(at('23:31'))
   const w = await wardenLines(ids.w1)
   assert.equal(w.length, 1)
-  assert.equal(w[0]!.body, 'One Student (a-101) has not checked in, 31 minutes after curfew.')
+  assert.equal(w[0]!.body, 'One Student (a-101) has not checked in: late pass ended at 23:00, 121 minutes after curfew.')
   await sweep(at('00:01', '27'))
   assert.ok((await caseOf(ids.s1)).guardianAt, 'the guardian step is at pass end + 60')
 })
@@ -361,7 +361,9 @@ test('BLOCKER 1: a library visit holds the case; the ladder restarts after the w
   await sweep(at('22:49'))
   assert.equal((await wardenLines(ids.w1)).length, 0)
   await sweep(at('22:51'))
-  assert.equal((await wardenLines(ids.w1)).length, 1)
+  const w = await wardenLines(ids.w1)
+  assert.equal(w.length, 1)
+  assert.equal(w[0]!.body, 'One Student (a-101) has not checked in: left the library at 22:00, 81 minutes after curfew.')
 })
 
 test('BLOCKER 1: a check-in still resolves a held case', async () => {
@@ -463,4 +465,43 @@ test('NOTE: a warden scope does not outlive the role', async () => {
   }
   assert.equal((await notes(ids.w1, 'Resident not checked in')).length, 0)
   assert.equal((await notes(ids.w2, 'Resident not checked in')).length, 2, 'the block warden took over')
+})
+
+test('round 2: a restarted ladder keeps the curfew, says what ended, and tells the guardians what is new', async () => {
+  await consent(ids.s1)
+  await linkParent()
+  await sweep(at('21:40'))
+  await sweep(at('22:00'))
+  await sweep(at('22:30'))
+  assert.equal((await notes(ids.par)).length, 1)
+  await pass(ids.s1, at('23:30'))
+  await sweep(at('22:35'))
+  const held = await caseOf(ids.s1)
+  assert.equal(held.curfewAt.getTime(), at('21:30').getTime(), 'the curfew is not moved')
+  assert.equal(held.wardenAt, null)
+  assert.equal(held.guardianAt, null)
+  const log = await withTenant(inst, (tx) => tx.select().from(presenceLog).where(and(eq(presenceLog.kind, 'case_held'), eq(presenceLog.studentId, ids.s1))))
+  assert.equal(log.length, 1, 'a hold is logged once, with its reason')
+  await sweep(at('22:36'))
+  assert.equal((await withTenant(inst, (tx) => tx.select().from(presenceLog).where(and(eq(presenceLog.kind, 'case_held'), eq(presenceLog.studentId, ids.s1))))).length, 1)
+  await sweep(at('00:00', '27'))
+  const w = (await wardenLines(ids.w1)).map((n) => n.body)
+  assert.ok(w.includes('One Student (a-101) has not checked in: late pass ended at 23:30, 150 minutes after curfew.'), w.join(' | '))
+  await sweep(at('00:30', '27'))
+  const g = (await notes(ids.par)).map((n) => n.body)
+  assert.equal(g.length, 2)
+  assert.equal(g[1], "One Student's late-stay pass ended at 23:30 and they have not checked in at the hostel as of 00:30. Please contact them or the hostel office.")
+})
+
+test('round 2: the fallback recipients leave out an erased user', async () => {
+  await withTenant(inst, (tx) => tx.delete(wardenScopes))
+  await authDb.execute(sql`update users set erased_at = now() where id = ${ids.w1}`)
+  try {
+    await sweep(at('21:40'))
+    await sweep(at('22:00'))
+  } finally {
+    await authDb.execute(sql`update users set erased_at = null where id = ${ids.w1}`)
+  }
+  assert.equal((await notes(ids.w1, 'Resident not checked in')).length, 0)
+  assert.equal((await notes(ids.w2, 'Resident not checked in')).length, 2)
 })
