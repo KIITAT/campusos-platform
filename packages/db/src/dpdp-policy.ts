@@ -213,6 +213,13 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   hostel_check_ins: 'export',
   hostel_leaves: 'export',
   hostel_visitors: 'export',
+  hostel_warden_scopes: 'export',
+  hostel_late_passes: 'export',
+  hostel_curfew_cases: 'export',
+  hostel_presence_log: 'export',
+  hostel_policy: 'exclude',
+  hostel_event_cursors: 'exclude',
+  hostel_late_stay_windows: 'exclude',
 
   // hr
   hr_appraisal_feedback: 'export',
@@ -254,6 +261,8 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   hr_staff: 'export',
 
   library_loans: 'export',
+  library_sessions: 'export',
+  library_events: 'exclude',
 
   // mentoring
   mentor_assignments: 'export',

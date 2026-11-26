@@ -206,3 +206,45 @@ test('settings reject bad hours', async () => {
   const row = await setSettings(librarian(), { ...base, opensAt: '08:00', closesAt: '21:00', closingReminderMin: 10 })
   assert.equal(row.closingReminderMin, 10)
 })
+
+// --- privacy (D1347, D1348) -------------------------------------------------
+
+/** A closed visit that ended `daysAgo` days ago, with its events, for any institution (the auth role bypasses RLS). */
+async function oldVisit(institutionId: string, studentId: string, daysAgo: number) {
+  const [s] = (await authDb.execute(sql`
+    insert into library_sessions (institution_id, student_id, entered_at, exited_at, entry_method, exit_method)
+    values (${institutionId}, ${studentId}, now() - make_interval(days => ${daysAgo}, hours => 2), now() - make_interval(days => ${daysAgo}), 'desk', 'desk')
+    returning id`)).rows as { id: string }[]
+  await authDb.execute(sql`
+    insert into library_events (institution_id, kind, student_id, session_id, at, method)
+    values (${institutionId}, 'session_ended', ${studentId}, ${s!.id}, now() - make_interval(days => ${daysAgo}), 'desk')`)
+}
+
+test('erasure removes the person\'s sessions and events and leaves another student\'s alone', async () => {
+  await enterSession(librarian(), { studentId: ids.s1 })
+  await enterSession(librarian(), { studentId: ids.s2 })
+  await exitSession(librarian(), { studentId: ids.s1 })
+  const r = (await withTenant(inst, (tx) => tx.execute(sql`select dpdp_subject.erase_library(${ids.s1}) as r`))).rows[0] as { r: Record<string, number> }
+  assert.deepEqual(r.r, { library_sessions: 1, library_events: 2 })
+  const left = await withTenant(inst, (tx) => tx.select().from(sessions))
+  assert.deepEqual(left.map((x) => x.studentId), [ids.s2])
+  assert.equal(await count(events), 1)
+})
+
+test('purge deletes visits older than presence_retention_days and keeps newer ones; another institution is untouched', async () => {
+  const [o] = await authDb.insert(users).values({ email: 'o1@libsessother.test', institutionId: other, role: 'student', name: 'Other One' }).returning({ id: users.id })
+  await oldVisit(inst, ids.s1, 100)
+  await oldVisit(inst, ids.s2, 10)
+  await oldVisit(other, o!.id, 100)
+  const r = (await authDb.execute(sql`select dpdp_retention.purge_library(${inst}::uuid) as r`)).rows[0] as { r: Record<string, number> }
+  assert.deepEqual(r.r, { library_sessions: 1, library_events: 1 })
+  assert.equal(await count(sessions), 1)
+  const theirs = await withTenant(other, async (tx) => Number((await tx.select({ n: sql<number>`count(*)::int` }).from(sessions))[0]!.n))
+  assert.equal(theirs, 1)
+  // A longer retention keeps the 10 day old visit past a 30 day window, and a shorter one is the floor (30).
+  await setSettings(librarian(), { loanDays: 14, graceDays: 0, finePerDay: '1', maxConcurrentLoans: 3, maxRenewals: 1, blockAtOutstanding: '0', reason: 'retention test', presenceRetentionDays: 30 })
+  await oldVisit(inst, ids.s1, 40)
+  const r2 = (await authDb.execute(sql`select dpdp_retention.purge_library(${inst}::uuid) as r`)).rows[0] as { r: Record<string, number> }
+  assert.equal(r2.r.library_sessions, 1)
+  assert.equal(await count(sessions), 1)
+})

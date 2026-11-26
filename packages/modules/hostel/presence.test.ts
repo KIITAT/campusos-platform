@@ -239,3 +239,55 @@ test('notify_warden_on_library_entry false: entry notifies nobody; true: the flo
   assert.equal((await consume()).notified, 1)
   assert.equal((await notesFor(ids.w1)).length, 1)
 })
+
+// --- privacy (D1347, D1348) -------------------------------------------------
+
+const seedHistory = async (studentId: string, daysAgo: number) => {
+  await authDb.execute(sql`
+    insert into hostel_presence_log (institution_id, student_id, at, kind, source, detail)
+    values (${inst}, ${studentId}, now() - make_interval(days => ${daysAgo}), 'case_opened', 'hostel', '{}'::jsonb)`)
+  await authDb.execute(sql`
+    insert into hostel_curfew_cases (institution_id, student_id, block_id, night, curfew_at, opened_at, resolved_at, resolution)
+    values (${inst}, ${studentId}, ${blockId}, (current_date - ${daysAgo}::int), now() - make_interval(days => ${daysAgo}),
+            now() - make_interval(days => ${daysAgo}), now() - make_interval(days => ${daysAgo}), 'warden_verified')`)
+  await authDb.execute(sql`
+    insert into hostel_late_passes (institution_id, student_id, night, until_at, reason, status, created_at)
+    values (${inst}, ${studentId}, (current_date - ${daysAgo}::int), now() - make_interval(days => ${daysAgo}), 'practical examination', 'approved', now() - make_interval(days => ${daysAgo}))`)
+}
+
+const counts = async (studentId: string) => {
+  const q = async (t: string) => Number(((await authDb.execute(sql.raw(`select count(*)::int as n from ${t} where student_id = '${studentId}'`))).rows[0] as { n: number }).n)
+  return { log: await q('hostel_presence_log'), cases: await q('hostel_curfew_cases'), passes: await q('hostel_late_passes') }
+}
+
+test('erasure removes the person\'s log rows and cases and blanks late-pass reasons; a second student is untouched', async () => {
+  await seedHistory(ids.s1, 5)
+  await seedHistory(ids.s2, 5)
+  const r = (await withTenant(inst, (tx) => tx.execute(sql`select dpdp_subject.erase_hostel(${ids.s1}) as r`))).rows[0] as { r: Record<string, number> }
+  assert.equal(r.r.hostel_presence_log, 1)
+  assert.equal(r.r.hostel_curfew_cases, 1)
+  assert.equal(r.r.hostel_late_passes, 1)
+  assert.ok('hostel_leaves' in r.r && 'hostel_check_ins' in r.r && 'hostel_visitors' in r.r, 'the three old counts are still returned')
+  assert.deepEqual(await counts(ids.s1), { log: 0, cases: 0, passes: 1 })
+  assert.deepEqual(await counts(ids.s2), { log: 1, cases: 1, passes: 1 })
+  const reasons = (await authDb.execute(sql`select student_id, reason from hostel_late_passes where institution_id = ${inst}`)).rows as { student_id: string; reason: string }[]
+  assert.equal(reasons.find((x) => x.student_id === ids.s1)!.reason, '[erased]')
+  assert.equal(reasons.find((x) => x.student_id === ids.s2)!.reason, 'practical examination')
+})
+
+test('purge deletes history older than presence_retention_days and keeps newer; another institution is untouched', async () => {
+  const [o] = await authDb.insert(institutions).values({ slug: `${SLUG}-other`, name: 'Other', allowedEmailDomains: ['hpresenceother.test'] }).returning({ id: institutions.id })
+  try {
+    const [os] = await authDb.insert(users).values({ email: 'o1@hpresenceother.test', institutionId: o!.id, role: 'student', name: 'Other One' }).returning({ id: users.id })
+    await authDb.execute(sql`insert into hostel_presence_log (institution_id, student_id, at, kind, source) values (${o!.id}, ${os!.id}, now() - interval '200 days', 'case_opened', 'hostel')`)
+    await seedHistory(ids.s1, 100)
+    await seedHistory(ids.s2, 10)
+    const r = (await authDb.execute(sql`select dpdp_retention.purge_hostel(${inst}::uuid) as r`)).rows[0] as { r: Record<string, number> }
+    assert.deepEqual(r.r, { hostel_presence_log: 1, hostel_curfew_cases: 1, hostel_late_passes: 1 })
+    assert.deepEqual(await counts(ids.s1), { log: 0, cases: 0, passes: 0 })
+    assert.deepEqual(await counts(ids.s2), { log: 1, cases: 1, passes: 1 })
+    assert.equal((await counts(os!.id)).log, 1)
+  } finally {
+    await authDb.delete(institutions).where(eq(institutions.id, o!.id))
+  }
+})

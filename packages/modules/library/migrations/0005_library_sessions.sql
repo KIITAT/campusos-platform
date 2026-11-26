@@ -62,3 +62,61 @@ ALTER TABLE library_events ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "library_sessions_tenant_isolation" ON "library_sessions" AS PERMISSIVE FOR ALL TO "campusos_app" USING (institution_id = nullif(current_setting('app.institution_id', true), '')::uuid) WITH CHECK (institution_id = nullif(current_setting('app.institution_id', true), '')::uuid);
 --> statement-breakpoint
 CREATE POLICY "library_events_tenant_isolation" ON "library_events" AS PERMISSIVE FOR ALL TO "campusos_app" USING (institution_id = nullif(current_setting('app.institution_id', true), '')::uuid) WITH CHECK (institution_id = nullif(current_setting('app.institution_id', true), '')::uuid);
+--> statement-breakpoint
+-- Privacy: erase a person's visits, and purge old ones (P2-22a, D1347, D1348).
+-- Rollback: DROP FUNCTION IF EXISTS dpdp_subject.erase_library(text); DROP FUNCTION IF EXISTS dpdp_retention.purge_library(uuid);
+-- Pre-flight: core 0012 (dpdp_subject) and core 0016 (dpdp_retention).
+DO $$
+BEGIN
+  IF to_regnamespace('dpdp_subject') IS NULL OR to_regprocedure('public.campusos_erasure_allows(text, jsonb, jsonb, text[])') IS NULL THEN
+    RAISE EXCEPTION 'core migration 0012 (dpdp_subject) must be applied first';
+  END IF;
+  IF to_regnamespace('dpdp_retention') IS NULL THEN
+    RAISE EXCEPTION 'core migration 0016 (retention) must be applied first';
+  END IF;
+END $$;
+--> statement-breakpoint
+CREATE OR REPLACE FUNCTION dpdp_subject.erase_library(who text)
+RETURNS jsonb
+LANGUAGE plpgsql
+VOLATILE
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  n_events integer;
+  n_sessions integer;
+BEGIN
+  DELETE FROM library_events WHERE student_id = who;
+  GET DIAGNOSTICS n_events = ROW_COUNT;
+  DELETE FROM library_sessions WHERE student_id = who;
+  GET DIAGNOSTICS n_sessions = ROW_COUNT;
+  RETURN jsonb_build_object('library_sessions', n_sessions, 'library_events', n_events);
+END
+$$;
+--> statement-breakpoint
+REVOKE ALL ON FUNCTION dpdp_subject.erase_library(text) FROM PUBLIC;
+--> statement-breakpoint
+GRANT EXECUTE ON FUNCTION dpdp_subject.erase_library(text) TO campusos_app;
+--> statement-breakpoint
+CREATE OR REPLACE FUNCTION dpdp_retention.purge_library(inst uuid)
+RETURNS jsonb
+LANGUAGE plpgsql
+VOLATILE
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+  keep interval := make_interval(days => coalesce((SELECT presence_retention_days FROM library_settings WHERE institution_id = inst), 90));
+  n_events integer;
+  n_sessions integer;
+BEGIN
+  DELETE FROM library_events WHERE institution_id = inst AND at < now() - keep;
+  GET DIAGNOSTICS n_events = ROW_COUNT;
+  DELETE FROM library_sessions WHERE institution_id = inst AND exited_at IS NOT NULL AND exited_at < now() - keep;
+  GET DIAGNOSTICS n_sessions = ROW_COUNT;
+  RETURN jsonb_build_object('library_sessions', n_sessions, 'library_events', n_events);
+END
+$$;
+--> statement-breakpoint
+REVOKE ALL ON FUNCTION dpdp_retention.purge_library(uuid) FROM PUBLIC;

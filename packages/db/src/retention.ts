@@ -26,6 +26,8 @@ export const RETENTION_SCHEDULE: readonly { table: string; module: string; rule:
   { table: 'admissions_enquiries', module: 'admissions', rule: 'no accepted application and no activity for 365 days; anonymised' },
   { table: 'hr_job_applicants', module: 'hr', rule: 'not hired, opening closed more than 365 days ago; anonymised' },
   { table: 'attendance_devices', module: 'attendance', rule: 'the person was erased' },
+  { table: 'library_sessions', module: 'library', rule: 'closed more than the presence retention days ago (default 90); events likewise' },
+  { table: 'hostel_presence_log', module: 'hostel', rule: 'older than the presence retention days (default 90); resolved cases and decided passes likewise' },
 ]
 
 export interface PurgeReport {
