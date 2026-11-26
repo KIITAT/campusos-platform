@@ -216,3 +216,16 @@ test('a pasted spreadsheet imports like rows do: quotes, commas and blank lines 
   await assert.rejects(() => importLeads(c.admin, { csv, rows: [lead('x')] }))
   await assert.rejects(() => importLeads(c.admin, { csv: 'Title,Source' }), refused(400, 'empty_import'))
 })
+
+
+// --- NEW-83 follow-ups (NEW-260 to NEW-264) -----------------------------------
+
+test('NEW-260: parallel captures on a round-robin team spread over its members', async () => {
+  const c = await college()
+  const t = await team(c.admin, 'Team RR', c.manager.id, [c.rep.id, c.rep2.id])
+  await setAutoAssign(c.admin, { teamId: t, autoAssign: 'on' })
+  const got = await Promise.all([1, 2, 3, 4].map(i => captureLead(c.admin, { title: 'Web ' + i, source: 'website' })))
+  const owners = got.map(g => g.ownerId)
+  assert.equal(owners.filter(o => o === c.rep.id).length, 2, owners.join())
+  assert.equal(owners.filter(o => o === c.rep2.id).length, 2, owners.join())
+})
