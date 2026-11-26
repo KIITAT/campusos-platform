@@ -239,6 +239,33 @@ export async function notify(tx: Tx, institutionId: string, input: NotifyInput):
   return n
 }
 
+/**
+ * One category, a different line for each recipient, written with one insert (P2-22a, the curfew ladder: 5,000
+ * open cases cannot cost one `notify` each). Opt-outs and channels are handled as in `notify`.
+ */
+export async function notifyEach(
+  tx: Tx,
+  institutionId: string,
+  moduleId: string,
+  items: { userId: string; title: string; body: string; link?: string | null }[],
+): Promise<number> {
+  if (!(moduleId in NOTIFICATION_CATEGORIES)) throw unknownCategory()
+  if (items.length === 0) return 0
+  const muted = await mutedAmong(tx, institutionId, moduleId, [...new Set(items.map((i) => i.userId))])
+  const rows = items.filter((i) => !muted.has(i.userId)).map((i) => ({ user_id: i.userId, title: i.title, body: i.body, link: i.link ?? null }))
+  if (rows.length === 0) return 0
+  const inserted = (await tx.execute(sql`
+    insert into notifications (institution_id, user_id, module_id, title, body, link)
+    select ${institutionId}, t.user_id, ${moduleId}, t.title, t.body, t.link
+      from jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) as t(user_id text, title text, body text, link text)
+    returning id, user_id, title, body, link`)).rows as { id: string; user_id: string; title: string; body: string; link: string | null }[]
+  if (channels.size > 0 && inserted.length > 0) {
+    const deliveries: Delivery[] = inserted.map((r) => ({ notificationId: r.id, institutionId, userId: r.user_id, moduleId, title: r.title, body: r.body, link: r.link }))
+    for (const c of channels.values()) await c.deliver(tx, deliveries)
+  }
+  return inserted.length
+}
+
 // --- preferences -----------------------------------------------------------
 
 export async function preferences(actor: Actor) {

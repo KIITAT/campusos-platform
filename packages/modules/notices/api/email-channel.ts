@@ -27,10 +27,11 @@ export const emailNotificationChannel: NotificationChannel = {
            where n.institution_id = ${tenant}
              and n.id = any(array(select value::uuid from jsonb_array_elements_text(${ids}::jsonb)))
              and u.erased_at is null and u.role <> 'pending' and nullif(btrim(u.email), '') is not null
-             and not exists (
+             -- A hostel safety alert is not a preference: it is mailed whatever the member chose (ALWAYS_DELIVERED).
+             and (n.module_id = 'hostel_safety' or not exists (
                select 1 from notification_email_opt_outs o
                 where o.institution_id = n.institution_id and o.user_id = n.user_id
-             )
+             ))
           on conflict (institution_id, dedupe_key) do nothing
         `)
       })
