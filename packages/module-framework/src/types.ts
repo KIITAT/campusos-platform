@@ -48,6 +48,34 @@ export interface ModuleManifest {
    * nothing at all when none is installed, rather than a bell that never rings.
    */
   notifications?: { route: string; href: string }
+  /**
+   * Presentation hints for the desktop client (P2-23, F2). Optional: absent,
+   * nothing changes anywhere. `icon` is a short name, `accent` a #rrggbb
+   * colour, `codes` quick-navigation codes, `queues` work queues (a link
+   * inside this module's own screens).
+   */
+  desktop?: { icon?: string; accent?: string; codes?: string[]; queues?: { label: string; href: string }[] }
+  /**
+   * A module that keeps academic years or terms says where (P2-23, W5):
+   * `route` is one of its own GET routes answering
+   * `[{ id, label, current }]` for the caller. The host adds the answers to
+   * `GET /api/v1/me`.
+   */
+  academicYears?: { route: string }
+  /**
+   * A module with documents waiting for the caller's approval says where
+   * (P2-23, W9): `route` is one of its own GET routes answering
+   * `{ items: [{ document, party, amountPaise, href, since }] }`; `href` is
+   * the module's own approvals screen. The host merges every module's items.
+   */
+  approvals?: { route: string; href: string }
+  /**
+   * The records whose change history the host may serve (P2-23, W11): the
+   * `entity` name as written in the audit log and the roles who may read that
+   * record. An entity no module declares is never served. Never declare a
+   * sensitive record (P1-08c) here: its reads must be logged first.
+   */
+  auditEntities?: { entity: string; roles: Role[] }[]
 }
 
 /** 403 body when a module is gated off. The UI turns this into an upsell. */

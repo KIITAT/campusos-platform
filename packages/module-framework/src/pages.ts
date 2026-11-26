@@ -58,6 +58,13 @@ export interface PluginColumn {
 export interface PluginTable {
   kind: 'table'
   title?: string
+  /**
+   * `register` asks a client with room for it to draw the table densely, as
+   * an accountant's register (P2-23, F1). The web portal ignores it.
+   */
+  variant?: 'register'
+  /** Headings spanning several columns, for a register: each names the column keys it covers, in order. */
+  groups?: { label: string; keys: string[] }[]
   note?: string
   /** Key into the page's loaded data; must be an array. */
   rows: string
@@ -352,6 +359,17 @@ export interface PluginRecord {
   modifiedAt?: string | null
   modifiedBy?: string | null
   audit?: { entity: string; entityId: string }
+  /**
+   * Optional layout declarations for clients that draw records as documents
+   * (P2-23, F3); the web portal ignores them. `tabs` name groups of the
+   * page's sections by index; `related` are links to other records, inside
+   * this module; `steps` is the ordered list of states and the current one;
+   * `readOnlyReason` says why the record cannot be changed.
+   */
+  tabs?: { label: string; sections: number[] }[]
+  related?: { label: string; href: string; status?: string }[]
+  steps?: { states: string[]; current: string }
+  readOnlyReason?: string
   /** Anything else worth a line in the timeline, merged with the audit trail. */
   timeline?: { at: string; who?: string | null; text: string }[]
   docStatus?: {

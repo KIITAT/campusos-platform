@@ -2,7 +2,7 @@ import { and, asc, eq, sql } from 'drizzle-orm'
 import * as z from 'zod'
 import { formatPaise } from '@campusos/money'
 import { audit, withTenant } from '@campusos/db'
-import { accounts, budgets, lines, entries, periods } from '../schema'
+import { accounts, budgets, fiscalYears, lines, entries, periods } from '../schema'
 import { FinanceError, ensureDefaultChart, type Actor } from './operations'
 import { requireRead, type Tx } from './core'
 import { fiscalBounds, localToday, settingsWithin } from './years'
@@ -66,6 +66,29 @@ export async function listPeriods(actor: Actor, input: unknown = {}) {
       .where(year === undefined ? undefined : eq(periods.year, year))
       .orderBy(asc(periods.year), asc(periods.month)),
   )
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+/**
+ * A period row as the desktop client reads it (P2-23, W6): the row itself plus
+ * a label, the dates of the accounting month and whether it is locked.
+ */
+export function periodView<T extends { year: number; month: number; status: string }>(row: T, closedYears: { startsOn: string; endsOn: string }[] = []) {
+  const from = `${row.year}-${String(row.month).padStart(2, '0')}-01`
+  const to = monthEnd(from)
+  // The posting trigger also refuses every date in a closed fiscal year, whatever the month row says.
+  const inClosedYear = closedYears.some((y) => from >= y.startsOn && to <= y.endsOn)
+  return { ...row, label: `${MONTHS[row.month - 1]} ${row.year}`, from, to, locked: row.status === 'closed' || inClosedYear }
+}
+
+/** The months as the desktop client reads them (P2-23, W6), each with its lock. */
+export async function listPeriodViews(actor: Actor, input: unknown = {}) {
+  const rows = await listPeriods(actor, input)
+  const closed = await withTenant(requireRead(actor), (tx) =>
+    tx.select({ startsOn: fiscalYears.startsOn, endsOn: fiscalYears.endsOn }).from(fiscalYears).where(eq(fiscalYears.status, 'closed')),
+  )
+  return rows.map((r) => periodView(r, closed))
 }
 
 export interface CloseCheck {

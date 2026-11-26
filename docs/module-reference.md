@@ -7,33 +7,33 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 
 | Module | Version | Pages | API routes | Dependencies |
 |---|---|---:|---:|---|
-| [Academic Core](#academic) | 0.17.0 | 8 | 45 | None |
-| [Admissions](#admissions) | 0.15.0 | 3 | 9 | academic |
+| [Academic Core](#academic) | 0.18.0 | 8 | 46 | None |
+| [Admissions](#admissions) | 0.16.0 | 3 | 9 | academic |
 | [Alumni and events](#alumni) | 0.5.0 | 4 | 12 | None |
-| [Attendance & QR](#attendance) | 0.22.0 | 8 | 30 | academic, notices |
-| [Student Care](#care) | 0.16.0 | 7 | 24 | academic, notices |
-| [Ceremonies](#ceremonies) | 0.14.0 | 6 | 23 | academic |
-| [Sales CRM](#crm) | 0.14.0 | 4 | 32 | finance, notices |
+| [Attendance & QR](#attendance) | 0.23.0 | 8 | 30 | academic, notices |
+| [Student Care](#care) | 0.17.0 | 7 | 24 | academic, notices |
+| [Ceremonies](#ceremonies) | 0.15.0 | 6 | 23 | academic |
+| [Sales CRM](#crm) | 0.15.0 | 4 | 32 | finance, notices |
 | [Documents](#documents) | 0.1.0 | 1 | 8 | None |
-| [Enrollment](#enrollment) | 0.11.0 | 3 | 9 | academic |
-| [Examinations & Grading](#examinations) | 0.35.0 | 11 | 44 | academic, notices |
-| [Feedback](#feedback) | 0.11.0 | 8 | 19 | academic |
-| [Fees & Finance](#fees) | 0.34.0 | 12 | 49 | academic, finance, notices |
-| [Finance & Books](#finance) | 0.22.0 | 92 | 208 | None |
+| [Enrollment](#enrollment) | 0.12.0 | 3 | 9 | academic |
+| [Examinations & Grading](#examinations) | 0.36.0 | 11 | 44 | academic, notices |
+| [Feedback](#feedback) | 0.12.0 | 8 | 19 | academic |
+| [Fees & Finance](#fees) | 0.35.0 | 12 | 49 | academic, finance, notices |
+| [Finance & Books](#finance) | 0.23.0 | 92 | 209 | None |
 | [Helpdesk and grievance](#helpdesk) | 0.5.0 | 2 | 7 | None |
-| [Hostel](#hostel) | 0.18.0 | 8 | 35 | academic, notices |
-| [HR & Payroll](#hr) | 0.30.0 | 18 | 134 | finance, notices |
-| [Library](#library) | 0.21.0 | 7 | 26 | academic, notices |
-| [Mentoring](#mentoring) | 0.35.0 | 6 | 19 | academic, notices |
-| [Communication & Notices](#notices) | 0.19.0 | 4 | 14 | academic |
-| [Parent Portal](#parents) | 0.35.0 | 4 | 13 | academic |
-| [Placement](#placement) | 0.16.0 | 8 | 15 | academic, notices |
-| [Projects and timesheets](#projects) | 0.5.0 | 6 | 27 | finance |
-| [Quizzes](#quizzes) | 0.11.0 | 7 | 22 | academic |
+| [Hostel](#hostel) | 0.19.0 | 8 | 35 | academic, notices |
+| [HR & Payroll](#hr) | 0.31.0 | 18 | 134 | finance, notices |
+| [Library](#library) | 0.22.0 | 7 | 26 | academic, notices |
+| [Mentoring](#mentoring) | 0.36.0 | 6 | 19 | academic, notices |
+| [Communication & Notices](#notices) | 0.20.0 | 4 | 14 | academic |
+| [Parent Portal](#parents) | 0.36.0 | 4 | 13 | academic |
+| [Placement](#placement) | 0.17.0 | 8 | 15 | academic, notices |
+| [Projects and timesheets](#projects) | 0.6.0 | 6 | 27 | finance |
+| [Quizzes](#quizzes) | 0.12.0 | 7 | 22 | academic |
 | [Reports](#reports) | 0.7.0 | 5 | 10 | notices |
 | [Skills](#skills) | 0.5.0 | 5 | 12 | None |
-| [Timetable](#timetable) | 0.13.0 | 12 | 42 | academic |
-| [Transport](#transport) | 0.8.0 | 4 | 14 | None |
+| [Timetable](#timetable) | 0.14.0 | 12 | 42 | academic |
+| [Transport](#transport) | 0.9.0 | 4 | 14 | None |
 
 <a id="academic"></a>
 ## Academic Core
@@ -74,6 +74,7 @@ Source: `campusos-platform/packages/modules/academic/`.
 | `POST /api/v1/modules/academic/sections/members` | Add a student to a cohort | `sectionId`, `userId` |
 | `POST /api/v1/modules/academic/offerings` | Offer a course to a cohort in a term | `termId`, `courseId`, `sectionId`, `facultyUserId` |
 | `POST /api/v1/modules/academic/slots` | Add a weekly timetable slot | `offeringId`, `roomId`, `dayOfWeek`, `startsAt`, `endsAt` |
+| `GET /api/v1/modules/academic/years` | The institution's terms, newest first, as { id, label, current }: what the desktop client's year selector shows | See runtime OpenAPI schema |
 | `GET /api/v1/modules/academic/timetable` | The weekly timetable for the current term, scoped to the caller: their cohorts if a student, what they teach if a lecturer, the whole institution for an admin | See runtime OpenAPI schema |
 | `POST /api/v1/modules/academic/terms/calendar` | Set a term's registration and drop dates | `termId`, `registrationOpensOn`, `registrationClosesOn`, `addDropEndsOn`, `withdrawEndsOn` |
 | `POST /api/v1/modules/academic/curricula` | Create a curriculum for a catalogue year | `programId`, `catalogYear`, `totalCredits` |
@@ -786,6 +787,7 @@ Source: `campusos-platform/packages/modules/finance/`.
 | `POST /api/v1/modules/finance/approval-rules` | Set an approval rule | `docType`, `minAmount`, `approver` |
 | `POST /api/v1/modules/finance/approval-rules/remove` | Remove an approval rule | See runtime OpenAPI schema |
 | `POST /api/v1/modules/finance/approvals/decide` | Approve or refuse a draft as it stands | `docType`, `docId`, `decision`, `note` |
+| `GET /api/v1/modules/finance/approvals/feed` | Waiting drafts as the cross-module approvals feed reads them | See runtime OpenAPI schema |
 | `GET /api/v1/modules/finance/approvals/pending` | Drafts waiting for an approval this reader may give | See runtime OpenAPI schema |
 | `GET /api/v1/modules/finance/sod` | Whether single-officer mode is on | See runtime OpenAPI schema |
 | `POST /api/v1/modules/finance/sod/single-officer` | Turn single-officer mode on or off | `enabled`, `reason` |

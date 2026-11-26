@@ -205,6 +205,8 @@ export function validatePlugin(plugin: Plugin): void {
     seen.add(key)
   }
 
+  validateOptionalManifestFields(plugin)
+
   const pagePaths = new Set<string>()
   for (const page of plugin.pages ?? []) {
     if (!page.path.startsWith('/')) {
@@ -219,6 +221,47 @@ export function validatePlugin(plugin: Plugin): void {
   for (const path of Object.keys(plugin.openapiPaths ?? {})) {
     if (!path.startsWith(manifest.apiBasePath)) {
       throw new Error(`${manifest.id}: documents ${path}, outside its own base path`)
+    }
+  }
+}
+
+/** Is `href` a plain path inside this module's own screens? */
+const insideModule = (href: unknown, id: string): boolean =>
+  typeof href === 'string' && (href === `/m/${id}` || (href.startsWith(`/m/${id}/`) && !/[\\\s]|\/\.\.?(\/|$)/.test(href)))
+
+/** The optional fields of P2-23, checked at install: absent they cost nothing. */
+function validateOptionalManifestFields(plugin: Plugin): void {
+  const { manifest, routes } = plugin
+  const id = manifest.id
+  const getRoute = (route: unknown) => typeof route === 'string' && routes.some((r) => r.method === 'GET' && r.path === route)
+  const d = manifest.desktop
+  if (d !== undefined) {
+    if (d.icon !== undefined && !/^[a-z0-9-]{1,40}$/.test(d.icon)) throw new Error(`${id}: desktop.icon must be 1 to 40 of a-z, 0-9 and -`)
+    if (d.accent !== undefined && !/^#[0-9a-fA-F]{6}$/.test(d.accent)) throw new Error(`${id}: desktop.accent must be #rrggbb`)
+    if (d.codes !== undefined && (!Array.isArray(d.codes) || d.codes.length > 8 || d.codes.some((c) => !/^[A-Z0-9]{1,6}$/.test(c)))) {
+      throw new Error(`${id}: desktop.codes are at most 8 codes of 1 to 6 capitals or digits`)
+    }
+    if (d.queues !== undefined) {
+      if (!Array.isArray(d.queues) || d.queues.length > 8) throw new Error(`${id}: desktop.queues are at most 8`)
+      for (const q of d.queues) {
+        if (typeof q.label !== 'string' || !q.label || q.label.length > 60 || !insideModule(q.href, id)) {
+          throw new Error(`${id}: desktop.queues need a label and a link inside /m/${id}`)
+        }
+      }
+    }
+  }
+  if (manifest.academicYears && !getRoute(manifest.academicYears.route)) {
+    throw new Error(`${id}: academicYears.route must be one of its own GET routes`)
+  }
+  if (manifest.approvals && (!getRoute(manifest.approvals.route) || !insideModule(manifest.approvals.href, id))) {
+    throw new Error(`${id}: approvals needs one of its own GET routes and a link inside /m/${id}`)
+  }
+  if (manifest.auditEntities) {
+    const entities = new Set<string>()
+    for (const e of manifest.auditEntities) {
+      if (typeof e.entity !== 'string' || !e.entity || e.entity.length > 100 || entities.has(e.entity)) throw new Error(`${id}: auditEntities names an empty or repeated entity`)
+      if (!Array.isArray(e.roles) || !e.roles.length || e.roles.some((r) => !ROLES.includes(r) || r === 'pending')) throw new Error(`${id}: auditEntities ${e.entity} needs roles`)
+      entities.add(e.entity)
     }
   }
 }

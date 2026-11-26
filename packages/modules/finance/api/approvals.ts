@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, sql } from 'drizzle-orm'
 import { withTenant } from '@campusos/db'
 import * as z from 'zod'
 import {
@@ -12,6 +12,7 @@ import {
   orderLines,
   orders,
   paymentAllocations,
+  parties,
   payments,
 } from '../schema'
 import { FinanceError, named, requireStaff, tenantOf, type Actor, type Tx } from './core'
@@ -182,4 +183,41 @@ export async function pendingApprovals(actor: Actor) {
     }
     return out.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
   })
+}
+
+const KIND_LABEL: Record<Approvable, string> = {
+  purchase_order: 'Purchase order',
+  purchase_invoice: 'Purchase invoice',
+  payment_pay: 'Payment',
+  journal: 'Journal voucher',
+  material_request: 'Material request',
+}
+
+/**
+ * The same waiting drafts as `pendingApprovals`, in the shape every module
+ * contributes to the host's cross-module approvals feed (P2-23, W9). It is
+ * built from `pendingApprovals`, so the rule, the approver and the
+ * segregation-of-duties checks are those, not a second copy. The party is the
+ * document's own where it has one.
+ */
+export async function approvalFeed(actor: Actor) {
+  const waiting = await pendingApprovals(actor)
+  const tenant = tenantOf(actor)
+  const ids = (type: Approvable) => waiting.filter((w) => w.docType === type).map((w) => w.docId)
+  const names = new Map<string, string>()
+  await withTenant(tenant, async (tx) => {
+    const add = (rows: { id: string; name: string }[]) => rows.forEach((r) => names.set(r.id, r.name))
+    if (ids('purchase_order').length) add(await tx.select({ id: orders.id, name: parties.name }).from(orders).innerJoin(parties, eq(parties.id, orders.partyId)).where(inArray(orders.id, ids('purchase_order'))))
+    if (ids('purchase_invoice').length) add(await tx.select({ id: invoices.id, name: parties.name }).from(invoices).innerJoin(parties, eq(parties.id, invoices.partyId)).where(inArray(invoices.id, ids('purchase_invoice'))))
+    if (ids('payment_pay').length) add(await tx.select({ id: payments.id, name: parties.name }).from(payments).innerJoin(parties, eq(parties.id, payments.partyId)).where(inArray(payments.id, ids('payment_pay'))))
+  })
+  return {
+    items: waiting.map((w) => ({
+      document: `${KIND_LABEL[w.docType]} ${w.number ?? '(draft)'}`,
+      party: names.get(w.docId) ?? null,
+      amountPaise: w.amountPaise,
+      href: w.href,
+      since: w.createdAt.toISOString(),
+    })),
+  }
 }
