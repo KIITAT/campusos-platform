@@ -141,6 +141,13 @@
       "when": 1795335560966,
       "tag": "0019_job_lanes",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1795679653894,
+      "tag": "0020_hostel_presence_consent",
+      "breakpoints": true
     }
   ]
 }

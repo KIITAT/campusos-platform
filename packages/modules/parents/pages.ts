@@ -14,7 +14,7 @@ import {
 
 const ADMIN = ['institution_admin', 'super_admin'] as const
 
-const PURPOSE_LABEL: Record<string, string> = { privacy_notice: 'Privacy notice', care_self_checks: 'Counselling self-checks', apaar: 'APAAR ID' }
+const PURPOSE_LABEL: Record<string, string> = { privacy_notice: 'Privacy notice', care_self_checks: 'Counselling self-checks', apaar: 'APAAR ID', hostel_presence: 'Hostel presence (library and class status, curfew alerts)' }
 
 export const pages: PluginPage[] = [
   {

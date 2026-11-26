@@ -19,6 +19,8 @@ export type SensitiveReadKind =
   | 'mentoring.mentee'
   | 'mentoring.leave_document'
   | 'parents.child_overview'
+  | 'hostel.presence'
+  | 'hostel.student_record'
 
 export type SensitiveRead = {
   institutionId: string
@@ -49,6 +51,8 @@ export const KIND_LABELS: Record<SensitiveReadKind, string> = {
   'mentoring.mentee': 'A mentee’s whole record',
   'mentoring.leave_document': 'A leave application’s document',
   'parents.child_overview': 'A child’s overview, opened by the office',
+  'hostel.presence': 'A resident’s presence status and curfew history',
+  'hostel.student_record': 'A resident’s hostel record: late-coming, discipline, leave',
 }
 
 /** One row, in the read's own transaction; a failure to log fails the read. */

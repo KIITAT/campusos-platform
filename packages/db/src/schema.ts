@@ -151,7 +151,7 @@ export const guardianConsents = pgTable(
   (t) => [
     tenantPolicy('guardian_consents'),
     index('guardian_consents_latest').on(t.institutionId, t.studentId, t.purpose, t.recordedAt.desc()),
-    check('guardian_consents_purpose', sql`purpose in ('privacy_notice', 'care_self_checks', 'apaar')`),
+    check('guardian_consents_purpose', sql`purpose in ('privacy_notice', 'care_self_checks', 'apaar', 'hostel_presence')`),
     check('guardian_consents_decision', sql`decision in ('given', 'refused', 'withdrawn')`),
     check('guardian_consents_basis', sql`basis in ('guardian', 'office_record', 'student')`),
     check('guardian_consents_basis_guardian', sql`(basis = 'guardian') = (guardian_id is not null)`),

@@ -7,7 +7,7 @@ import { guardianConsents } from './schema'
 /** The transaction `withTenant` hands its callback. */
 export type Tx = Parameters<Parameters<typeof withTenant>[1]>[0]
 
-export const CONSENT_PURPOSES = ['privacy_notice', 'care_self_checks', 'apaar'] as const
+export const CONSENT_PURPOSES = ['privacy_notice', 'care_self_checks', 'apaar', 'hostel_presence'] as const
 export type ConsentPurpose = (typeof CONSENT_PURPOSES)[number]
 export type ConsentDecision = 'given' | 'refused' | 'withdrawn'
 export type ConsentBasis = 'guardian' | 'office_record' | 'student'
