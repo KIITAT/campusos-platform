@@ -7,6 +7,7 @@ import {
   pgTable,
   smallint,
   text,
+  time,
   timestamp,
   uniqueIndex,
   uuid,
@@ -201,6 +202,12 @@ export const settings = pgTable(
     maxFinePaise: paise('max_fine_paise'),
     /** Owing more than this blocks further borrowing. Zero means never block. */
     blockAtOutstandingPaise: paise('block_at_outstanding_paise').notNull().default(0),
+    /** Door hours (local time): the door scan is refused outside them (P2-22a, D1331, D1332). */
+    opensAt: time('opens_at').notNull().default('09:00'),
+    closesAt: time('closes_at').notNull().default('20:00'),
+    closingReminderMin: smallint('closing_reminder_min').notNull().default(15),
+    autoCloseAfterMin: smallint('auto_close_after_min').notNull().default(30),
+    presenceRetentionDays: smallint('presence_retention_days').notNull().default(90),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   () => [
@@ -211,7 +218,73 @@ export const settings = pgTable(
     check('library_settings_limits', sql`max_concurrent_loans between 1 and 50`),
     check('library_settings_renewals', sql`max_renewals between 0 and 20`),
     check('library_settings_block', sql`block_at_outstanding_paise >= 0`),
+    check('library_settings_hours', sql`closes_at > opens_at`),
+    check('library_settings_reminder', sql`closing_reminder_min between 5 and 120`),
+    check('library_settings_auto_close', sql`auto_close_after_min between 0 and 240`),
+    check('library_settings_presence_retention', sql`presence_retention_days between 30 and 730`),
     tenantPolicy('library_settings'),
+  ],
+)
+
+/**
+ * Who is inside the library (P2-22a). One open session per student, by a partial
+ * unique index; the hostel reads the open ones at query time and the events
+ * below as history.
+ */
+export const sessions = pgTable(
+  'library_sessions',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    enteredAt: timestamp('entered_at', { withTimezone: true }).notNull().defaultNow(),
+    exitedAt: timestamp('exited_at', { withTimezone: true }),
+    entryMethod: text('entry_method').notNull(),
+    exitMethod: text('exit_method'),
+    recordedBy: text('recorded_by').references(() => users.id, { onDelete: 'set null' }),
+    exitRecordedBy: text('exit_recorded_by').references(() => users.id, { onDelete: 'set null' }),
+    reminderSentAt: timestamp('reminder_sent_at', { withTimezone: true }),
+    unconfirmedReportedAt: timestamp('unconfirmed_reported_at', { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex('library_sessions_one_open')
+      .on(t.studentId)
+      .where(sql`exited_at is null`),
+    index('library_sessions_open')
+      .on(t.institutionId)
+      .where(sql`exited_at is null`),
+    index('library_sessions_student').on(t.studentId, t.enteredAt.desc()),
+    check('library_sessions_entry_method', sql`entry_method in ('door_qr', 'desk')`),
+    check('library_sessions_exit_method', sql`exit_method in ('door_qr', 'desk', 'auto_close')`),
+    check('library_sessions_closed_together', sql`(exited_at is null) = (exit_method is null)`),
+    check('library_sessions_order', sql`exited_at is null or exited_at >= entered_at`),
+    tenantPolicy('library_sessions'),
+  ],
+)
+
+/** The outbox the hostel polls by cursor (D1334): the id is an identity, so it orders by commit. */
+export const events = pgTable(
+  'library_events',
+  {
+    id: bigint({ mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+    institutionId: tenantId(),
+    kind: text().notNull(),
+    studentId: text('student_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    sessionId: uuid('session_id')
+      .notNull()
+      .references(() => sessions.id, { onDelete: 'cascade' }),
+    at: timestamp({ withTimezone: true }).notNull(),
+    method: text(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('library_events_feed').on(t.institutionId, t.id),
+    check('library_events_kind', sql`kind in ('session_started', 'session_ended', 'session_unconfirmed')`),
+    tenantPolicy('library_events'),
   ],
 )
 
