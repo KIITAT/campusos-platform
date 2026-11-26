@@ -185,15 +185,15 @@ export async function report(actor: Actor, input: unknown = {}) {
       select l.owner_id, u.name,
              count(*) filter (where l.status = 'open')::int as open_count,
              coalesce(sum(l.expected_value_paise) filter (where l.status = 'open'), 0)::bigint as open_value,
-             count(*) filter (where l.status = 'won' and l.closed_at::date between ${from}::date and ${to}::date)::int as won_count,
-             coalesce(sum(l.expected_value_paise) filter (where l.status = 'won' and l.closed_at::date between ${from}::date and ${to}::date), 0)::bigint as won_value,
-             count(*) filter (where l.status = 'lost' and l.closed_at::date between ${from}::date and ${to}::date)::int as lost_count,
-             coalesce(round(avg(extract(epoch from (l.closed_at - l.created_at)) / 86400) filter (where l.status = 'won' and l.closed_at::date between ${from}::date and ${to}::date))::int, 0) as days_to_win
+             count(*) filter (where l.status = 'won' and (l.closed_at at time zone 'Asia/Kolkata')::date between ${from}::date and ${to}::date)::int as won_count,
+             coalesce(sum(l.expected_value_paise) filter (where l.status = 'won' and (l.closed_at at time zone 'Asia/Kolkata')::date between ${from}::date and ${to}::date), 0)::bigint as won_value,
+             count(*) filter (where l.status = 'lost' and (l.closed_at at time zone 'Asia/Kolkata')::date between ${from}::date and ${to}::date)::int as lost_count,
+             coalesce(round(avg(extract(epoch from (l.closed_at - l.created_at)) / 86400) filter (where l.status = 'won' and (l.closed_at at time zone 'Asia/Kolkata')::date between ${from}::date and ${to}::date))::int, 0) as days_to_win
         from crm_leads l join users u on u.id = l.owner_id
        where true ${scope} group by l.owner_id, u.name order by u.name`)).rows as { owner_id: string; name: string; open_count: number; open_value: string; won_count: number; won_value: string; lost_count: number; days_to_win: number }[]
     const lost = (await tx.execute(sql`
       select r.name, count(*)::int as count from crm_leads l join crm_lost_reasons r on r.institution_id = l.institution_id and r.id = l.lost_reason_id
-       where l.status = 'lost' and l.closed_at::date between ${from}::date and ${to}::date ${scope} group by r.name order by count(*) desc, r.name`)).rows as { name: string; count: number }[]
+       where l.status = 'lost' and (l.closed_at at time zone 'Asia/Kolkata')::date between ${from}::date and ${to}::date ${scope} group by r.name order by count(*) desc, r.name`)).rows as { name: string; count: number }[]
     const bySource = (await tx.execute(sql`
       select l.source, count(*)::int as leads, count(*) filter (where l.status = 'won')::int as won from crm_leads l where true ${scope} group by l.source order by l.source`)).rows as { source: string; leads: number; won: number }[]
     const rate = (w: number, l: number) => (w + l === 0 ? null : Math.round((w * 100) / (w + l)))
