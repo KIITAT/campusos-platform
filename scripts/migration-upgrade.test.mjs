@@ -192,14 +192,15 @@ before(async () => {
     const fee = await c.query(`insert into institutions (slug, name) values ('upgrade-fees', 'Fees') returning id`)
     const inst = fee.rows[0].id
     await c.query(`insert into users (id, institution_id, email, role, name) values
-      ('upgrade-fees-u1', $1, 'u1@upgrade-fees.example', 'student', 'U1'), ('upgrade-fees-u2', $1, 'u2@upgrade-fees.example', 'student', 'U2')`, [inst])
+      ('upgrade-fees-u1', $1, 'u1@upgrade-fees.example', 'student', 'U1'), ('upgrade-fees-u2', $1, 'u2@upgrade-fees.example', 'student', 'U2'),
+      ('upgrade-fees-u3', $1, 'u3@upgrade-fees.example', 'student', 'U3')`, [inst])
     const dept = (await c.query(`insert into academic_departments (institution_id, code, name) values ($1, 'cse', 'CSE') returning id`, [inst])).rows[0].id
     const prog = (await c.query(`insert into academic_programs (institution_id, department_id, code, name, level, duration_terms)
       values ($1, $2, 'btech', 'BTech', 'undergraduate', 8) returning id`, [inst, dept])).rows[0].id
     const term = (await c.query(`insert into academic_terms (institution_id, code, name, starts_on, ends_on)
       values ($1, 't1', 'Sem 1', '2026-07-01', '2027-02-28') returning id`, [inst])).rows[0].id
     await c.query(`insert into academic_student_programs (institution_id, student_id, program_id, declared_on)
-      values ($1, 'upgrade-fees-u1', $2, '2026-06-01'), ($1, 'upgrade-fees-u2', $2, '2026-06-01')`, [inst, prog])
+      values ($1, 'upgrade-fees-u1', $2, '2026-06-01'), ($1, 'upgrade-fees-u2', $2, '2026-06-01'), ($1, 'upgrade-fees-u3', $2, '2026-06-01')`, [inst, prog])
     const items = (await c.query(`insert into fee_items (institution_id, program_id, term_id, label, amount_paise, due_on) values
       ($1, $2, $3, 'Tuition I', 5000000, '2026-10-01T00:00:00Z'), ($1, $2, $3, 'Tuition II', 5000000, '2026-12-01T00:00:00Z'),
       ($1, $2, $3, 'Registration', 100000, null) returning id, label`, [inst, prog, term])).rows
@@ -212,7 +213,12 @@ before(async () => {
       ($1, 'upgrade-fees-u1', $2, 10120000, '2026-09-01T00:00:00Z'), ($1, 'upgrade-fees-u2', $2, 5000000, '2026-09-01T00:00:00Z')`, [inst, term])
     // ...then the upgrade, in the order an installation runs it.
     await migrateCore(c, Number.MAX_SAFE_INTEGER)
-    await applyModules(c, (f) => NEW_FILES.has(f))
+    const FEES_0011 = 'fees/0011_structures_and_late_fees.sql'
+    await applyModules(c, (f) => NEW_FILES.has(f) && f !== FEES_0011)
+    // u3: an invoice voided before 0011 (fees 0009 is applied, 0011 is not yet): it owes nothing from the day it was voided.
+    await c.query(`insert into fee_invoices (institution_id, student_id, term_id, charged_paise, issued_at, voided_at, void_reason) values
+      ($1, 'upgrade-fees-u3', $2, 10100000, '2026-09-01T00:00:00Z', '2026-09-02T00:00:00Z', 'issued in error')`, [inst, term])
+    await applyModules(c, (f) => f === FEES_0011)
   })
 })
 
@@ -283,11 +289,12 @@ test('the upgrade seals the existing trail per institution, in (at, id) order, a
 
 test('fees 0011 dates the invoices issued before it per instalment, or as one figure when the price list has moved (P1-03d)', { skip: !url && 'MIGRATION_DATABASE_URL is not set' }, async () => {
   await withClient(at(DB), async (c) => {
-    const { rows } = await c.query(`select student_id, cardinality(owed_at)::int as n, owed_at[1] = issued_at as at_issue, owed_dues[1] as dues
+    const { rows } = await c.query(`select student_id, cardinality(owed_at)::int as n, owed_at[1] = issued_at as at_issue, owed_dues[1] as dues, owed_at[2] = voided_at as at_void, owed_dues[2] as void_dues
       from fee_invoices where student_id like 'upgrade-fees-%' order by student_id`)
     assert.deepEqual(rows, [
-      { student_id: 'upgrade-fees-u1', n: 1, at_issue: true, dues: { '2026-10-01': 5000000, '2026-12-01': 4900000, undated: 120000 } },
-      { student_id: 'upgrade-fees-u2', n: 1, at_issue: true, dues: { undated: 5000000 } },
+      { student_id: 'upgrade-fees-u1', n: 1, at_issue: true, at_void: null, void_dues: null, dues: { '2026-10-01': 5000000, '2026-12-01': 4900000, undated: 120000 } },
+      { student_id: 'upgrade-fees-u2', n: 1, at_issue: true, at_void: null, void_dues: null, dues: { undated: 5000000 } },
+      { student_id: 'upgrade-fees-u3', n: 2, at_issue: true, at_void: true, void_dues: {}, dues: { '2026-10-01': 5000000, '2026-12-01': 5000000, undated: 100000 } },
     ])
   })
 })

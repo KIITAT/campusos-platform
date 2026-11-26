@@ -653,3 +653,29 @@ test('a waiver granted after a category correction not yet issued owes the invoi
   assert.equal((await run(c)).charged, 0)
   assert.equal((await lateCharges(c, c.s1)).length, 0)
 })
+
+test('a waiver larger than the invoiced line, then revoked, restores the figure exactly (fix verification 5 HIGH 1, S1)', async () => {
+  const c = await campus()
+  for (const [cat, amt] of [['general', '50000'], ['sc', '30000']] as const) {
+    await createFeeItem(c.admin, { programId: c.programId, termId: c.termId, label: 'Tuition I', amount: amt, dueOn: await ago(c, 40), category: cat })
+    await createFeeItem(c.admin, { programId: c.programId, termId: c.termId, label: 'Tuition II', amount: amt, dueOn: await ago(c, 20), category: cat })
+  }
+  await academic.setStudentProfile(c.admin, { studentId: c.s1, category: 'sc' })
+  const r = await api.createLateFee(c.admin, { termId: c.termId, afterDays: 5, amount: '500' })
+  await backdate(c, r.id, 400)
+  await issueAgo(c, 45)
+  // Corrected to general (dearer, not issued); a concession above what the invoice asks at that date, then withdrawn.
+  await academic.setStudentProfile(c.admin, { studentId: c.s1, category: 'general' })
+  const t2 = (await authDb.execute(sql`select id from fee_items where term_id = ${c.termId}::uuid and label = 'Tuition II' and category = 'general'`)).rows[0] as { id: string }
+  const w = await grantWaiver(c.admin, { studentId: c.s1, feeItemId: t2.id, amount: '40000', reason: 'concession after correction' })
+  await authDb.execute(sql`update fee_invoices set owed_at[cardinality(owed_at)] = now() - interval '42 days' where term_id = ${c.termId}::uuid and student_id = ${c.s1} and voided_at is null`)
+  await revokeWaiver(c.admin, { waiverId: w.id, reason: 'concession withdrawn' })
+  await authDb.execute(sql`update fee_invoices set owed_at[cardinality(owed_at)] = now() - interval '41 days' where term_id = ${c.termId}::uuid and student_id = ${c.s1} and voided_at is null`)
+  for (const [s, a] of [[c.s1, '30000'], [c.s2, '50000']] as const) {
+    await cash(c, s, a, `${await ago(c, 39)}T06:00:00.000Z`)
+    await cash(c, s, a, `${await ago(c, 22)}T06:00:00.000Z`)
+  }
+  await issue(c)
+  assert.equal((await run(c)).charged, 0)
+  assert.equal((await lateCharges(c, c.s1)).length, 0)
+})
