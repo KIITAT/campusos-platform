@@ -105,6 +105,16 @@ export const paths = {
     ...list("A student's recorded choices (studentId): the privacy notice, counselling self-checks and the APAAR ID"),
     ...post("Record a choice for a student: a guardian for a minor, the student once adult, or the office from a form", recordConsentSchema),
   },
+  [`${base}/years`]: {
+    get: {
+      summary: "The institution's terms, newest first, as { id, label, current }: what the desktop client's year selector shows",
+      tags: ['academic'],
+      responses: {
+        '200': { description: 'OK' },
+        '403': { description: 'Module not enabled for this institution', content: { 'application/json': { schema: errorRef } } },
+      },
+    },
+  },
   [`${base}/timetable`]: {
     get: {
       summary:

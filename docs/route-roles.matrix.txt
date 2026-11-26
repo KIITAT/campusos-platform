@@ -2,7 +2,7 @@
 # rewrite with UPDATE_MATRIX=1. Columns: S=super_admin I=institution_admin H=hod F=faculty A=accounts_staff L=library_staff O=hostel_staff s=student p=parent n=pending.
 # Last column: op = the operation also refuses every undeclared role; gate = the gate is its only role check.
 
-## academic 0.16.0
+## academic 0.17.0
 POST /api/v1/modules/academic/departments                                SI........ op
 POST /api/v1/modules/academic/programs                                   SI........ op
 POST /api/v1/modules/academic/courses                                    SI........ op
@@ -17,6 +17,7 @@ POST /api/v1/modules/academic/departments/head                           SI.....
 POST /api/v1/modules/academic/sections/members                           SI........ op
 POST /api/v1/modules/academic/offerings                                  SI........ op
 POST /api/v1/modules/academic/slots                                      SI........ op
+GET /api/v1/modules/academic/years                                       SIHF...s.. gate
 GET /api/v1/modules/academic/timetable                                   SIHF...s.. gate
 POST /api/v1/modules/academic/terms/calendar                             SI........ op
 POST /api/v1/modules/academic/curricula                                  SI........ op
@@ -330,7 +331,7 @@ GET /api/v1/modules/fees/record-search                                   SI..A..
 GET /api/v1/modules/fees/student-choices                                 SI..A..... op
 GET /api/v1/modules/fees/receipt.pdf                                     SI..A..s.. gate
 
-## finance 0.22.0
+## finance 0.23.0
 GET /api/v1/modules/finance/accounts                                     SI..A..... op
 POST /api/v1/modules/finance/accounts                                    SI........ op
 POST /api/v1/modules/finance/accounts/update                             SI........ op
@@ -366,6 +367,7 @@ GET /api/v1/modules/finance/approval-rules                               SI..A..
 POST /api/v1/modules/finance/approval-rules                              SI........ op
 POST /api/v1/modules/finance/approval-rules/remove                       SI........ op
 POST /api/v1/modules/finance/approvals/decide                            SIHFALO... gate
+GET /api/v1/modules/finance/approvals/feed                               SIHFALO... op
 GET /api/v1/modules/finance/approvals/pending                            SIHFALO... op
 GET /api/v1/modules/finance/sod                                          SI..A..... op
 POST /api/v1/modules/finance/sod/single-officer                          SI........ op

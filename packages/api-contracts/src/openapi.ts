@@ -57,6 +57,39 @@ export const coreDocument = createDocument({
         },
       },
     },
+    '/api/v1/me/jobs': {
+      get: {
+        summary: "The caller's own 50 newest background jobs: id, kind, status, attempts, dates and error code; never the payload or result",
+        responses: { '200': { description: 'OK' }, '401': { description: 'Sign in required', content: json(errorSchema) } },
+      },
+    },
+    '/api/v1/me/jobs/{id}/cancel': {
+      post: {
+        summary: "Cancel one of the caller's own queued jobs; any other job answers 404",
+        parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
+        responses: { '200': { description: 'Cancelled' }, '401': { description: 'Sign in required', content: json(errorSchema) }, '404': { description: 'Not a queued job of the caller', content: json(errorSchema) } },
+      },
+    },
+    '/api/v1/approvals': {
+      get: {
+        summary: 'Documents waiting for the caller, merged from every module that declares an approvals route',
+        responses: { '200': { description: '{ items, partial }' }, '401': { description: 'Sign in required', content: json(errorSchema) } },
+      },
+    },
+    '/api/v1/search': {
+      get: {
+        summary: 'Global record search over the modules that offer a lookup: at most 12 hits per module, one shared rate bucket',
+        parameters: [{ name: 'q', in: 'query', required: true, schema: { type: 'string', maxLength: 100 } }],
+        responses: { '200': { description: '{ groups, partial, notice }' }, '400': { description: 'Unusable query', content: json(errorSchema) }, '401': { description: 'Sign in required', content: json(errorSchema) } },
+      },
+    },
+    '/api/v1/audit': {
+      get: {
+        summary: "One record's change history (when, who, what), only for records a module declares and roles it names",
+        parameters: [{ name: 'entity', in: 'query', required: true, schema: { type: 'string' } }, { name: 'id', in: 'query', required: true, schema: { type: 'string' } }],
+        responses: { '200': { description: '{ entries }' }, '401': { description: 'Sign in required', content: json(errorSchema) }, '404': { description: 'Not a record the caller may read', content: json(errorSchema) } },
+      },
+    },
     '/api/v1/institutions': {
       post: {
         summary: 'Create an institution (super_admin only)',

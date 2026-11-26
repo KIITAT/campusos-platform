@@ -79,6 +79,10 @@ export const meSchema = z
     institutionId: z.uuid().nullable(),
     institutionSlug: z.string().nullable(),
     enabledModules: z.array(z.string()),
+    /** The institution's display name (P2-23, W7). */
+    institutionName: z.string().nullable(),
+    /** Terms the caller may see, newest first, from the module that keeps them (P2-23, W5); empty when none. */
+    academicYears: z.array(z.object({ id: z.string(), label: z.string(), current: z.boolean() })),
   })
   .meta({ id: 'Me' })
 
