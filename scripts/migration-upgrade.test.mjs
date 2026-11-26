@@ -96,6 +96,8 @@ const NEW_FILES = new Set([
   'ceremonies/0001_transfer_certificates.sql',
   'documents/0000_document_store.sql',
   'examinations/0008_issued_report_cards.sql',
+  'library/0005_library_sessions.sql',
+  'hostel/0004_presence_and_curfew.sql',
 ])
 const NEW_CORE_FROM = 5
 
