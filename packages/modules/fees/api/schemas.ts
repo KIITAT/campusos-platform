@@ -1,5 +1,6 @@
 import * as z from 'zod'
 import { ticked } from '@campusos/module-framework'
+import { STUDENT_CATEGORIES } from '@campusos/module-academic/schema'
 import { awardBasisEnum, paymentMethodEnum, scholarshipKindEnum } from '../schema'
 import { parseRupeesToPaise } from '@campusos/money'
 
@@ -53,9 +54,27 @@ export const createFeeItemSchema = z
      * registration or examination fee does not.
      */
     proratable: z.preprocess(ticked, z.boolean()).default(false),
+    /** An instalment: the date this line is due. */
     dueOn: z.iso.date().nullish(),
+    /** For one batch (admission year) only; empty is every batch. */
+    admissionYear: z.preprocess(blank, z.coerce.number().int().min(1900).max(2200).optional()),
+    /** For one reservation category only (the profile's); empty is every category. */
+    category: z.preprocess(blank, z.enum(STUDENT_CATEGORIES).optional()),
   })
   .meta({ id: 'FeeItemCreate' })
+
+/** A late-fee rule for a term: charged once for each instalment still unpaid this many days after its due date. */
+export const createLateFeeSchema = z
+  .object({
+    termId: uuid,
+    afterDays: z.coerce.number().int().min(0).max(365),
+    amount: positiveRupees.refine((p) => p <= 10_000_000, 'at most ₹1,00,000'),
+  })
+  .meta({ id: 'FeeLateFeeCreate' })
+
+export const removeLateFeeSchema = z
+  .object({ lateFeeId: uuid, reason: z.string().trim().min(5).max(500) })
+  .meta({ id: 'FeeLateFeeRemove' })
 
 /** The reason is required at every layer: schema, column, and audit row. */
 export const grantWaiverSchema = z
@@ -164,6 +183,8 @@ export const ledgerLineSchema = z
     waivedPaise: z.number().int(),
     waiverId: uuid.nullable(),
     waiverReason: z.string().nullable(),
+    /** The instalment date (YYYY-MM-DD); null when the line is due once invoiced. */
+    dueOn: z.string().nullable(),
   })
   .meta({ id: 'FeeLedgerLine' })
 
@@ -203,6 +224,8 @@ export const studentLedgerSchema = z
     overpaidPaise: z.number().int(),
     /** On today's price list for the term and not yet issued: not owed until it is. */
     notYetInvoicedPaise: z.number().int(),
+    /** Due before today and unpaid, earliest instalments first. */
+    overduePaise: z.number().int(),
     /** Null until the term's charges have been issued to this student. */
     invoicedAt: z.string().nullable(),
   })
@@ -222,6 +245,7 @@ export const duesRowSchema = z
     outstandingPaise: z.number().int(),
     overpaidPaise: z.number().int(),
     notYetInvoicedPaise: z.number().int(),
+    overduePaise: z.number().int(),
   })
   .meta({ id: 'FeeDuesRow' })
 
@@ -232,6 +256,8 @@ export const duesReportSchema = z
     defaulterCount: z.number().int(),
     notYetInvoicedPaise: z.number().int(),
     notYetInvoicedCount: z.number().int(),
+    totalOverduePaise: z.number().int(),
+    overdueCount: z.number().int(),
     rows: z.array(duesRowSchema),
     total: z.number().int(),
     next: z.string().nullable(),

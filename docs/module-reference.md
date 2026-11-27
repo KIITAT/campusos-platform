@@ -8,7 +8,7 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | Module | Version | Pages | API routes | Dependencies |
 |---|---|---:|---:|---|
 | [Academic Core](#academic) | 0.18.0 | 8 | 46 | None |
-| [Admissions](#admissions) | 0.16.0 | 3 | 9 | academic |
+| [Admissions](#admissions) | 0.17.0 | 3 | 9 | academic |
 | [Alumni and events](#alumni) | 0.5.0 | 4 | 12 | None |
 | [Attendance & QR](#attendance) | 0.23.0 | 8 | 30 | academic, notices |
 | [Student Care](#care) | 0.17.0 | 7 | 24 | academic, notices |
@@ -16,24 +16,24 @@ Regenerate with UPDATE_REFERENCE=1 and scripts/module-reference.test.ts.
 | [Sales CRM](#crm) | 0.15.0 | 4 | 32 | finance, notices |
 | [Documents](#documents) | 0.1.0 | 1 | 8 | None |
 | [Enrollment](#enrollment) | 0.12.0 | 3 | 9 | academic |
-| [Examinations & Grading](#examinations) | 0.36.0 | 11 | 44 | academic, notices |
+| [Examinations & Grading](#examinations) | 0.37.0 | 11 | 44 | academic, notices |
 | [Feedback](#feedback) | 0.12.0 | 8 | 19 | academic |
-| [Fees & Finance](#fees) | 0.35.0 | 12 | 49 | academic, finance, notices |
+| [Fees & Finance](#fees) | 0.36.0 | 12 | 52 | academic, finance, notices |
 | [Finance & Books](#finance) | 0.23.0 | 92 | 209 | None |
 | [Helpdesk and grievance](#helpdesk) | 0.5.0 | 2 | 7 | None |
-| [Hostel](#hostel) | 0.19.0 | 8 | 35 | academic, notices |
+| [Hostel](#hostel) | 0.20.0 | 8 | 35 | academic, notices |
 | [HR & Payroll](#hr) | 0.31.0 | 18 | 134 | finance, notices |
-| [Library](#library) | 0.22.0 | 7 | 26 | academic, notices |
-| [Mentoring](#mentoring) | 0.36.0 | 6 | 19 | academic, notices |
+| [Library](#library) | 0.23.0 | 7 | 26 | academic, notices |
+| [Mentoring](#mentoring) | 0.37.0 | 6 | 19 | academic, notices |
 | [Communication & Notices](#notices) | 0.20.0 | 4 | 14 | academic |
-| [Parent Portal](#parents) | 0.36.0 | 4 | 13 | academic |
+| [Parent Portal](#parents) | 0.37.0 | 4 | 13 | academic |
 | [Placement](#placement) | 0.17.0 | 8 | 15 | academic, notices |
 | [Projects and timesheets](#projects) | 0.6.0 | 6 | 27 | finance |
 | [Quizzes](#quizzes) | 0.12.0 | 7 | 22 | academic |
 | [Reports](#reports) | 0.7.0 | 5 | 10 | notices |
 | [Skills](#skills) | 0.5.0 | 5 | 12 | None |
 | [Timetable](#timetable) | 0.14.0 | 12 | 42 | academic |
-| [Transport](#transport) | 0.9.0 | 4 | 14 | None |
+| [Transport](#transport) | 0.10.0 | 4 | 14 | None |
 
 <a id="academic"></a>
 ## Academic Core
@@ -621,7 +621,10 @@ Source: `campusos-platform/packages/modules/fees/`.
 | `GET /api/v1/modules/fees/drops` | Credits already worked out for courses dropped in a term | See runtime OpenAPI schema |
 | `POST /api/v1/modules/fees/drops/prorate` | Work a term's drops into credits, once each, and post them | `termId`, `studentId` |
 | `GET /api/v1/modules/fees/items` | Charged fee lines, optionally for one term | See runtime OpenAPI schema |
-| `POST /api/v1/modules/fees/items` | Define a charge for a programme and term | `programId`, `termId`, `label`, `amount`, `proratable`, `dueOn` |
+| `POST /api/v1/modules/fees/items` | Define a charge for a programme and term | `programId`, `termId`, `label`, `amount`, `proratable`, `dueOn`, `admissionYear`, `category` |
+| `GET /api/v1/modules/fees/late-fees` | Late-fee rules, optionally for one term | See runtime OpenAPI schema |
+| `POST /api/v1/modules/fees/late-fees` | Charge a flat late fee for an instalment still unpaid this many days after its due date | `termId`, `afterDays`, `amount` |
+| `POST /api/v1/modules/fees/late-fees/remove` | Remove a late-fee rule; late fees already raised stay | `lateFeeId`, `reason` |
 | `POST /api/v1/modules/fees/waivers` | Grant or revise a scholarship or waiver. Reason mandatory and audited. | `studentId`, `feeItemId`, `amount`, `reason` |
 | `POST /api/v1/modules/fees/waivers/revoke` | Withdraw a waiver. Reason mandatory and audited. | `waiverId`, `reason` |
 | `POST /api/v1/modules/fees/payments` | Record a payment and issue a receipt number | `studentId`, `termId`, `amount`, `method`, `reference`, `receivedAt`, `notes`, `drawerIfsc`, `drawerAccount`, `allowAdvance`, `Idempotency-Key` (header) |
@@ -642,6 +645,7 @@ Source: `campusos-platform/packages/modules/fees/`.
 ### Background jobs
 
 - `fees.check-receivable`: daily scheduled; roles institution_admin, accounts_staff, super_admin.
+- `fees.late-fees`: daily scheduled; roles institution_admin, accounts_staff, super_admin.
 
 <a id="finance"></a>
 ## Finance & Books

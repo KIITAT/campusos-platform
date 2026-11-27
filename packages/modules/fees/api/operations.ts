@@ -36,10 +36,10 @@ import {
   type DuesReport,
   type StudentLedger,
 } from './schemas'
-import { postedOf, postedSql, receivableReport } from './books'
+import { overdueSql, postedOf, postedSql, receivableReport } from './books'
 import { postInvoice, postPayment, postRefund, postWaiverChange } from './posting'
-import { enrolledPrograms, notEnrolled, priceListSql, termRoster } from './enrolment'
-import { checkOtherPerson, fiscalShort, settingsWithin } from '@campusos/module-finance/api'
+import { notEnrolled, priceListSql, termRoster } from './enrolment'
+import { checkOtherPerson, fiscalShort, localToday, settingsWithin } from '@campusos/module-finance/api'
 import { notify } from '@campusos/module-notices/api'
 
 const MODULE = 'fees'
@@ -82,7 +82,7 @@ export class FeeError extends Error {
   }
 }
 
-const tenantOf = (actor: Actor): string => {
+export const tenantOf = (actor: Actor): string => {
   if (!actor.institutionId) {
     throw new FeeError(400, 'no_institution', 'no institution for this session')
   }
@@ -162,6 +162,8 @@ export async function createFeeItem(actor: Actor, input: unknown) {
         amountPaise: data.amount,
         proratable: data.proratable,
         dueOn: data.dueOn ? new Date(data.dueOn) : null,
+        admissionYear: data.admissionYear ?? null,
+        category: data.category ?? null,
       })
       .onConflictDoNothing()
       .returning()
@@ -181,6 +183,8 @@ export async function listFeeItems(actor: Actor, termId?: string) {
         label: feeItems.label,
         amountPaise: feeItems.amountPaise,
         dueOn: feeItems.dueOn,
+        admissionYear: feeItems.admissionYear,
+        category: feeItems.category,
         programCode: programs.code,
         programId: feeItems.programId,
         termCode: terms.code,
@@ -190,7 +194,13 @@ export async function listFeeItems(actor: Actor, termId?: string) {
       .innerJoin(programs, eq(programs.id, feeItems.programId))
       .innerJoin(terms, eq(terms.id, feeItems.termId))
       .where(termId ? eq(feeItems.termId, termId) : undefined)
-      .orderBy(asc(programs.code), asc(terms.code), asc(feeItems.label)),
+      .orderBy(
+        asc(programs.code),
+        asc(terms.code),
+        asc(feeItems.label),
+        sql`${feeItems.admissionYear} nulls first`,
+        sql`${feeItems.category} nulls first`,
+      ),
   )
 }
 
@@ -221,8 +231,7 @@ export async function grantWaiver(actor: Actor, input: unknown) {
     // Only a charge the student actually has (ACC-22): an item of a programme
     // they are enrolled in for its term, by the rule that bills them. Anything
     // else would post waiver expense against a debt that was never raised.
-    const enrolled = await enrolledPrograms(tx, data.studentId, item.termId)
-    if (!enrolled.some((p) => p.programId === item.programId)) {
+    if (!(await itemsCharged(tx, data.studentId, item.termId)).includes(data.feeItemId)) {
       throw new FeeError(
         400,
         'item_not_charged',
@@ -304,10 +313,59 @@ export async function grantWaiver(actor: Actor, input: unknown) {
         label: item.label,
         studentName: await nameOf(tx, data.studentId),
       })
+      await noteWaiver(tx, data.studentId, data.feeItemId, data.amount - (existing?.postedPaise ?? 0))
     }
 
     return row!
   })
+}
+
+/**
+ * Notes on each live invoice of these students what it asks for, per due date
+ * and net of the waivers posted against the term (P1-03d): late fees judge an
+ * instalment on what had been scheduled up to its day as at that day, not on
+ * what is owed today. The student's late fees are not instalments and stay out,
+ * as they do in the late-fee run. Read from the price list as it stands, so only
+ * for an issue, where the price list and the invoice agree; a waiver change
+ * goes through noteWaiver.
+ */
+export async function noteOwed(tx: Tx, termId: string, studentIds: string[]) {
+  if (studentIds.length === 0) return
+  await tx.execute(sql`
+    update fee_invoices i
+       set owed_at = array_append(i.owed_at, now()),
+           owed_dues = array_append(i.owed_dues, coalesce(
+             (select jsonb_object_agg(x.k, x.net)
+                from (select coalesce(l.due_on::text, 'undated') as k, sum(l.charged - l.waived)::bigint as net
+                        from (${priceListSql(termId, studentIds)}) l
+                        left join fee_student_charges c on c.id = l.student_charge_id
+                       where l.student_id = i.student_id
+                         and (c.id is null or not (c.source_module = 'fees' and c.source_id like 'late:%'))
+                       group by 1) x), '{}'::jsonb))
+     where i.term_id = ${termId}::uuid and i.voided_at is null
+       and i.student_id = any(array[${sql.join(studentIds.map((s) => sql`${s}`), sql`, `)}]::text[])`)
+}
+
+/**
+ * A waiver granted, revised or revoked moves one line of what the invoice asks
+ * for: the line's due-date key falls by the amount newly posted (negative when
+ * a waiver is taken back), and nothing else changes. The key is not floored at
+ * zero: a waiver above what the invoice asks at that date (a corrected line not
+ * yet issued) leaves it negative, which is what the books say, so that a
+ * revoke restores it exactly (fix verification 5 HIGH 1). Not read from the price
+ * list: a category or batch correction that has not been issued is not owed yet,
+ * whatever a waiver on the corrected line does (fix verification 4 HIGH 1).
+ */
+async function noteWaiver(tx: Tx, studentId: string, feeItemId: string, deltaPaise: number) {
+  await tx.execute(sql`
+    with k as (select coalesce((f.due_on at time zone 'UTC')::date::text, 'undated') as key from fee_items f where f.id = ${feeItemId}::uuid)
+    update fee_invoices i
+       set owed_at = array_append(i.owed_at, now()),
+           owed_dues = array_append(i.owed_dues, coalesce(i.owed_dues[cardinality(i.owed_dues)], '{}'::jsonb)
+             || jsonb_build_object(k.key, coalesce((i.owed_dues[cardinality(i.owed_dues)] ->> k.key)::bigint, 0) - ${deltaPaise}::bigint))
+      from k
+     where i.student_id = ${studentId} and i.voided_at is null
+       and i.term_id = (select f.term_id from fee_items f where f.id = ${feeItemId}::uuid)`)
 }
 
 export async function revokeWaiver(actor: Actor, input: unknown) {
@@ -365,6 +423,7 @@ export async function revokeWaiver(actor: Actor, input: unknown) {
     }
 
     await tx.delete(feeWaivers).where(eq(feeWaivers.id, data.waiverId))
+    if (row.postedPaise > 0) await noteWaiver(tx, row.studentId, row.feeItemId, -row.postedPaise)
   })
 }
 
@@ -775,7 +834,10 @@ async function issueChunk(
       )[0]!.id
 
     if (invoice) {
-      await tx.update(feeInvoices).set({ chargedPaise: listed, version }).where(eq(feeInvoices.id, invoice.id))
+      await tx
+        .update(feeInvoices)
+        .set({ chargedPaise: listed, version, versionsIssuedAt: sql`array_append(${feeInvoices.versionsIssuedAt}, now())` })
+        .where(eq(feeInvoices.id, invoice.id))
     }
 
     // Waivers the books have not been told about: everything granted before
@@ -809,6 +871,7 @@ async function issueChunk(
 
   if (issued.length > 0) {
     const issuedIds = issued.map((i) => i.studentId)
+    await noteOwed(tx, termId, issuedIds)
     // The student's own charges this run priced are in the books now: from
     // here they are waived or refunded, not cancelled. Only those (NEW-91): a
     // charge raised while the chunk ran was not billed and stays cancellable.
@@ -1052,12 +1115,21 @@ export async function paymentTrail(actor: Actor, paymentId: string) {
 
 // --- reads ----------------------------------------------------------------
 
+/** The fee items one student is charged for in a term: the price list's pick (ACC-21). */
+async function itemsCharged(tx: Tx, studentId: string, termId: string): Promise<string[]> {
+  const rows = (
+    await tx.execute(sql`select fee_item_id from (${priceListSql(termId, [studentId])}) l where fee_item_id is not null`)
+  ).rows as { fee_item_id: string }[]
+  return rows.map((r) => String(r.fee_item_id))
+}
+
 /**
- * Charges applying to one student in one term: the fee items of the
- * programmes they are enrolled in for it (ACC-19), and their own charges.
+ * Charges applying to one student in one term: the fee items the price list
+ * picks for them (the programmes they are enrolled in, ACC-19; the most
+ * specific line of each label, ACC-21), and their own charges.
  */
 export async function chargesFor(tx: Tx, studentId: string, termId: string) {
-  const progs = await enrolledPrograms(tx, studentId, termId)
+  const ids = await itemsCharged(tx, studentId, termId)
 
   // Charges on this student alone -- a backlog paper -- whatever programme
   // they read, billed beside the programme's own lines.
@@ -1082,15 +1154,17 @@ export async function chargesFor(tx: Tx, studentId: string, termId: string) {
     waivedPaise: null as number | null,
     waiverReason: null as string | null,
     postedPaise: null as number | null,
+    dueOn: null as string | null,
   }))
 
-  if (progs.length === 0) return own
+  if (ids.length === 0) return own
 
   const items = await tx
     .select({
       feeItemId: feeItems.id,
       label: feeItems.label,
       chargedPaise: feeItems.amountPaise,
+      dueOn: feeItems.dueOn,
       waiverId: feeWaivers.id,
       waivedPaise: feeWaivers.amountPaise,
       waiverReason: feeWaivers.reason,
@@ -1101,14 +1175,17 @@ export async function chargesFor(tx: Tx, studentId: string, termId: string) {
       feeWaivers,
       and(eq(feeWaivers.feeItemId, feeItems.id), eq(feeWaivers.studentId, studentId)),
     )
-    .where(
-      and(
-        eq(feeItems.termId, termId),
-        inArray(feeItems.programId, progs.map((p) => p.programId)),
-      ),
-    )
+    .where(inArray(feeItems.id, ids))
     .orderBy(asc(feeItems.label))
-  return [...items.map((i) => ({ ...i, feeItemId: i.feeItemId as string | null, studentChargeId: null as string | null })), ...own]
+  return [
+    ...items.map((i) => ({
+      ...i,
+      feeItemId: i.feeItemId as string | null,
+      studentChargeId: null as string | null,
+      dueOn: i.dueOn ? i.dueOn.toISOString().slice(0, 10) : (null as string | null),
+    })),
+    ...own,
+  ]
 }
 
 export async function studentLedger(
@@ -1147,6 +1224,8 @@ export async function studentLedger(
     const listed = charges.reduce((n, c) => n + c.chargedPaise, 0)
     const unposted = charges.reduce((n, c) => n + Math.max(0, (c.waivedPaise ?? 0) - (c.postedPaise ?? 0)), 0)
     const payablePaise = p.invoicedPaise - p.waivedPaise - p.creditedPaise
+    const today = await localToday(tx, tenant)
+    const [od] = (await tx.execute(overdueSql(termId, studentId, today))).rows as { overdue_paise: string | number }[]
 
     return {
       studentId,
@@ -1161,6 +1240,7 @@ export async function studentLedger(
         waivedPaise: c.waivedPaise ?? 0,
         waiverId: c.waiverId,
         waiverReason: c.waiverReason,
+        dueOn: c.dueOn,
       })),
       payments: payments.map((p) => ({
         id: p.id,
@@ -1183,6 +1263,7 @@ export async function studentLedger(
       outstandingPaise: Math.max(0, p.balancePaise),
       overpaidPaise: Math.max(0, -p.balancePaise),
       notYetInvoicedPaise: Math.max(0, listed - unposted - p.invoicedPaise),
+      overduePaise: Number(od?.overdue_paise ?? 0),
       invoicedAt: invoice?.issuedAt.toISOString() ?? null,
     }
   })
@@ -1218,10 +1299,12 @@ export async function duesReport(
       .from(terms)
       .where(eq(terms.id, termId))
     if (!term) throw new FeeError(404, 'no_such_term', 'no such term')
+    const today = await localToday(tx, tenant)
 
     const cte = sql`
       with posted as (${postedSql({ termId })}),
-      listed as (select student_id, sum(charged)::bigint as listed_paise, sum(unposted_waived)::bigint as unposted_paise
+      listed as (select student_id, sum(charged)::bigint as listed_paise, sum(unposted_waived)::bigint as unposted_paise,
+                     coalesce(sum(charged - waived) filter (where due_on is null or due_on < ${today}::date), 0)::bigint as scheduled_paise
                    from (${priceListSql(termId, null)}) l group by student_id),
       d as (
         select coalesce(p.student_id, l.student_id) as student_id,
@@ -1232,7 +1315,10 @@ export async function duesReport(
                coalesce(p.unreconciled_paise, 0) as unreconciled_paise,
                greatest(coalesce(p.balance_paise, 0), 0) as outstanding_paise,
                greatest(-coalesce(p.balance_paise, 0), 0) as overpaid_paise,
-               greatest(coalesce(l.listed_paise, 0) - coalesce(l.unposted_paise, 0) - coalesce(p.invoiced_paise, 0), 0) as not_yet_invoiced_paise
+               greatest(coalesce(l.listed_paise, 0) - coalesce(l.unposted_paise, 0) - coalesce(p.invoiced_paise, 0), 0) as not_yet_invoiced_paise,
+               -- overdueSql's arithmetic on the scheduled amount already priced above, not a second pass over the price list.
+               greatest(0, least(coalesce(p.invoiced_paise, 0) - coalesce(p.waived_paise, 0), coalesce(l.scheduled_paise, 0))
+                           - coalesce(p.credited_paise, 0) - (coalesce(p.paid_paise, 0) - coalesce(p.refunded_paise, 0)))::bigint as overdue_paise
           from posted p full join listed l on l.student_id = p.student_id)`
     const shown = sql`(d.payable_paise <> 0 or d.paid_paise <> 0 or d.not_yet_invoiced_paise <> 0)`
     const search = searchAny(page.q, [sql`u.name`, sql`u.email`])
@@ -1258,7 +1344,9 @@ export async function duesReport(
              coalesce(sum(d.outstanding_paise), 0)::bigint as outstanding,
              count(*) filter (where d.outstanding_paise > 0)::int as defaulters,
              coalesce(sum(d.not_yet_invoiced_paise), 0)::bigint as nyi,
-             count(*) filter (where d.not_yet_invoiced_paise > 0)::int as nyi_count
+             count(*) filter (where d.not_yet_invoiced_paise > 0)::int as nyi_count,
+             coalesce(sum(d.overdue_paise), 0)::bigint as overdue,
+             count(*) filter (where d.overdue_paise > 0)::int as overdue_count
         from d join users u on u.id = d.student_id
        where ${where}`)).rows as Record<string, unknown>[]
 
@@ -1275,6 +1363,7 @@ export async function duesReport(
       outstandingPaise: Number(r.outstanding_paise),
       overpaidPaise: Number(r.overpaid_paise),
       notYetInvoicedPaise: Number(r.not_yet_invoiced_paise),
+      overduePaise: Number(r.overdue_paise),
       _cursor: r._cursor as string[],
     }))
     return {
@@ -1283,6 +1372,8 @@ export async function duesReport(
       defaulterCount: Number(sum!.defaulters),
       notYetInvoicedPaise: Number(sum!.nyi),
       notYetInvoicedCount: Number(sum!.nyi_count),
+      totalOverduePaise: Number(sum!.overdue),
+      overdueCount: Number(sum!.overdue_count),
       ...finishPage(mapped, page, Number(sum!.total)),
     }
   })

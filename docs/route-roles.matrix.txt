@@ -314,6 +314,9 @@ GET /api/v1/modules/fees/drops                                           SI.....
 POST /api/v1/modules/fees/drops/prorate                                  SI........ op
 GET /api/v1/modules/fees/items                                           SI..A..... op
 POST /api/v1/modules/fees/items                                          SI........ op
+GET /api/v1/modules/fees/late-fees                                       SI..A..... op
+POST /api/v1/modules/fees/late-fees                                      SI........ op
+POST /api/v1/modules/fees/late-fees/remove                               SI........ op
 POST /api/v1/modules/fees/waivers                                        SI........ op
 POST /api/v1/modules/fees/waivers/revoke                                 SI........ op
 POST /api/v1/modules/fees/payments                                       SI..A..... op
@@ -944,7 +947,7 @@ GET /api/v1/modules/timetable/live/pdf                                   SIHF...
 GET /api/v1/modules/timetable/my                                         SIHF...... op
 GET /api/v1/modules/timetable/my/pdf                                     SIHF...... op
 
-## transport 0.9.0
+## transport 0.10.0
 GET /api/v1/modules/transport/vehicles                                   SI........ op
 GET /api/v1/modules/transport/routes                                     SIHFALOs.. op
 GET /api/v1/modules/transport/stops                                      SIHFALOs.. op

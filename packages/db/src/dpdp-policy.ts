@@ -166,6 +166,7 @@ export const EXPORT_POLICY: Readonly<Record<string, ExportRule>> = {
   // nothing the person said or did that the receipt does not already record.
   fee_idempotency_keys: 'exclude',
   fee_invoices: 'export',
+  fee_late_fees: 'export',
   fee_payments: { omit: ['receipt_no_key'] },
   fee_refunds: 'export',
   fee_scholarship_awards: 'export',

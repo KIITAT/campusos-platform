@@ -81,14 +81,53 @@ export const feeItems = pgTable(
      * an audit finding.
      */
     proratable: boolean().notNull().default(false),
+    /** An instalment is a line with a due date (P1-03d). */
     dueOn: timestamp('due_on', { withTimezone: true }),
+    /** For one batch only (the admission year); null is every batch. */
+    admissionYear: smallint('admission_year'),
+    /** For one reservation category only (STUDENT_CATEGORIES); null is every category. */
+    category: text(),
     createdAt: createdAt(),
   },
   (t) => [
-    uniqueIndex('fee_items_identity').on(t.programId, t.termId, t.label),
+    uniqueIndex('fee_items_identity').on(
+      t.programId,
+      t.termId,
+      t.label,
+      sql`coalesce(${t.admissionYear}, 0)`,
+      sql`coalesce(${t.category}, '')`,
+    ),
     index('fee_items_term').on(t.termId),
     check('fee_items_amount', sql`amount_paise > 0`),
+    check('fee_items_admission_year', sql`admission_year is null or admission_year between 1900 and 2200`),
+    check('fee_items_category', sql`category is null or category in ('general','ews','obc','sc','st')`),
     tenantPolicy('fee_items'),
+  ],
+)
+
+/**
+ * A late-fee rule for a term: a student still owing on an instalment `afterDays`
+ * after its due date is charged `amountPaise` once (P1-03d). Several rules on
+ * a term are slabs.
+ */
+export const lateFees = pgTable(
+  'fee_late_fees',
+  {
+    id: pk(),
+    institutionId: tenantId(),
+    termId: uuid('term_id')
+      .notNull()
+      .references(() => terms.id, { onDelete: 'cascade' }),
+    afterDays: smallint('after_days').notNull(),
+    amountPaise: paise('amount_paise').notNull(),
+    createdBy: text('created_by').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex('fee_late_fees_slab').on(t.termId, t.afterDays),
+    check('fee_late_fees_days', sql`after_days between 0 and 365`),
+    check('fee_late_fees_amount', sql`amount_paise between 1 and 10000000`),
+    tenantPolicy('fee_late_fees'),
   ],
 )
 
@@ -289,6 +328,17 @@ export const feeInvoices = pgTable(
     /** Incremented by a supplementary issue, so each posting has its own ref. */
     version: integer().notNull().default(1),
     issuedAt: timestamp('issued_at', { withTimezone: true }).notNull().defaultNow(),
+    /** When each version was issued, version k at index k: what had been invoiced by a given day (P1-03d late fees). */
+    versionsIssuedAt: timestamp('versions_issued_at', { withTimezone: true }).array().notNull().default(sql`ARRAY[now()]`),
+    /**
+     * What the invoice asked for, net of the waivers posted against the term,
+     * after each issue, each waiver change and each void, and when: what was
+     * owed as at a given day (P1-03d late fees). owed_dues[k] is the amount from
+     * owed_at[k] per due date ({"2026-10-17": paise, "undated": paise}), empty
+     * for a void; an instalment's figure is the keys up to its day and 'undated'.
+     */
+    owedAt: timestamp('owed_at', { withTimezone: true }).array().notNull().default(sql`'{}'`),
+    owedDues: jsonb('owed_dues').array().notNull().default(sql`'{}'`),
     issuedBy: text('issued_by').references(() => users.id, { onDelete: 'set null' }),
     createdAt: createdAt(),
     /** An invoice issued in error is voided, never deleted (fees 0009). */
@@ -301,6 +351,8 @@ export const feeInvoices = pgTable(
     uniqueIndex('fee_invoices_once').on(t.studentId, t.termId).where(sql`voided_at IS NULL`),
     index('fee_invoices_term').on(t.termId),
     check('fee_invoices_amount', sql`charged_paise > 0`),
+    check('fee_invoices_versions', sql`cardinality(versions_issued_at) = version`),
+    check('fee_invoices_owed', sql`cardinality(owed_at) = cardinality(owed_dues)`),
     check(
       'fee_invoices_void_shape',
       sql`(voided_at IS NULL) = (void_reason IS NULL) AND (void_reason IS NULL OR length(btrim(void_reason)) >= 5)`,

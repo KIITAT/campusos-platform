@@ -1,5 +1,6 @@
 import { sql, type SQL } from 'drizzle-orm'
 import type { withTenant } from '@campusos/db'
+import { priceListSql } from './enrolment'
 
 type Tx = Parameters<Parameters<typeof withTenant>[1]>[0]
 
@@ -49,6 +50,23 @@ export function postedSql(filter: { termId?: string | null; studentId?: string |
          where true${t(sql`p.term_id`)}${s(sql`p.student_id`)}
       ) d
      group by student_id, term_id`
+}
+
+/**
+ * Due before `today` and unpaid, per student (P1-03d). A line with no due date
+ * is due once invoiced; credits and payments settle the earliest instalments
+ * first, so overdue never exceeds outstanding.
+ */
+export function overdueSql(termId: string, studentId: string | null, today: string): SQL {
+  return sql`
+    select b.student_id,
+           greatest(0, least(b.invoiced_paise - b.waived_paise, coalesce(s.scheduled, 0))
+                       - b.credited_paise - (b.paid_paise - b.refunded_paise))::bigint as overdue_paise
+      from (${postedSql({ termId, studentId })}) b
+      left join (select student_id, sum(charged - waived)::bigint as scheduled
+                   from (${priceListSql(termId, studentId ? [studentId] : null)}) l
+                  where l.due_on is null or l.due_on < ${today}::date
+                  group by student_id) s on s.student_id = b.student_id`
 }
 
 export interface Posted {
